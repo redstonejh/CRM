@@ -287,23 +287,45 @@
     setTimeout(() => clone.remove(), 440);
   };
 
+  // ── Native-style drop preview ────────────────────────────────────────────────
+  // While dragging a stack card over the dashboard, show the SAME blue dashed
+  // .widget-placeholder the native widget drag uses, snapped to the target grid cell,
+  // so you can see where the ticket will land.
+  const gridLayout = () => document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]');
+  const stackTopY = () => window.innerHeight - (CARD_H + MARGIN * 2);
+  let dropPh = null;
+  // Show the placeholder at the cell the widget will ACTUALLY land in (the runtime compacts
+  // to the next free cell, so previewing the cursor cell would be a lie).
+  const showDropPreview = () => {
+    const layout = gridLayout(); if (!layout) return;
+    const cell = nextCell(layout);
+    if (!dropPh) { dropPh = document.createElement("div"); dropPh.className = "widget-placeholder tk-drop-preview"; }
+    dropPh.style.gridColumn = `${cell.col} / span 1`;
+    dropPh.style.gridRow = `${cell.row} / span 3`;
+    if (dropPh.parentElement !== layout) layout.appendChild(dropPh);
+  };
+  const clearDropPreview = () => { if (dropPh) dropPh.remove(); };
+
   const wireCard = (card, t) => {
     let startX = 0, startY = 0, dragging = false, down = false;
     const onMove = (e) => {
       if (!down) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) { dragging = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999"; }
-      if (dragging) card.style.transform = `translate(${card._tx + dx}px, ${card._ty + dy}px) rotate(0deg) scale(1.03)`;
+      if (dragging) {
+        card.style.transform = `translate(${card._tx + dx}px, ${card._ty + dy}px) rotate(0deg) scale(1.03)`;
+        if (e.clientY < stackTopY()) showDropPreview(); else clearDropPreview();
+      }
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       card.style.transform = `translate(${card._tx}px, ${card._ty}px) rotate(${card._rot}deg)`;   // spring back
+      clearDropPreview();
       if (!wasDrag) { flyIntoGrid(card, t); return; }                      // click → into the grid cell
-      // Dropped anywhere up in the dashboard area (above the bottom stack zone) → bring it in.
-      const stackTop = window.innerHeight - (CARD_H + MARGIN * 2);
-      if (e.clientY < stackTop) flyIntoGrid(card, t);
+      // Dropped up in the dashboard area (above the bottom stack zone) → bring it in.
+      if (e.clientY < stackTopY()) flyIntoGrid(card, t);
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;

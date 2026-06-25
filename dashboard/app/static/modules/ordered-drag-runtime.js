@@ -127,9 +127,12 @@ export const createOrderedDragRuntime = (deps = {}) => {
     };
     let lastMoveEvent = event;
     // Drag targets used to be clamped to the rows visible in the viewport
-    // ("committed page bottom"). That lock blocked dragging objects below the
-    // fold and caused interaction bugs, so drags are unbounded now.
-    const committedPageBottomRow = Infinity;
+    // ("committed page bottom"). That global lock blocked dragging objects below
+    // the fold and caused interaction bugs, so drags are unbounded by default.
+    // A layout may still opt in to a reserved bottom band via data-drop-floor-y
+    // (a client-Y below which no drop target may land — e.g. the ticket stacks
+    // overlay); the floor is converted to a max bottom row in startDrag.
+    let committedPageBottomRow = Infinity;
 
     const clampCellToCommittedRows = (cell, rowSpan = null, maxBottom = committedPageBottomRow) => {
       if (!cell || !Number.isFinite(maxBottom)) return cell;
@@ -214,6 +217,13 @@ export const createOrderedDragRuntime = (deps = {}) => {
         targetCell = originalCell;
       }
       dragMetrics = createGridMetrics(layout);
+      // Honour a layout's reserved bottom band: clamp drop targets so the
+      // placeholder/commit can never enter rows that fall below the floor line.
+      const dropFloorY = Number(layout?.dataset?.dropFloorY);
+      if (Number.isFinite(dropFloorY) && dragMetrics?.rect && dragMetrics.rowStep > 0) {
+        const maxBottomRow = Math.floor(1 + ((dropFloorY - dragMetrics.rect.top - dragMetrics.rowHeight) / dragMetrics.rowStep));
+        committedPageBottomRow = Math.max(1, maxBottomRow);
+      }
       reflowItems = reflowItemsForLayout(layout, item);
       closeInactiveDashboardTools(item);
       onStart?.();

@@ -51,7 +51,19 @@
   const sevBgCache = {};
   const severityBg = (sev) => {
     if (sevBgCache[sev]) return sevBgCache[sev];
-    const host = (gridCard() && gridCard().parentElement) || document.body;
+    const fallback = `linear-gradient(180deg, rgba(${SEV_RGB[sev]},0.4), rgba(${SEV_RGB[sev]},0.2))`;
+    // The probe needs the ticket widget's severity→accent palette (#ticket-widget-styles,
+    // injected by widget-registry at load). If it isn't present yet, use the gradient
+    // fallback WITHOUT caching so a later render probes the exact db-panel fill instead of
+    // poisoning the cache with the default (blue) accent.
+    if (!document.getElementById("ticket-widget-styles")) return fallback;
+    // Probe in the grid's own context so the db-panel white-mix var resolves identically.
+    // With no ticket on the grid, fall back to the builder-chart layout (NOT <body>, which
+    // inherits a different mix and renders faded).
+    const host = (gridCard() && gridCard().parentElement)
+      || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]')
+      || document.querySelector('.dashboard-layout-grid')
+      || document.body;
     const probe = document.createElement("div");
     probe.className = "widget-card ticket-widget-card db-panel-custom-color";
     probe.setAttribute("data-widget-runtime-type", "ticket");
@@ -64,7 +76,7 @@
     if (cs.backgroundColor && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(cs.backgroundColor)) layers.push(`linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`);
     probe.remove();
     if (layers.length) return (sevBgCache[sev] = layers.join(", "));
-    return `linear-gradient(180deg, rgba(${SEV_RGB[sev]},0.4), rgba(${SEV_RGB[sev]},0.2))`;
+    return fallback;
   };
 
   const ensureStyles = () => {
@@ -86,6 +98,7 @@
          "render into every .widget-card" loop never overwrites them. The inner .ticket-body /
          .ticket-company / .ticket-host / .ticket-down classes are global, so content matches. */
       .tk-card { position: absolute; bottom: ${MARGIN}px; box-sizing: border-box; pointer-events: auto; cursor: grab;
+        user-select: none; -webkit-user-select: none;   /* drag/double-click must not highlight the card text */
         padding: 14px 15px; border-radius: 15px; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18);
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
@@ -111,6 +124,39 @@
       .tk-bar.is-on { opacity: 1; }
       .tk-thumb { position: absolute; top: 0; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.32); cursor: grab; }
       .tk-thumb:hover { background: rgba(255,255,255,0.5); }
+
+      /* Quantum-tunnel wiggle when a ticket dragged off the grid re-inserts into a
+         stack. Animates the individual translate/scale/filter props (NOT transform) so
+         it composes with the resting transform that place() writes inline. */
+      @keyframes tk-tunnel {
+        0%   { translate: 0 -4px; scale: 1.03; filter: brightness(1.12); opacity: .85; }
+        30%  { translate: -3px 0; scale: 1.006; filter: none; opacity: 1; }
+        55%  { translate: 2px 0; }
+        78%  { translate: -1px 0; }
+        100% { translate: 0 0; scale: 1; filter: none; opacity: 1; }
+      }
+      .tk-card.tk-tunneling { animation: tk-tunnel .32s cubic-bezier(.25, 1, .35, 1) both; }
+
+      /* Drop outlines on the corner decks during a ticket drag. BOTH decks show a faint
+         outline (.tk-faint); the hovered deck intensifies (.tk-hot). The deck that does
+         not match the ticket's state turns red (.tk-bad) and rejects the drop — an open
+         ticket may enter only the left (active) deck, a resolved one only the right. */
+      .tk-landing { position: absolute; bottom: ${MARGIN}px; border-radius: ${RADIUS}px; opacity: 0;
+        pointer-events: none; border: 2px dashed rgba(125,180,255,0.9); background: rgba(95,150,255,0.10);
+        transition: opacity .18s ease, border-color .18s ease, background .18s ease; z-index: 600; }
+      .tk-landing.tk-left { left: ${MARGIN}px; } .tk-landing.tk-right { right: ${MARGIN}px; }
+      .tk-landing.tk-faint { opacity: 0.32; }
+      .tk-landing.tk-hot { opacity: 1; animation: tk-landing-pulse 1.05s ease-in-out infinite; }
+      .tk-landing.tk-bad { border-color: rgba(255,120,120,0.92); background: rgba(255,90,90,0.10); }
+      .tk-landing.tk-bad.tk-hot { animation: tk-landing-pulse-bad 1.05s ease-in-out infinite; }
+      @keyframes tk-landing-pulse {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(80,140,255,0.10), inset 0 0 18px rgba(95,150,255,0.30); }
+        50%      { box-shadow: 0 0 0 7px rgba(80,140,255,0.16), inset 0 0 34px rgba(95,150,255,0.6); }
+      }
+      @keyframes tk-landing-pulse-bad {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(255,80,80,0.12), inset 0 0 18px rgba(255,90,90,0.30); }
+        50%      { box-shadow: 0 0 0 7px rgba(255,80,80,0.20), inset 0 0 34px rgba(255,90,90,0.6); }
+      }
     `;
     document.head.appendChild(style);
   };
@@ -141,7 +187,13 @@
       decks[side] = { box, arrow, bar, thumb, cards: [], scrollX: 0, contentW: 0, viewW: 0 };
     }
     document.body.appendChild(root);
-    window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); layout("left"); layout("right"); });
+    window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
+    // Watch native widget drags from the outside so a grid ticket can be dropped back
+    // into its stack. Capture phase → these run before the native drag's own document
+    // handlers, letting us read the under-cursor rect before it commits.
+    document.addEventListener("pointermove", onDragWatchMove, true);
+    document.addEventListener("pointerup", onDragWatchUp, true);
+    document.addEventListener("pointercancel", resetDragWatch, true);
   };
 
   const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + 34}px`; };
@@ -230,10 +282,31 @@
     return { col: 1, row: 1 };
   };
 
+  // The grid cell under the cursor (1-col × 3-row footprint), clamped to the rows ABOVE the
+  // stack band. A ticket dragged out of a stack spawns here so the blue placeholder is born
+  // right where the card crossed in (down by the stack) and rides up onto the grid — instead
+  // of flying in from the next-free corner cell.
+  const cursorCell = (clientX, clientY) => {
+    const host = document.querySelector(".dashboard-layout-grid");
+    const rect = host && host.getBoundingClientRect();
+    if (!rect || !rect.width) return null;
+    const cs = getComputedStyle(host);
+    const cols = 6;
+    const gap = parseFloat(cs.rowGap || cs.gap) || 18;
+    const rowH = parseFloat(cs.getPropertyValue("--dashboard-grid-row-height")) || 81;
+    const step = rowH + gap;
+    const colW = (rect.width - gap * (cols - 1)) / cols;
+    const itemH = rowH * 3 + gap * 2;   // 3-row ticket footprint
+    const col = Math.max(1, Math.min(cols, Math.round((clientX - rect.left - colW / 2) / (colW + gap)) + 1));
+    const maxStart = Math.max(1, Math.floor(1 + (stackTopY() + MARGIN - rect.top - rowH) / step) - 2);
+    const row = Math.max(1, Math.min(maxStart, Math.round((clientY - rect.top - itemH / 2) / step) + 1));
+    return { col, row };
+  };
+
   // Add the dropped ticket to the dashboard grid as its OWN BARE ticket widget (identical to
   // the static one — no shell), keyed uniquely, sized to 3 rows via the runtime, and fed its
   // specific ticket. Many can coexist; if already present, just refresh it.
-  const addTicketToGrid = (t) => {
+  const addTicketToGrid = (t, preferredCell = null) => {
     if (!t || !t.id) return null;
     const layout = document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]');
     if (!layout || typeof layout.__initWidget !== "function") { window.ticketGrid?.show(t); return null; }
@@ -242,9 +315,14 @@
     let card = layout.querySelector(`[data-widget-key="${sel}"]`);
     let cell = null;
     if (!card) {
-      cell = nextCell(layout);
+      cell = preferredCell || nextCell(layout);
       card = document.createElement("div");
       card.className = "widget-card ticket-widget-card";
+      // Size to its 3-row footprint INSTANTLY. .widget-card animates width/height/grid-row,
+      // and the drag hand-off reads getBoundingClientRect to compute the grab offset — a
+      // mid-transition (half-sized) read offsets the widget from the cursor and makes the
+      // first drag look frozen until it snaps to its grid cell on release. Restored below.
+      card.style.transition = "none";
       card.dataset.widgetKey = key;
       card.dataset.widgetType = "ticket";
       card.dataset.widgetRuntimeType = "ticket";
@@ -262,19 +340,22 @@
     window.dashboardWidgetDataRuntime?.ingest?.({ widgets: { [key]: { rows: [t] } } });
     if (cell) window.ticketDashboardPlacement?.size?.(card, cell.col, cell.row);
     window.dashboardWidgetDataRuntime?.ingest?.({ widgets: { [key]: { rows: [t] } } });
+    // Flush the instant sizing, then restore normal motion (the drag's panel-interaction-active
+    // suppresses transitions anyway, so this only matters once the widget is at rest).
+    if (cell) { void card.offsetWidth; requestAnimationFrame(() => { card.style.transition = ""; }); }
     return card;
   };
 
-  // Drop onto the dashboard → add a new grid widget for it, remove it from its stack (one
-  // canonical ticket), and fly a clone into the new cell for a seamless hand-off.
-  const flyIntoGrid = (card, t) => {
+  // Drop onto the dashboard → add a new grid widget for it (at `cell`, the drop target),
+  // remove it from its stack (one canonical ticket), and fly a clone into the new cell.
+  const flyIntoGrid = (card, t, cell = null) => {
     // Clone the source card NOW — re-render below drops it from the stack.
     const cr = card.getBoundingClientRect();
     const clone = card.cloneNode(true);
     clone.className = "tk-card tk-flying";
     clone.style.cssText = `position:fixed; left:${cr.left}px; top:${cr.top}px; width:${cr.width}px; height:${cr.height}px; margin:0; z-index:9999;`;
     document.body.appendChild(clone);
-    const placed = addTicketToGrid(t);
+    const placed = addTicketToGrid(t, cell);
     render();   // the ticket now has a grid widget → it leaves its stack
     requestAnimationFrame(() => {
       const gr = placed && placed.getBoundingClientRect();
@@ -288,42 +369,162 @@
   };
 
   // ── Lift a stack card onto the dashboard ─────────────────────────────────────
-  // We used to paint our own blue placeholder pinned to nextCell(), so it sat in a
-  // corner and never tracked the cursor. Instead, once a card is lifted up out of the
-  // stack zone we hand the gesture off to the REAL widget-move runtime (handOffToGrid),
-  // so the rest of the drag is byte-for-byte the native one: a glass widget gliding
-  // under the cursor + the blue placeholder reflowing between grid cells.
+  // Once a card is lifted up out of the stack zone we hand the gesture off to the REAL
+  // widget-move runtime (handOffToGrid), so the rest of the drag is the native one: a
+  // glass widget gliding under the cursor + the blue placeholder reflowing between cells.
   const gridLayout = () => document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]');
   const stackTopY = () => window.innerHeight - (CARD_H + MARGIN * 2);
+
+  // ── Drag a grid ticket BACK into its stack ───────────────────────────────────
+  // The bottom band belongs to the stacks. The grid drag is taught to RESERVE it via
+  // data-drop-floor-y, so the native blue placeholder can never enter band rows — only
+  // the dragged glass widget follows the cursor down. When the cursor is over the stack
+  // band we tuck that (clamped) placeholder away and light a landing pad ("the blue
+  // preview enters the stack"); releasing there cancels the native drop and re-homes the
+  // ticket as a real stack member with the quantum-tunnel wiggle.
+  const PIN = "ticket-pin-";
+  // ANY ticket widget on the grid can be dragged home — the pinned ones AND the main
+  // ticket-card from the template. Match on the runtime type, not the pin key.
+  const draggedTicket = () => document.querySelector(
+    '.dashboard-layout-grid .widget-card.widget-dragging[data-widget-runtime-type="ticket"],' +
+    ' .widget-layout .widget-card.widget-dragging[data-widget-runtime-type="ticket"]');
+  const ticketForWidget = (w) => {
+    if (!w) return null;
+    const k = String(w.dataset.widgetKey || "");
+    const id = w.dataset.ticketId || (k.startsWith(PIN) ? k.slice(PIN.length) : "");
+    return id ? (tickets.find((x) => x.id === id) || null) : null;
+  };
+  const deckSideFor = (t) => ((t && (t.state || "open") === "resolved") ? "right" : "left");
+  const overStack = (e) => e.clientY >= stackTopY();
+  const nativePlaceholder = () => gridLayout()?.querySelector(":scope > .widget-placeholder") || null;
+  // Publish the stack cards' TOP EDGE so the grid drag clamps its placeholder to sit
+  // flush above the stacks. stackTopY keeps a MARGIN of slack above the cards (they sit
+  // at bottom:MARGIN), and reserving down to it left one extra empty row — the lock a
+  // cell too high. The cards' real top is stackTopY + MARGIN.
+  const syncDropFloor = () => { const l = gridLayout(); if (l) l.dataset.dropFloorY = String(Math.round(stackTopY() + MARGIN)); };
+
+  let dragPinW = null, dragPinT = null;
+  // Which deck the cursor is over (by viewport half) while in the stack band, else null.
+  const hotSideAt = (e) => (overStack(e) ? (e.clientX < window.innerWidth / 2 ? "left" : "right") : null);
+  // Landing pads live on the ROOT (not the deck boxes): an empty deck box is display:none,
+  // which would hide a pad nested inside it — but we still want to show (and red-flag) an
+  // empty deck as a drop target. Positioned at the deck's top-card slot via a side class.
+  const landingPad = (side) => {
+    const deck = decks[side];
+    if (!deck.landing) { deck.landing = document.createElement("div"); deck.landing.className = `tk-landing tk-${side}`; root.appendChild(deck.landing); }
+    deck.landing.style.width = `${CARD_W}px`; deck.landing.style.height = `${CARD_H}px`;
+    return deck.landing;
+  };
+  const clearLandings = () => {
+    for (const s of ["left", "right"]) decks[s]?.landing?.classList.remove("tk-faint", "tk-hot", "tk-bad");
+    const ph = nativePlaceholder(); if (ph) ph.style.visibility = "";
+  };
+  const resetDragWatch = () => { clearLandings(); dragPinW = null; dragPinT = null; };
+
+  const onDragWatchMove = (e) => {
+    if (!document.body.classList.contains("panel-interaction-active")) { if (dragPinW) resetDragWatch(); return; }
+    const w = draggedTicket();
+    if (!w) { if (dragPinW) resetDragWatch(); return; }
+    dragPinW = w; dragPinT = ticketForWidget(w);
+    if (!dragPinT) { clearLandings(); return; }
+    // Faint outline on BOTH decks; red (.tk-bad) on the one that rejects this ticket's
+    // state; the hovered deck intensifies (.tk-hot). Over the VALID deck the grid
+    // placeholder gives way (it would "enter the stack"); otherwise it stays visible.
+    const validSide = deckSideFor(dragPinT);
+    const hot = hotSideAt(e);
+    for (const s of ["left", "right"]) {
+      const pad = landingPad(s);
+      pad.classList.add("tk-faint");
+      pad.classList.toggle("tk-bad", s !== validSide);
+      pad.classList.toggle("tk-hot", s === hot);
+    }
+    const ph = nativePlaceholder();
+    if (ph) ph.style.visibility = (hot === validSide) ? "hidden" : "";
+  };
+  const onDragWatchUp = (e) => {
+    const w = dragPinW || draggedTicket();
+    const t = dragPinT || ticketForWidget(w);
+    const hot = hotSideAt(e);
+    const validSide = t ? deckSideFor(t) : null;
+    resetDragWatch();
+    // Only a release over the ticket's OWN stack absorbs it. Over the wrong (red) stack —
+    // or not over a stack at all — the native drop stands and it stays on the grid.
+    if (!w || !t || !hot || hot !== validSide) return;
+    const from = w.getBoundingClientRect();                     // under-cursor rect, before native commits
+    // Let native's drop COMMIT normally (it is clamped ABOVE the band by data-drop-floor-y,
+    // so it never lands behind the stacks), then pull the widget out on the next frame —
+    // requestAnimationFrame runs before paint, so the committed cell never shows. We do NOT
+    // block the pointerup or fire a synthetic cancel: doing so left native's teardown to a
+    // fragile synthetic path that could wedge the drag state on rapid in/out dragging.
+    requestAnimationFrame(() => tunnelToStack(w, t, validSide, from));
+  };
+
+  const tunnelToStack = (w, t, side, from) => {
+    w.remove();              // leave the grid → render() hands the ticket back to its deck
+    render();
+    const target = decks[side]?.cards.find((c) => c.dataset.id === t.id);
+    const clone = document.createElement("div");
+    clone.className = "tk-card tk-flying";
+    // Snappier flight than the shared .tk-flying default so the wiggle lands quickly.
+    clone.style.cssText = `position:fixed; left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; margin:0; z-index:9999; pointer-events:none; transition: transform .2s cubic-bezier(.4,0,.2,1), opacity .2s ease;`;
+    clone.style.backgroundColor = baseColor();
+    clone.style.backgroundImage = severityBg(sevOf(t));
+    clone.innerHTML = cardInner(t);
+    document.body.appendChild(clone);
+    if (!target) { requestAnimationFrame(() => { clone.style.opacity = "0"; }); setTimeout(() => clone.remove(), 420); return; }
+    // Measure the card's resting slot with its transition suppressed, then hide it
+    // behind the flying clone until the clone lands.
+    const prevTransition = target.style.transition;
+    target.style.transition = "none";
+    const to = target.getBoundingClientRect();
+    target.style.opacity = "0";
+    void target.offsetWidth;
+    target.style.transition = prevTransition;
+    requestAnimationFrame(() => {
+      clone.style.transformOrigin = "top left";
+      clone.style.transform = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`;
+    });
+    setTimeout(() => {
+      clone.remove();
+      target.style.opacity = "";
+      target.classList.add("tk-tunneling");
+      target.addEventListener("animationend", () => target.classList.remove("tk-tunneling"), { once: true });
+    }, 180);
+  };
 
   const wireCard = (card, t) => {
     let startX = 0, startY = 0, dragging = false, down = false, handedOff = false;
     let pointerId = null, pointerType = "mouse";
 
     // Materialise the ticket as a real grid widget, drop the source card from its
-    // stack, then "pick up" the new widget mid-drag with the native widget-move
-    // runtime — from here the gesture is indistinguishable from moving any widget.
+    // stack, then "pick up" the new widget mid-drag with the native widget-move runtime.
     const handOffToGrid = (e) => {
       handedOff = true; down = false; dragging = false;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       card.classList.remove("tk-dragging");
-      const placed = addTicketToGrid(t);   // creates + initialises the real grid widget
+      const placed = addTicketToGrid(t, cursorCell(e.clientX, e.clientY));
       render();                            // ticket now lives on the grid → leaves its stack
       if (!placed || typeof placed.__beginWidgetMoveFromDragRuntime !== "function") return;
-      // Begin the native drag from the widget's own centre, then immediately feed it a
-      // pointermove at the live cursor. Native derives its grab offset from that centre,
-      // so this first synthetic move snaps the widget squarely under the cursor — no
-      // one-frame flash at the spawn cell — before any real pointer event arrives.
-      const r = placed.getBoundingClientRect();
-      placed.__beginWidgetMoveFromDragRuntime({
-        button: 0, pointerId, pointerType, currentTarget: placed, target: placed,
-        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
-        timeStamp: performance.now(), preventDefault() {}, stopPropagation() {},
+      const cx = e.clientX, cy = e.clientY;
+      placed.style.opacity = "0";
+      let released = false;
+      const onGapUp = () => { released = true; };
+      window.addEventListener("pointerup", onGapUp, { once: true, capture: true });
+      requestAnimationFrame(() => {
+        window.removeEventListener("pointerup", onGapUp, true);
+        placed.style.opacity = "";
+        if (released || !placed.isConnected || typeof placed.__beginWidgetMoveFromDragRuntime !== "function") return;
+        const r = placed.getBoundingClientRect();
+        placed.__beginWidgetMoveFromDragRuntime({
+          button: 0, pointerId, pointerType, currentTarget: placed, target: placed,
+          clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+          timeStamp: performance.now(), preventDefault() {}, stopPropagation() {},
+        });
+        document.dispatchEvent(new PointerEvent("pointermove", {
+          pointerId, pointerType, bubbles: true, clientX: cx, clientY: cy,
+        }));
       });
-      document.dispatchEvent(new PointerEvent("pointermove", {
-        pointerId, pointerType, bubbles: true, clientX: e.clientX, clientY: e.clientY,
-      }));
     };
 
     const onMove = (e) => {
@@ -341,8 +542,9 @@
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       card.style.transform = `translate(${card._tx}px, ${card._ty}px) rotate(${card._rot}deg)`;   // spring back
-      if (!wasDrag) { flyIntoGrid(card, t); return; }                      // click → into the grid cell
-      // Released up in the dashboard area without a grid to hand off to → bring it in.
+      // Config opens on DOUBLE click (see below); a single click does nothing.
+      if (!wasDrag) return;
+      // Released up in the dashboard without a grid to hand off to → bring it in.
       if (e.clientY < stackTopY()) flyIntoGrid(card, t);
     };
     card.addEventListener("pointerdown", (e) => {
@@ -352,11 +554,23 @@
       pointerId = e.pointerId; pointerType = e.pointerType || "mouse";
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });
+    // Double-click opens the ticket's config (flies to centre).
+    card.addEventListener("dblclick", (e) => { e.preventDefault(); window.ticketDetail?.open(t, card); });
+  };
+
+  // The card's inner markup — shared by the stack cards and the fly-home clone so they
+  // render identically. Uses the global .ticket-body/.ticket-company/etc. classes.
+  const cardInner = (t) => {
+    const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
+    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
+    return `<div class="ticket-body">` +
+      `<div class="ticket-company">${esc(t.companyLabel || "Unknown")}</div>` +
+      `<div class="ticket-host">${esc(t.host || "—")}</div>` +
+      `<div class="ticket-down">Down ${esc(human(endMs - created))}</div>` +
+      `</div>`;
   };
 
   const cardEl = (t) => {
-    const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
-    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
     const card = document.createElement("div");
     // NOT a .widget-card (the runtime renders the grid ticket into EVERY .widget-card, which
     // is what overwrote these with "Willits Scaling"). .tk-card replicates the frame; the
@@ -367,12 +581,7 @@
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = severityBg(sevOf(t));
-    card.innerHTML =
-      `<div class="ticket-body">` +
-      `<div class="ticket-company">${esc(t.companyLabel || "Unknown")}</div>` +
-      `<div class="ticket-host">${esc(t.host || "—")}</div>` +
-      `<div class="ticket-down">Down ${esc(human(endMs - created))}</div>` +
-      `</div>`;
+    card.innerHTML = cardInner(t);
     wireCard(card, t);
     return card;
   };
@@ -402,7 +611,7 @@
 
   const render = () => {
     ensureRoot();
-    matchCardSize(); sizeRoot();
+    matchCardSize(); sizeRoot(); syncDropFloor();
     const onGrid = onGridIds();
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     const avail = tickets.filter((t) => !onGrid.has(t.id));

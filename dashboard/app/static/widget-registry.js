@@ -3105,6 +3105,7 @@
          separate shell to hide. Content lays out directly inside it. */
       .widget-card.ticket-widget-card, .widget-card[data-widget-runtime-type="ticket"] {
         display: flex !important; flex-direction: column; cursor: pointer;
+        user-select: none; -webkit-user-select: none;   /* drag/double-click must not highlight the card text */
         padding: 14px 15px !important; border-radius: 15px !important; color: #fff;
         /* Background is NOT hardcoded — it comes from the widget's built-in
            db-panel-custom-color theme (accent tint by priority), set in
@@ -3202,10 +3203,11 @@
       // back to the last ticket we showed for this instance.
       const effective = ticket || lastTicketByInstance.get(key) || null;
       renderTicketInto(mount, effective);
-      // Left-click the card → open the ERPNext-style detail/edit form.
+      // Double-click the card → open the ERPNext-style detail/edit form.
       const card = mount.closest(".widget-card");
       if (card) {
-        card.onclick = effective
+        card.onclick = null;
+        card.ondblclick = effective
           ? (event) => { if (!wasDragGesture(event)) window.ticketDetail?.open(effective, card); }
           : null;
         // Colour the card by priority through the widget's own custom-color theme.
@@ -3221,6 +3223,11 @@
     },
     render: () => `<div class="ticket-body" data-ticket-mount></div>`,
   });
+  // Inject the ticket widget's stylesheet up front, not just on first render. The corner
+  // ticket stacks reuse these rules (.ticket-body/.ticket-company/… frame, fonts and the
+  // severity→accent palette), and the dashboard may carry NO ticket widget at all — in
+  // which case mountBodyRenderer never runs and the stacks would lose their styling.
+  ensureTicketStyles();
 
   registerWidgetDefinition({
     type: "chart",

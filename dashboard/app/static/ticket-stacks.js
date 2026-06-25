@@ -287,49 +287,69 @@
     setTimeout(() => clone.remove(), 440);
   };
 
-  // ── Native-style drop preview ────────────────────────────────────────────────
-  // While dragging a stack card over the dashboard, show the SAME blue dashed
-  // .widget-placeholder the native widget drag uses, snapped to the target grid cell,
-  // so you can see where the ticket will land.
+  // ── Lift a stack card onto the dashboard ─────────────────────────────────────
+  // We used to paint our own blue placeholder pinned to nextCell(), so it sat in a
+  // corner and never tracked the cursor. Instead, once a card is lifted up out of the
+  // stack zone we hand the gesture off to the REAL widget-move runtime (handOffToGrid),
+  // so the rest of the drag is byte-for-byte the native one: a glass widget gliding
+  // under the cursor + the blue placeholder reflowing between grid cells.
   const gridLayout = () => document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]');
   const stackTopY = () => window.innerHeight - (CARD_H + MARGIN * 2);
-  let dropPh = null;
-  // Show the placeholder at the cell the widget will ACTUALLY land in (the runtime compacts
-  // to the next free cell, so previewing the cursor cell would be a lie).
-  const showDropPreview = () => {
-    const layout = gridLayout(); if (!layout) return;
-    const cell = nextCell(layout);
-    if (!dropPh) { dropPh = document.createElement("div"); dropPh.className = "widget-placeholder tk-drop-preview"; }
-    dropPh.style.gridColumn = `${cell.col} / span 1`;
-    dropPh.style.gridRow = `${cell.row} / span 3`;
-    if (dropPh.parentElement !== layout) layout.appendChild(dropPh);
-  };
-  const clearDropPreview = () => { if (dropPh) dropPh.remove(); };
 
   const wireCard = (card, t) => {
-    let startX = 0, startY = 0, dragging = false, down = false;
+    let startX = 0, startY = 0, dragging = false, down = false, handedOff = false;
+    let pointerId = null, pointerType = "mouse";
+
+    // Materialise the ticket as a real grid widget, drop the source card from its
+    // stack, then "pick up" the new widget mid-drag with the native widget-move
+    // runtime — from here the gesture is indistinguishable from moving any widget.
+    const handOffToGrid = (e) => {
+      handedOff = true; down = false; dragging = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      card.classList.remove("tk-dragging");
+      const placed = addTicketToGrid(t);   // creates + initialises the real grid widget
+      render();                            // ticket now lives on the grid → leaves its stack
+      if (!placed || typeof placed.__beginWidgetMoveFromDragRuntime !== "function") return;
+      // Begin the native drag from the widget's own centre, then immediately feed it a
+      // pointermove at the live cursor. Native derives its grab offset from that centre,
+      // so this first synthetic move snaps the widget squarely under the cursor — no
+      // one-frame flash at the spawn cell — before any real pointer event arrives.
+      const r = placed.getBoundingClientRect();
+      placed.__beginWidgetMoveFromDragRuntime({
+        button: 0, pointerId, pointerType, currentTarget: placed, target: placed,
+        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+        timeStamp: performance.now(), preventDefault() {}, stopPropagation() {},
+      });
+      document.dispatchEvent(new PointerEvent("pointermove", {
+        pointerId, pointerType, bubbles: true, clientX: e.clientX, clientY: e.clientY,
+      }));
+    };
+
     const onMove = (e) => {
-      if (!down) return;
+      if (!down || handedOff) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) { dragging = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999"; }
-      if (dragging) {
-        card.style.transform = `translate(${card._tx + dx}px, ${card._ty + dy}px) rotate(0deg) scale(1.03)`;
-        if (e.clientY < stackTopY()) showDropPreview(); else clearDropPreview();
-      }
+      if (!dragging) return;
+      // Lifted up out of the stack zone → become a real dashboard widget mid-drag.
+      if (e.clientY < stackTopY() && gridLayout()?.__initWidget) { handOffToGrid(e); return; }
+      card.style.transform = `translate(${card._tx + dx}px, ${card._ty + dy}px) rotate(0deg) scale(1.03)`;
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
+      if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       card.style.transform = `translate(${card._tx}px, ${card._ty}px) rotate(${card._rot}deg)`;   // spring back
-      clearDropPreview();
       if (!wasDrag) { flyIntoGrid(card, t); return; }                      // click → into the grid cell
-      // Dropped up in the dashboard area (above the bottom stack zone) → bring it in.
+      // Released up in the dashboard area without a grid to hand off to → bring it in.
       if (e.clientY < stackTopY()) flyIntoGrid(card, t);
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
-      down = true; startX = e.clientX; startY = e.clientY;
+      down = true; handedOff = false; dragging = false;
+      startX = e.clientX; startY = e.clientY;
+      pointerId = e.pointerId; pointerType = e.pointerType || "mouse";
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });
   };

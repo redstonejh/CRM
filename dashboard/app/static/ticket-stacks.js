@@ -610,7 +610,7 @@
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
-      if (e.clientY < stackTopY()) { highlightZoneAt(e.clientX, e.clientY); return; }
+      if (e.clientY < stackTopY()) { flowHighlight(stackPos(side), e.clientX, e.clientY); return; }
       clearZoneHighlight();
       // Fanned out → dragging reorders the row: move this card to the slot under it and let
       // the others slide to fill the gap (the .tk-card transform transition animates it).
@@ -642,8 +642,8 @@
       // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
       if (e.clientY < stackTopY()) {
         const z = zoneAt(e.clientX, e.clientY);
-        if (z) { dropIntoZone(card, t, z); return; }
-        layout(side); return;   // not over a zone → spring back to the stack
+        if (z && canAdvance(stackPos(side), posOfStage(z))) { dropIntoZone(card, t, z); return; }
+        layout(side); return;   // not over a VALID zone (none, or a red one) → spring back
       }
       // Released back in the stack (incl. after a reorder) → settle into the slot + restore z.
       layout(side);
@@ -839,12 +839,33 @@
     }
     return null;
   };
-  const highlightZoneAt = (x, y) => {
-    const hit = zoneAt(x, y);
-    STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.toggle("is-target", s.key === hit));
-    return hit;
+  // ── Pipeline chain rules ──────────────────────────────────────────────────────
+  // A ticket may move FORWARD only one stage at a time, but BACKWARD to ANY earlier stage.
+  // Chain positions: inbox/left stack = -1, stages 0…n-1, resolved/right stack = n.
+  const stackPos = (side) => (side === "right" ? STAGES.length : -1);
+  const posOfStage = (key) => STAGE_KEYS.indexOf(key);
+  const canAdvance = (from, to) => to < from || to === from + 1;
+  const distToRect = (x, y, r) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
+  const HL_RANGE = 260;
+  const baseZoneShadow = "inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28)";
+  const clearGlow = (p) => { p.style.borderColor = ""; p.style.boxShadow = ""; };
+  // Subtle glow on every bucket that intensifies as the cursor nears it: blue where a drop is
+  // allowed from `from`, red where it would skip a stage (and so is rejected on release).
+  const flowHighlight = (from, x, y) => {
+    STAGES.forEach((s, i) => {
+      const p = zoneBody[s.key]?.parentElement; if (!p) return;
+      if (i === from) { clearGlow(p); return; }                  // the ticket's own bucket → neutral
+      const t = clamp(1 - distToRect(x, y, p.getBoundingClientRect()) / HL_RANGE, 0.14, 1);
+      if (canAdvance(from, i)) {                                  // valid → blue
+        p.style.borderColor = `rgba(125,180,255,${(0.2 + 0.72 * t).toFixed(3)})`;
+        p.style.boxShadow = `inset 0 0 0 1px rgba(125,180,255,${(0.5 * t).toFixed(3)}), 0 0 ${Math.round(36 * t)}px rgba(90,150,255,${(0.5 * t).toFixed(3)}), ${baseZoneShadow}`;
+      } else {                                                   // skips a stage → red (blocked)
+        p.style.borderColor = `rgba(255,120,120,${(0.2 + 0.66 * t).toFixed(3)})`;
+        p.style.boxShadow = `inset 0 0 0 1px rgba(255,120,120,${(0.5 * t).toFixed(3)}), 0 0 ${Math.round(32 * t)}px rgba(255,80,80,${(0.46 * t).toFixed(3)}), ${baseZoneShadow}`;
+      }
+    });
   };
-  const clearZoneHighlight = () => STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.remove("is-target"));
+  const clearZoneHighlight = () => STAGES.forEach((s) => { const p = zoneBody[s.key]?.parentElement; if (p) { p.classList.remove("is-target"); clearGlow(p); } });
 
   // A zone card is a FULL ticket card — identical layout/size to a corner-stack card.
   const zoneCardInner = (t) => cardInner(t);
@@ -870,7 +891,7 @@
       }
       if (!dragging) return;
       clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
-      highlightZoneAt(e.clientX, e.clientY);
+      flowHighlight(posOfStage(stage), e.clientX, e.clientY);
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
@@ -880,9 +901,9 @@
       card.classList.remove("tk-zdrag");
       if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
       const z = zoneAt(e.clientX, e.clientY);
-      if (z && z !== stage) { setStage(t.id, z); render(); return; }                  // → another stage
-      if (!z && e.clientY >= stackTopY()) { setStage(t.id, null); render(); return; }  // → back to the inbox stack
-      // else: same zone / nowhere → the card just un-hides in place.
+      if (z && z !== stage && canAdvance(posOfStage(stage), posOfStage(z))) { setStage(t.id, z); render(); return; }  // valid forward/backward
+      if (!z && e.clientY >= stackTopY()) { setStage(t.id, null); render(); return; }  // → inbox stack (always allowed: backward)
+      // else: same zone / a blocked (red) zone / nowhere → the card just un-hides in place.
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;

@@ -468,14 +468,14 @@
     if (x < min) return min - MAX_OVER * Math.tanh((min - x) / MAX_OVER);
     return x;
   };
-  // The collapse arrow sits at a STATIC anchor (it must not drift during scroll): the open-edge
-  // ticket when the fan fits, or the screen edge when it overflows. No scroll-following.
+  // The collapse arrow rides the open-edge ticket while it's on-screen, and clamps to the screen
+  // edge once that edge scrolls off. It tracks RIGIDLY (its left/right transition is turned off
+  // during scroll — see runScroll/wireThumb) so it locks to the ticket instead of floating.
   const placeArrow = (side) => {
     const deck = decks[side]; if (!deck) return;
     const screenEdge = window.innerWidth - MARGIN - 34;
     const inset = !fanned[side] ? (MARGIN + CARD_W + 10)               // closed pile edge
-      : deck.contentW > deck.viewW ? screenEdge                        // overflowing → pinned to the screen edge
-      : Math.min(MARGIN + deck.contentW + 10, screenEdge);             // fits → at the open-edge ticket
+      : Math.min(MARGIN + deck.contentW + deck.scrollX + 10, screenEdge);
     deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(inset)}px`;
     deck.arrow.style[side === "left" ? "right" : "left"] = "auto";
   };
@@ -490,13 +490,14 @@
     deck.thumb.style.width = `${thumbW}px`;
     deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
     deck.thumb.style.right = "auto";
-    // NB: the arrow is NOT repositioned here — it stays at its static anchor while you scroll.
+    placeArrow(side);   // arrow tracks the ticket edge (rigidly — its transition is off during scroll)
   };
   // One easing loop: each frame glide scrollX toward the target (smooth wheel), then ease it back
   // inside the bounds once the gesture ends (rubber-band settle). Restores card transitions at rest.
   const runScroll = (side) => {
     const deck = decks[side]; if (!deck || deck._raf) return;   // already animating → loop reads targetX live
     deck.cards.forEach((c) => { c.style.transition = "none"; });
+    deck.arrow.style.transition = "none";                       // track the edge rigidly while scrolling
     const tick = () => {
       const min = scrollMinOf(deck);
       const goal = deck._wheeling ? deck.targetX : clamp(deck.targetX, min, 0);
@@ -504,6 +505,7 @@
       if (!deck._wheeling && Math.abs(goal - deck.scrollX) < 0.4) {
         deck.scrollX = goal; deck.targetX = goal; positionFan(side);
         deck.cards.forEach((c) => { c.style.transition = ""; });
+        deck.arrow.style.transition = "";                       // restore (CSS .42s) so a fan-toggle glides
         deck._raf = 0; return;
       }
       positionFan(side);
@@ -540,6 +542,7 @@
       const dFrac = dxPx / Math.max(1, barW - thumbW);
       deck.scrollX = damp(startScroll + dFrac * min, min);   // rubber-band past the ends
       deck.cards.forEach((c) => { c.style.transition = "none"; });
+      deck.arrow.style.transition = "none";                  // track the edge rigidly while dragging
       positionFan(side);
     };
     const up = () => {

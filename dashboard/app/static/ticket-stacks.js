@@ -218,7 +218,8 @@
       /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.32)); }
-      .tk-flow-arrow { fill: none; stroke: rgba(255,255,255,0.62); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+      .tk-flow-arrow path { fill: none; stroke: rgba(255,255,255,0.66); stroke-width: 2.5;
+        stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
     `;
     document.head.appendChild(style);
   };
@@ -721,42 +722,49 @@
   // A stylized translucent line through the pipeline: left (inbox) stack → triage, an arrow
   // between each bucket, then resolution → right (resolved) stack. Drawn as one SVG overlay,
   // each arrow a glowing glass body with a bright core + a glassy arrowhead.
+  // Real arrow icons from Lucide (ISC licensed, https://lucide.dev), 24×24 viewBox each.
+  const FLOW_ICON = {
+    inLeft: `<path d="m15 14 5-5-5-5"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/>`,        // corner-up-right
+    mid: `<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>`,                            // arrow-right
+    outRight: `<path d="m10 15 5 5 5-5"/><path d="M4 4h7a4 4 0 0 1 4 4v12"/>`,       // corner-right-down
+  };
   let flowRoot = null, flowArrows = [];
   const ensureFlow = () => {
     if (flowRoot) return;
     ensureStyles();
-    const arrows = STAGES.length + 1;                  // left arc + (n-1) between + right arc
-    let lines = "";
-    for (let i = 0; i < arrows; i++) lines += `<path class="tk-flow-arrow"></path>`;
+    const n = STAGES.length;
+    let g = `<g class="tk-flow-arrow">${FLOW_ICON.inLeft}</g>`;     // inbox stack → triage
+    for (let i = 0; i < n - 1; i++) g += `<g class="tk-flow-arrow">${FLOW_ICON.mid}</g>`;
+    g += `<g class="tk-flow-arrow">${FLOW_ICON.outRight}</g>`;      // resolution → resolved stack
     const wrap = document.createElement("div");
-    wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg">${lines}</svg>`;
+    wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg">${g}</svg>`;
     flowRoot = wrap.firstElementChild;
     document.body.appendChild(flowRoot);
     flowArrows = [...flowRoot.querySelectorAll(".tk-flow-arrow")];
   };
-  // lefts: each bucket's left x; bw: bucket width; topY/botY: bucket top/bottom in viewport px.
+  // Place each 24×24 icon by uniform scale + translate (no distortion); stroke stays crisp via
+  // non-scaling-stroke. lefts: bucket left xs; bw: bucket width; topY/botY: bucket top/bottom.
   const drawFlow = (lefts, bw, topY, botY) => {
     ensureFlow();
-    const n = lefts.length, r = Math.round;
-    const midY = r(topY + (botY - topY) * 0.5);                // flow runs along the buckets' midline
-    const cardTop = window.innerHeight - CARD_H - MARGIN;      // top edge of the corner stack cards
-    const offStack = r(cardTop - MARGIN);                      // start/end one MARGIN clear of the stacks
+    const n = lefts.length, r = Math.round, bucketH = botY - topY, midY = topY + bucketH / 2;
     const lStackX = MARGIN + CARD_W / 2, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
-    // A chevron arrowhead, drawn in the same stroke as the shaft (theta = travel direction at the tip).
-    const head = (ex, ey, theta, len = 12, spread = 0.42) =>
-      ` M${r(ex - len * Math.cos(theta - spread))},${r(ey - len * Math.sin(theta - spread))}` +
-      ` L${r(ex)},${r(ey)} L${r(ex - len * Math.cos(theta + spread))},${r(ey - len * Math.sin(theta + spread))}`;
-    const ds = [];
-    // 1 — ONE arc: up out of the inbox stack (a MARGIN above it), curving right into triage.
-    { const ex = lefts[0] - MARGIN;
-      ds.push(`M${r(lStackX)},${offStack} Q${r(lStackX - 6)},${midY} ${ex},${midY}` + head(ex, midY, 0)); }
-    // 2 — STRAIGHT arrow across each gap into the next bucket.
-    for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN;
-      ds.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${ex},${midY}` + head(ex, midY, 0)); }
-    // 3 — ONE arc: right out of resolution, curving down to a MARGIN above the resolved stack.
-    { const sx = lefts[n - 1] + bw + MARGIN, cx = rStackX + 6, theta = Math.atan2(offStack - midY, rStackX - cx);
-      ds.push(`M${r(sx)},${midY} Q${r(cx)},${midY} ${r(rStackX)},${offStack}` + head(rStackX, offStack, theta)); }
-    ds.forEach((d, i) => flowArrows[i]?.setAttribute("d", d));
+    const gap = n > 1 ? lefts[1] - lefts[0] - bw : MARGIN * 4;
+    const leftRoom = (lefts[0] - MARGIN) - lStackX;                // stack → triage horizontal room
+    const rightRoom = rStackX - (lefts[n - 1] + bw + MARGIN);      // resolution → stack room
+    const place = (i, S, tx, ty) =>
+      flowArrows[i]?.setAttribute("transform", `translate(${r(tx)},${r(ty)}) scale(${(S / 24).toFixed(4)})`);
+    // 1 — corner-up-right: tail a MARGIN above the inbox stack, head pointing right into triage.
+    { const S = Math.max(40, Math.min(92, bucketH * 0.45, leftRoom * 1.5)), s = S / 24;
+      place(0, S, lStackX - 4 * s, botY - 20 * s); }
+    // 2 — arrow-right centred in each gap between buckets.
+    for (let i = 0; i < n - 1; i++) {
+      const S = Math.max(34, Math.min(58, gap * 0.55, bucketH * 0.4)), s = S / 24;
+      const cx = (lefts[i] + bw + lefts[i + 1]) / 2;
+      place(1 + i, S, cx - 12 * s, midY - 12 * s);
+    }
+    // 3 — corner-right-down: head a MARGIN above the resolved stack, tail out of resolution.
+    { const S = Math.max(40, Math.min(92, bucketH * 0.45, rightRoom * 1.5)), s = S / 24;
+      place(n, S, rStackX - 15 * s, botY - 20 * s); }
   };
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {

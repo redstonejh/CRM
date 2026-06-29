@@ -733,8 +733,8 @@
     // A small SOLID triangle head; lives on top of the (single) trail so no line shows through it.
     wrap.innerHTML =
       `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><defs>` +
-      `<marker id="tk-flow-head" markerUnits="userSpaceOnUse" markerWidth="17" markerHeight="14" refX="14.5" refY="7" orient="auto">` +
-      `<path d="M1,1 L16,7 L1,13 Z" fill="rgba(255,255,255,0.95)"></path></marker>` +
+      `<marker id="tk-flow-head" markerUnits="userSpaceOnUse" markerWidth="26" markerHeight="22" refX="22" refY="11" orient="auto">` +
+      `<path d="M2,2 L24,11 L2,20 Z" fill="rgba(255,255,255,0.95)"></path></marker>` +
       `</defs>${lines}</svg>`;
     flowRoot = wrap.firstElementChild;
     document.body.appendChild(flowRoot);

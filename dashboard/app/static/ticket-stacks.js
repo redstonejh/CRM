@@ -243,12 +243,14 @@
       .tk-trash-host { margin-top: 2px; font-size: 0.72rem; color: rgba(255,255,255,0.62); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .tk-trash-empty { padding: 18px 8px; text-align: center; color: rgba(255,255,255,0.4); font-size: 0.8rem; }
 
-      /* Sleek horizontal scrollbar beneath an overflowing fan (same recipe as the menus). */
-      .tk-bar { position: absolute; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.10);
-        pointer-events: auto; opacity: 0; transition: opacity .2s ease; }
+      /* Full-width, high-contrast horizontal scrollbar across the bottom under a fanned stack. */
+      .tk-bar { position: absolute; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.16);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); pointer-events: auto; opacity: 0; transition: opacity .2s ease; }
       .tk-bar.is-on { opacity: 1; }
-      .tk-thumb { position: absolute; top: 0; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.32); cursor: grab; }
-      .tk-thumb:hover { background: rgba(255,255,255,0.5); }
+      .tk-thumb { position: absolute; top: 0; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.66); cursor: grab;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.4); transition: background .15s ease; }
+      .tk-thumb:hover { background: rgba(255,255,255,0.88); }
+      .tk-thumb:active { cursor: grabbing; background: #fff; }
 
       /* Quantum-tunnel wiggle when a ticket dragged off the grid re-inserts into a
          stack. Animates the individual translate/scale/filter props (NOT transform) so
@@ -417,17 +419,20 @@
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
       deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
     }
-    // scrollbar beneath the fan, only when overflowing
+    // Full-width scrollbar across the bottom, only when the fan overflows.
     const overflow = open && contentW > viewW + 1;
     deck.bar.classList.toggle("is-on", overflow);
     if (overflow) {
-      deck.bar.style.width = `${viewW}px`;
+      const barW = window.innerWidth - MARGIN * 2;
       deck.bar.style.bottom = `${MARGIN - 12}px`;
+      deck.bar.style.width = `${barW}px`;
       deck.bar.style[side === "left" ? "left" : "right"] = `${MARGIN}px`;
-      const thumbW = Math.max(36, viewW * (viewW / contentW));
-      const frac = scrollMin ? (deck.scrollX / scrollMin) : 0;   // 0..1
+      deck.bar.style[side === "left" ? "right" : "left"] = "auto";
+      const thumbW = Math.max(36, barW * (viewW / contentW));
+      const frac = scrollMin ? clamp(deck.scrollX, scrollMin, 0) / scrollMin : 0;   // 0..1
       deck.thumb.style.width = `${thumbW}px`;
-      deck.thumb.style[side === "left" ? "left" : "right"] = `${frac * (viewW - thumbW)}px`;
+      deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
+      deck.thumb.style.right = "auto";
     }
   };
 
@@ -455,32 +460,76 @@
     layout(side); layout(other);   // re-lay BOTH: each arrow's z depends on the other side's fan state
   };
 
+  // ── Overscroll: Apple-style rubber-band at the ends of a fanned scroll ──────────
+  const MAX_OVER = 92;                                   // furthest the fan can be pulled past an end
+  const scrollMinOf = (deck) => Math.min(0, deck.viewW - deck.contentW);
+  const barWidth = () => window.innerWidth - MARGIN * 2;
+  // Past a bound, the shown overscroll asymptotes to ±MAX_OVER (diminishing resistance).
+  const damp = (x, min) => {
+    if (x > 0) return MAX_OVER * Math.tanh(x / MAX_OVER);
+    if (x < min) return min - MAX_OVER * Math.tanh((min - x) / MAX_OVER);
+    return x;
+  };
+  // Reposition the fanned cards + thumb from the CURRENT (maybe overscrolled) scrollX — no clamp.
+  const positionFan = (side) => {
+    const deck = decks[side]; if (!deck) return;
+    const step = CARD_W + GAP_FAN;
+    deck.cards.forEach((c, i) => place(c, side, i, true, step));
+    const min = scrollMinOf(deck), barW = barWidth();
+    const thumbW = Math.max(36, barW * (deck.viewW / Math.max(1, deck.contentW)));
+    const frac = min ? clamp(deck.scrollX, min, 0) / min : 0;
+    deck.thumb.style.width = `${thumbW}px`;
+    deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
+    deck.thumb.style.right = "auto";
+  };
+  // Ease the fan back inside its bounds after an overscroll, then restore card transitions.
+  const settleFan = (side) => {
+    const deck = decks[side]; if (!deck) return;
+    cancelAnimationFrame(deck._raf);
+    deck.cards.forEach((c) => { c.style.transition = "none"; });
+    const step = () => {
+      const target = clamp(deck.scrollX, scrollMinOf(deck), 0);
+      deck.scrollX += (target - deck.scrollX) * 0.2;
+      if (Math.abs(target - deck.scrollX) < 0.4) {
+        deck.scrollX = target; positionFan(side);
+        deck.cards.forEach((c) => { c.style.transition = ""; });
+        return;
+      }
+      positionFan(side);
+      deck._raf = requestAnimationFrame(step);
+    };
+    deck._raf = requestAnimationFrame(step);
+  };
+
   const onWheel = (side, e) => {
     if (!fanned[side]) return;
     const deck = decks[side];
     if (deck.contentW <= deck.viewW) return;
     e.preventDefault();
-    deck.scrollX = clamp(deck.scrollX - (e.deltaY + e.deltaX), Math.min(0, deck.viewW - deck.contentW), 0);
+    cancelAnimationFrame(deck._raf); clearTimeout(deck._settleT);
+    const min = scrollMinOf(deck), delta = e.deltaY + e.deltaX;
+    const over = deck.scrollX > 0 ? deck.scrollX : (deck.scrollX < min ? min - deck.scrollX : 0);
+    const resist = over > 0 ? Math.max(0.12, 1 - over / MAX_OVER) : 1;   // resist more the further past the end
+    deck.scrollX = clamp(deck.scrollX - delta * resist, min - MAX_OVER, MAX_OVER);
     deck.cards.forEach((c) => { c.style.transition = "none"; });
-    layout(side);
-    requestAnimationFrame(() => deck.cards.forEach((c) => { c.style.transition = ""; }));
+    positionFan(side);
+    deck._settleT = setTimeout(() => settleFan(side), 110);              // bounce back once the wheel stops
   };
 
   const wireThumb = (side, thumb) => {
     let sx = 0, startScroll = 0, drag = false;
     const move = (e) => {
       if (!drag) return;
-      const deck = decks[side], scrollMin = Math.min(0, deck.viewW - deck.contentW);
-      const thumbW = Math.max(36, deck.viewW * (deck.viewW / deck.contentW));
+      const deck = decks[side], min = scrollMinOf(deck), barW = barWidth();
+      const thumbW = Math.max(36, barW * (deck.viewW / deck.contentW));
       const dxPx = (e.clientX - sx) * (side === "right" ? -1 : 1);
-      const dFrac = dxPx / Math.max(1, deck.viewW - thumbW);
-      deck.scrollX = clamp(startScroll + dFrac * scrollMin, scrollMin, 0);
+      const dFrac = dxPx / Math.max(1, barW - thumbW);
+      deck.scrollX = damp(startScroll + dFrac * min, min);   // rubber-band past the ends
       deck.cards.forEach((c) => { c.style.transition = "none"; });
-      layout(side);
-      requestAnimationFrame(() => deck.cards.forEach((c) => { c.style.transition = ""; }));
+      positionFan(side);
     };
-    const up = () => { drag = false; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-    thumb.addEventListener("pointerdown", (e) => { e.stopPropagation(); drag = true; sx = e.clientX; startScroll = decks[side].scrollX; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); });
+    const up = () => { drag = false; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); settleFan(side); };
+    thumb.addEventListener("pointerdown", (e) => { e.stopPropagation(); drag = true; sx = e.clientX; startScroll = decks[side].scrollX; cancelAnimationFrame(decks[side]._raf); window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); });
   };
 
   // Next free grid cell in a 6-col layout for a 1-col × 3-row ticket widget.

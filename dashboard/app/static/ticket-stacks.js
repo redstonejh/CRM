@@ -724,13 +724,18 @@
     const colW = (r.width - gap * (cols - 1)) / cols;
     return { left: r.left, colW, gap, cols };
   };
-  const ZONE_TOP = 70;        // sit just below the round nav buttons along the top edge
+  const ZONE_TOP = 70;        // fallback if the nav bar can't be measured
   // Three compact buckets — each just wide enough for one full ticket card — spread across the
-  // dashboard grid's extent with EQUAL empty space between them (and at both ends).
+  // dashboard grid's extent with EQUAL empty space between them (and at both ends). Vertically
+  // they expand to leave a fixed MARGIN of breathing room from the nav buttons above AND the
+  // corner stacks below (both gaps equal), measuring the nav bar's real position so it adapts.
   const layoutZones = () => {
     if (!zonesRoot) return;
-    zonesRoot.style.top = `${ZONE_TOP}px`;
-    zonesRoot.style.bottom = `${CARD_H + MARGIN * 2 + 8}px`;    // sit just above the corner stacks
+    const nav = document.querySelector(".workspace-tab-bar");
+    const navRect = nav && nav.getBoundingClientRect();
+    const top = navRect && navRect.bottom > 0 ? Math.round(navRect.bottom + MARGIN) : ZONE_TOP;
+    zonesRoot.style.top = `${top}px`;
+    zonesRoot.style.bottom = `${CARD_H + MARGIN * 2}px`;        // a MARGIN above the stacks' top card
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
     const region = g

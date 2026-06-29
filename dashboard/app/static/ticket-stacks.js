@@ -183,7 +183,7 @@
       }
 
       /* ── Pipeline zones (glass buckets) — each panel snaps to dashboard grid columns. ─── */
-      .tk-zones { position: fixed; left: 0; right: 0; top: 60px; z-index: 800; pointer-events: none; }
+      .tk-zones { position: fixed; left: 0; right: 0; top: 78px; z-index: 800; pointer-events: none; }
       .tk-zone { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
@@ -724,24 +724,25 @@
     const colW = (r.width - gap * (cols - 1)) / cols;
     return { left: r.left, colW, gap, cols };
   };
-  // Lay the three buckets across the grid: each spans an equal block of columns (6 cols → 2
-  // each), aligned to the real column edges + gap, so they line up with grid widgets.
+  const ZONE_TOP = 78;        // sit just below the round nav buttons along the top edge
+  // Three compact buckets — each just wide enough for one full ticket card — spread across the
+  // dashboard grid's extent with EQUAL empty space between them (and at both ends).
   const layoutZones = () => {
     if (!zonesRoot) return;
-    zonesRoot.style.bottom = `${CARD_H + MARGIN * 2 + 44}px`;   // clear the corner stacks
+    zonesRoot.style.top = `${ZONE_TOP}px`;
+    zonesRoot.style.bottom = `${CARD_H + MARGIN * 2 + 14}px`;   // sit just above the corner stacks
     const n = STAGES.length, g = gridGeom();
+    // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
+    const region = g
+      ? { left: g.left, width: g.colW * g.cols + g.gap * (g.cols - 1) }
+      : { left: MARGIN, width: window.innerWidth - MARGIN * 2 };
+    const bucketW = Math.min(CARD_W + 44, (region.width - MARGIN * (n + 1)) / n);  // one full card, snug
+    const gap = (region.width - bucketW * n) / (n + 1);          // equal gap incl. both ends
     STAGES.forEach((s, i) => {
       const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;
-      if (g) {
-        const span = g.cols / n;                                   // columns per bucket
-        panel.style.left = `${Math.round(g.left + i * span * (g.colW + g.gap))}px`;
-        panel.style.width = `${Math.round(span * g.colW + (span - 1) * g.gap)}px`;
-      } else {                                                     // grid not measurable → even thirds
-        const w = (window.innerWidth - MARGIN * 2 - MARGIN * (n - 1)) / n;
-        panel.style.left = `${Math.round(MARGIN + i * (w + MARGIN))}px`;
-        panel.style.width = `${Math.round(w)}px`;
-      }
+      panel.style.width = `${Math.round(bucketW)}px`;
+      panel.style.left = `${Math.round(region.left + gap * (i + 1) + bucketW * i)}px`;
     });
   };
   const ensureZones = () => {

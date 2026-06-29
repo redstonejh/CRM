@@ -37,6 +37,34 @@
     try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
   };
 
+  // Deleted tickets (a client-side flag, NOT tickets.remove() — they must be kept & shown in the
+  // trash). The right stack shows resolved tickets normally; its trash button flips it to show
+  // these instead. Persisted like the stage map.
+  const DELETED_STORE = "tk-deleted";
+  let deletedSet = (() => { try { return new Set(JSON.parse(localStorage.getItem(DELETED_STORE) || "[]")); } catch { return new Set(); } })();
+  const isDeleted = (id) => !!id && deletedSet.has(id);
+  const setDeleted = (id, on) => {
+    if (!id) return;
+    if (on) deletedSet.add(id); else deletedSet.delete(id);
+    try { localStorage.setItem(DELETED_STORE, JSON.stringify([...deletedSet])); } catch {}
+  };
+  let trashMode = false;   // right stack: false → resolved/closed, true → deleted (trash)
+
+  // Per-ticket title/subtitle overrides (e.g. for a manually-created ticket the user names in the
+  // config). The ticket API can't edit companyLabel/host, so — like the stage & deleted flags —
+  // these live client-side in localStorage and are applied at render.
+  const META_STORE = "tk-ticket-meta";
+  let metaMap = (() => { try { return JSON.parse(localStorage.getItem(META_STORE) || "{}") || {}; } catch { return {}; } })();
+  const metaOf = (id) => (id && metaMap[id]) || {};
+  const setMeta = (id, m) => {
+    if (!id) return;
+    metaMap[id] = { ...metaOf(id), ...m };
+    try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
+  };
+  const titleOf = (t) => { const m = metaOf(t.id); return (m.title && m.title.trim()) || t.companyLabel || "Unknown"; };
+  const subOf = (t) => { const m = metaOf(t.id); return (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || "—"); };
+  let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
+
   let root = null;
   const decks = { left: null, right: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false };
@@ -142,6 +170,19 @@
       .tk-arrow:hover { transform: scale(1.08); }
       .tk-arrow svg { width: 15px; height: 15px; } .tk-arrow.is-hidden { opacity: 0; pointer-events: none; }
 
+      /* Create (+) / trash buttons centred above each corner stack — same glass pill as .tk-arrow. */
+      .tk-stack-btn { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none;
+        border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
+        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
+        -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 10px 26px rgba(0,0,0,0.34);
+        color: #fff; display: flex; align-items: center; justify-content: center;
+        transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+      .tk-stack-btn:hover { transform: scale(1.08); }
+      .tk-stack-btn svg { width: 16px; height: 16px; }
+      .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
+        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
+
       /* Sleek horizontal scrollbar beneath an overflowing fan (same recipe as the menus). */
       .tk-bar { position: absolute; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.10);
         pointer-events: auto; opacity: 0; transition: opacity .2s ease; }
@@ -230,6 +271,8 @@
   const arrowSvg = (dir) =>
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${
       dir === "right" ? `<polyline points="9 6 15 12 9 18"/>` : `<polyline points="15 6 9 12 15 18"/>`}</svg>`;
+  const PLUS_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
+  const TRASH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
 
   const ensureRoot = () => {
     if (root) return;
@@ -249,8 +292,23 @@
       box.appendChild(arrow); box.appendChild(bar);
       box.addEventListener("wheel", (e) => onWheel(side, e), { passive: false });
       wireThumb(side, thumb);
-      root.appendChild(box);
-      decks[side] = { box, arrow, bar, thumb, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
+      // Action button above the stack: LEFT "+" creates a ticket; RIGHT trash toggles the stack
+      // between resolved and deleted. Lives on root (not the deck box) so it stays visible when
+      // the deck is empty (the box gets display:none via .is-empty).
+      const action = document.createElement("button");
+      action.className = "tk-stack-btn"; action.type = "button";
+      if (side === "left") {
+        action.setAttribute("aria-label", "Create a ticket");
+        action.innerHTML = PLUS_SVG;
+        action.addEventListener("click", openCreate);
+      } else {
+        action.setAttribute("aria-label", "Show deleted tickets");
+        action.title = "Show deleted tickets";
+        action.innerHTML = TRASH_SVG;
+        action.addEventListener("click", () => { trashMode = !trashMode; action.classList.toggle("is-active", trashMode); render(); });
+      }
+      root.appendChild(box); root.appendChild(action);
+      decks[side] = { box, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
     document.body.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
@@ -286,6 +344,11 @@
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
     deck.arrow.classList.toggle("is-hidden", n <= 1);
+    // create/trash button: centred above the stack's top card (independent of fan state)
+    if (deck.action) {
+      deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
+      deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
+    }
     // scrollbar beneath the fan, only when overflowing
     const overflow = open && contentW > viewW + 1;
     deck.bar.classList.toggle("is-on", overflow);
@@ -665,8 +728,8 @@
     const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
     const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
     return `<div class="ticket-body">` +
-      `<div class="ticket-company">${esc(t.companyLabel || "Unknown")}</div>` +
-      `<div class="ticket-host">${esc(t.host || "—")}</div>` +
+      `<div class="ticket-company">${esc(titleOf(t))}</div>` +
+      `<div class="ticket-host">${esc(subOf(t))}</div>` +
       `<div class="ticket-down">Down ${esc(human(endMs - created))}</div>` +
       `</div>`;
   };
@@ -929,7 +992,7 @@
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     STAGES.forEach((s) => {
       const body = zoneBody[s.key];
-      const list = tickets.filter((t) => stageOf(t.id) === s.key).sort(order);
+      const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id)).sort(order);
       body.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
       list.forEach((t) => body.appendChild(zoneCardEl(t, s.key)));
       const count = body.parentElement.querySelector(".tk-zone-count");
@@ -941,6 +1004,7 @@
   // and fly a shrinking clone from the drop point into its new card in the zone.
   const dropIntoZone = (fromCard, t, stage) => {
     const from = fromCard.getBoundingClientRect();
+    setDeleted(t.id, false);   // entering the pipeline un-deletes (a ticket can't be both staged and trashed)
     setStage(t.id, stage);
     render();
     const dest = zoneBody[stage]?.querySelector(`.tk-zcard[data-id="${cssEsc(t.id)}"]`);
@@ -965,11 +1029,38 @@
     matchCardSize(); sizeRoot(); layoutZones(); syncDropFloor();
     const onGrid = onGridIds();
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
-    // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox).
-    const avail = tickets.filter((t) => !onGrid.has(t.id) && !stageOf(t.id));
+    // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox). Deleted
+    // tickets are hidden everywhere EXCEPT the right stack when it's flipped to trash mode.
+    const avail = tickets.filter((t) => !onGrid.has(t.id) && !stageOf(t.id) && !isDeleted(t.id));
     buildDeck("left", avail.filter((t) => (t.state || "open") !== "resolved").sort(order));
-    buildDeck("right", avail.filter((t) => (t.state || "open") === "resolved").sort(order));
+    const rightList = trashMode
+      ? tickets.filter((t) => isDeleted(t.id) && !onGrid.has(t.id))               // trash: every deleted ticket
+      : avail.filter((t) => (t.state || "open") === "resolved");                  // resolved/closed
+    buildDeck("right", rightList.slice().sort(order));
     renderZones();
+    // A just-created ticket: once its card has spawned into the left stack, let it settle, then
+    // fly it to the centre and expand its config. Creating fires several re-renders that REPLACE
+    // the card element, so re-query the LIVE node at fire time — a detached node has a 0-rect and
+    // the flyer would grow from (0,0).
+    if (pendingOpenId && decks.left?.box?.querySelector(`.tk-card[data-id="${cssEsc(pendingOpenId)}"]`)) {
+      const id = pendingOpenId; pendingOpenId = null;
+      const tryOpen = (tries) => {
+        const card = decks.left?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`);
+        const tk = tickets.find((x) => x.id === id);
+        if (card && card.isConnected && card.getBoundingClientRect().width > 10 && tk) window.ticketDetail?.open?.(tk, card);
+        else if (tries > 0) setTimeout(() => tryOpen(tries - 1), 120);
+      };
+      setTimeout(() => tryOpen(8), 420);
+    }
+  };
+
+  // The left "+": spawn a blank ticket into the inbox stack, then (once its card has visibly
+  // landed) fly it to the centre and expand its config — where the user sets title & subtitle.
+  const openCreate = async () => {
+    let tk = null;
+    try { const res = await window.tickets?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
+    if (tk && tk.id) pendingOpenId = tk.id;
+    load();   // re-fetch + render; render() auto-opens the config when the new card appears
   };
 
   const load = async () => {
@@ -982,7 +1073,24 @@
     }
   };
 
-  window.ticketStacks = { reload: load };
+  // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
+  window.ticketStacks = {
+    reload: load,
+    isDeleted,
+    delete: (id) => { setDeleted(id, true); render(); },
+    restore: (id) => { setDeleted(id, false); render(); },
+    metaOf,
+    // Persist the override and update the card's text IN PLACE (no rebuild) so live edits from
+    // the open config don't detach the card the detail panel is animating from.
+    setMeta: (id, m) => {
+      setMeta(id, m);
+      const t = tickets.find((x) => x.id === id); if (!t) return;
+      document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
+        const co = c.querySelector(".ticket-company"); if (co) co.textContent = titleOf(t);
+        const ho = c.querySelector(".ticket-host"); if (ho) ho.textContent = subOf(t);
+      });
+    },
+  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load);
   else load();
 })();

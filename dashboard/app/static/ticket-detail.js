@@ -97,6 +97,15 @@
       .td-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .td-ip { font-size: 0.8rem; font-weight: 500; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
       .td-sep { color: rgba(255,255,255,0.28); font-weight: 400; }
+      /* Editable title/subtitle inputs styled to read like the header text until focused. */
+      .td-edit { font: inherit; color: inherit; background: transparent; border: 0; border-radius: 6px;
+        padding: 1px 4px; margin: 0; outline: none; min-width: 0; transition: background .14s ease, box-shadow .14s ease; }
+      .td-edit::placeholder { color: rgba(255,255,255,0.32); font-weight: 600; }
+      .td-edit:hover { background: rgba(255,255,255,0.06); }
+      .td-edit:focus { background: rgba(255,255,255,0.10); box-shadow: inset 0 0 0 1px rgba(125,180,255,0.55); }
+      input.td-name { flex: 1 1 auto; }
+      input.td-ip { flex: 0 1 auto; width: 9ch; }
+      input.td-ip:focus { width: 16ch; }
       .td-x { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0 2px; margin: 0;
         color: rgba(255,255,255,0.5); font-size: 17px; line-height: 1; cursor: pointer; transition: color .14s ease; }
       .td-x:hover { color: #fff; }
@@ -134,6 +143,8 @@
         text-align: left; width: auto; border: 0; background: transparent; cursor: pointer; border-radius: 8px;
         padding: 0 4px; margin: 0; font: inherit; font-size: 0.9rem; font-weight: 600; color: rgba(255,255,255,0.62); transition: color .14s ease; }
       .td-act:hover { color: #fff; }
+      .td-act.td-danger { color: rgba(255,135,135,0.85); margin-left: auto; }   /* Delete/Restore sits at the far end */
+      .td-act.td-danger:hover { color: #ff8a8a; }
 
       .td-log { display: flex; flex-direction: column; gap: 7px; max-height: 160px; overflow: auto;
         background: rgba(255,255,255,0.05); border-radius: 9px; padding: 8px 9px; }
@@ -262,13 +273,23 @@
     if (state !== "claimed" && state !== "resolved") acts.push(`<button class="td-act" data-act="claim">Claim</button>`);
     if (state !== "resolved") acts.push(`<button class="td-act" data-act="resolve">Resolve</button>`);
     if (state === "resolved") acts.push(`<button class="td-act" data-act="reopen">Reopen</button>`);
+    // Delete sends the ticket to the trash (right stack, trash view); Restore brings it back.
+    if (window.ticketStacks?.isDeleted?.(t.id)) acts.push(`<button class="td-act td-danger" data-act="restore">Restore</button>`);
+    else acts.push(`<button class="td-act td-danger" data-act="delete">Delete</button>`);
     const log = (t.history || []).slice().reverse().map((h) =>
       `<div class="td-ev"><b>${esc(h.by)}</b> ${esc(h.action)} <span class="td-at">${shortTime(h.at)}</span>${h.action === "comment" && h.detail ? `<div class="td-ev-note">${esc(h.detail)}</div>` : ""}</div>`
     ).join("");
 
+    const meta = (window.ticketStacks?.metaOf?.(t.id)) || {};
+    const titleVal = meta.title != null ? meta.title : (t.companyLabel || "");
+    const subVal = meta.subtitle != null ? meta.subtitle : (t.host || "");
     panel.innerHTML = `
       <div class="td-head">
-        <div class="td-title"><span class="td-name">${esc(t.companyLabel || "Unknown")}</span><span class="td-sep">|</span><span class="td-ip">${esc(t.host || "—")}</span></div>
+        <div class="td-title">
+          <input class="td-name td-edit" data-meta="title" value="${esc(titleVal)}" placeholder="Title" aria-label="Title" />
+          <span class="td-sep">|</span>
+          <input class="td-ip td-edit" data-meta="subtitle" value="${esc(subVal)}" placeholder="Subtitle" aria-label="Subtitle" />
+        </div>
         <button class="td-x" data-act="close" aria-label="Close">&times;</button>
       </div>
       <div class="td-meta">Down ${esc(human(downMs))}${t.recoveredAt ? " &middot; recovered" : ""}</div>
@@ -302,9 +323,16 @@
       };
     });
     if (!t) return;
+    // Title / subtitle: live-saved as client-side overrides (the card updates in place as you type).
+    panel.querySelectorAll(".td-edit").forEach((el) => {
+      el.oninput = () => window.ticketStacks?.setMeta?.(t.id, { [el.dataset.meta]: el.value });
+      el.onkeydown = (e) => { if (e.key === "Enter") el.blur(); e.stopPropagation(); };
+    });
     panel.querySelectorAll(".td-act").forEach((el) => {
       el.onclick = async () => {
         const a = el.dataset.act;
+        if (a === "delete") { window.ticketStacks?.delete?.(t.id); close(); return; }   // → trash
+        if (a === "restore") { window.ticketStacks?.restore?.(t.id); refresh(); return; }
         if (a === "claim") await window.tickets.claim(t.id);
         else if (a === "resolve") await window.tickets.resolve(t.id);
         else if (a === "reopen") await window.tickets.reopen(t.id);

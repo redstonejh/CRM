@@ -171,7 +171,7 @@
       .tk-arrow svg { width: 15px; height: 15px; } .tk-arrow.is-hidden { opacity: 0; pointer-events: none; }
 
       /* Create (+) / trash buttons centred above each corner stack — same glass pill as .tk-arrow. */
-      .tk-stack-btn { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none;
+      .tk-stack-btn { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
         border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
         background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
         -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
@@ -373,12 +373,21 @@
     // its follow transform. Otherwise a reorder re-layout drops it BEHIND its neighbours, so
     // it looks frozen (it's still following the cursor, just hidden) until release.
     if (!card.classList.contains("tk-dragging")) {
-      card.style.zIndex = String(500 - i);
+      card.style.zIndex = String((open ? 3000 : 500) - i);   // a fanned stack rides above the closed one
       card.style.transform = `translate(${tx}px, ${ty}px) rotate(${rot}deg)`;
     }
   };
 
-  const toggleFan = (side) => { fanned[side] = !fanned[side]; if (!fanned[side]) decks[side].scrollX = 0; layout(side); };
+  const toggleFan = (side) => {
+    const open = !fanned[side];
+    fanned[side] = open;
+    if (!open) decks[side].scrollX = 0;
+    if (open) {                                      // only one stack fanned at a time → close the other
+      const other = side === "left" ? "right" : "left";
+      if (fanned[other]) { fanned[other] = false; decks[other].scrollX = 0; layout(other); }
+    }
+    layout(side);
+  };
 
   const onWheel = (side, e) => {
     if (!fanned[side]) return;

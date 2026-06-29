@@ -861,9 +861,14 @@
       if (!dragging && Math.hypot(dx, dy) > 6) {
         dragging = true; dragActive = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
         baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
+        dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
+          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y); const dt = dropTarget(stackPos(side), x, y); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
+          else { clearZoneHighlight(); clearGap(); }
+        };
       }
       if (!dragging) return;
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
+      updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
@@ -895,7 +900,7 @@
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      dragActive = false;                                                   // always clear, even on hand-off
+      dragActive = false; stopAutoScroll(); dragPreviewFn = null;           // always clear, even on hand-off
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
@@ -984,7 +989,8 @@
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
-  let dragActive = false; // true while a ticket is mid-drag → route wheel to the bucket under the cursor
+  let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
+  let dragPreviewFn = null;   // (x,y) => recompute the current drag's highlight + sandwich gap (re-run while autoscrolling)
   const zoneBody = {};    // stage key → body element (the scroll viewport)
   const zoneTrack = {};   // stage key → the translated track holding the card stack
   const zoneScroll = {};  // stage key → { sy, ty, raf, wheeling, releaseT } (custom smooth/recoil scroll)
@@ -1054,6 +1060,78 @@
     onZoneWheel(key, e);
   };
   window.addEventListener("wheel", onDragWheel, { capture: true, passive: false });
+
+  // ── Drag-to-edge autoscroll ──────────────────────────────────────────────────
+  // While dragging a ticket, if the cursor enters the hot band near a scrollable edge, keep scrolling
+  // that container smoothly to reveal the off-screen drop space — buckets vertically, the fanned deck
+  // horizontally. A standalone rAF loop does the scrolling so it continues even when the pointer holds
+  // still; speed ramps up the closer the cursor gets to the edge.
+  const EDGE_ZONE = 74;   // px from an edge where autoscroll engages
+  const EDGE_MAX = 13;    // px/frame at the very edge
+  let autoRaf = 0, autoTarget = null, autoVel = 0, autoX = 0, autoY = 0;
+  const autoTick = () => {
+    autoRaf = 0;
+    if (!autoTarget || !autoVel) return;
+    if (autoTarget.kind === "zone") {
+      const s = autoTarget.key, st = zoneScroll[s];
+      if (st) { const min = zMin(s), next = clamp(st.sy + autoVel, min, 0);
+        if (next !== st.sy) { st.sy = next; st.ty = next; positionZone(s); } }
+    } else {
+      const deck = decks[autoTarget.side];
+      if (deck) { const min = scrollMinOf(deck), next = clamp(deck.scrollX + autoVel, min, 0);
+        if (next !== deck.scrollX) {
+          deck.scrollX = next; deck.targetX = next;
+          deck.cards.forEach((c) => { c.style.transition = "none"; }); deck.arrow.style.transition = "none";
+          positionFan(autoTarget.side);
+        } }
+    }
+    if (dragPreviewFn) dragPreviewFn(autoX, autoY);   // keep the sandwich gap / highlight under the cursor as content scrolls
+    autoRaf = requestAnimationFrame(autoTick);
+  };
+  const updateAutoScroll = (x, y) => {
+    autoX = x; autoY = y; autoTarget = null; autoVel = 0;
+    let overBucket = false;
+    for (const sdef of STAGES) {
+      const p = zoneBody[sdef.key]?.parentElement; if (!p) continue;
+      const r = p.getBoundingClientRect();
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;   // not over this bucket
+      overBucket = true;
+      const st = zoneScroll[sdef.key], min = zMin(sdef.key);
+      if (st && min < 0) {
+        if (y < r.top + EDGE_ZONE && st.sy < 0)            // near top → reveal earlier cards (sy → 0)
+          { autoTarget = { kind: "zone", key: sdef.key }; autoVel = clamp((r.top + EDGE_ZONE - y) / EDGE_ZONE, 0, 1) * EDGE_MAX; }
+        else if (y > r.bottom - EDGE_ZONE && st.sy > min)  // near bottom → reveal later cards (sy → min)
+          { autoTarget = { kind: "zone", key: sdef.key }; autoVel = -clamp((y - (r.bottom - EDGE_ZONE)) / EDGE_ZONE, 0, 1) * EDGE_MAX; }
+      }
+      break;   // cursor is over this bucket → don't also consider the deck
+    }
+    if (!overBucket) {
+      for (const side of ["left", "right"]) {
+        const deck = decks[side]; if (!deck || !fanned[side]) continue;
+        const min = scrollMinOf(deck); if (min >= 0) continue;
+        const nearL = x < EDGE_ZONE, nearR = x > window.innerWidth - EDGE_ZONE;
+        const fwd = side === "left" ? nearR : nearL;       // toward the far end → reveal later cards (scrollX → min)
+        const bwd = side === "left" ? nearL : nearR;       // toward the anchor → reveal earlier cards (scrollX → 0)
+        if (fwd && deck.scrollX > min) {
+          const f = nearR ? (x - (window.innerWidth - EDGE_ZONE)) / EDGE_ZONE : (EDGE_ZONE - x) / EDGE_ZONE;
+          autoTarget = { kind: "deck", side }; autoVel = -clamp(f, 0, 1) * EDGE_MAX;
+        } else if (bwd && deck.scrollX < 0) {
+          const f = nearL ? (EDGE_ZONE - x) / EDGE_ZONE : (x - (window.innerWidth - EDGE_ZONE)) / EDGE_ZONE;
+          autoTarget = { kind: "deck", side }; autoVel = clamp(f, 0, 1) * EDGE_MAX;
+        }
+        if (autoTarget) break;
+      }
+    }
+    if (autoTarget && !autoRaf) autoRaf = requestAnimationFrame(autoTick);
+  };
+  const stopAutoScroll = () => {
+    const deckSide = autoTarget && autoTarget.kind === "deck" ? autoTarget.side : null;
+    autoTarget = null; autoVel = 0;
+    if (autoRaf) { cancelAnimationFrame(autoRaf); autoRaf = 0; }
+    if (deckSide) { const deck = decks[deckSide]; if (deck) {   // restore the transitions autoscroll switched off
+      deck.cards.forEach((c) => { c.style.transition = ""; }); deck.arrow.style.transition = ""; deck.targetX = deck.scrollX; } }
+  };
+
   const wireZoneThumb = (s) => {
     const th = zoneBody[s].querySelector(".tk-zth");
     let y0 = 0, start = 0, drag = false;
@@ -1248,16 +1326,21 @@
         clone.innerHTML = zoneCardInner(t);
         document.body.appendChild(clone);
         card.classList.add("tk-zdrag");
+        dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
+          flowHighlight(posOfStage(stage), x, y); const dt = dropTarget(posOfStage(stage), x, y);
+          if (dt) previewGap(dt.stage, dt.index); else clearGap();
+        };
       }
       if (!dragging) return;
       clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
+      updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket if the cursor nears a scrollable edge
       flowHighlight(posOfStage(stage), e.clientX, e.clientY);
       const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY);
       if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      const wasDrag = dragging; dragging = false; down = false; dragActive = false;
+      const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null;
       clearZoneHighlight(); clearGap();
       if (clone) { clone.remove(); clone = null; }
       card.classList.remove("tk-zdrag");

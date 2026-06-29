@@ -18,6 +18,25 @@
   const loadOrder = (side) => { try { const v = JSON.parse(localStorage.getItem(ORDER_KEY(side)) || "null"); return Array.isArray(v) ? v : null; } catch { return null; } };
   const saveOrder = (side) => { try { localStorage.setItem(ORDER_KEY(side), JSON.stringify(decks[side]?.order || [])); } catch {} };
 
+  // Pipeline stages — the glass "bucket" zones on the dashboard. A ticket dragged into a
+  // zone is assigned that stage (persisted by id); unassigned tickets live in the corner
+  // stacks (the inbox). cssEsc guards attribute selectors built from ticket ids.
+  const cssEsc = (window.CSS && CSS.escape) ? (s) => CSS.escape(s) : (s) => String(s).replace(/["\\\]]/g, "\\$&");
+  const STAGES = [
+    { key: "triage", label: "Triage and Assignment" },
+    { key: "investigation", label: "Investigation and Diagnosis" },
+    { key: "resolution", label: "Resolution and Closure" },
+  ];
+  const STAGE_KEYS = STAGES.map((s) => s.key);
+  const STAGE_STORE = "tk-ticket-stage";
+  let stageMap = (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })();
+  const stageOf = (id) => (id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null);
+  const setStage = (id, stage) => {
+    if (!id) return;
+    if (stage && STAGE_KEYS.includes(stage)) stageMap[id] = stage; else delete stageMap[id];
+    try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
+  };
+
   let root = null;
   const decks = { left: null, right: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false };
@@ -162,6 +181,44 @@
         0%, 100% { box-shadow: 0 0 0 3px rgba(255,80,80,0.12), inset 0 0 18px rgba(255,90,90,0.30); }
         50%      { box-shadow: 0 0 0 7px rgba(255,80,80,0.20), inset 0 0 34px rgba(255,90,90,0.6); }
       }
+
+      /* ── Pipeline zones (glass buckets) — a row of stages across the dashboard. ───────── */
+      .tk-zones { position: fixed; left: 22px; right: 22px; top: 60px; z-index: 800;
+        display: flex; gap: 16px; align-items: stretch; pointer-events: none; }
+      .tk-zone { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; pointer-events: auto;
+        border-radius: 16px; padding: 12px 12px 14px; color: #fff;
+        background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
+        -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
+        border: 1px solid rgba(255,255,255,0.14);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
+        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+      .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
+        background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
+        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
+      .tk-zone-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 2px 4px 11px; font-size: 0.82rem; font-weight: 700; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
+      .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
+        background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
+      .tk-zone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+        display: flex; flex-direction: column; gap: 8px; padding: 2px;
+        scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
+      .tk-zone-body::-webkit-scrollbar { width: 8px; }
+      .tk-zone-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+      .tk-zone-empty { margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
+
+      /* Compact ticket card inside a zone. */
+      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; cursor: grab; color: #fff; overflow: hidden;
+        user-select: none; -webkit-user-select: none; border-radius: 12px; padding: 9px 11px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 14px rgba(0,0,0,0.18); transition: box-shadow .14s ease; }
+      .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.32), 0 4px 14px rgba(0,0,0,0.18); }
+      .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
+      .tk-zc-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .tk-zc-co { font-size: 0.86rem; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tk-zc-dn { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums; }
+      .tk-zc-host { margin-top: 2px; font-size: 0.72rem; color: rgba(255,255,255,0.58); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+      .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; overflow: hidden;
+        border-radius: 12px; padding: 9px 11px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 20px 44px rgba(0,0,0,0.42);
+        transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
     `;
     document.head.appendChild(style);
   };
@@ -545,11 +602,12 @@
         baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
       }
       if (!dragging) return;
-      // Drag a card UP past the top of the stack zone → hand it off to the dashboard grid
-      // (works fanned OR stacked). A horizontal reorder keeps the cursor ON the cards (well
-      // below stackTopY), so it never reaches this line — the two gestures don't collide.
-      if (e.clientY < stackTopY() && gridLayout()?.__initWidget) { handOffToGrid(e); return; }
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
+      // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
+      // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
+      // never reaches here — the two gestures don't collide.
+      if (e.clientY < stackTopY()) { highlightZoneAt(e.clientX, e.clientY); return; }
+      clearZoneHighlight();
       // Fanned out → dragging reorders the row: move this card to the slot under it and let
       // the others slide to fill the gap (the .tk-card transform transition animates it).
       if (fanned[side]) {
@@ -576,8 +634,13 @@
       card.classList.remove("tk-dragging");
       // Config opens on DOUBLE click; a single click does nothing (the card never moved).
       if (!wasDrag) return;
-      // Released up on the dashboard (no hand-off had fired) → drop it onto the grid.
-      if (e.clientY < stackTopY()) { flyIntoGrid(card, t); return; }
+      clearZoneHighlight();
+      // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
+      if (e.clientY < stackTopY()) {
+        const z = zoneAt(e.clientX, e.clientY);
+        if (z) { dropIntoZone(card, t, z); return; }
+        layout(side); return;   // not over a zone → spring back to the stack
+      }
       // Released back in the stack (incl. after a reorder) → settle into the slot + restore z.
       layout(side);
     };
@@ -650,14 +713,149 @@
     return ids;
   };
 
+  // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
+  let zonesRoot = null;
+  const zoneBody = {};   // stage key → body element
+  const sizeZones = () => { if (zonesRoot) zonesRoot.style.bottom = `${CARD_H + MARGIN * 2 + 44}px`; };  // clear the corner stacks
+  const ensureZones = () => {
+    if (zonesRoot) return;
+    ensureStyles();
+    zonesRoot = document.createElement("div");
+    zonesRoot.className = "tk-zones";
+    STAGES.forEach((s) => {
+      const panel = document.createElement("div");
+      panel.className = "tk-zone";
+      panel.dataset.stage = s.key;
+      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-count">0</span></div><div class="tk-zone-body"></div>`;
+      zonesRoot.appendChild(panel);
+      zoneBody[s.key] = panel.querySelector(".tk-zone-body");
+    });
+    document.body.appendChild(zonesRoot);
+    sizeZones();
+    window.addEventListener("resize", sizeZones);
+  };
+
+  // Which stage zone (if any) is under the point — the drop target for a ticket drag.
+  const zoneAt = (x, y) => {
+    for (const s of STAGES) {
+      const r = zoneBody[s.key]?.parentElement?.getBoundingClientRect();
+      if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return s.key;
+    }
+    return null;
+  };
+  const highlightZoneAt = (x, y) => {
+    const hit = zoneAt(x, y);
+    STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.toggle("is-target", s.key === hit));
+    return hit;
+  };
+  const clearZoneHighlight = () => STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.remove("is-target"));
+
+  const zoneCardInner = (t) => {
+    const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
+    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
+    return `<div class="tk-zc-top"><span class="tk-zc-co">${esc(t.companyLabel || "Unknown")}</span><span class="tk-zc-dn">${esc(human(endMs - created))}</span></div>` +
+      `<div class="tk-zc-host">${esc(t.host || "—")}</div>`;
+  };
+
+  // Drag a zone card to ANOTHER zone (reassign stage), DOWN onto the corner stacks (un-assign
+  // → back to the inbox), or release on its own zone / nowhere (snap back). Click opens config.
+  const wireZoneCard = (card, t, stage) => {
+    let down = false, dragging = false, sx = 0, sy = 0, clone = null;
+    const onMove = (e) => {
+      if (!down) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (!dragging && Math.hypot(dx, dy) > 6) {
+        dragging = true;
+        const r = card.getBoundingClientRect();
+        clone = document.createElement("div");
+        clone.className = "tk-zfly";
+        clone.style.cssText = `left:${r.left}px; top:${r.top}px; width:${r.width}px; height:${r.height}px; transition:none;`;
+        clone.style.backgroundColor = baseColor();
+        clone.style.backgroundImage = severityBg(sevOf(t));
+        clone.innerHTML = zoneCardInner(t);
+        document.body.appendChild(clone);
+        card.classList.add("tk-zdrag");
+      }
+      if (!dragging) return;
+      clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
+      highlightZoneAt(e.clientX, e.clientY);
+    };
+    const onUp = (e) => {
+      window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
+      const wasDrag = dragging; dragging = false; down = false;
+      clearZoneHighlight();
+      if (clone) { clone.remove(); clone = null; }
+      card.classList.remove("tk-zdrag");
+      if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
+      const z = zoneAt(e.clientX, e.clientY);
+      if (z && z !== stage) { setStage(t.id, z); render(); return; }                  // → another stage
+      if (!z && e.clientY >= stackTopY()) { setStage(t.id, null); render(); return; }  // → back to the inbox stack
+      // else: same zone / nowhere → the card just un-hides in place.
+    };
+    card.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      down = true; dragging = false; sx = e.clientX; sy = e.clientY;
+      window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    });
+  };
+
+  const zoneCardEl = (t, stage) => {
+    const card = document.createElement("div");
+    card.className = "tk-zcard";
+    card.dataset.id = t.id || "";
+    card.style.backgroundColor = baseColor();
+    card.style.backgroundImage = severityBg(sevOf(t));
+    card.innerHTML = zoneCardInner(t);
+    wireZoneCard(card, t, stage);
+    return card;
+  };
+
+  const renderZones = () => {
+    ensureZones();
+    const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
+    STAGES.forEach((s) => {
+      const body = zoneBody[s.key];
+      const list = tickets.filter((t) => stageOf(t.id) === s.key).sort(order);
+      body.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
+      list.forEach((t) => body.appendChild(zoneCardEl(t, s.key)));
+      const count = body.parentElement.querySelector(".tk-zone-count");
+      if (count) count.textContent = String(list.length);
+    });
+  };
+
+  // Drop a ticket dragged from a corner stack into a zone: assign the stage, leave the stack,
+  // and fly a shrinking clone from the drop point into its new card in the zone.
+  const dropIntoZone = (fromCard, t, stage) => {
+    const from = fromCard.getBoundingClientRect();
+    setStage(t.id, stage);
+    render();
+    const dest = zoneBody[stage]?.querySelector(`.tk-zcard[data-id="${cssEsc(t.id)}"]`);
+    if (!dest) return;
+    const to = dest.getBoundingClientRect();
+    const clone = document.createElement("div");
+    clone.className = "tk-zfly";
+    clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; transform-origin: top left;`;
+    clone.style.backgroundColor = baseColor();
+    clone.style.backgroundImage = severityBg(sevOf(t));
+    clone.innerHTML = zoneCardInner(t);
+    document.body.appendChild(clone);
+    dest.style.opacity = "0";
+    requestAnimationFrame(() => {
+      clone.style.transform = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`;
+    });
+    setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; }, 300);
+  };
+
   const render = () => {
-    ensureRoot();
-    matchCardSize(); sizeRoot(); syncDropFloor();
+    ensureRoot(); ensureZones();
+    matchCardSize(); sizeRoot(); sizeZones(); syncDropFloor();
     const onGrid = onGridIds();
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
-    const avail = tickets.filter((t) => !onGrid.has(t.id));
+    // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox).
+    const avail = tickets.filter((t) => !onGrid.has(t.id) && !stageOf(t.id));
     buildDeck("left", avail.filter((t) => (t.state || "open") !== "resolved").sort(order));
     buildDeck("right", avail.filter((t) => (t.state || "open") === "resolved").sort(order));
+    renderZones();
   };
 
   const load = async () => {

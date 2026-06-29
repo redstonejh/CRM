@@ -218,8 +218,9 @@
       /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.32)); }
-      .tk-flow-arrow { fill: none; stroke: rgba(255,255,255,0.74); stroke-width: 4;
+      .tk-flow-shaft { fill: none; stroke: rgba(255,255,255,0.85); stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
+      .tk-flow-head { fill: rgba(255,255,255,0.95); stroke: none; }
     `;
     document.head.appendChild(style);
   };
@@ -722,42 +723,48 @@
   // A stylized translucent line through the pipeline: left (inbox) stack → triage, an arrow
   // between each bucket, then resolution → right (resolved) stack. Drawn as one SVG overlay,
   // each arrow a glowing glass body with a bright core + a glassy arrowhead.
-  let flowRoot = null, flowArrows = [];
+  let flowRoot = null, flowShafts = [], flowHeads = [];
   const ensureFlow = () => {
     if (flowRoot) return;
     ensureStyles();
     const arrows = STAGES.length + 1;
     let lines = "";
-    for (let i = 0; i < arrows; i++) lines += `<path class="tk-flow-arrow" marker-end="url(#tk-flow-head)"></path>`;
+    // Per arrow: a stroked shaft + a SOLID triangle head built forward from where the shaft ends.
+    for (let i = 0; i < arrows; i++) lines += `<path class="tk-flow-shaft"></path><path class="tk-flow-head"></path>`;
     const wrap = document.createElement("div");
-    // A small SOLID triangle head; lives on top of the (single) trail so no line shows through it.
-    wrap.innerHTML =
-      `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><defs>` +
-      `<marker id="tk-flow-head" markerUnits="userSpaceOnUse" markerWidth="26" markerHeight="22" refX="22" refY="11" orient="auto">` +
-      `<path d="M2,2 L24,11 L2,20 Z" fill="rgba(255,255,255,0.95)"></path></marker>` +
-      `</defs>${lines}</svg>`;
+    wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg">${lines}</svg>`;
     flowRoot = wrap.firstElementChild;
     document.body.appendChild(flowRoot);
-    flowArrows = [...flowRoot.querySelectorAll(".tk-flow-arrow")];
+    flowShafts = [...flowRoot.querySelectorAll(".tk-flow-shaft")];
+    flowHeads = [...flowRoot.querySelectorAll(".tk-flow-head")];
   };
-  // Long trails with a small solid head. lefts: bucket left xs; bw: bucket width; topY/botY bounds.
+  const HEAD_LEN = 20, HEAD_HALF = 9;
+  // A solid arrowhead whose BASE CENTRE is where the shaft stops — so the line enters the head's
+  // centre and never reaches the tip. dx,dy = unit travel direction at the tip; r = rounder.
+  const arrowHead = (ex, ey, dx, dy, r) => {
+    const bx = ex - HEAD_LEN * dx, by = ey - HEAD_LEN * dy;             // base centre
+    const sx = ex - (HEAD_LEN - 6) * dx, sy = ey - (HEAD_LEN - 6) * dy; // shaft stops 6px INTO the head
+    const px = -dy * HEAD_HALF, py = dx * HEAD_HALF;                    // half-width perpendicular
+    return { sx, sy, d: `M${r(bx + px)},${r(by + py)} L${r(ex)},${r(ey)} L${r(bx - px)},${r(by - py)} Z` };
+  };
+  // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds.
   const drawFlow = (lefts, bw, topY, botY) => {
     ensureFlow();
     const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
-    const cardTop = window.innerHeight - CARD_H - MARGIN;
-    const offStack = r(cardTop - MARGIN);                          // start/end a MARGIN clear of the stacks
+    const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
     const lStackX = MARGIN + CARD_W / 2, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
-    const ds = [];
-    // 1 — long arc up out of the inbox stack, arriving DEAD HORIZONTAL into triage (control
-    //     directly above the start → vertical exit, horizontal entry → head points cleanly right).
-    ds.push(`M${r(lStackX)},${offStack} Q${r(lStackX)},${midY} ${r(lefts[0] - MARGIN)},${midY}`);
-    // 2 — long straight trail across each gap into the next bucket.
-    for (let i = 0; i < n - 1; i++)
-      ds.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(lefts[i + 1] - MARGIN)},${midY}`);
-    // 3 — long arc out of resolution, arriving DEAD VERTICAL into the resolved stack (control
-    //     directly above the end → horizontal exit, vertical entry → head points cleanly down).
-    ds.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} Q${r(rStackX)},${midY} ${r(rStackX)},${offStack}`);
-    ds.forEach((d, i) => flowArrows[i]?.setAttribute("d", d));
+    const shafts = [], heads = [];
+    // 1 — arc up out of the inbox stack, arriving DEAD HORIZONTAL into triage (head points right).
+    { const ex = lefts[0] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
+      shafts.push(`M${r(lStackX)},${offStack} Q${r(lStackX)},${midY} ${r(h.sx)},${r(h.sy)}`); heads.push(h.d); }
+    // 2 — straight trail across each gap into the next bucket (head points right).
+    for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
+      shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${r(h.sy)}`); heads.push(h.d); }
+    // 3 — arc out of resolution, arriving DEAD VERTICAL into the resolved stack (head points down).
+    { const h = arrowHead(rStackX, offStack, 0, 1, r);
+      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} Q${r(rStackX)},${midY} ${r(h.sx)},${r(h.sy)}`); heads.push(h.d); }
+    shafts.forEach((d, i) => flowShafts[i]?.setAttribute("d", d));
+    heads.forEach((d, i) => flowHeads[i]?.setAttribute("d", d));
   };
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {

@@ -372,6 +372,10 @@
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
     deck.arrow.classList.toggle("is-hidden", n <= 1);
+    // The fanned stack's arrow stays on top; the other side's arrow drops BELOW the fanned cards
+    // (z 600 < the fanned cards' 3000) so it doesn't poke through the spread-out fan.
+    const otherSide = side === "left" ? "right" : "left";
+    deck.arrow.style.zIndex = (!open && fanned[otherSide]) ? "600" : "5000";
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
@@ -410,11 +414,9 @@
     const open = !fanned[side];
     fanned[side] = open;
     if (!open) decks[side].scrollX = 0;
-    if (open) {                                      // only one stack fanned at a time → close the other
-      const other = side === "left" ? "right" : "left";
-      if (fanned[other]) { fanned[other] = false; decks[other].scrollX = 0; layout(other); }
-    }
-    layout(side);
+    const other = side === "left" ? "right" : "left";
+    if (open && fanned[other]) { fanned[other] = false; decks[other].scrollX = 0; }  // only one fanned at a time
+    layout(side); layout(other);   // re-lay BOTH: each arrow's z depends on the other side's fan state
   };
 
   const onWheel = (side, e) => {

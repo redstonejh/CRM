@@ -182,11 +182,10 @@
         50%      { box-shadow: 0 0 0 7px rgba(255,80,80,0.20), inset 0 0 34px rgba(255,90,90,0.6); }
       }
 
-      /* ── Pipeline zones (glass buckets) — a row of stages across the dashboard. ───────── */
-      .tk-zones { position: fixed; left: 22px; right: 22px; top: 60px; z-index: 800;
-        display: flex; gap: 16px; align-items: stretch; pointer-events: none; }
-      .tk-zone { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; pointer-events: auto;
-        border-radius: 16px; padding: 12px 12px 14px; color: #fff;
+      /* ── Pipeline zones (glass buckets) — each panel snaps to dashboard grid columns. ─── */
+      .tk-zones { position: fixed; left: 0; right: 0; top: 60px; z-index: 800; pointer-events: none; }
+      .tk-zone { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: auto;
+        border-radius: 16px; padding: 12px 14px 14px; color: #fff;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
         border: 1px solid rgba(255,255,255,0.14);
@@ -200,24 +199,20 @@
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
       .tk-zone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-        display: flex; flex-flow: row wrap; align-content: flex-start; gap: 8px; padding: 2px;
+        display: flex; flex-flow: row wrap; align-content: flex-start; justify-content: center; gap: ${MARGIN}px; padding: 2px;
         scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
       .tk-zone-body::-webkit-scrollbar { width: 8px; }
       .tk-zone-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
-      .tk-zone-empty { margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
+      .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
 
-      /* Compact ticket card inside a zone. */
-      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; width: 150px; cursor: grab; color: #fff; overflow: hidden;
-        user-select: none; -webkit-user-select: none; border-radius: 12px; padding: 9px 11px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 14px rgba(0,0,0,0.18); transition: box-shadow .14s ease; }
-      .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.32), 0 4px 14px rgba(0,0,0,0.18); }
+      /* A FULL-size ticket card living in a zone — same dimensions + look as a stack card. */
+      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; cursor: grab; color: #fff; display: flex; flex-direction: column; overflow: hidden;
+        user-select: none; -webkit-user-select: none; padding: 14px 15px; border-radius: 15px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18); transition: box-shadow .15s ease; }
+      .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
-      .tk-zc-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-      .tk-zc-co { font-size: 0.86rem; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .tk-zc-dn { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.8); font-variant-numeric: tabular-nums; }
-      .tk-zc-host { margin-top: 2px; font-size: 0.72rem; color: rgba(255,255,255,0.58); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-      .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; overflow: hidden;
-        border-radius: 12px; padding: 9px 11px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 20px 44px rgba(0,0,0,0.42);
+      .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
+        padding: 14px 15px; border-radius: 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 24px 52px rgba(0,0,0,0.45);
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
     `;
     document.head.appendChild(style);
@@ -716,7 +711,39 @@
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
   const zoneBody = {};   // stage key → body element
-  const sizeZones = () => { if (zonesRoot) zonesRoot.style.bottom = `${CARD_H + MARGIN * 2 + 44}px`; };  // clear the corner stacks
+  // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
+  const gridGeom = () => {
+    const grid = document.querySelector(".dashboard-layout-grid");
+    if (!grid) return null;
+    const r = grid.getBoundingClientRect();
+    if (!r.width) return null;
+    const cs = getComputedStyle(grid);
+    const parsed = (cs.gridTemplateColumns || "").split(/\s+/).filter((v) => v && v !== "none").length;
+    const cols = parsed >= STAGES.length ? parsed : 6;       // dashboard is a 6-column grid
+    const gap = parseFloat(cs.columnGap || cs.gap) || MARGIN;
+    const colW = (r.width - gap * (cols - 1)) / cols;
+    return { left: r.left, colW, gap, cols };
+  };
+  // Lay the three buckets across the grid: each spans an equal block of columns (6 cols → 2
+  // each), aligned to the real column edges + gap, so they line up with grid widgets.
+  const layoutZones = () => {
+    if (!zonesRoot) return;
+    zonesRoot.style.bottom = `${CARD_H + MARGIN * 2 + 44}px`;   // clear the corner stacks
+    const n = STAGES.length, g = gridGeom();
+    STAGES.forEach((s, i) => {
+      const panel = zoneBody[s.key]?.parentElement;
+      if (!panel) return;
+      if (g) {
+        const span = g.cols / n;                                   // columns per bucket
+        panel.style.left = `${Math.round(g.left + i * span * (g.colW + g.gap))}px`;
+        panel.style.width = `${Math.round(span * g.colW + (span - 1) * g.gap)}px`;
+      } else {                                                     // grid not measurable → even thirds
+        const w = (window.innerWidth - MARGIN * 2 - MARGIN * (n - 1)) / n;
+        panel.style.left = `${Math.round(MARGIN + i * (w + MARGIN))}px`;
+        panel.style.width = `${Math.round(w)}px`;
+      }
+    });
+  };
   const ensureZones = () => {
     if (zonesRoot) return;
     ensureStyles();
@@ -731,8 +758,9 @@
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
     });
     document.body.appendChild(zonesRoot);
-    sizeZones();
-    window.addEventListener("resize", sizeZones);
+    layoutZones();
+    requestAnimationFrame(layoutZones);              // re-measure once the grid has laid out
+    window.addEventListener("resize", layoutZones);
   };
 
   // Which stage zone (if any) is under the point — the drop target for a ticket drag.
@@ -750,12 +778,8 @@
   };
   const clearZoneHighlight = () => STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.remove("is-target"));
 
-  const zoneCardInner = (t) => {
-    const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
-    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
-    return `<div class="tk-zc-top"><span class="tk-zc-co">${esc(t.companyLabel || "Unknown")}</span><span class="tk-zc-dn">${esc(human(endMs - created))}</span></div>` +
-      `<div class="tk-zc-host">${esc(t.host || "—")}</div>`;
-  };
+  // A zone card is a FULL ticket card — identical layout/size to a corner-stack card.
+  const zoneCardInner = (t) => cardInner(t);
 
   // Drag a zone card to ANOTHER zone (reassign stage), DOWN onto the corner stacks (un-assign
   // → back to the inbox), or release on its own zone / nowhere (snap back). Click opens config.
@@ -803,6 +827,7 @@
     const card = document.createElement("div");
     card.className = "tk-zcard";
     card.dataset.id = t.id || "";
+    card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;   // full ticket dimensions
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = severityBg(sevOf(t));
     card.innerHTML = zoneCardInner(t);
@@ -848,7 +873,7 @@
 
   const render = () => {
     ensureRoot(); ensureZones();
-    matchCardSize(); sizeRoot(); sizeZones(); syncDropFloor();
+    matchCardSize(); sizeRoot(); layoutZones(); syncDropFloor();
     const onGrid = onGridIds();
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox).

@@ -173,10 +173,11 @@
     style.id = "ticket-stacks-styles";
     style.textContent = `
       .tk-stacks { position: fixed; inset: auto 0 0 0; z-index: 4000; pointer-events: none; -webkit-app-region: no-drag; }
-      .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; }
+      .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease; }
       .tk-deck-left { left: 0; } .tk-deck-right { right: 0; }
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
+      .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
       /* A stack card IS a real ticket card (same widget-card / ticket / db-panel-custom-color
          classes + .ticket-body markup) so its colour, glass, fonts and shape are IDENTICAL to
          the dashboard widget. .tk-card ONLY adds positioning + the fan/drag motion — no visual
@@ -213,8 +214,9 @@
         -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 10px 26px rgba(0,0,0,0.34);
         color: #fff; display: flex; align-items: center; justify-content: center;
-        transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+        transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, opacity .25s ease; }
       .tk-stack-btn:hover { transform: scale(1.08); }
+      .tk-stack-btn.is-dimmed { opacity: 0.3; }   /* idle stack's button while the other is fanned */
       .tk-stack-btn svg { width: 16px; height: 16px; }
       .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
@@ -400,13 +402,7 @@
     const scrollMin = Math.min(0, viewW - contentW);
     deck.scrollX = clamp(deck.scrollX, scrollMin, 0);
     cards.forEach((c, i) => place(c, side, i, open, step));
-    // Arrow rides the open edge of the deck and flips when fanned. But a fan with more tickets
-    // than fit spills its cards off-screen — then the edge-riding arrow ends up buried mid-fan,
-    // so anchor it to the screen edge instead (it stays on top via z-index → always reachable).
-    const edge = (open ? Math.min(contentW, viewW) : CARD_W) + 10;
-    const screenEdge = window.innerWidth - MARGIN - 34;
-    const arrowInset = (open && contentW > viewW) ? screenEdge : Math.min(MARGIN + edge, screenEdge);
-    deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(arrowInset)}px`;
+    placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
     deck.arrow.classList.toggle("is-hidden", n <= 1);
@@ -414,10 +410,14 @@
     // (z 600 < the fanned cards' 3000) so it doesn't poke through the spread-out fan.
     const otherSide = side === "left" ? "right" : "left";
     deck.arrow.style.zIndex = (!open && fanned[otherSide]) ? "600" : "5000";
+    // De-emphasise the idle stack (cards + arrow + its button) while the OTHER stack is fanned.
+    const dimmed = fanned[otherSide];
+    deck.box.classList.toggle("is-dimmed", dimmed);
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
       deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
+      deck.action.classList.toggle("is-dimmed", dimmed);
     }
     // Full-width scrollbar across the bottom, only when the fan overflows.
     const overflow = open && contentW > viewW + 1;
@@ -470,7 +470,19 @@
     if (x < min) return min - MAX_OVER * Math.tanh((min - x) / MAX_OVER);
     return x;
   };
-  // Reposition the fanned cards + thumb from the CURRENT (maybe overscrolled) scrollX — no clamp.
+  // The collapse arrow rides the fan's open edge (the last card), FOLLOWING it as you scroll —
+  // but never past the screen edge. So it only clamps to the edge while that edge is off-viewport;
+  // scroll the end into view and the arrow tracks the actual ticket edge again.
+  const placeArrow = (side) => {
+    const deck = decks[side]; if (!deck) return;
+    const screenEdge = window.innerWidth - MARGIN - 34;
+    const inset = fanned[side]
+      ? Math.min(MARGIN + deck.contentW + deck.scrollX + 10, screenEdge)
+      : (MARGIN + CARD_W + 10);
+    deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(inset)}px`;
+    deck.arrow.style[side === "left" ? "right" : "left"] = "auto";
+  };
+  // Reposition the fanned cards + thumb + arrow from the CURRENT (maybe overscrolled) scrollX — no clamp.
   const positionFan = (side) => {
     const deck = decks[side]; if (!deck) return;
     const step = CARD_W + GAP_FAN;
@@ -481,6 +493,7 @@
     deck.thumb.style.width = `${thumbW}px`;
     deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
     deck.thumb.style.right = "auto";
+    placeArrow(side);   // arrow follows the fan edge as it scrolls
   };
   // Ease the fan back inside its bounds after an overscroll, then restore card transitions.
   const settleFan = (side) => {

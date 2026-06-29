@@ -179,7 +179,27 @@
     if (isBlank(t)) return assignColor(t.id);   // blank & unassigned (new OR retroactive) → assign one
     return null;
   };
-  const colorBg = (hex) => { const { r, g, b } = hexToRgb(hex); return `linear-gradient(180deg, rgba(${r},${g},${b},0.92), rgba(${r},${g},${b},0.72))`; };
+  // Render a palette colour through the SAME db-panel fill as the severity colours, so it gets the
+  // same muted/mature look (the accent mixed into the dark surface) rather than the raw bright hex.
+  const colorBgCache = {};
+  const colorBg = (hex) => {
+    if (colorBgCache[hex]) return colorBgCache[hex];
+    const { r, g, b } = hexToRgb(hex);
+    const fallback = `linear-gradient(180deg, rgba(${r},${g},${b},0.4), rgba(${r},${g},${b},0.2))`;
+    if (!document.getElementById("ticket-widget-styles")) return fallback;
+    const host = (gridCard() && gridCard().parentElement) || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]') || document.querySelector(".dashboard-layout-grid") || document.body;
+    const probe = document.createElement("div");
+    probe.className = "widget-card ticket-widget-card db-panel-custom-color";
+    probe.setAttribute("data-widget-runtime-type", "ticket");
+    probe.style.cssText = `position:absolute; left:-9999px; top:0; width:160px; height:200px; --panel-accent:${hex}; --panel-accent-rgb:${r}, ${g}, ${b};`;
+    host.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const layers = [];
+    if (cs.backgroundImage && cs.backgroundImage !== "none") layers.push(cs.backgroundImage);
+    if (cs.backgroundColor && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(cs.backgroundColor)) layers.push(`linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`);
+    probe.remove();
+    return layers.length ? (colorBgCache[hex] = layers.join(", ")) : fallback;
+  };
   // The card fill: a random widget colour for a blank ticket, else its severity colour.
   const cardBg = (t) => { const c = colorFor(t); return c ? colorBg(c) : severityBg(sevOf(t)); };
 
@@ -209,7 +229,8 @@
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
       .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
-      .tk-card.tk-dragging { cursor: grabbing; transition: none;
+      .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.62;   /* glass while dragging → see the drop target through it */
+        -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
       .tk-card.tk-flying { transition: transform .4s ${EASE}, opacity .4s ease; pointer-events: none; }
 
@@ -321,7 +342,7 @@
       .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; padding: 2px; }
       .tk-zone-track { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 100%; will-change: transform; }
       /* Bucket scrollbar — same look as the deck's, vertical on the right. */
-      .tk-zsb { position: absolute; top: 4px; bottom: 4px; right: 2px; width: 8px; border-radius: 999px;
+      .tk-zsb { position: absolute; top: 4px; bottom: 4px; right: 4px; width: 8px; border-radius: 999px;
         background: rgba(255,255,255,0.16); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
         opacity: 0; transition: opacity .2s ease; pointer-events: auto; }
       .tk-zsb.is-on { opacity: 1; }
@@ -340,6 +361,7 @@
       .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
       .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
+        opacity: 0.62; -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);   /* glass while dragging */
         padding: 14px 15px; border-radius: 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 24px 52px rgba(0,0,0,0.45);
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
 
@@ -1108,7 +1130,7 @@
     const region = g
       ? { left: g.left, width: g.colW * g.cols + g.gap * (g.cols - 1) }
       : { left: MARGIN, width: window.innerWidth - MARGIN * 2 };
-    const bucketW = Math.min(CARD_W + 44, (region.width - MARGIN * (n + 1)) / n);  // one full card, snug
+    const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (n + 1)) / n);  // one full card + room for the scrollbar
     const gap = (region.width - bucketW * n) / (n + 1);          // equal gap incl. both ends
     const lefts = [];
     STAGES.forEach((s, i) => {

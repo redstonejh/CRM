@@ -330,7 +330,8 @@
          title peeks above the one on top of it. */
       .tk-zcard { box-sizing: border-box; flex: 0 0 auto; position: relative; cursor: grab; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         user-select: none; -webkit-user-select: none; padding: 14px 15px; border-radius: 15px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18); transition: box-shadow .15s ease; }
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18);
+        transition: transform .2s cubic-bezier(.2,.8,.3,1), box-shadow .15s ease; }   /* transform → collision/sandwich slide */
       .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
       .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
@@ -840,8 +841,13 @@
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
-      if (e.clientY < stackTopY()) { flowHighlight(stackPos(side), e.clientX, e.clientY); return; }
-      clearZoneHighlight();
+      if (e.clientY < stackTopY()) {
+        flowHighlight(stackPos(side), e.clientX, e.clientY);
+        const dt = dropTarget(stackPos(side), e.clientX, e.clientY);
+        if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
+        return;
+      }
+      clearZoneHighlight(); clearGap();
       // Fanned out → dragging reorders the row: move this card to the slot under it and let
       // the others slide to fill the gap (the .tk-card transform transition animates it).
       if (fanned[side]) {
@@ -871,10 +877,12 @@
       clearZoneHighlight();
       // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
       if (e.clientY < stackTopY()) {
-        const z = zoneAt(e.clientX, e.clientY);
-        if (z && canAdvance(stackPos(side), posOfStage(z))) { dropIntoZone(card, t, z, zoneInsertIndex(z, e.clientY)); return; }
+        const dt = dropTarget(stackPos(side), e.clientX, e.clientY);
+        clearGap();
+        if (dt) { dropIntoZone(card, t, dt.stage, dt.index); return; }
         layout(side); return;   // not over a VALID zone (none, or a red one) → spring back
       }
+      clearGap();
       // Released back in the stack (incl. after a reorder) → settle into the slot + restore z.
       layout(side);
     };
@@ -1122,18 +1130,19 @@
       if (!dragging) return;
       clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
       flowHighlight(posOfStage(stage), e.clientX, e.clientY);
+      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY);
+      if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
       const wasDrag = dragging; dragging = false; down = false;
-      clearZoneHighlight();
+      clearZoneHighlight(); clearGap();
       if (clone) { clone.remove(); clone = null; }
       card.classList.remove("tk-zdrag");
       if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
-      const z = zoneAt(e.clientX, e.clientY);
-      if (z === stage) { setStageAt(t.id, stage, zoneInsertIndex(stage, e.clientY)); render(); return; }              // reorder within the bucket
-      if (z && canAdvance(posOfStage(stage), posOfStage(z))) { setStage(t.id, z); setStageAt(t.id, z, zoneInsertIndex(z, e.clientY)); render(); return; }  // → another stage, at that layer
-      if (!z && e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }         // → inbox stack (backward)
+      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY);   // valid bucket (reorder or legal step) + layer
+      if (dt) { setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); return; }
+      if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }   // onto a stack → inbox
       // else: a blocked (red) zone / nowhere → the card just un-hides in place.
     };
     card.addEventListener("pointerdown", (e) => {
@@ -1162,6 +1171,29 @@
     const r = body.getBoundingClientRect();
     const count = body.querySelectorAll(".tk-zcard").length;
     return clamp(Math.floor((y - r.top + body.scrollTop) / ZCARD_PEEK), 0, count);
+  };
+  // Live "sandwich" preview: while dragging over a bucket, cards at/after the insert layer slide
+  // down (collision) to open a gap where the ticket will drop. No gap when appending to the bottom.
+  let gapStage = null;
+  const clearGap = () => {
+    if (!gapStage) return;
+    zoneBody[gapStage]?.querySelectorAll(".tk-zcard").forEach((c) => { c.style.transform = ""; });
+    gapStage = null;
+  };
+  const previewGap = (stage, index) => {
+    if (gapStage && gapStage !== stage) clearGap();
+    gapStage = stage;
+    (zoneBody[stage]?.querySelectorAll(".tk-zcard") || []).forEach((c, i) => {
+      c.style.transform = i >= index ? `translateY(${ZCARD_PEEK}px)` : "";
+    });
+  };
+  // The droppable bucket + insert index under (x,y) for a drag from chain position `from` — or null.
+  const dropTarget = (from, x, y) => {
+    const z = zoneAt(x, y);
+    if (!z) return null;
+    const to = posOfStage(z);
+    if (from !== to && !canAdvance(from, to)) return null;   // same stage = reorder; else a legal step
+    return { stage: z, index: zoneInsertIndex(z, y) };
   };
 
   const renderZones = () => {

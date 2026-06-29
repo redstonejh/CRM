@@ -216,11 +216,13 @@
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
 
       /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
+      /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
+         then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
-        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.32)); }
-      .tk-flow-shaft { fill: none; stroke: #eaf0f8; stroke-width: 4;
+        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
+      .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
-      .tk-flow-head { fill: #eaf0f8; stroke: none; }   /* same OPAQUE colour as the shaft → seamless */
+      .tk-flow-head { fill: #d2e3ff; stroke: none; }
     `;
     document.head.appendChild(style);
   };

@@ -9,6 +9,7 @@
 (() => {
   let CARD_W = 185, CARD_H = 279;          // matched to the grid ticket card at render time
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
+  const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
   const SEV_RGB = { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
   const sevOf = (t) => (t && ["low", "medium", "high", "critical"].includes(t.priority)) ? t.priority : (t ? "medium" : "none");
@@ -303,14 +304,16 @@
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
       .tk-zone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-        display: flex; flex-flow: row wrap; align-content: flex-start; justify-content: center; gap: ${MARGIN}px; padding: 2px;
+        display: flex; flex-direction: column; align-items: center; padding: 2px;
         scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
       .tk-zone-body::-webkit-scrollbar { width: 8px; }
       .tk-zone-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
       .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
 
-      /* A FULL-size ticket card living in a zone — same dimensions + look as a stack card. */
-      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; cursor: grab; color: #fff; display: flex; flex-direction: column; overflow: hidden;
+      /* A FULL-size ticket card living in a zone — same dimensions + look as a stack card. They
+         stack vertically with overlap (position+z-index set in renderZones) so only each card's
+         title peeks above the one on top of it. */
+      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; position: relative; cursor: grab; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         user-select: none; -webkit-user-select: none; padding: 14px 15px; border-radius: 15px;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18); transition: box-shadow .15s ease; }
       .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
@@ -1143,7 +1146,14 @@
       const body = zoneBody[s.key];
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id)).sort(order);
       body.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
-      list.forEach((t) => body.appendChild(zoneCardEl(t, s.key)));
+      // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
+      // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
+      list.forEach((t, i) => {
+        const card = zoneCardEl(t, s.key);
+        if (i > 0) card.style.marginTop = `-${CARD_H - ZCARD_PEEK}px`;
+        card.style.zIndex = String(i + 1);
+        body.appendChild(card);
+      });
       const count = body.parentElement.querySelector(".tk-zone-count");
       if (count) count.textContent = String(list.length);
     });

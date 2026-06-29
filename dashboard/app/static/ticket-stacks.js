@@ -229,8 +229,7 @@
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
       .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
-      .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.62;   /* glass while dragging → see the drop target through it */
-        -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+      .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.94;   /* matches the dashboard's native drag ghost (.widget-dragging): a barely-translucent "picked up" look, no blur */
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
       .tk-card.tk-flying { transition: transform .4s ${EASE}, opacity .4s ease; pointer-events: none; }
 
@@ -356,12 +355,12 @@
          title peeks above the one on top of it. */
       .tk-zcard { box-sizing: border-box; flex: 0 0 auto; position: relative; cursor: grab; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         user-select: none; -webkit-user-select: none; padding: 14px 15px; border-radius: 15px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 14px 18px -14px rgba(0,0,0,0.5);  /* neg. spread → shadow projects only downward, no horizontal bleed to compound across the stack */
         transition: transform .2s cubic-bezier(.2,.8,.3,1), box-shadow .15s ease; }   /* transform → collision/sandwich slide */
-      .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
+      .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 14px 18px -14px rgba(0,0,0,0.5); }
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
       .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
-        opacity: 0.62; -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);   /* glass while dragging */
+        opacity: 0.94;   /* matches the native drag ghost — barely-translucent, no blur */
         padding: 14px 15px; border-radius: 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 24px 52px rgba(0,0,0,0.45);
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
 

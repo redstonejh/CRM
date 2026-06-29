@@ -131,6 +131,42 @@
     return fallback;
   };
 
+  // ── Blank-ticket colours ──────────────────────────────────────────────────────
+  // A ticket with no information yet (no title/subtitle/priority) is painted a random colour
+  // from the EXISTING widget palette (panelThemePresets in modules/panel-appearance-runtime.js),
+  // minus white/"clear" — never the same colour twice in a row. The colour sticks (persisted)
+  // until a priority is set, when the severity colour takes over. Applies to new AND existing
+  // blank tickets (assigned lazily on render).
+  const TICKET_COLORS = ["#2563eb", "#0ea5e9", "#0891b2", "#14b8a6", "#16a34a", "#65a30d", "#ca8a04", "#d97706", "#dc2626", "#e11d48", "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#64748b", "#111827"];
+  const COLOR_STORE = "tk-ticket-color", COLOR_LAST = "tk-ticket-color-last";
+  let colorMap = (() => { try { return JSON.parse(localStorage.getItem(COLOR_STORE) || "{}") || {}; } catch { return {}; } })();
+  let lastColor = (() => { try { return localStorage.getItem(COLOR_LAST) || null; } catch { return null; } })();
+  const hexToRgb = (hex) => { const h = String(hex).replace("#", ""); return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }; };
+  const assignColor = (id) => {
+    const pool = TICKET_COLORS.filter((c) => c !== lastColor);          // never the same colour twice in a row
+    const c = (pool.length ? pool : TICKET_COLORS)[Math.floor(Math.random() * (pool.length || TICKET_COLORS.length))];
+    colorMap[id] = c; lastColor = c;
+    try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); localStorage.setItem(COLOR_LAST, c); } catch {}
+    return c;
+  };
+  const hasPriority = (t) => ["low", "medium", "high", "critical"].includes(t.priority);
+  const isBlank = (t) => {
+    const m = metaOf(t.id);
+    const title = (m.title && m.title.trim()) || (t.companyLabel && !["", "Untitled", "(manual)"].includes(t.companyLabel) ? t.companyLabel : "");
+    const sub = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host && t.host !== "—" ? t.host : "");
+    return !title && !sub && !hasPriority(t);
+  };
+  const colorFor = (t) => {
+    if (!t || !t.id) return null;
+    if (hasPriority(t)) return null;            // explicit priority → use the severity colour
+    if (colorMap[t.id]) return colorMap[t.id];  // already coloured → keep it (sticky)
+    if (isBlank(t)) return assignColor(t.id);   // blank & unassigned (new OR retroactive) → assign one
+    return null;
+  };
+  const colorBg = (hex) => { const { r, g, b } = hexToRgb(hex); return `linear-gradient(180deg, rgba(${r},${g},${b},0.92), rgba(${r},${g},${b},0.72))`; };
+  // The card fill: a random widget colour for a blank ticket, else its severity colour.
+  const cardBg = (t) => { const c = colorFor(t); return c ? colorBg(c) : severityBg(sevOf(t)); };
+
   const ensureStyles = () => {
     if (document.getElementById("ticket-stacks-styles")) return;
     const style = document.createElement("style");
@@ -641,7 +677,7 @@
     // Snappier flight than the shared .tk-flying default so the wiggle lands quickly.
     clone.style.cssText = `position:fixed; left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; margin:0; z-index:9999; pointer-events:none; transition: transform .2s cubic-bezier(.4,0,.2,1), opacity .2s ease;`;
     clone.style.backgroundColor = baseColor();
-    clone.style.backgroundImage = severityBg(sevOf(t));
+    clone.style.backgroundImage = cardBg(t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
     if (!target) { requestAnimationFrame(() => { clone.style.opacity = "0"; }); setTimeout(() => clone.remove(), 420); return; }
@@ -783,7 +819,7 @@
     card.dataset.id = t.id || "";
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
     card.style.backgroundColor = baseColor();
-    card.style.backgroundImage = severityBg(sevOf(t));
+    card.style.backgroundImage = cardBg(t);
     card.innerHTML = cardInner(t);
     wireCard(card, t, side);
     return card;
@@ -986,7 +1022,7 @@
         clone.className = "tk-zfly";
         clone.style.cssText = `left:${r.left}px; top:${r.top}px; width:${r.width}px; height:${r.height}px; transition:none;`;
         clone.style.backgroundColor = baseColor();
-        clone.style.backgroundImage = severityBg(sevOf(t));
+        clone.style.backgroundImage = cardBg(t);
         clone.innerHTML = zoneCardInner(t);
         document.body.appendChild(clone);
         card.classList.add("tk-zdrag");
@@ -1020,7 +1056,7 @@
     card.dataset.id = t.id || "";
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;   // full ticket dimensions
     card.style.backgroundColor = baseColor();
-    card.style.backgroundImage = severityBg(sevOf(t));
+    card.style.backgroundImage = cardBg(t);
     card.innerHTML = zoneCardInner(t);
     wireZoneCard(card, t, stage);
     return card;
@@ -1053,7 +1089,7 @@
     clone.className = "tk-zfly";
     clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; transform-origin: top left;`;
     clone.style.backgroundColor = baseColor();
-    clone.style.backgroundImage = severityBg(sevOf(t));
+    clone.style.backgroundImage = cardBg(t);
     clone.innerHTML = zoneCardInner(t);
     document.body.appendChild(clone);
     dest.style.opacity = "0";
@@ -1088,7 +1124,7 @@
       item.className = "tk-trash-item";
       item.dataset.id = t.id || "";
       item.style.backgroundColor = baseColor();
-      item.style.backgroundImage = severityBg(sevOf(t));
+      item.style.backgroundImage = cardBg(t);
       item.innerHTML = `<div class="tk-trash-co">${esc(titleOf(t))}</div><div class="tk-trash-host">${esc(subOf(t))}</div>`;
       item.addEventListener("click", () => window.ticketDetail?.open?.(t, item));   // open → Restore
       body.appendChild(item);

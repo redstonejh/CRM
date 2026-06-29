@@ -222,6 +222,7 @@ export const initializeWorkspacePagesRuntime = ({
   };
 
   const workspaceSwipeBlockSelector = [
+    ".tk-stacks",
     ".widget-card",
     ".db-panel",
     ".workspace-divider",

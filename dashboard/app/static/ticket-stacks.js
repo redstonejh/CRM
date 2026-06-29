@@ -404,11 +404,10 @@
     placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
-    deck.arrow.classList.toggle("is-hidden", n <= 1);
-    // The fanned stack's arrow stays on top; the other side's arrow drops BELOW the fanned cards
-    // (z 600 < the fanned cards' 3000) so it doesn't poke through the spread-out fan.
     const otherSide = side === "left" ? "right" : "left";
-    deck.arrow.style.zIndex = (!open && fanned[otherSide]) ? "600" : "5000";
+    // Hide this side's fan arrow entirely while the OTHER stack is fanned (or with ≤1 card).
+    deck.arrow.classList.toggle("is-hidden", n <= 1 || fanned[otherSide]);
+    deck.arrow.style.zIndex = "5000";
     // De-emphasise the idle stack's cards + arrow while the OTHER stack is fanned — but the
     // create/trash button stays at full opacity (it's an always-available action).
     deck.box.classList.toggle("is-dimmed", fanned[otherSide]);

@@ -183,7 +183,7 @@
       }
 
       /* ── Pipeline zones (glass buckets) — each panel snaps to dashboard grid columns. ─── */
-      .tk-zones { position: fixed; left: 0; right: 0; top: 70px; z-index: 800; pointer-events: none; }
+      .tk-zones { position: fixed; left: 0; right: 0; top: 64px; z-index: 800; pointer-events: none; }
       .tk-zone { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
@@ -724,17 +724,13 @@
     const colW = (r.width - gap * (cols - 1)) / cols;
     return { left: r.left, colW, gap, cols };
   };
-  const ZONE_TOP = 70;        // fallback if the nav bar can't be measured
+  const ZONE_TOP = 64;        // fixed gap below the round nav buttons
   // Three compact buckets — each just wide enough for one full ticket card — spread across the
   // dashboard grid's extent with EQUAL empty space between them (and at both ends). Vertically
-  // they expand to leave a fixed MARGIN of breathing room from the nav buttons above AND the
-  // corner stacks below (both gaps equal), measuring the nav bar's real position so it adapts.
+  // they fill from just under the nav buttons down to a MARGIN above the corner stacks.
   const layoutZones = () => {
     if (!zonesRoot) return;
-    const nav = document.querySelector(".workspace-tab-bar");
-    const navRect = nav && nav.getBoundingClientRect();
-    const top = navRect && navRect.bottom > 0 ? Math.round(navRect.bottom + MARGIN) : ZONE_TOP;
-    zonesRoot.style.top = `${top}px`;
+    zonesRoot.style.top = `${ZONE_TOP}px`;
     zonesRoot.style.bottom = `${CARD_H + MARGIN * 2}px`;        // a MARGIN above the stacks' top card
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).

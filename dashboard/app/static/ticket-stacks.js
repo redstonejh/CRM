@@ -216,7 +216,6 @@
         color: #fff; display: flex; align-items: center; justify-content: center;
         transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, opacity .25s ease; }
       .tk-stack-btn:hover { transform: scale(1.08); }
-      .tk-stack-btn.is-dimmed { opacity: 0.3; }   /* idle stack's button while the other is fanned */
       .tk-stack-btn svg { width: 16px; height: 16px; }
       .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
@@ -410,14 +409,13 @@
     // (z 600 < the fanned cards' 3000) so it doesn't poke through the spread-out fan.
     const otherSide = side === "left" ? "right" : "left";
     deck.arrow.style.zIndex = (!open && fanned[otherSide]) ? "600" : "5000";
-    // De-emphasise the idle stack (cards + arrow + its button) while the OTHER stack is fanned.
-    const dimmed = fanned[otherSide];
-    deck.box.classList.toggle("is-dimmed", dimmed);
+    // De-emphasise the idle stack's cards + arrow while the OTHER stack is fanned — but the
+    // create/trash button stays at full opacity (it's an always-available action).
+    deck.box.classList.toggle("is-dimmed", fanned[otherSide]);
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
       deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
-      deck.action.classList.toggle("is-dimmed", dimmed);
     }
     // Full-width scrollbar across the bottom, only when the fan overflows.
     const overflow = open && contentW > viewW + 1;
@@ -470,15 +468,14 @@
     if (x < min) return min - MAX_OVER * Math.tanh((min - x) / MAX_OVER);
     return x;
   };
-  // The collapse arrow rides the fan's open edge (the last card), FOLLOWING it as you scroll —
-  // but never past the screen edge. So it only clamps to the edge while that edge is off-viewport;
-  // scroll the end into view and the arrow tracks the actual ticket edge again.
+  // The collapse arrow sits at a STATIC anchor (it must not drift during scroll): the open-edge
+  // ticket when the fan fits, or the screen edge when it overflows. No scroll-following.
   const placeArrow = (side) => {
     const deck = decks[side]; if (!deck) return;
     const screenEdge = window.innerWidth - MARGIN - 34;
-    const inset = fanned[side]
-      ? Math.min(MARGIN + deck.contentW + deck.scrollX + 10, screenEdge)
-      : (MARGIN + CARD_W + 10);
+    const inset = !fanned[side] ? (MARGIN + CARD_W + 10)               // closed pile edge
+      : deck.contentW > deck.viewW ? screenEdge                        // overflowing → pinned to the screen edge
+      : Math.min(MARGIN + deck.contentW + 10, screenEdge);             // fits → at the open-edge ticket
     deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(inset)}px`;
     deck.arrow.style[side === "left" ? "right" : "left"] = "auto";
   };
@@ -493,7 +490,7 @@
     deck.thumb.style.width = `${thumbW}px`;
     deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
     deck.thumb.style.right = "auto";
-    placeArrow(side);   // arrow follows the fan edge as it scrolls
+    // NB: the arrow is NOT repositioned here — it stays at its static anchor while you scroll.
   };
   // One easing loop: each frame glide scrollX toward the target (smooth wheel), then ease it back
   // inside the bounds once the gesture ends (rubber-band settle). Restores card transitions at rest.

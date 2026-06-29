@@ -338,9 +338,13 @@
     const scrollMin = Math.min(0, viewW - contentW);
     deck.scrollX = clamp(deck.scrollX, scrollMin, 0);
     cards.forEach((c, i) => place(c, side, i, open, step));
-    // arrow rides the open edge of the deck and flips when fanned
+    // Arrow rides the open edge of the deck and flips when fanned. But a fan with more tickets
+    // than fit spills its cards off-screen — then the edge-riding arrow ends up buried mid-fan,
+    // so anchor it to the screen edge instead (it stays on top via z-index → always reachable).
     const edge = (open ? Math.min(contentW, viewW) : CARD_W) + 10;
-    deck.arrow.style[side === "left" ? "left" : "right"] = `${MARGIN + edge}px`;
+    const screenEdge = window.innerWidth - MARGIN - 34;
+    const arrowInset = (open && contentW > viewW) ? screenEdge : Math.min(MARGIN + edge, screenEdge);
+    deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(arrowInset)}px`;
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
     deck.arrow.classList.toggle("is-hidden", n <= 1);

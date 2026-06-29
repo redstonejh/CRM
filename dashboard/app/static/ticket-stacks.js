@@ -160,7 +160,7 @@
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
       .tk-card.tk-flying { transition: transform .4s ${EASE}, opacity .4s ease; pointer-events: none; }
 
-      .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none;
+      .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
         border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
         background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
         -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
@@ -182,6 +182,30 @@
       .tk-stack-btn svg { width: 16px; height: 16px; }
       .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
+
+      /* Deleted view: a togglable drawer that opens ABOVE the trash icon, ringed in the same blue
+         as the active trash button so it reads as a temporary toggled view, not a permanent stack. */
+      .tk-trash-drawer { position: fixed; z-index: 6000; box-sizing: border-box; width: 264px; max-width: calc(100vw - ${MARGIN * 2}px);
+        display: flex; flex-direction: column; color: #fff; border-radius: 16px; padding: 12px;
+        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.52));
+        -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
+        border: 1.5px solid rgba(125,180,255,0.85);
+        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.28), 0 0 26px rgba(90,150,255,0.42), 0 22px 52px rgba(0,0,0,0.46);
+        transform-origin: bottom right; transition: opacity .2s ease, transform .2s cubic-bezier(.2,.9,.3,1); }
+      .tk-trash-drawer.is-hidden { opacity: 0; transform: translateY(10px) scale(0.96); pointer-events: none; }
+      .tk-trash-hd { display: flex; align-items: center; gap: 7px; padding: 0 2px 10px;
+        font-size: 0.82rem; font-weight: 700; letter-spacing: .01em; color: rgba(180,205,255,0.95); }
+      .tk-trash-hd svg { width: 15px; height: 15px; }
+      .tk-trash-body { display: flex; flex-direction: column; gap: 7px; overflow-y: auto; max-height: 46vh; padding: 1px;
+        scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
+      .tk-trash-body::-webkit-scrollbar { width: 8px; }
+      .tk-trash-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+      .tk-trash-item { box-sizing: border-box; cursor: pointer; color: #fff; border-radius: 11px; padding: 9px 11px; overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 12px rgba(0,0,0,0.2); transition: box-shadow .14s ease; }
+      .tk-trash-item:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.30), 0 4px 12px rgba(0,0,0,0.2); }
+      .tk-trash-co { font-size: 0.86rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tk-trash-host { margin-top: 2px; font-size: 0.72rem; color: rgba(255,255,255,0.62); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tk-trash-empty { padding: 18px 8px; text-align: center; color: rgba(255,255,255,0.4); font-size: 0.8rem; }
 
       /* Sleek horizontal scrollbar beneath an overflowing fan (same recipe as the menus). */
       .tk-bar { position: absolute; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.10);
@@ -1037,6 +1061,38 @@
     setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; }, 300);
   };
 
+  // The deleted view — a togglable drawer that opens above the trash icon (blue-outlined).
+  let trashDrawer = null;
+  const ensureTrashDrawer = () => {
+    if (trashDrawer) return;
+    ensureStyles();
+    trashDrawer = document.createElement("div");
+    trashDrawer.className = "tk-trash-drawer is-hidden";
+    document.body.appendChild(trashDrawer);
+  };
+  const renderTrash = () => {
+    ensureTrashDrawer();
+    trashDrawer.style.right = `${MARGIN}px`;
+    trashDrawer.style.bottom = `${MARGIN + CARD_H + 62}px`;   // just above the trash button
+    trashDrawer.classList.toggle("is-hidden", !trashMode);
+    if (!trashMode) return;
+    const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
+    const list = tickets.filter((t) => isDeleted(t.id)).sort(order);
+    trashDrawer.innerHTML = `<div class="tk-trash-hd">${TRASH_SVG}<span>Deleted</span></div>` +
+      `<div class="tk-trash-body">${list.length ? "" : `<div class="tk-trash-empty">No deleted tickets.</div>`}</div>`;
+    const body = trashDrawer.querySelector(".tk-trash-body");
+    list.forEach((t) => {
+      const item = document.createElement("div");
+      item.className = "tk-trash-item";
+      item.dataset.id = t.id || "";
+      item.style.backgroundColor = baseColor();
+      item.style.backgroundImage = severityBg(sevOf(t));
+      item.innerHTML = `<div class="tk-trash-co">${esc(titleOf(t))}</div><div class="tk-trash-host">${esc(subOf(t))}</div>`;
+      item.addEventListener("click", () => window.ticketDetail?.open?.(t, item));   // open → Restore
+      body.appendChild(item);
+    });
+  };
+
   const render = () => {
     ensureRoot(); ensureZones();
     matchCardSize(); sizeRoot(); layoutZones(); syncDropFloor();
@@ -1046,11 +1102,10 @@
     // tickets are hidden everywhere EXCEPT the right stack when it's flipped to trash mode.
     const avail = tickets.filter((t) => !onGrid.has(t.id) && !stageOf(t.id) && !isDeleted(t.id));
     buildDeck("left", avail.filter((t) => (t.state || "open") !== "resolved").sort(order));
-    const rightList = trashMode
-      ? tickets.filter((t) => isDeleted(t.id) && !onGrid.has(t.id))               // trash: every deleted ticket
-      : avail.filter((t) => (t.state || "open") === "resolved");                  // resolved/closed
-    buildDeck("right", rightList.slice().sort(order));
+    // The right stack always shows resolved/closed; deleted tickets live in the trash drawer.
+    buildDeck("right", avail.filter((t) => (t.state || "open") === "resolved").sort(order));
     renderZones();
+    renderTrash();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then
     // fly it to the centre and expand its config. Creating fires several re-renders that REPLACE
     // the card element, so re-query the LIVE node at fire time — a detached node has a 0-rect and

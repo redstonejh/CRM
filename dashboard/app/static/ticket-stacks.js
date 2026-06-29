@@ -738,31 +738,35 @@
     flowShafts = [...flowRoot.querySelectorAll(".tk-flow-shaft")];
     flowHeads = [...flowRoot.querySelectorAll(".tk-flow-head")];
   };
-  const HEAD_LEN = 20, HEAD_HALF = 9;
-  // A solid arrowhead whose BASE CENTRE is where the shaft stops — so the line enters the head's
-  // centre and never reaches the tip. dx,dy = unit travel direction at the tip; r = rounder.
+  const HEAD_LEN = 20, HEAD_HALF = 9, CORNER = 46;
+  // A solid arrowhead whose BASE CENTRE is where the shaft stops; the shaft's round cap just
+  // reaches the base, so the line enters the head's centre and nothing crosses into/past it.
+  // dx,dy = unit travel direction at the tip; r = rounder.
   const arrowHead = (ex, ey, dx, dy, r) => {
     const bx = ex - HEAD_LEN * dx, by = ey - HEAD_LEN * dy;             // base centre
-    const sx = ex - (HEAD_LEN - 6) * dx, sy = ey - (HEAD_LEN - 6) * dy; // shaft stops 6px INTO the head
+    const sx = ex - (HEAD_LEN + 2) * dx, sy = ey - (HEAD_LEN + 2) * dy; // shaft end (round cap reaches base)
     const px = -dy * HEAD_HALF, py = dx * HEAD_HALF;                    // half-width perpendicular
     return { sx, sy, d: `M${r(bx + px)},${r(by + py)} L${r(ex)},${r(ey)} L${r(bx - px)},${r(by - py)} Z` };
   };
-  // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds.
+  // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds. Each stack connector is a
+  // straight run + ONE rounded corner so the line reaches the head dead-straight and centred.
   const drawFlow = (lefts, bw, topY, botY) => {
     ensureFlow();
     const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
     const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
-    const lStackX = MARGIN + CARD_W / 2, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
+    const leftX = MARGIN + 26, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
     const shafts = [], heads = [];
-    // 1 — arc up out of the inbox stack, arriving DEAD HORIZONTAL into triage (head points right).
+    // 1 — rise from the inbox, early rounded corner, long HORIZONTAL run dead-centre into triage.
     { const ex = lefts[0] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
-      shafts.push(`M${r(lStackX)},${offStack} Q${r(lStackX)},${midY} ${r(h.sx)},${r(h.sy)}`); heads.push(h.d); }
+      shafts.push(`M${leftX},${offStack} L${leftX},${midY + CORNER} Q${leftX},${midY} ${leftX + CORNER},${midY} L${r(h.sx)},${midY}`);
+      heads.push(h.d); }
     // 2 — straight trail across each gap into the next bucket (head points right).
     for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
-      shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${r(h.sy)}`); heads.push(h.d); }
-    // 3 — arc out of resolution, arriving DEAD VERTICAL into the resolved stack (head points down).
+      shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${midY}`); heads.push(h.d); }
+    // 3 — leave resolution, early rounded corner, long VERTICAL run dead-centre down into resolved.
     { const h = arrowHead(rStackX, offStack, 0, 1, r);
-      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} Q${r(rStackX)},${midY} ${r(h.sx)},${r(h.sy)}`); heads.push(h.d); }
+      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} L${r(rStackX - CORNER)},${midY} Q${r(rStackX)},${midY} ${r(rStackX)},${midY + CORNER} L${r(rStackX)},${r(h.sy)}`);
+      heads.push(h.d); }
     shafts.forEach((d, i) => flowShafts[i]?.setAttribute("d", d));
     heads.forEach((d, i) => flowHeads[i]?.setAttribute("d", d));
   };

@@ -200,14 +200,14 @@
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
       .tk-zone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-        display: flex; flex-direction: column; gap: 8px; padding: 2px;
+        display: flex; flex-flow: row wrap; align-content: flex-start; gap: 8px; padding: 2px;
         scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
       .tk-zone-body::-webkit-scrollbar { width: 8px; }
       .tk-zone-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
       .tk-zone-empty { margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
 
       /* Compact ticket card inside a zone. */
-      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; cursor: grab; color: #fff; overflow: hidden;
+      .tk-zcard { box-sizing: border-box; flex: 0 0 auto; width: 150px; cursor: grab; color: #fff; overflow: hidden;
         user-select: none; -webkit-user-select: none; border-radius: 12px; padding: 9px 11px;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 4px 14px rgba(0,0,0,0.18); transition: box-shadow .14s ease; }
       .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.32), 0 4px 14px rgba(0,0,0,0.18); }

@@ -545,8 +545,10 @@
         baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
       }
       if (!dragging) return;
-      // Lifted up out of the stack zone → become a real dashboard widget mid-drag.
-      if (e.clientY < stackTopY() && gridLayout()?.__initWidget) { handOffToGrid(e); return; }
+      // STACKED deck → lifting a card up onto the dashboard hands it off to the grid. When
+      // FANNED, dragging only reorders (below): the cards sit just under stackTopY, so a tiny
+      // upward drift would otherwise mis-fire the hand-off and yank the card onto the grid.
+      if (!fanned[side] && e.clientY < stackTopY() && gridLayout()?.__initWidget) { handOffToGrid(e); return; }
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
       // Fanned out → dragging reorders the row: move this card to the slot under it and let
       // the others slide to fill the gap (the .tk-card transform transition animates it).
@@ -574,9 +576,10 @@
       card.classList.remove("tk-dragging");
       // Config opens on DOUBLE click; a single click does nothing (the card never moved).
       if (!wasDrag) return;
-      // Released up in the dashboard without a grid to hand off to → bring it in.
-      if (e.clientY < stackTopY()) { flyIntoGrid(card, t); return; }
-      // Released in the stack → settle into the (possibly reordered) slot, restoring z-index.
+      // STACKED + released up on the dashboard → drop it onto the grid. (When fanned this is
+      // disabled so a reorder can't accidentally fling the card onto the grid.)
+      if (!fanned[side] && e.clientY < stackTopY()) { flyIntoGrid(card, t); return; }
+      // Fanned reorder, or released back in the stack → settle into the slot, restoring z-index.
       layout(side);
     };
     card.addEventListener("pointerdown", (e) => {

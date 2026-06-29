@@ -318,11 +318,16 @@
         padding: 2px 4px 11px; font-size: 0.98rem; font-weight: 700; line-height: 1.25; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
-      .tk-zone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-        display: flex; flex-direction: column; align-items: center; padding: 2px;
-        scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
-      .tk-zone-body::-webkit-scrollbar { width: 8px; }
-      .tk-zone-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+      .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; padding: 2px; }
+      .tk-zone-track { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 100%; will-change: transform; }
+      /* Bucket scrollbar — same look as the deck's, vertical on the right. */
+      .tk-zsb { position: absolute; top: 4px; bottom: 4px; right: 2px; width: 8px; border-radius: 999px;
+        background: rgba(255,255,255,0.16); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+        opacity: 0; transition: opacity .2s ease; pointer-events: auto; }
+      .tk-zsb.is-on { opacity: 1; }
+      .tk-zth { position: absolute; left: 0; width: 8px; border-radius: 999px; background: rgba(255,255,255,0.66);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.4); cursor: grab; transition: background .15s ease; }
+      .tk-zth:hover { background: rgba(255,255,255,0.88); } .tk-zth:active { cursor: grabbing; background: #fff; }
       .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
 
       /* A FULL-size ticket card living in a zone — same dimensions + look as a stack card. They
@@ -957,7 +962,73 @@
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
-  const zoneBody = {};   // stage key → body element
+  const zoneBody = {};    // stage key → body element (the scroll viewport)
+  const zoneTrack = {};   // stage key → the translated track holding the card stack
+  const zoneScroll = {};  // stage key → { sy, ty, raf, wheeling, releaseT } (custom smooth/recoil scroll)
+
+  // ── Bucket scroll (same smooth + rubber-band recoil as the fanned decks, but vertical) ──────
+  const zViewH = (s) => zoneBody[s]?.clientHeight || 0;
+  const zContentH = (s) => zoneTrack[s]?.offsetHeight || 0;
+  const zMin = (s) => Math.min(0, zViewH(s) - zContentH(s));
+  const positionZone = (s) => {
+    const tr = zoneTrack[s], st = zoneScroll[s], body = zoneBody[s]; if (!tr || !st || !body) return;
+    tr.style.transform = `translateY(${Math.round(st.sy)}px)`;
+    const view = zViewH(s), content = zContentH(s), min = zMin(s);
+    const sb = body.querySelector(".tk-zsb"), th = body.querySelector(".tk-zth");
+    const over = content > view + 1;
+    sb.classList.toggle("is-on", over);
+    if (over) {
+      const trackH = view - 8;
+      const thumbH = Math.max(28, trackH * (view / content));
+      const frac = min ? clamp(st.sy, min, 0) / min : 0;
+      th.style.height = `${Math.round(thumbH)}px`;
+      th.style.top = `${Math.round(4 + frac * (trackH - thumbH))}px`;
+    }
+  };
+  const runZoneScroll = (s) => {
+    const st = zoneScroll[s]; if (!st || st.raf) return;
+    const tick = () => {
+      const min = zMin(s), goal = st.wheeling ? st.ty : clamp(st.ty, min, 0);
+      st.sy += (goal - st.sy) * 0.22;
+      if (!st.wheeling && Math.abs(goal - st.sy) < 0.4) { st.sy = goal; st.ty = goal; positionZone(s); st.raf = 0; return; }
+      positionZone(s); st.raf = requestAnimationFrame(tick);
+    };
+    st.raf = requestAnimationFrame(tick);
+  };
+  const onZoneWheel = (s, e) => {
+    if (zContentH(s) <= zViewH(s) + 1) return;   // nothing to scroll
+    e.preventDefault();
+    const st = zoneScroll[s], min = zMin(s);
+    const raw = e.deltaY + e.deltaX;
+    const px = e.deltaMode === 1 ? raw * 16 : e.deltaMode === 2 ? raw * zViewH(s) : raw;
+    if (!st.raf) st.ty = st.sy;
+    st.ty = damp(st.ty - px, min);
+    st.wheeling = true;
+    clearTimeout(st.releaseT);
+    st.releaseT = setTimeout(() => { st.wheeling = false; runZoneScroll(s); }, 90);
+    runZoneScroll(s);
+  };
+  const wireZoneThumb = (s) => {
+    const th = zoneBody[s].querySelector(".tk-zth");
+    let y0 = 0, start = 0, drag = false;
+    const move = (e) => {
+      if (!drag) return;
+      const st = zoneScroll[s], min = zMin(s), view = zViewH(s), content = zContentH(s);
+      const trackH = view - 8, thumbH = Math.max(28, trackH * (view / content));
+      const dFrac = (e.clientY - y0) / Math.max(1, trackH - thumbH);
+      st.sy = damp(start + dFrac * min, min);
+      positionZone(s);
+    };
+    const up = () => {
+      drag = false; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      const st = zoneScroll[s]; st.wheeling = false; st.ty = st.sy; runZoneScroll(s);
+    };
+    th.addEventListener("pointerdown", (e) => {
+      e.stopPropagation(); drag = true; y0 = e.clientY;
+      const st = zoneScroll[s]; cancelAnimationFrame(st.raf); st.raf = 0; clearTimeout(st.releaseT); st.wheeling = false; start = st.sy;
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+    });
+  };
 
   // ── Glass flow arrows ─────────────────────────────────────────────────────────
   // A stylized translucent line through the pipeline: left (inbox) stack → triage, an arrow
@@ -1059,9 +1130,14 @@
       const panel = document.createElement("div");
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
-      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-count">0</span></div><div class="tk-zone-body"></div>`;
+      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-count">0</span></div>` +
+        `<div class="tk-zone-body"><div class="tk-zone-track"></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
+      zoneTrack[s.key] = panel.querySelector(".tk-zone-track");
+      zoneScroll[s.key] = { sy: 0, ty: 0, raf: 0, wheeling: false, releaseT: 0 };
+      zoneBody[s.key].addEventListener("wheel", (e) => onZoneWheel(s.key, e), { passive: false });
+      wireZoneThumb(s.key);
     });
     document.body.appendChild(zonesRoot);
     layoutZones();
@@ -1167,23 +1243,24 @@
   // Which layer a drop at viewport-y lands on within a bucket: the peek band under the cursor,
   // or the bottom (== card count) when it's below the stack — so an indiscriminate drop appends.
   const zoneInsertIndex = (stage, y) => {
-    const body = zoneBody[stage]; if (!body) return 0;
+    const body = zoneBody[stage], track = zoneTrack[stage]; if (!body || !track) return 0;
     const r = body.getBoundingClientRect();
-    const count = body.querySelectorAll(".tk-zcard").length;
-    return clamp(Math.floor((y - r.top + body.scrollTop) / ZCARD_PEEK), 0, count);
+    const count = track.querySelectorAll(".tk-zcard").length;
+    const sy = zoneScroll[stage]?.sy || 0;   // track is translated by sy → undo it to get content-y
+    return clamp(Math.floor((y - r.top - sy) / ZCARD_PEEK), 0, count);
   };
   // Live "sandwich" preview: while dragging over a bucket, cards at/after the insert layer slide
   // down (collision) to open a gap where the ticket will drop. No gap when appending to the bottom.
   let gapStage = null;
   const clearGap = () => {
     if (!gapStage) return;
-    zoneBody[gapStage]?.querySelectorAll(".tk-zcard").forEach((c) => { c.style.transform = ""; });
+    zoneTrack[gapStage]?.querySelectorAll(".tk-zcard").forEach((c) => { c.style.transform = ""; });
     gapStage = null;
   };
   const previewGap = (stage, index) => {
     if (gapStage && gapStage !== stage) clearGap();
     gapStage = stage;
-    (zoneBody[stage]?.querySelectorAll(".tk-zcard") || []).forEach((c, i) => {
+    (zoneTrack[stage]?.querySelectorAll(".tk-zcard") || []).forEach((c, i) => {
       c.style.transform = i >= index ? `translateY(${ZCARD_PEEK}px)` : "";
     });
   };
@@ -1200,22 +1277,24 @@
     ensureZones();
     const byCreated = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     STAGES.forEach((s) => {
-      const body = zoneBody[s.key];
+      const body = zoneBody[s.key], track = zoneTrack[s.key];
       const ord = stageOrder[s.key] || [];
       const oidx = (id) => { const i = ord.indexOf(id); return i === -1 ? 1e9 : i; };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id))
         .sort((a, b) => oidx(a.id) - oidx(b.id) || byCreated(a, b));
-      body.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
+      track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
         const card = zoneCardEl(t, s.key);
         if (i > 0) card.style.marginTop = `-${CARD_H - ZCARD_PEEK}px`;
         card.style.zIndex = String(i + 1);
-        body.appendChild(card);
+        track.appendChild(card);
       });
       const count = body.parentElement.querySelector(".tk-zone-count");
       if (count) count.textContent = String(list.length);
+      const st = zoneScroll[s.key];   // re-clamp scroll to the new content height + reposition
+      if (st) { st.sy = clamp(st.sy, zMin(s.key), 0); st.ty = st.sy; positionZone(s.key); }
     });
   };
 
@@ -1227,7 +1306,7 @@
     setStage(t.id, stage);
     setStageAt(t.id, stage, index);   // bottom by default, or the layer the cursor was over
     render();
-    const dest = zoneBody[stage]?.querySelector(`.tk-zcard[data-id="${cssEsc(t.id)}"]`);
+    const dest = zoneTrack[stage]?.querySelector(`.tk-zcard[data-id="${cssEsc(t.id)}"]`);
     if (!dest) return;
     const to = dest.getBoundingClientRect();
     const clone = document.createElement("div");

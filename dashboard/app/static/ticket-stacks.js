@@ -495,23 +495,24 @@
     deck.thumb.style.right = "auto";
     placeArrow(side);   // arrow follows the fan edge as it scrolls
   };
-  // Ease the fan back inside its bounds after an overscroll, then restore card transitions.
-  const settleFan = (side) => {
-    const deck = decks[side]; if (!deck) return;
-    cancelAnimationFrame(deck._raf);
+  // One easing loop: each frame glide scrollX toward the target (smooth wheel), then ease it back
+  // inside the bounds once the gesture ends (rubber-band settle). Restores card transitions at rest.
+  const runScroll = (side) => {
+    const deck = decks[side]; if (!deck || deck._raf) return;   // already animating → loop reads targetX live
     deck.cards.forEach((c) => { c.style.transition = "none"; });
-    const step = () => {
-      const target = clamp(deck.scrollX, scrollMinOf(deck), 0);
-      deck.scrollX += (target - deck.scrollX) * 0.2;
-      if (Math.abs(target - deck.scrollX) < 0.4) {
-        deck.scrollX = target; positionFan(side);
+    const tick = () => {
+      const min = scrollMinOf(deck);
+      const goal = deck._wheeling ? deck.targetX : clamp(deck.targetX, min, 0);
+      deck.scrollX += (goal - deck.scrollX) * 0.22;
+      if (!deck._wheeling && Math.abs(goal - deck.scrollX) < 0.4) {
+        deck.scrollX = goal; deck.targetX = goal; positionFan(side);
         deck.cards.forEach((c) => { c.style.transition = ""; });
-        return;
+        deck._raf = 0; return;
       }
       positionFan(side);
-      deck._raf = requestAnimationFrame(step);
+      deck._raf = requestAnimationFrame(tick);
     };
-    deck._raf = requestAnimationFrame(step);
+    deck._raf = requestAnimationFrame(tick);
   };
 
   const onWheel = (side, e) => {
@@ -519,14 +520,17 @@
     const deck = decks[side];
     if (deck.contentW <= deck.viewW) return;
     e.preventDefault();
-    cancelAnimationFrame(deck._raf); clearTimeout(deck._settleT);
-    const min = scrollMinOf(deck), delta = e.deltaY + e.deltaX;
-    const over = deck.scrollX > 0 ? deck.scrollX : (deck.scrollX < min ? min - deck.scrollX : 0);
-    const resist = over > 0 ? Math.max(0.12, 1 - over / MAX_OVER) : 1;   // resist more the further past the end
-    deck.scrollX = clamp(deck.scrollX - delta * resist, min - MAX_OVER, MAX_OVER);
-    deck.cards.forEach((c) => { c.style.transition = "none"; });
-    positionFan(side);
-    deck._settleT = setTimeout(() => settleFan(side), 110);              // bounce back once the wheel stops
+    const min = scrollMinOf(deck);
+    // Normalise wheel units to pixels (mice report lines/pages) so every device scrolls evenly,
+    // then accumulate into a target the loop eases toward — no per-event jumps.
+    const raw = e.deltaY + e.deltaX;
+    const px = e.deltaMode === 1 ? raw * 16 : e.deltaMode === 2 ? raw * deck.viewW : raw;
+    if (!deck._raf) deck.targetX = deck.scrollX;   // new gesture → resync target to the live position
+    deck.targetX = damp(deck.targetX - px, min);   // rubber-band-bounded target
+    deck._wheeling = true;
+    clearTimeout(deck._releaseT);
+    deck._releaseT = setTimeout(() => { deck._wheeling = false; runScroll(side); }, 90);   // settle after wheel stops
+    runScroll(side);
   };
 
   const wireThumb = (side, thumb) => {
@@ -541,8 +545,17 @@
       deck.cards.forEach((c) => { c.style.transition = "none"; });
       positionFan(side);
     };
-    const up = () => { drag = false; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); settleFan(side); };
-    thumb.addEventListener("pointerdown", (e) => { e.stopPropagation(); drag = true; sx = e.clientX; startScroll = decks[side].scrollX; cancelAnimationFrame(decks[side]._raf); window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); });
+    const up = () => {
+      drag = false; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      const deck = decks[side]; deck._wheeling = false; deck.targetX = deck.scrollX; runScroll(side);   // settle / bounce back
+    };
+    thumb.addEventListener("pointerdown", (e) => {
+      e.stopPropagation(); drag = true; sx = e.clientX;
+      const deck = decks[side];
+      cancelAnimationFrame(deck._raf); deck._raf = 0; clearTimeout(deck._releaseT); deck._wheeling = false;
+      startScroll = deck.scrollX;
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+    });
   };
 
   // Next free grid cell in a 6-col layout for a 1-col × 3-row ticket widget.

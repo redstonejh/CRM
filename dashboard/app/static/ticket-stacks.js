@@ -23,9 +23,9 @@
   // stacks (the inbox). cssEsc guards attribute selectors built from ticket ids.
   const cssEsc = (window.CSS && CSS.escape) ? (s) => CSS.escape(s) : (s) => String(s).replace(/["\\\]]/g, "\\$&");
   const STAGES = [
-    { key: "triage", label: "Triage and Assignment" },
-    { key: "investigation", label: "Investigation and Diagnosis" },
-    { key: "resolution", label: "Resolution and Closure" },
+    { key: "triage", label: "Triage" },
+    { key: "investigation", label: "Investigation" },
+    { key: "resolution", label: "Resolution" },
   ];
   const STAGE_KEYS = STAGES.map((s) => s.key);
   const STAGE_STORE = "tk-ticket-stage";
@@ -195,7 +195,7 @@
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
       .tk-zone-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-        padding: 2px 4px 11px; font-size: 0.82rem; font-weight: 700; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
+        padding: 2px 4px 11px; font-size: 0.98rem; font-weight: 700; line-height: 1.25; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
       .tk-zone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;

@@ -733,8 +733,8 @@
     // A small SOLID triangle head; lives on top of the (single) trail so no line shows through it.
     wrap.innerHTML =
       `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><defs>` +
-      `<marker id="tk-flow-head" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="10.5" refY="6.5" orient="auto">` +
-      `<path d="M2,2 L12,6.5 L2,11 Z" fill="rgba(255,255,255,0.95)"></path></marker>` +
+      `<marker id="tk-flow-head" markerUnits="userSpaceOnUse" markerWidth="17" markerHeight="14" refX="14.5" refY="7" orient="auto">` +
+      `<path d="M1,1 L16,7 L1,13 Z" fill="rgba(255,255,255,0.95)"></path></marker>` +
       `</defs>${lines}</svg>`;
     flowRoot = wrap.firstElementChild;
     document.body.appendChild(flowRoot);
@@ -748,13 +748,15 @@
     const offStack = r(cardTop - MARGIN);                          // start/end a MARGIN clear of the stacks
     const lStackX = MARGIN + CARD_W / 2, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
     const ds = [];
-    // 1 — long arc up out of the inbox stack, into triage.
-    ds.push(`M${r(lStackX)},${offStack} Q${r(lStackX - 8)},${midY} ${r(lefts[0] - MARGIN)},${midY}`);
+    // 1 — long arc up out of the inbox stack, arriving DEAD HORIZONTAL into triage (control
+    //     directly above the start → vertical exit, horizontal entry → head points cleanly right).
+    ds.push(`M${r(lStackX)},${offStack} Q${r(lStackX)},${midY} ${r(lefts[0] - MARGIN)},${midY}`);
     // 2 — long straight trail across each gap into the next bucket.
     for (let i = 0; i < n - 1; i++)
       ds.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(lefts[i + 1] - MARGIN)},${midY}`);
-    // 3 — long arc down out of resolution, into the resolved stack.
-    ds.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} Q${r(rStackX + 8)},${midY} ${r(rStackX)},${offStack}`);
+    // 3 — long arc out of resolution, arriving DEAD VERTICAL into the resolved stack (control
+    //     directly above the end → horizontal exit, vertical entry → head points cleanly down).
+    ds.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} Q${r(rStackX)},${midY} ${r(rStackX)},${offStack}`);
     ds.forEach((d, i) => flowArrows[i]?.setAttribute("d", d));
   };
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.

@@ -218,9 +218,9 @@
       /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.32)); }
-      .tk-flow-shaft { fill: none; stroke: rgba(255,255,255,0.85); stroke-width: 4;
+      .tk-flow-shaft { fill: none; stroke: #eaf0f8; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
-      .tk-flow-head { fill: rgba(255,255,255,0.95); stroke: none; }
+      .tk-flow-head { fill: #eaf0f8; stroke: none; }   /* same OPAQUE colour as the shaft → seamless */
     `;
     document.head.appendChild(style);
   };
@@ -744,7 +744,7 @@
   // dx,dy = unit travel direction at the tip; r = rounder.
   const arrowHead = (ex, ey, dx, dy, r) => {
     const bx = ex - HEAD_LEN * dx, by = ey - HEAD_LEN * dy;             // base centre
-    const sx = ex - (HEAD_LEN + 2) * dx, sy = ey - (HEAD_LEN + 2) * dy; // shaft end (round cap reaches base)
+    const sx = ex - (HEAD_LEN - 5) * dx, sy = ey - (HEAD_LEN - 5) * dy; // shaft overlaps 5px INTO the head (no gap)
     const px = -dy * HEAD_HALF, py = dx * HEAD_HALF;                    // half-width perpendicular
     return { sx, sy, d: `M${r(bx + px)},${r(by + py)} L${r(ex)},${r(ey)} L${r(bx - px)},${r(by - py)} Z` };
   };
@@ -754,7 +754,7 @@
     ensureFlow();
     const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
     const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
-    const leftX = MARGIN + 26, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
+    const leftX = MARGIN + 26, rightX = window.innerWidth - (MARGIN + 26);   // mirror of leftX
     const shafts = [], heads = [];
     // 1 — rise from the inbox, early rounded corner, long HORIZONTAL run dead-centre into triage.
     { const ex = lefts[0] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
@@ -763,9 +763,10 @@
     // 2 — straight trail across each gap into the next bucket (head points right).
     for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
       shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${midY}`); heads.push(h.d); }
-    // 3 — leave resolution, early rounded corner, long VERTICAL run dead-centre down into resolved.
-    { const h = arrowHead(rStackX, offStack, 0, 1, r);
-      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} L${r(rStackX - CORNER)},${midY} Q${r(rStackX)},${midY} ${r(rStackX)},${midY + CORNER} L${r(rStackX)},${r(h.sy)}`);
+    // 3 — MIRROR of the left: leave resolution, early rounded corner, long VERTICAL run dead-centre
+    //     down into the resolved stack (head points down).
+    { const h = arrowHead(rightX, offStack, 0, 1, r);
+      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} L${r(rightX - CORNER)},${midY} Q${r(rightX)},${midY} ${r(rightX)},${midY + CORNER} L${r(rightX)},${r(h.sy)}`);
       heads.push(h.d); }
     shafts.forEach((d, i) => flowShafts[i]?.setAttribute("d", d));
     heads.forEach((d, i) => flowHeads[i]?.setAttribute("d", d));

@@ -214,6 +214,11 @@
       .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         padding: 14px 15px; border-radius: 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 24px 52px rgba(0,0,0,0.45);
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
+
+      /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
+      .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible; }
+      .tk-flow-body { fill: none; stroke: url(#tk-flow-grad); stroke-width: 3; stroke-linecap: round; filter: url(#tk-flow-glow); }
+      .tk-flow-core { fill: none; stroke: rgba(255,255,255,0.8); stroke-width: 1.1; stroke-linecap: round; }
     `;
     document.head.appendChild(style);
   };
@@ -711,6 +716,61 @@
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
   const zoneBody = {};   // stage key → body element
+
+  // ── Glass flow arrows ─────────────────────────────────────────────────────────
+  // A stylized translucent line through the pipeline: left (inbox) stack → triage, an arrow
+  // between each bucket, then resolution → right (resolved) stack. Drawn as one SVG overlay,
+  // each arrow a glowing glass body with a bright core + a glassy arrowhead.
+  let flowRoot = null, flowBodies = [], flowCores = [];
+  const ensureFlow = () => {
+    if (flowRoot) return;
+    ensureStyles();
+    const arrows = STAGES.length + 1;                  // left curve + (n-1) between + right curve
+    let lines = "";
+    for (let i = 0; i < arrows; i++)
+      lines += `<path class="tk-flow-body" marker-end="url(#tk-flow-head)"></path><path class="tk-flow-core"></path>`;
+    const wrap = document.createElement("div");
+    wrap.innerHTML =
+      `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><defs>` +
+      `<linearGradient id="tk-flow-grad" x1="0" y1="0" x2="1" y2="1">` +
+      `<stop offset="0" stop-color="#ffffff" stop-opacity="0.72"></stop>` +
+      `<stop offset="1" stop-color="#bcd6ff" stop-opacity="0.48"></stop></linearGradient>` +
+      `<filter id="tk-flow-glow" x="-60%" y="-60%" width="220%" height="220%">` +
+      `<feDropShadow dx="0" dy="1" stdDeviation="2.4" flood-color="#8fb6ff" flood-opacity="0.45"></feDropShadow></filter>` +
+      `<marker id="tk-flow-head" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" refX="12.5" refY="8" orient="auto">` +
+      `<path d="M2,2 L14,8 L2,14 L5.5,8 Z" fill="url(#tk-flow-grad)" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.6"></path></marker>` +
+      `</defs>${lines}</svg>`;
+    flowRoot = wrap.firstElementChild;
+    document.body.appendChild(flowRoot);
+    flowBodies = [...flowRoot.querySelectorAll(".tk-flow-body")];
+    flowCores = [...flowRoot.querySelectorAll(".tk-flow-core")];
+  };
+  // lefts: each bucket's left x; bw: bucket width; topY/botY: bucket top/bottom in viewport px.
+  const drawFlow = (lefts, bw, topY, botY) => {
+    ensureFlow();
+    const n = lefts.length, H = botY - topY;
+    const cardTop = window.innerHeight - CARD_H - MARGIN;       // top edge of the corner stack cards
+    const lStackX = MARGIN + CARD_W / 2, rStackX = window.innerWidth - MARGIN - CARD_W / 2;
+    const r = (v) => Math.round(v);
+    const ds = [];
+    // 1 — left stack rises and hooks right into the triage bucket's left edge.
+    {
+      const sx = lStackX, sy = cardTop, ex = lefts[0] - 9, ey = botY - H * 0.32;
+      ds.push(`M${r(sx)},${r(sy)} C${r(sx - 26)},${r(sy - H * 0.16)} ${r(ex - 72)},${r(ey)} ${r(ex)},${r(ey)}`);
+    }
+    // 2 — a gently bowed arrow across each gap, pointing into the next bucket.
+    const midY = topY + H * 0.5;
+    for (let i = 0; i < n - 1; i++) {
+      const sx = lefts[i] + bw + 12, ex = lefts[i + 1] - 11, span = ex - sx;
+      ds.push(`M${r(sx)},${r(midY)} C${r(sx + span * 0.34)},${r(midY - 13)} ${r(ex - span * 0.34)},${r(midY - 13)} ${r(ex)},${r(midY)}`);
+    }
+    // 3 — resolution bucket sweeps right then down into the resolved stack.
+    {
+      const sx = lefts[n - 1] + bw + 9, sy = botY - H * 0.32, ex = rStackX, ey = cardTop - 6;
+      ds.push(`M${r(sx)},${r(sy)} C${r(sx + 72)},${r(sy)} ${r(ex - 26)},${r(ey - H * 0.16)} ${r(ex)},${r(ey)}`);
+    }
+    ds.forEach((d, i) => { flowBodies[i]?.setAttribute("d", d); flowCores[i]?.setAttribute("d", d); });
+  };
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {
     const grid = document.querySelector(".dashboard-layout-grid");
@@ -739,12 +799,16 @@
       : { left: MARGIN, width: window.innerWidth - MARGIN * 2 };
     const bucketW = Math.min(CARD_W + 44, (region.width - MARGIN * (n + 1)) / n);  // one full card, snug
     const gap = (region.width - bucketW * n) / (n + 1);          // equal gap incl. both ends
+    const lefts = [];
     STAGES.forEach((s, i) => {
+      const left = region.left + gap * (i + 1) + bucketW * i;
+      lefts.push(left);
       const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;
       panel.style.width = `${Math.round(bucketW)}px`;
-      panel.style.left = `${Math.round(region.left + gap * (i + 1) + bucketW * i)}px`;
+      panel.style.left = `${Math.round(left)}px`;
     });
+    drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
   };
   const ensureZones = () => {
     if (zonesRoot) return;

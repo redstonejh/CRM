@@ -184,7 +184,7 @@
       box.addEventListener("wheel", (e) => onWheel(side, e), { passive: false });
       wireThumb(side, thumb);
       root.appendChild(box);
-      decks[side] = { box, arrow, bar, thumb, cards: [], scrollX: 0, contentW: 0, viewW: 0 };
+      decks[side] = { box, arrow, bar, thumb, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: null };
     }
     document.body.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
@@ -492,9 +492,9 @@
     }, 180);
   };
 
-  const wireCard = (card, t) => {
+  const wireCard = (card, t, side) => {
     let startX = 0, startY = 0, dragging = false, down = false, handedOff = false;
-    let pointerId = null, pointerType = "mouse";
+    let pointerId = null, pointerType = "mouse", baseTx = 0, baseTy = 0;
 
     // Materialise the ticket as a real grid widget, drop the source card from its
     // stack, then "pick up" the new widget mid-drag with the native widget-move runtime.
@@ -530,11 +530,31 @@
     const onMove = (e) => {
       if (!down || handedOff) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
-      if (!dragging && Math.hypot(dx, dy) > 6) { dragging = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999"; }
+      if (!dragging && Math.hypot(dx, dy) > 6) {
+        dragging = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
+        baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
+      }
       if (!dragging) return;
       // Lifted up out of the stack zone → become a real dashboard widget mid-drag.
       if (e.clientY < stackTopY() && gridLayout()?.__initWidget) { handOffToGrid(e); return; }
-      card.style.transform = `translate(${card._tx + dx}px, ${card._ty + dy}px) rotate(0deg) scale(1.03)`;
+      card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
+      // Fanned out → dragging reorders the row: move this card to the slot under it and let
+      // the others slide to fill the gap (the .tk-card transform transition animates it).
+      if (fanned[side]) {
+        const deck = decks[side];
+        if (deck.cards.length > 1) {
+          const step = CARD_W + GAP_FAN;
+          const along = (side === "right" ? -(baseTx + dx) : (baseTx + dx)) - deck.scrollX;
+          const idx = clamp(Math.round(along / step), 0, deck.cards.length - 1);
+          const cur = deck.cards.indexOf(card);
+          if (cur !== -1 && idx !== cur) {
+            deck.cards.splice(cur, 1);
+            deck.cards.splice(idx, 0, card);
+            deck.order = deck.cards.map((c) => c.dataset.id);   // remember the custom order across renders
+            layout(side);                                       // animate the OTHER cards (this one is skipped while dragging)
+          }
+        }
+      }
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
@@ -570,7 +590,7 @@
       `</div>`;
   };
 
-  const cardEl = (t) => {
+  const cardEl = (t, side) => {
     const card = document.createElement("div");
     // NOT a .widget-card (the runtime renders the grid ticket into EVERY .widget-card, which
     // is what overwrote these with "Willits Scaling"). .tk-card replicates the frame; the
@@ -582,16 +602,23 @@
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = severityBg(sevOf(t));
     card.innerHTML = cardInner(t);
-    wireCard(card, t);
+    wireCard(card, t, side);
     return card;
   };
 
   const buildDeck = (side, list) => {
     const deck = decks[side];
+    // Honour a user-defined order (from dragging cards around the fanned row); tickets not
+    // in that order (new arrivals) keep their incoming order and fall to the end.
+    if (deck.order && deck.order.length) {
+      const pos = new Map(deck.order.map((id, i) => [id, i]));
+      list = list.slice().sort((a, b) =>
+        (pos.has(a.id) ? pos.get(a.id) : Infinity) - (pos.has(b.id) ? pos.get(b.id) : Infinity));
+    }
     deck.cards.forEach((c) => c.remove());
-    deck.cards = list.map(cardEl);
+    deck.cards = list.map((t) => cardEl(t, side));
     deck.cards.forEach((c) => deck.box.appendChild(c));
-    if (!deck.cards.length) { fanned[side] = false; deck.scrollX = 0; }
+    if (!deck.cards.length) { fanned[side] = false; deck.scrollX = 0; deck.order = null; }
     layout(side);
   };
 

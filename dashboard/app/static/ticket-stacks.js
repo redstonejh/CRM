@@ -13,6 +13,11 @@
   const SEV_RGB = { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
   const sevOf = (t) => (t && ["low", "medium", "high", "critical"].includes(t.priority)) ? t.priority : (t ? "medium" : "none");
 
+  // Persist the per-deck custom card order (from drag-to-reorder) across reloads.
+  const ORDER_KEY = (side) => `tk-stack-order-${side}`;
+  const loadOrder = (side) => { try { const v = JSON.parse(localStorage.getItem(ORDER_KEY(side)) || "null"); return Array.isArray(v) ? v : null; } catch { return null; } };
+  const saveOrder = (side) => { try { localStorage.setItem(ORDER_KEY(side), JSON.stringify(decks[side]?.order || [])); } catch {} };
+
   let root = null;
   const decks = { left: null, right: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false };
@@ -184,7 +189,7 @@
       box.addEventListener("wheel", (e) => onWheel(side, e), { passive: false });
       wireThumb(side, thumb);
       root.appendChild(box);
-      decks[side] = { box, arrow, bar, thumb, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: null };
+      decks[side] = { box, arrow, bar, thumb, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
     document.body.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
@@ -240,8 +245,13 @@
     else { const d = Math.min(i, 6); tx = d * 3; ty = -d * 4; rot = (i % 2 ? 1 : -1) * Math.min(i, 3) * 1.6; }
     if (side === "right") { tx = -tx; rot = -rot; }
     card._tx = tx; card._ty = ty; card._rot = rot;
-    card.style.zIndex = String(500 - i);
-    if (!card.classList.contains("tk-dragging")) card.style.transform = `translate(${tx}px, ${ty}px) rotate(${rot}deg)`;
+    // Leave the dragged card alone — keep its on-top z-index (9999, set at drag start) and
+    // its follow transform. Otherwise a reorder re-layout drops it BEHIND its neighbours, so
+    // it looks frozen (it's still following the cursor, just hidden) until release.
+    if (!card.classList.contains("tk-dragging")) {
+      card.style.zIndex = String(500 - i);
+      card.style.transform = `translate(${tx}px, ${ty}px) rotate(${rot}deg)`;
+    }
   };
 
   const toggleFan = (side) => { fanned[side] = !fanned[side]; if (!fanned[side]) decks[side].scrollX = 0; layout(side); };
@@ -550,7 +560,8 @@
           if (cur !== -1 && idx !== cur) {
             deck.cards.splice(cur, 1);
             deck.cards.splice(idx, 0, card);
-            deck.order = deck.cards.map((c) => c.dataset.id);   // remember the custom order across renders
+            deck.order = deck.cards.map((c) => c.dataset.id);   // remember the custom order…
+            saveOrder(side);                                    // …and persist it across reloads
             layout(side);                                       // animate the OTHER cards (this one is skipped while dragging)
           }
         }
@@ -561,11 +572,12 @@
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
-      card.style.transform = `translate(${card._tx}px, ${card._ty}px) rotate(${card._rot}deg)`;   // spring back
-      // Config opens on DOUBLE click (see below); a single click does nothing.
+      // Config opens on DOUBLE click; a single click does nothing (the card never moved).
       if (!wasDrag) return;
       // Released up in the dashboard without a grid to hand off to → bring it in.
-      if (e.clientY < stackTopY()) flyIntoGrid(card, t);
+      if (e.clientY < stackTopY()) { flyIntoGrid(card, t); return; }
+      // Released in the stack → settle into the (possibly reordered) slot, restoring z-index.
+      layout(side);
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -618,7 +630,7 @@
     deck.cards.forEach((c) => c.remove());
     deck.cards = list.map((t) => cardEl(t, side));
     deck.cards.forEach((c) => deck.box.appendChild(c));
-    if (!deck.cards.length) { fanned[side] = false; deck.scrollX = 0; deck.order = null; }
+    if (!deck.cards.length) { fanned[side] = false; deck.scrollX = 0; }   // keep deck.order — a temporarily-empty deck shouldn't forget the saved order
     layout(side);
   };
 

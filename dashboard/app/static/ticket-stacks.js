@@ -859,7 +859,7 @@
       if (!down || handedOff) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) {
-        dragging = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
+        dragging = true; dragActive = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
         baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
       }
       if (!dragging) return;
@@ -895,6 +895,7 @@
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
+      dragActive = false;                                                   // always clear, even on hand-off
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
@@ -983,6 +984,7 @@
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
+  let dragActive = false; // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   const zoneBody = {};    // stage key → body element (the scroll viewport)
   const zoneTrack = {};   // stage key → the translated track holding the card stack
   const zoneScroll = {};  // stage key → { sy, ty, raf, wheeling, releaseT } (custom smooth/recoil scroll)
@@ -1029,6 +1031,29 @@
     st.releaseT = setTimeout(() => { st.wheeling = false; runZoneScroll(s); }, 90);
     runZoneScroll(s);
   };
+  // While a ticket is dragged, the dragged element stays in the DECK's DOM subtree, so wheel events
+  // bubble to the deck — never to the bucket the cursor is spatially over (DOM bubbling follows the
+  // tree, not z-stacking). This capture-phase router redirects the wheel to the bucket under the
+  // cursor so you can scroll a tall bucket to reach a drop slot mid-drag, just like the deck already
+  // scrolls while dragging. It only acts during a drag and only over a bucket; otherwise it's a no-op
+  // and the deck's own onWheel handles it via bubbling.
+  const bucketAtPoint = (x, y) => {
+    for (const s of STAGES) {
+      const p = zoneBody[s.key]?.parentElement;   // the .tk-zone panel
+      if (!p) continue;
+      const r = p.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return s.key;
+    }
+    return null;
+  };
+  const onDragWheel = (e) => {
+    if (!dragActive) return;
+    const key = bucketAtPoint(e.clientX, e.clientY);
+    if (!key) return;                          // over the deck / elsewhere → its own handler takes it
+    e.preventDefault(); e.stopPropagation();   // this wheel belongs to the bucket, not the deck
+    onZoneWheel(key, e);
+  };
+  window.addEventListener("wheel", onDragWheel, { capture: true, passive: false });
   const wireZoneThumb = (s) => {
     const th = zoneBody[s].querySelector(".tk-zth");
     let y0 = 0, start = 0, drag = false;
@@ -1213,7 +1238,7 @@
       if (!down) return;
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (!dragging && Math.hypot(dx, dy) > 6) {
-        dragging = true;
+        dragging = true; dragActive = true;
         const r = card.getBoundingClientRect();
         clone = document.createElement("div");
         clone.className = "tk-zfly";
@@ -1232,7 +1257,7 @@
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      const wasDrag = dragging; dragging = false; down = false;
+      const wasDrag = dragging; dragging = false; down = false; dragActive = false;
       clearZoneHighlight(); clearGap();
       if (clone) { clone.remove(); clone = null; }
       card.classList.remove("tk-zdrag");

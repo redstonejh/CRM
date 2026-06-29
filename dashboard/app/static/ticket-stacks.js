@@ -38,6 +38,21 @@
     try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
   };
 
+  // Per-stage card order = the vertical stacking order within a bucket. A drop appends to the
+  // bottom by default, or inserts at the layer the cursor is over. Persisted like the stage map.
+  const STAGE_ORDER_STORE = "tk-stage-order";
+  let stageOrder = (() => { try { return JSON.parse(localStorage.getItem(STAGE_ORDER_STORE) || "{}") || {}; } catch { return {}; } })();
+  // Place id into stage's order at index (clamped); a null stage just removes it from every order.
+  const setStageAt = (id, stage, index) => {
+    if (!id) return;
+    for (const k of Object.keys(stageOrder)) stageOrder[k] = (stageOrder[k] || []).filter((x) => x !== id);
+    if (stage && STAGE_KEYS.includes(stage)) {
+      const arr = stageOrder[stage] || (stageOrder[stage] = []);
+      arr.splice(clamp(index | 0, 0, arr.length), 0, id);
+    }
+    try { localStorage.setItem(STAGE_ORDER_STORE, JSON.stringify(stageOrder)); } catch {}
+  };
+
   // Deleted tickets (a client-side flag, NOT tickets.remove() — they must be kept & shown in the
   // trash). The right stack shows resolved tickets normally; its trash button flips it to show
   // these instead. Persisted like the stage map.
@@ -857,7 +872,7 @@
       // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
       if (e.clientY < stackTopY()) {
         const z = zoneAt(e.clientX, e.clientY);
-        if (z && canAdvance(stackPos(side), posOfStage(z))) { dropIntoZone(card, t, z); return; }
+        if (z && canAdvance(stackPos(side), posOfStage(z))) { dropIntoZone(card, t, z, zoneInsertIndex(z, e.clientY)); return; }
         layout(side); return;   // not over a VALID zone (none, or a red one) → spring back
       }
       // Released back in the stack (incl. after a reorder) → settle into the slot + restore z.
@@ -1116,9 +1131,10 @@
       card.classList.remove("tk-zdrag");
       if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
       const z = zoneAt(e.clientX, e.clientY);
-      if (z && z !== stage && canAdvance(posOfStage(stage), posOfStage(z))) { setStage(t.id, z); render(); return; }  // valid forward/backward
-      if (!z && e.clientY >= stackTopY()) { setStage(t.id, null); render(); return; }  // → inbox stack (always allowed: backward)
-      // else: same zone / a blocked (red) zone / nowhere → the card just un-hides in place.
+      if (z === stage) { setStageAt(t.id, stage, zoneInsertIndex(stage, e.clientY)); render(); return; }              // reorder within the bucket
+      if (z && canAdvance(posOfStage(stage), posOfStage(z))) { setStage(t.id, z); setStageAt(t.id, z, zoneInsertIndex(z, e.clientY)); render(); return; }  // → another stage, at that layer
+      if (!z && e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }         // → inbox stack (backward)
+      // else: a blocked (red) zone / nowhere → the card just un-hides in place.
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -1139,12 +1155,24 @@
     return card;
   };
 
+  // Which layer a drop at viewport-y lands on within a bucket: the peek band under the cursor,
+  // or the bottom (== card count) when it's below the stack — so an indiscriminate drop appends.
+  const zoneInsertIndex = (stage, y) => {
+    const body = zoneBody[stage]; if (!body) return 0;
+    const r = body.getBoundingClientRect();
+    const count = body.querySelectorAll(".tk-zcard").length;
+    return clamp(Math.floor((y - r.top + body.scrollTop) / ZCARD_PEEK), 0, count);
+  };
+
   const renderZones = () => {
     ensureZones();
-    const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
+    const byCreated = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     STAGES.forEach((s) => {
       const body = zoneBody[s.key];
-      const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id)).sort(order);
+      const ord = stageOrder[s.key] || [];
+      const oidx = (id) => { const i = ord.indexOf(id); return i === -1 ? 1e9 : i; };   // unordered → bottom
+      const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id))
+        .sort((a, b) => oidx(a.id) - oidx(b.id) || byCreated(a, b));
       body.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
@@ -1161,10 +1189,11 @@
 
   // Drop a ticket dragged from a corner stack into a zone: assign the stage, leave the stack,
   // and fly a shrinking clone from the drop point into its new card in the zone.
-  const dropIntoZone = (fromCard, t, stage) => {
+  const dropIntoZone = (fromCard, t, stage, index) => {
     const from = fromCard.getBoundingClientRect();
     setDeleted(t.id, false);   // entering the pipeline un-deletes (a ticket can't be both staged and trashed)
     setStage(t.id, stage);
+    setStageAt(t.id, stage, index);   // bottom by default, or the layer the cursor was over
     render();
     const dest = zoneBody[stage]?.querySelector(`.tk-zcard[data-id="${cssEsc(t.id)}"]`);
     if (!dest) return;

@@ -1476,6 +1476,9 @@
       }
     });
     drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
+    // Recompute every bucket's scroll-edge shadows for the new geometry — the deck does the same via
+    // updateDeckEdges() at the end of layout(); without this the bucket shadows go stale on a resize.
+    STAGES.forEach((s) => positionZone(s.key));
   };
   const ensureZones = () => {
     if (zonesRoot) return;
@@ -1493,6 +1496,9 @@
       zoneTrack[s.key] = panel.querySelector(".tk-zone-track");
       zoneScroll[s.key] = { sy: 0, ty: 0, raf: 0, wheeling: false, releaseT: 0 };
       zoneBody[s.key].addEventListener("wheel", (e) => onZoneWheel(s.key, e), { passive: false });
+      // Any change to this bucket's viewport size (window resize, grid reflow, bucket resize) re-runs
+      // its edge-shadow math live — matching how the fanned deck's shadows stay reactive.
+      if (window.ResizeObserver) new ResizeObserver(() => positionZone(s.key)).observe(zoneBody[s.key]);
       wireZoneThumb(s.key);
     });
     document.body.appendChild(zonesRoot);
@@ -1550,7 +1556,7 @@
   // Drag a zone card to ANOTHER zone (reassign stage), DOWN onto the corner stacks (un-assign
   // → back to the inbox), or release on its own zone / nowhere (snap back). Click opens config.
   const wireZoneCard = (card, t, stage) => {
-    let down = false, dragging = false, sx = 0, sy = 0, clone = null, fanGap = null;
+    let down = false, dragging = false, sx = 0, sy = 0, clone = null, fanGap = null, r0 = null;
     // The fanned deck this ticket would re-join (its own side, when that side is the open fan), else null.
     const fanTarget = () => { const fs = fanned.left ? "left" : (fanned.right ? "right" : null); return fs && fs === deckSideFor(t) ? fs : null; };
     // Pick the right preview for the cursor: over the matching fanned stack → part its cards at the
@@ -1568,45 +1574,68 @@
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (!dragging && Math.hypot(dx, dy) > 6) {
         dragging = true; dragActive = true;
-        const r = card.getBoundingClientRect();
+        r0 = card.getBoundingClientRect();
         clone = document.createElement("div");
         clone.className = "tk-zfly";
-        clone.style.cssText = `left:${r.left}px; top:${r.top}px; width:${r.width}px; height:${r.height}px; transition:none;`;
+        // `translate` follows the cursor instantly; `scale` is the ONLY transitioned property → a smooth
+        // lift-off (and, on drop, a smooth settle). Using the individual props keeps the two independent.
+        clone.style.cssText = `left:${r0.left}px; top:${r0.top}px; width:${r0.width}px; height:${r0.height}px; translate:0px 0px; scale:1; transition: scale .16s ease;`;
         clone.style.backgroundColor = baseColor();
         clone.style.backgroundImage = cardBg(t);
         clone.innerHTML = zoneCardInner(t);
         document.body.appendChild(clone);
         card.classList.add("tk-zdrag");
         dragPreviewFn = preview;                 // re-run while autoscrolling so the gap follows the cursor
+        requestAnimationFrame(() => { if (clone) clone.style.scale = "1.04"; });   // ease up off the bucket
       }
       if (!dragging) return;
-      clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
+      clone.style.translate = `${dx}px ${dy}px`;   // instant follow (translate isn't transitioned)
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       preview(e.clientX, e.clientY);
+    };
+    // Settle the dragged clone smoothly into the ticket's resting card (its new slot after a drop, or
+    // back home on a snap-back), then swap to the real card — scale eases back to fit, opacity → solid.
+    const settleClone = (id) => {
+      const cl = clone; clone = null;
+      if (!cl) return;
+      const dest = document.querySelector(`.tk-zcard[data-id="${cssEsc(id)}"], .tk-card[data-id="${cssEsc(id)}"]`);
+      const to = (dest && dest.isConnected) ? dest.getBoundingClientRect() : null;
+      if (!to || to.width < 4 || !r0) { cl.remove(); return; }
+      dest.style.opacity = "0";   // hide the real card until the clone lands on it
+      cl.style.transition = "translate .2s cubic-bezier(.4,0,.2,1), scale .2s cubic-bezier(.4,0,.2,1), opacity .2s ease";
+      requestAnimationFrame(() => {
+        cl.style.translate = `${Math.round(to.left - r0.left)}px ${Math.round(to.top - r0.top)}px`;
+        cl.style.scale = `${(to.width / r0.width).toFixed(4)} ${(to.height / r0.height).toFixed(4)}`;
+        cl.style.opacity = "1";
+      });
+      setTimeout(() => { cl.remove(); if (dest.isConnected) dest.style.opacity = ""; }, 220);
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
       const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null;
       clearZoneHighlight(); clearGap();
       if (fanGap) { layout(fanGap); fanGap = null; }
-      if (clone) { clone.remove(); clone = null; }
-      card.classList.remove("tk-zdrag");
-      // A plain click → bring the card fully into the bucket (if scrolled off) THEN open its config.
-      if (!wasDrag) { revealZoneCard(stage, card, () => window.ticketDetail?.open(t, card)); return; }
-      // Released over the matching fanned stack → splice into its row at the cursor slot, then
-      // un-assign the stage so the ticket re-joins the inbox deck exactly there.
+      if (!wasDrag) {   // a plain click — no drag clone to settle
+        if (clone) { clone.remove(); clone = null; }
+        card.classList.remove("tk-zdrag");
+        revealZoneCard(stage, card, () => window.ticketDetail?.open(t, card));   // scroll into view, then open
+        return;
+      }
+      // A real drag → apply the drop, render, then SETTLE the clone into the ticket's resting card.
+      // Released over the matching fanned stack → splice into its row at the cursor slot, un-assigning
+      // the stage so the ticket re-joins the inbox deck exactly there.
       const ft = (e.clientY >= stackTopY()) ? fanTarget() : null;
       if (ft) {
         const deck = decks[ft];
         const ids = deck.cards.map((c) => c.dataset.id).filter((id) => id && id !== t.id);
         ids.splice(clamp(fanInsertIndex(ft, e.clientX), 0, ids.length), 0, t.id);
         deck.order = ids; saveOrder(ft);
-        setStage(t.id, null); setStageAt(t.id, null); render(); return;
+        setStage(t.id, null); setStageAt(t.id, null); render(); settleClone(t.id); return;
       }
       const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY, t);   // valid bucket (reorder or legal step) + layer
-      if (dt) { setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); return; }
-      if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }   // onto a stack → inbox (append)
-      // else: a blocked (red) zone / nowhere → the card just un-hides in place.
+      if (dt) { setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); settleClone(t.id); return; }
+      if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); settleClone(t.id); return; }   // onto a stack → inbox (append)
+      render(); settleClone(t.id);   // a blocked (red) zone / nowhere → rebuild in place + settle home
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -1642,8 +1671,10 @@
   let gapStage = null;
   const clearGap = () => {
     if (!gapStage) return;
-    zoneTrack[gapStage]?.querySelectorAll(".tk-zcard").forEach((c) => { c.style.transform = ""; });
+    const s = gapStage;
+    zoneTrack[s]?.querySelectorAll(".tk-zcard").forEach((c) => { c.style.transform = ""; });
     gapStage = null;
+    positionZone(s);   // cards moved back → refresh this bucket's edge shadows
   };
   const previewGap = (stage, index) => {
     if (gapStage && gapStage !== stage) clearGap();
@@ -1651,6 +1682,7 @@
     (zoneTrack[stage]?.querySelectorAll(".tk-zcard") || []).forEach((c, i) => {
       c.style.transform = i >= index ? `translateY(${ZCARD_PEEK}px)` : "";
     });
+    positionZone(stage);   // sandwich gap shifted cards → shadows track the reorder live
   };
   // The droppable bucket + insert index under (x,y) for a drag from chain position `from` — or null.
   const dropTarget = (from, x, y, tk) => {

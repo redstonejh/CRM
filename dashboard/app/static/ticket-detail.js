@@ -88,11 +88,12 @@
       .td-wrap.is-settled .ticket-detail { box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 18px 42px rgba(0,0,0,0.4); }
       .ticket-detail :focus, .ticket-detail :focus-visible { outline: none !important; box-shadow: none !important; }
       /* Sleek overlay scrollbar — same recipe as the search sub-menu. */
-      .ticket-detail, .td-log { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.26) transparent; }
-      .ticket-detail::-webkit-scrollbar, .td-log::-webkit-scrollbar { width: 10px; }
-      .ticket-detail::-webkit-scrollbar-track, .td-log::-webkit-scrollbar-track { background: transparent; }
-      .ticket-detail::-webkit-scrollbar-thumb, .td-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,.22); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
-      .ticket-detail::-webkit-scrollbar-thumb:hover, .td-log::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.42); background-clip: padding-box; }
+      /* Scrollbars match the fanned decks / buckets: thin bright overlay thumb on a clear track. */
+      .ticket-detail, .td-ta { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.6) transparent; }
+      .ticket-detail::-webkit-scrollbar, .td-ta::-webkit-scrollbar { width: 8px; }
+      .ticket-detail::-webkit-scrollbar-track, .td-ta::-webkit-scrollbar-track { background: transparent; }
+      .ticket-detail::-webkit-scrollbar-thumb, .td-ta::-webkit-scrollbar-thumb { background: rgba(255,255,255,.55); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+      .ticket-detail::-webkit-scrollbar-thumb:hover, .td-ta::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.72); background-clip: padding-box; }
 
       /* Header: "name | ip" on top, then "Down <time> | <opened timestamp>". */
       .td-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; }
@@ -137,14 +138,23 @@
       .td-prio-opt.is-active { color: #fff; font-weight: 700; }
 
       .td-head-bare { justify-content: flex-end; padding: 0; min-height: 0; }   /* just the close × */
-      /* Flat field rows (no dropdowns) — a label with a required * and the input below it. */
+      /* Flat field rows (no dropdowns) — a label with a required * and the input below it; the FIRST
+         field's label shares the row with the close × (.td-field-head). */
       .td-field { display: flex; flex-direction: column; gap: 5px; padding: 1px 4px; }
+      .td-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .td-field-label { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.72); }
       .td-req { color: rgba(255,140,140,0.95); font-weight: 700; }
-      .td-in { width: 100%; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
+      .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
         background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
-      .td-ta { resize: vertical; min-height: 0; height: auto; line-height: 1.4; }
+      .td-ta { resize: none; min-height: 2.4em; line-height: 1.4; overflow-y: auto; max-height: 200px; }   /* auto-grown in JS, scrolls past max */
+      .td-ta-big { min-height: 7.6em; }   /* Resolution: tall enough to show the long prompt un-truncated */
+      /* Save: a plain text action (same style as the severity option buttons), pinned bottom-right. */
+      .td-save-row { display: flex; justify-content: flex-end; padding: 4px 4px 0; margin-top: auto; }
+      .td-save { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer;
+        font: inherit; font-size: 0.85rem; font-weight: 700; color: rgba(255,255,255,0.55); transition: color .14s ease; }
+      .td-save:hover { color: #fff; }
+      .td-msg { padding: 1px 4px; font-size: 0.76rem; color: rgba(255,160,160,0.95); }
 
       /* Claim + Resolve share one row, pinned to the bottom of the card-height panel. */
       .td-acts { display: flex; flex-direction: row; gap: 20px; margin-top: auto; padding-top: 6px; }
@@ -277,18 +287,21 @@
     // (all are required to complete the stage), the question as the prompt, and "n/a" satisfies it.
     // No title/subtitle (set at creation, already on the card), no metadata / claim-resolve-delete.
     const sf = (window.ticketStacks?.stageFields?.(t.id)) || { key: "triage", label: "Triage", fields: [] };
-    const fieldRow = (f) => {
+    const label = (f) => `${esc(f.label)}${f.req === false ? "" : ` <span class="td-req">*</span>`}`;
+    const input = (f) => {
       const val = (window.ticketStacks?.fieldValue?.(t.id, f.key)) ?? "";
-      let inner;
-      if (f.prio) { const pr = t.priority || "medium"; inner = `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }
-      else if (f.area) inner = `<textarea class="td-in td-ta" rows="2" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
-      else inner = `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
-      const star = f.req === false ? "" : ` <span class="td-req">*</span>`;
-      return `<div class="td-field"><div class="td-field-label">${esc(f.label)}${star}</div>${inner}</div>`;
+      if (f.prio) { const pr = t.priority || "medium"; return `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }
+      if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
+      return `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
     };
+    // The FIRST field's label shares the row with the close × (top-right); the rest are plain rows. A
+    // "save" text-button at the bottom-right validates the required fields before it closes.
+    const first = sf.fields[0], rest = sf.fields.slice(1);
     panel.innerHTML =
-      `<div class="td-head td-head-bare"><button class="td-x" data-act="close" aria-label="Close">&times;</button></div>` +
-      sf.fields.map(fieldRow).join("");
+      (first ? `<div class="td-field"><div class="td-field-head"><span class="td-field-label">${label(first)}</span><button class="td-x" data-act="close" aria-label="Close">&times;</button></div>${input(first)}</div>` : "") +
+      rest.map((f) => `<div class="td-field"><span class="td-field-label">${label(f)}</span>${input(f)}</div>`).join("") +
+      `<div class="td-msg" hidden></div>` +
+      `<div class="td-save-row"><button class="td-save" data-act="save">save</button></div>`;
     wire(t);
   };
 
@@ -317,11 +330,22 @@
     });
     // The stage's text fields — live-saved as client-side overrides so the card + its progress bars
     // update in real time as you type (and "n/a" satisfies the field while leaving no trace). Enter
-    // commits (Shift+Enter keeps a newline in the multi-line fields).
+    // commits (Shift+Enter keeps a newline in the multi-line fields). Textareas auto-grow to fit.
+    const grow = (el) => { if (el.tagName === "TEXTAREA") { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
     panel.querySelectorAll("[data-field]").forEach((el) => {
-      el.oninput = () => window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value });
+      grow(el);
+      el.oninput = () => { window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value }); grow(el); };
       el.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); el.blur(); } e.stopPropagation(); };
     });
+    // Save: required fields must be answered; a blank one prompts "use n/a" and focuses it, else close.
+    const msg = panel.querySelector(".td-msg");
+    const saveBtn = panel.querySelector("[data-act='save']");
+    if (saveBtn) saveBtn.onclick = () => {
+      let blank = null;
+      panel.querySelectorAll(".td-field [data-field]").forEach((el) => { if (!blank && String(el.value).trim() === "") blank = el; });
+      if (blank) { if (msg) { msg.textContent = "Some fields are blank — for anything not applicable, type “n/a”."; msg.hidden = false; } blank.focus(); return; }
+      close();
+    };
   };
 
   const open = (ticket, srcEl) => {

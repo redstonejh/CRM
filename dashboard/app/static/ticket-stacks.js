@@ -214,9 +214,9 @@
     triage:        [ { key: "priority",    label: "Severity",    q: "How severe is it?", prio: true },
                      { key: "description", label: "Description", q: "What's the issue?", area: true },
                      { key: "assignee",    label: "Assignee",    q: "Who's handling it?" } ],
-    investigation: [ { key: "investigation", label: "Findings", q: "What did the investigation find?", area: true },
-                     { key: "fix",           label: "Fix",      q: "What's the fix?", area: true } ],
-    resolution:    [ { key: "resolution", label: "Resolution", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true } ],
+    investigation: [ { key: "investigation", label: "Cause", q: "What caused the issue?", area: true },
+                     { key: "fix",           label: "Fix",   q: "What's the fix?", area: true } ],
+    resolution:    [ { key: "resolution", label: "Resolution", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true, big: true } ],
   };
   const fieldRaw = (t, key) => {
     const m = metaOf(t.id);

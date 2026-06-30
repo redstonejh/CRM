@@ -360,7 +360,7 @@
          + border-radius clip it, so it's a square 90° band through the ticket body but follows the REAL
          rounded corners exactly where the viewport edge nears a corner — and it can never land in the gaps
          between fanned tickets (it's inside a ticket, not the gap). Fully positioned/sized per frame in JS. */
-      .tk-edge-shade { position: absolute; pointer-events: none; z-index: 6; width: 0; height: 0; }
+      .tk-edge-shade { position: absolute; pointer-events: none; z-index: 6; }   /* size/offsets set in JS (explicit, so they don't fight the box model) */
 
       /* A FULL-size ticket card living in a zone — same dimensions + look as a stack card. They
          stack vertically with overlap (position+z-index set in renderZones) so only each card's
@@ -580,12 +580,12 @@
         if (sd === side && !card.classList.contains("tk-dragging") && r.width > 1) {
           if (r.left < -0.5 && r.right > 0.5) {                  // straddles the LEFT viewport edge
             const xcut = -r.left, w = Math.min(MAXW, xcut);
-            sh.style.cssText = `position:absolute;top:0;bottom:0;left:${xcut}px;width:${w}px;background:linear-gradient(to right, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`;
+            sh.style.cssText = `position:absolute;top:0;height:${r.height}px;left:${xcut}px;width:${w}px;background:linear-gradient(to right, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`;
             return;
           }
           if (r.right > VW + 0.5 && r.left < VW - 0.5) {         // straddles the RIGHT viewport edge
             const xcut = VW - r.left, w = Math.min(MAXW, r.right - VW);
-            sh.style.cssText = `position:absolute;top:0;bottom:0;left:${xcut - w}px;width:${w}px;background:linear-gradient(to right, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`;
+            sh.style.cssText = `position:absolute;top:0;height:${r.height}px;left:${xcut - w}px;width:${w}px;background:linear-gradient(to right, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`;
             return;
           }
         }
@@ -1127,13 +1127,13 @@
       if (shTop) {
         if (over && r.top < VT - 0.5 && r.bottom > VT + 0.5) {                    // straddles the clip top
           const ycut = VT - r.top, h = Math.min(MAXH, ycut);
-          shTop.style.cssText = `position:absolute;left:0;right:0;top:${ycut}px;height:${h}px;background:linear-gradient(to bottom, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`;
+          shTop.style.cssText = `position:absolute;left:0;width:${r.width}px;top:${ycut}px;height:${h}px;background:linear-gradient(to bottom, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`;
         } else shTop.style.cssText = "position:absolute;width:0;height:0;";
       }
       if (shBot) {
         if (over && r.bottom > VB + 0.5 && r.top < VB - 0.5) {                    // straddles the clip bottom
           const ycut = VB - r.top, h = Math.min(MAXH, r.bottom - VB);
-          shBot.style.cssText = `position:absolute;left:0;right:0;top:${ycut - h}px;height:${h}px;background:linear-gradient(to bottom, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`;
+          shBot.style.cssText = `position:absolute;left:0;width:${r.width}px;top:${ycut - h}px;height:${h}px;background:linear-gradient(to bottom, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`;
         } else shBot.style.cssText = "position:absolute;width:0;height:0;";
       }
     });

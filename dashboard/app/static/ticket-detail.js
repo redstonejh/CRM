@@ -16,7 +16,7 @@
 // search-input fields). Portals to <body> so backdrop-filter isn't flattened.
 (() => {
   const PRIORITIES = ["low", "medium", "high", "critical"];
-  const GAP = 16;            // gap between the card and the panel
+  const GAP = 10;            // gap between the card and the panel — matches GAP_FAN (the fanned-stack gap)
   const PANEL_W = 300;       // panel width (matches .ticket-detail width)
   // Tuck distance: the panel must hide FAR enough left that even its drop shadow
   // (blur 42px ⇒ ~60px reach) clears the clip-path's left edge — otherwise the
@@ -243,11 +243,12 @@
     const r = card.getBoundingClientRect();
     const el = card.cloneNode(true);           // keeps the card's inline background + body markup
     el.removeAttribute("id");
+    el.classList.add("td-frontclone");         // so the depth-of-field ramp can blur it like the rest of the world
     Object.assign(el.style, {
       position: "fixed", boxSizing: "border-box", margin: "0",
       left: `${Math.round(r.left)}px`, top: `${Math.round(r.top)}px`,
       width: `${Math.round(r.width)}px`, height: `${Math.round(r.height)}px`,
-      transform: "none", transition: "none", zIndex: String(z), pointerEvents: "none",
+      transform: "none", transition: "none", zIndex: String(z), pointerEvents: "none", filter: "blur(0px)",
     });
     // The real card is clipped by the bucket's scroll viewport (.tk-zone-clip, overflow:hidden); the
     // overlay clone isn't, so clip it to the SAME rect — otherwise the part of a front card that's
@@ -480,11 +481,19 @@
     };
   };
 
-  // Drive the depth-of-field scrim's blur (with a matching transition) — ramp in on open, out on close.
+  // Drive the depth-of-field blur (with a matching transition) — ramp in on open, out on close. The
+  // scrim blurs the whole world BEHIND the overlay; the front-card clones live ON the overlay (above
+  // the scrim), so they're blurred individually to the same depth — otherwise they'd stay sharp.
   const setBlur = (px, ms, ease) => {
-    if (!scrim) return;
-    scrim.style.transition = `backdrop-filter ${ms}ms ${ease}, -webkit-backdrop-filter ${ms}ms ${ease}`;
-    scrim.style.backdropFilter = scrim.style.webkitBackdropFilter = `blur(${px}px)`;
+    const tr = `${ms}ms ${ease}`;
+    if (scrim) {
+      scrim.style.transition = `backdrop-filter ${tr}, -webkit-backdrop-filter ${tr}`;
+      scrim.style.backdropFilter = scrim.style.webkitBackdropFilter = `blur(${px}px)`;
+    }
+    if (overlay) overlay.querySelectorAll(".td-frontclone").forEach((c) => {
+      c.style.transition = `filter ${tr}`;
+      c.style.filter = `blur(${px}px)`;
+    });
   };
 
   const open = (ticket, srcEl) => {

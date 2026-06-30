@@ -77,8 +77,8 @@
     metaMap[id] = { ...metaOf(id), ...m };
     try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
   };
-  const titleOf = (t) => { const m = metaOf(t.id); return (m.title && m.title.trim()) || t.companyLabel || "Unknown"; };
-  const subOf = (t) => { const m = metaOf(t.id); return (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || "—"); };
+  const titleOf = (t) => { const m = metaOf(t.id); return (m.title && m.title.trim() && !isNA(m.title)) ? m.title : (t.companyLabel || "Unknown"); };
+  const subOf = (t) => { const m = metaOf(t.id); const v = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || ""); return isNA(v) ? "" : v; };  // n/a → no trace on the card
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
 
   let root = null;
@@ -88,6 +88,7 @@
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const isNA = (v) => String(v ?? "").trim().toLowerCase() === "n/a";   // "n/a" = field satisfied, but shows nothing
   const human = (ms) => {
     if (!Number.isFinite(ms) || ms < 0) return "—";
     const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
@@ -202,6 +203,40 @@
   };
   // The card fill: a random widget colour for a blank ticket, else its severity colour.
   const cardBg = (t) => { const c = colorFor(t); return c ? colorBg(c) : severityBg(sevOf(t)); };
+
+  // ── Stage progress bars (3 segments, one per bucket) ──────────────────────────────────────
+  // Each bucket "owns" one segment (its identity). A ticket fills segments as it advances: passed
+  // stages green, current stage yellow→green once that stage's required fields are filled, future
+  // stages grey; a deleted ticket shows the bucket it was deleted from red. Per-stage required
+  // fields (the config menu shows only the current bucket's, each with its question) — a field is
+  // satisfied when it has any value, and "n/a" counts as satisfied while showing nothing on the card.
+  const STAGE_FIELDS = {
+    triage:        [ { key: "description", label: "Description", q: "What's the issue?", area: true },
+                     { key: "priority",    label: "Severity",    q: "How severe is it?", prio: true },
+                     { key: "assignee",    label: "Assignee",    q: "Who's handling it?" } ],
+    investigation: [ { key: "investigation", label: "Findings", q: "What did the investigation find?", area: true },
+                     { key: "fix",           label: "Fix",      q: "What's the fix?", area: true } ],
+    resolution:    [ { key: "resolution", label: "Resolution", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true } ],
+  };
+  const fieldRaw = (t, key) => {
+    const m = metaOf(t.id);
+    if (key === "title") return titleOf(t);
+    if (key === "subtitle") return m.subtitle != null ? m.subtitle : (t.host ?? "");
+    if (key === "description") return m.description != null ? m.description : (t.description ?? "");
+    if (key === "assignee") return m.assignee != null ? m.assignee : (t.assignee ?? "");
+    if (key === "priority") return t.priority || "";
+    return m[key] != null ? m[key] : "";   // investigation / fix / resolution (client-side meta)
+  };
+  const fieldSatisfied = (t, key) => key === "priority" ? hasPriority(t) : String(fieldRaw(t, key) ?? "").trim() !== "";
+  const stageComplete = (t, i) => (STAGE_FIELDS[STAGE_KEYS[i]] || []).every((f) => fieldSatisfied(t, f.key));
+  const ticketBarClasses = (t) => {
+    if (isDeleted(t.id)) { const d = STAGE_KEYS.indexOf(metaOf(t.id).delStage || ""); return STAGE_KEYS.map((_, i) => (i < d ? "g" : i === d ? "r" : "")); }
+    const s = STAGE_KEYS.indexOf(stageOf(t.id) || "");           // -1 = in a stack (inbox/resolved/trash)
+    if (s < 0) return STAGE_KEYS.map(() => "");
+    return STAGE_KEYS.map((_, i) => (i < s ? "g" : i === s ? (stageComplete(t, i) ? "g" : "y") : ""));
+  };
+  const bucketBarClasses = (j) => STAGE_KEYS.map((_, i) => (i === j ? "g" : ""));
+  const barsHTML = (classes, onCard) => `<div class="tk-bars${onCard ? " tk-bars-card" : ""}">${classes.map((c) => `<span class="tk-seg${c ? " " + c : ""}"></span>`).join("")}</div>`;
 
   const ensureStyles = () => {
     if (document.getElementById("ticket-stacks-styles")) return;
@@ -345,6 +380,12 @@
         padding: 2px 4px 11px; font-size: 0.98rem; font-weight: 700; line-height: 1.25; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
+      .tk-zone-hd-r { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
+      .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
+      .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
+      .tk-seg { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.20); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
+      .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
       /* body no longer clips — an inner .tk-zone-clip clips the scrolling track, so the scrollbar can sit
          in the bucket's right gutter (breathing room) without being cut off. */
       .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: visible; padding: 2px; }
@@ -1045,11 +1086,13 @@
   const cardInner = (t) => {
     const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
     const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
+    const sub = subOf(t);
     return `<div class="ticket-body">` +
       `<div class="ticket-company">${esc(titleOf(t))}</div>` +
-      `<div class="ticket-host">${esc(subOf(t))}</div>` +
+      (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // n/a / empty → no line, no placeholder
       `<div class="ticket-down">Down ${esc(human(endMs - created))}</div>` +
-      `</div>`;
+      `</div>` +
+      barsHTML(ticketBarClasses(t), true);
   };
 
   const cardEl = (t, side) => {
@@ -1398,11 +1441,11 @@
     ensureStyles();
     zonesRoot = document.createElement("div");
     zonesRoot.className = "tk-zones";
-    STAGES.forEach((s) => {
+    STAGES.forEach((s, i) => {
       const panel = document.createElement("div");
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
-      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-count">0</span></div>` +
+      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-hd-r"><span class="tk-zone-count">0</span>${barsHTML(bucketBarClasses(i), false)}</span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
@@ -1685,7 +1728,7 @@
   window.ticketStacks = {
     reload: load,
     isDeleted,
-    delete: (id) => { setDeleted(id, true); render(); },
+    delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
     restore: (id) => { setDeleted(id, false); render(); },
     metaOf,
     // Persist the override and update the card's text IN PLACE (no rebuild) so live edits from

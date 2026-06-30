@@ -572,26 +572,35 @@
   const updateDeckEdges = () => {
     const side = fanned.left ? "left" : (fanned.right ? "right" : null);
     const VW = window.innerWidth, MAXW = 34, SH = "rgba(0,0,0,0.45)";
-    ["left", "right"].forEach((sd) => {
-      const deck = decks[sd]; if (!deck) return;
-      deck.cards.forEach((card) => {
-        const sh = card.querySelector(":scope > .tk-edge-shade"); if (!sh) return;
-        const r = card.getBoundingClientRect();
-        if (sd === side && !card.classList.contains("tk-dragging") && r.width > 1) {
-          if (r.left < -0.5 && r.right > 0.5) {                  // straddles the LEFT viewport edge
-            const xcut = -r.left, w = Math.min(MAXW, xcut);
-            sh.style.cssText = `position:absolute;top:0;height:${r.height}px;left:${xcut}px;width:${w}px;background:linear-gradient(to right, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`;
-            return;
-          }
-          if (r.right > VW + 0.5 && r.left < VW - 0.5) {         // straddles the RIGHT viewport edge
-            const xcut = VW - r.left, w = Math.min(MAXW, r.right - VW);
-            sh.style.cssText = `position:absolute;top:0;height:${r.height}px;left:${xcut - w}px;width:${w}px;background:linear-gradient(to right, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`;
-            return;
-          }
-        }
-        sh.style.cssText = "position:absolute;width:0;height:0;";
-      });
+    const hide = (c) => { const sh = c.querySelector(":scope > .tk-edge-shade"); if (sh) sh.style.cssText = "position:absolute;width:0;height:0;"; };
+    ["left", "right"].forEach((sd) => { const d = decks[sd]; if (d) d.cards.forEach(hide); });
+    if (!side) return;
+    // Treat the whole fanned row as ONE clipped object: the shadow's depth tracks how far the LIST
+    // extends past the viewport edge (not an individual ticket), and it leaps inter-ticket gaps by
+    // sitting on the trailing ticket's edge — so it never blinks off just because a gap is at the edge.
+    const info = [];
+    decks[side].cards.forEach((card) => {
+      if (card.classList.contains("tk-dragging")) return;
+      const r = card.getBoundingClientRect();
+      if (r.width > 1) info.push({ card, r });
     });
+    if (!info.length) return;
+    let listLeft = Infinity, listRight = -Infinity;
+    info.forEach(({ r }) => { if (r.left < listLeft) listLeft = r.left; if (r.right > listRight) listRight = r.right; });
+    const paint = (ci, leftPx, w, grad) => {
+      const sh = ci.card.querySelector(":scope > .tk-edge-shade");
+      if (sh) sh.style.cssText = `position:absolute;top:0;height:${ci.r.height}px;left:${leftPx}px;width:${w}px;background:${grad};pointer-events:none;z-index:6;`;
+    };
+    if (listRight > VW + 0.5) {                                   // list extends past the RIGHT edge
+      const w = Math.min(MAXW, listRight - VW);
+      let tn = null; info.forEach((ci) => { if (ci.r.left < VW && (!tn || ci.r.right > tn.r.right)) tn = ci; });   // ticket at the edge (or just inside a gap)
+      if (tn) { const lead = Math.min(VW, tn.r.right); paint(tn, (lead - w) - tn.r.left, w, `linear-gradient(to right, rgba(0,0,0,0), ${SH})`); }
+    }
+    if (listLeft < -0.5) {                                        // list extends past the LEFT edge
+      const w = Math.min(MAXW, -listLeft);
+      let tm = null; info.forEach((ci) => { if (ci.r.right > 0 && (!tm || ci.r.left < tm.r.left)) tm = ci; });
+      if (tm) { const lead = Math.max(0, tm.r.left); paint(tm, lead - tm.r.left, w, `linear-gradient(to right, ${SH}, rgba(0,0,0,0))`); }
+    }
   };
   // Fanning out animates the cards over .42s, so their rects only reach the viewport edge mid-transition —
   // run the edge shadows each frame for the duration so they appear as the cards arrive, not on next scroll.

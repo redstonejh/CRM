@@ -80,6 +80,7 @@
   const titleOf = (t) => { const m = metaOf(t.id); return (m.title && m.title.trim() && !isNA(m.title)) ? m.title : (t.companyLabel || "Unknown"); };
   const subOf = (t) => { const m = metaOf(t.id); const v = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || ""); return isNA(v) ? "" : v; };  // n/a → no trace on the card
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
+  let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
 
   let root = null;
   const decks = { left: null, right: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
@@ -1229,6 +1230,22 @@
     };
     st.raf = requestAnimationFrame(tick);
   };
+  // Smoothly scroll bucket `s` until `card` is fully inside the clip viewport, then run cb(). If the
+  // card is already fully visible (or can't be revealed any further), cb() runs straight away. Used so
+  // a click on a partly/entirely scrolled-off ticket brings it into view BEFORE its open animation.
+  const revealZoneCard = (s, card, cb) => {
+    const clip = zoneTrack[s]?.parentElement, st = zoneScroll[s];   // .tk-zone-clip
+    if (!clip || !st) return cb();
+    const cr = card.getBoundingClientRect(), vr = clip.getBoundingClientRect(), PAD = 6;
+    let delta = 0;
+    if (cr.top < vr.top + PAD) delta = (vr.top + PAD) - cr.top;              // above view → scroll content down
+    else if (cr.bottom > vr.bottom - PAD) delta = (vr.bottom - PAD) - cr.bottom;   // below view → scroll up
+    const target = clamp(st.sy + delta, zMin(s), 0);
+    if (Math.abs(target - st.sy) < 1) return cb();                          // already visible / nowhere to scroll
+    st.ty = target; st.wheeling = false; runZoneScroll(s);
+    const waitFor = () => { if (!st.raf || Math.abs(st.sy - target) < 0.8) cb(); else requestAnimationFrame(waitFor); };
+    requestAnimationFrame(waitFor);
+  };
   const onZoneWheel = (s, e) => {
     if (zContentH(s) <= zViewH(s) + 1) return;   // nothing to scroll
     e.preventDefault();
@@ -1574,7 +1591,8 @@
       if (fanGap) { layout(fanGap); fanGap = null; }
       if (clone) { clone.remove(); clone = null; }
       card.classList.remove("tk-zdrag");
-      if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
+      // A plain click → bring the card fully into the bucket (if scrolled off) THEN open its config.
+      if (!wasDrag) { revealZoneCard(stage, card, () => window.ticketDetail?.open(t, card)); return; }
       // Released over the matching fanned stack → splice into its row at the cursor slot, then
       // un-assign the stage so the ticket re-joins the inbox deck exactly there.
       const ft = (e.clientY >= stackTopY()) ? fanTarget() : null;
@@ -1769,7 +1787,13 @@
     render();
     if (!subscribed) {
       subscribed = true;
-      window.tickets?.onChanged?.((payload) => { tickets = (payload && payload.tickets) || []; render(); });
+      // While the config is open, the card the detail panel is animating from must NOT be rebuilt
+      // (that detaches it → a copy snaps back to the stack). Defer the render until the panel closes.
+      window.tickets?.onChanged?.((payload) => {
+        tickets = (payload && payload.tickets) || [];
+        if (window.ticketDetail?.isOpen?.()) { pendingRender = true; return; }
+        render();
+      });
     }
   };
 
@@ -1798,6 +1822,21 @@
         if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
       });
     },
+    // Severity → recolour + refresh the card(s) IN PLACE (like setMeta) and persist the priority,
+    // WITHOUT a rebuild — so the open config's source card stays put (no snap-back copy). The persist
+    // fires onChanged, which is deferred while the config is open (see the subscription above).
+    setPriority: (id, val) => {
+      const t = tickets.find((x) => x.id === id); if (!t || t.priority === val) return;
+      t.priority = val;
+      document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
+        c.style.backgroundImage = cardBg(t);
+        const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
+        if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
+      });
+      try { window.tickets?.update?.(id, { priority: val }); } catch {}
+    },
+    // The detail panel closed → run any render that was deferred while it was open.
+    onDetailClosed: () => { if (pendingRender) { pendingRender = false; render(); } },
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load);
   else load();

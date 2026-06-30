@@ -1,14 +1,14 @@
 // ticket-detail.js — the ticket "open" view, with a CONTEXT-AWARE choreographed open:
 //   left-click a ticket card → a flat opaque clone glides from the card's spot in a
-//   direction that depends on WHERE the card lives, then the config panel slides out of
-//   the matching side:
-//     • bucket card        → pulls sideways toward centre (resolution bucket → left, the
-//                            earlier buckets → right); panel opens that same side.
-//     • fanned-deck card    → rises straight up above its spot; panel opens the deck's side
-//                            (left deck → left, right deck → right), flipping if no room.
-//     • closed-pile top card → stays put; panel opens the deck's side (flipping if no room).
-//   A corner pile can't open a panel over the screen edge, so the side auto-flips inward
-//   and the card stays where it is rather than being shoved across the screen.
+//   direction that depends on WHERE the card lives, then the config panel slides out.
+//   The panel ALWAYS prefers the card's LEFT side, flipping to the right only at a screen
+//   edge where a left panel wouldn't fit (so almost always left). The card's MOTION:
+//     • fanned-deck card     → rises so its bottom edge meets the top of the resting row.
+//     • bucket card, occluded → slides right until its left edge clears the column (sits
+//                              BESIDE the others, never on top of them).
+//     • closed-pile top card / front-most bucket card → stays put (already fully visible).
+//   (A bucket card that's scrolled out of view is first smoothly scrolled into the bucket
+//   by ticket-stacks.js before this open runs.)
 //   close → the panel collapses back in, then the card flies back to its place.
 //
 // STYLING (DESIGN_SYSTEM.md §6): a MENU — the search/account/background sub-menu
@@ -26,10 +26,10 @@
   const EASE = "cubic-bezier(.4, 0, .2, 1)"; // balanced glide (no front-loaded snap)
   const FLY_MS = 420, SLIDE_MS = 360, SLIDE_DELAY = 270, SETTLE_MS = 700;
   const CLOSE_SLIDE_MS = 190, CLOSE_FLY_MS = 280;   // close is snappier than open; panel fully retracts THEN card returns
-  const PULL = 64;           // how far a bucket card "pulls out" before its panel slides
   let overlay = null, panel = null, flyCard = null, wrap = null;
   let currentId = null, sourceEl = null, backTransform = "", subscribed = false, closing = false;
   let geo = null, settleTimer = null, panelSide = "right";   // which side the panel emerges from
+  let cardStays = false;     // true when the card doesn't move (front/closed-pile card) → panel opens with no delay
   const slideBack = () => `translateX(${panelSide === "left" ? "" : "-"}${TUCK}px)`;  // retract direction (mirrors per side)
   const openSections = new Set();
 
@@ -88,6 +88,9 @@
          per-side in buildStage(); these rules just flip the gap + tuck direction. */
       .td-wrap.td-left .ticket-detail { margin-left: 0; margin-right: ${GAP}px; transform: translateX(${TUCK}px); }
       .td-wrap.td-left.is-open .ticket-detail { transform: translateX(0); transition-delay: ${SLIDE_DELAY}ms; }
+      /* Card that doesn't move (front bucket card / closed-pile top) → the panel has nothing to wait
+         for, so it slides immediately (no fly delay) on open. */
+      .td-wrap.td-instant.is-open .ticket-detail, .td-wrap.td-instant.td-left.is-open .ticket-detail { transition-delay: 0ms; }
 
       /* THE MENU shell — the .dashboard-search-popover / .auth-profile-menu recipe.
          Drop shadow alpha starts at 0 (invisible) so it can be transitioned in at settle —
@@ -226,26 +229,67 @@
     flyCard.style.backgroundImage = layers.length ? layers.join(", ") : `linear-gradient(180deg, rgba(${fallbackRgb},0.16), rgba(${fallbackRgb},0.05))`;
   };
 
-  // Map the clicked card to an OPEN CONTEXT — where the flyer travels (motion) and which
-  // side the config panel emerges from (side):
-  //   • bucket card → pull sideways toward centre (resolution = leftmost-room → left; the
-  //     earlier buckets → right) and open the panel on that same side;
-  //   • fanned-deck card → rise straight up above its spot;
-  //   • closed-pile top card → stay put.
-  // Side starts from the deck's hand (left deck → left, right deck → right) but buildStage
-  // flips it if that side has no room (a corner pile can't open over the screen edge).
+  // A static, opaque copy of a bucket card pinned over its real position on the overlay. Used for the
+  // cards IN FRONT of an opening one: stacked ABOVE the flyer so the flyer slides out from UNDER them
+  // (keeping its z-order) instead of jumping on top. Torn down with the overlay (innerHTML cleared).
+  const cloneFrontCard = (card, z) => {
+    const r = card.getBoundingClientRect();
+    const el = card.cloneNode(true);           // keeps the card's inline background + body markup
+    el.removeAttribute("id");
+    Object.assign(el.style, {
+      position: "fixed", boxSizing: "border-box", margin: "0",
+      left: `${Math.round(r.left)}px`, top: `${Math.round(r.top)}px`,
+      width: `${Math.round(r.width)}px`, height: `${Math.round(r.height)}px`,
+      transform: "none", transition: "none", zIndex: String(z), pointerEvents: "none",
+    });
+    // The real card is clipped by the bucket's scroll viewport (.tk-zone-clip, overflow:hidden); the
+    // overlay clone isn't, so clip it to the SAME rect — otherwise the part of a front card that's
+    // scrolled past the bucket's edge spills out below/above the bucket.
+    const clipEl = card.closest(".tk-zone-clip");
+    if (clipEl) {
+      const vr = clipEl.getBoundingClientRect();
+      const t = Math.max(0, vr.top - r.top), b = Math.max(0, r.bottom - vr.bottom);
+      const l = Math.max(0, vr.left - r.left), rt = Math.max(0, r.right - vr.right);
+      if (t || b || l || rt) el.style.clipPath = `inset(${Math.round(t)}px ${Math.round(rt)}px ${Math.round(b)}px ${Math.round(l)}px)`;
+    }
+    overlay.appendChild(el);
+  };
+
+  // The flyer's inner markup = the source card's body PLUS its progress-bar "battery" (a SIBLING of
+  // the body on the real card, so the old body-only copy dropped it). Shared by build + live sync.
+  const flyerInner = () => {
+    const body = sourceEl ? sourceEl.querySelector(".ticket-body, [data-ticket-mount]") : null;
+    const bars = sourceEl ? sourceEl.querySelector(".tk-bars-card") : null;
+    return `<div class="ticket-body">${body ? body.innerHTML : ""}</div>` + (bars ? bars.outerHTML : "");
+  };
+  // Mirror the (live-patched) source card onto the flyer: refresh its bars + body and recolour it, so
+  // the flying card tracks edits in real time (a filled field greening a segment; a severity recolour).
+  const syncFlyer = () => {
+    if (!flyCard || !sourceEl) return;
+    flyCard.innerHTML = flyerInner();
+    const active = panel && panel.querySelector(".td-prio-opt.is-active");
+    paintFlyer(SEV_RGB[active ? active.dataset.prio : "medium"] || SEV_RGB.medium);
+  };
+
+  // Map the clicked card to its OPEN MOTION — how the flyer travels before the panel slides out.
+  // The panel side is UNIFORM (buildStage prefers LEFT, flipping right only when a left panel
+  // would run off-screen), so context only decides the card's movement:
+  //   • fanned-deck card     → RISE so its bottom edge meets the top edge of the resting row.
+  //   • closed-pile top card → STAY (it's already fully visible).
+  //   • bucket card, occluded → SLIDE right until its left edge clears the column, so it sits
+  //     BESIDE the others (never gaining z-order over them); the front-most (fully visible) card
+  //     is already clear → STAY.
+  //   • anything else (grid widget / trash drawer) → fly to CENTRE.
   const contextOf = (srcEl) => {
-    if (!srcEl || !srcEl.closest) return { motion: "center", side: "right" };
-    const zone = srcEl.closest(".tk-zone");
-    if (zone) return zone.dataset.stage === "resolution"
-      ? { motion: "left", side: "left" }
-      : { motion: "right", side: "right" };
+    if (!srcEl || !srcEl.closest) return "center";
+    if (srcEl.closest(".tk-zone")) {
+      const track = srcEl.closest(".tk-zone-track");
+      const cards = track ? track.querySelectorAll(".tk-zcard") : [];
+      return cards.length && cards[cards.length - 1] === srcEl ? "stay" : "slide";   // front-most card stays
+    }
     const deck = srcEl.closest(".tk-deck");
-    if (deck) return {
-      motion: deck.classList.contains("is-fanned") ? "up" : "stay",
-      side: deck.classList.contains("tk-deck-left") ? "left" : "right",
-    };
-    return { motion: "center", side: "right" };
+    if (deck) return deck.classList.contains("is-fanned") ? "rise" : "stay";
+    return "center";
   };
 
   // Build the flyer card + the (collapsed) config panel, positioned for the context-aware
@@ -255,28 +299,27 @@
     const vw = window.innerWidth, vh = window.innerHeight;
     const sr = sourceEl ? sourceEl.getBoundingClientRect() : { left: vw / 2 - 93, top: vh / 2 - 140, width: 186, height: 279 };
     const cardW = sr.width, cardH = sr.height;
-    const ctx = contextOf(sourceEl);
+    const motion = contextOf(sourceEl);
+    const moves = motion === "slide" || motion === "center";   // these reposition the card itself
+    cardStays = motion === "stay";
 
-    // Flyer destination from the motion intent (then clamped so the CARD stays on-screen).
-    const rise = Math.round(cardH * 0.9);
+    // Flyer destination from the motion (then clamped so the CARD stays on-screen).
     let tT = sr.top, tL = sr.left;
-    if (ctx.motion === "up") tT = sr.top - rise;
-    else if (ctx.motion === "right") tL = sr.left + PULL;
-    else if (ctx.motion === "left") tL = sr.left - PULL;
-    else if (ctx.motion === "center") { tL = (vw - cardW) / 2; tT = (vh - cardH) / 2; }
+    if (motion === "rise") tT = sr.top - cardH;          // bottom edge meets the resting row's top edge
+    else if (motion === "slide") tL = sr.left + cardW;   // left edge clears the column's right edge
+    else if (motion === "center") { tL = (vw - cardW) / 2; tT = (vh - cardH) / 2; }
     const targetTop = Math.round(Math.max(10, Math.min(tT, vh - 10 - cardH)));
     let targetLeft = Math.round(Math.max(10, Math.min(tL, vw - 10 - cardW)));
 
-    // Choose the panel side: honour the requested hand when its panel fits beside the card,
-    // else flip to the side that does (corner piles open inward, the card staying put). If a
-    // bucket card still won't fit on the chosen side, slide it just enough that it does.
+    // Panel side: prefer LEFT; flip to RIGHT only when a left panel would fall off-screen (edges
+    // only — almost always left). A card that actually moves may still overflow its chosen side,
+    // so nudge just that card back on-screen; a stationary card (rise/stay) is left untouched.
     const fits = (left, side) => side === "left"
       ? left - GAP - PANEL_W >= 10
       : left + cardW + GAP + PANEL_W <= vw - 10;
-    let side = ctx.side;
-    const other = side === "left" ? "right" : "left";
-    if (!fits(targetLeft, side) && fits(targetLeft, other)) side = other;
-    if (!fits(targetLeft, side)) targetLeft = side === "left"
+    let side = "left";
+    if (!fits(targetLeft, "left") && fits(targetLeft, "right")) side = "right";
+    if (moves && !fits(targetLeft, side)) targetLeft = side === "left"
       ? Math.round(Math.max(10 + GAP + PANEL_W, Math.min(targetLeft, vw - 10 - cardW)))
       : Math.round(Math.min(targetLeft, vw - 10 - cardW - GAP - PANEL_W));
     panelSide = side;
@@ -286,17 +329,30 @@
     // backdrop-filter, which is what washed it brighter-than-hover mid-flight. A plain
     // opaque div with only the visual styles can't be highlighted by anything.
     const prio = (ticket && ["low", "medium", "high", "critical"].includes(ticket.priority)) ? ticket.priority : (ticket ? "medium" : "none");
-    const body = sourceEl ? sourceEl.querySelector(".ticket-body, [data-ticket-mount]") : null;
     flyCard = document.createElement("div");
     flyCard.className = "td-card td-flyer";
-    flyCard.innerHTML = `<div class="ticket-body">${body ? body.innerHTML : ""}</div>`;
+    flyCard.innerHTML = flyerInner();   // body + progress bars
     backTransform = `translate(${Math.round(sr.left - targetLeft)}px, ${Math.round(sr.top - targetTop)}px)`;
     flyCard.style.cssText = `position:fixed; left:${targetLeft}px; top:${targetTop}px; width:${cardW}px; height:${cardH}px; transform:${backTransform};`;
     paintFlyer(SEV_RGB[prio]);
     overlay.appendChild(flyCard);
 
+    // Occluded bucket card (slide): clone the cards IN FRONT of it ABOVE the flyer so it slides out
+    // from UNDER them (and back under, on close) — it never jumps over the rest of the stack. The
+    // panel then sits above those clones so it still covers the column once it's out.
+    let panelZ = 0;   // 0 → leave the CSS default (panel below the flyer)
+    if (motion === "slide" && sourceEl) {
+      const track = sourceEl.closest(".tk-zone-track");
+      const sibs = track ? Array.from(track.querySelectorAll(".tk-zcard")) : [];
+      const fronts = sibs.slice(sibs.indexOf(sourceEl) + 1);
+      fronts.forEach((c, i) => cloneFrontCard(c, 3 + i));   // flyer is z-index 2 → clones ride above it
+      if (fronts.length) panelZ = 3 + fronts.length;        // panel above every front clone
+    }
+
     wrap = document.createElement("div");
     wrap.className = panelSide === "left" ? "td-wrap td-left" : "td-wrap";
+    if (cardStays) wrap.classList.add("td-instant");        // no fly → panel opens with no delay
+    if (panelZ) wrap.style.zIndex = String(panelZ);
     if (panelSide === "left") {
       wrap.style.right = `${Math.round(vw - targetLeft)}px`;   // wrap RIGHT edge sits at the card's LEFT edge
       wrap.style.clipPath = "inset(-260px 0 -260px -260px)";   // hide everything RIGHT of the card's left edge
@@ -383,12 +439,15 @@
     // Severity (the priority field of the Triage stage): set + recolour the flying card; persist via the
     // ticket API (it drives the card's colour). The bars refresh on the resulting re-render.
     panel.querySelectorAll(".td-prio-opt").forEach((el) => {
-      el.onclick = async () => {
+      el.onclick = () => {
         const val = el.dataset.prio;
         panel.querySelectorAll(".td-prio-opt").forEach((o) => o.classList.toggle("is-active", o === el));
-        if (sourceEl) sourceEl.dataset.severity = val;   // recolour the (hidden) source so its computed bg matches
-        paintFlyer(SEV_RGB[val] || SEV_RGB.medium);       // → repaint the flying card LIVE, not just on close
-        if (val !== (t.priority || "medium")) { t.priority = val; await window.tickets.update(t.id, { priority: val }); }
+        if (sourceEl) sourceEl.dataset.severity = val;
+        t.priority = val;
+        // Recolour + refresh the REAL card(s) in place and persist — NO full re-render, so the source
+        // card the flyer animates from is never detached (which made a copy "snap back" to the stack).
+        window.ticketStacks?.setPriority?.(t.id, val);
+        syncFlyer();   // mirror the new colour (and bars) onto the flying card
       };
     });
     // The stage's text fields — live-saved as client-side overrides so the card + its progress bars
@@ -397,7 +456,7 @@
     const grow = (el) => { if (el.tagName === "TEXTAREA") { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
     panel.querySelectorAll("[data-field]").forEach((el) => {
       grow(el);
-      el.oninput = () => { window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value }); grow(el); };
+      el.oninput = () => { window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value }); grow(el); syncFlyer(); };
       el.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); el.blur(); } e.stopPropagation(); };
     });
     // Save: required fields must be answered; a blank one prompts "use n/a" and focuses it, else close.
@@ -439,7 +498,7 @@
       panel.style.willChange = "auto";
       wrap.style.transform = "none";
       wrap.style.top = `${Math.round(geo.targetTop + geo.cardH / 2 - panel.offsetHeight / 2)}px`;
-    }, SETTLE_MS);
+    }, cardStays ? SLIDE_MS + 40 : SETTLE_MS);   // no fly → the panel is out a beat sooner
     if (!subscribed) { subscribed = true; window.tickets?.onChanged?.(() => refresh()); }
   };
 
@@ -473,10 +532,11 @@
       overlay.hidden = true; overlay.innerHTML = "";
       if (sourceEl) { sourceEl.style.visibility = ""; sourceEl = null; }
       flyCard = wrap = panel = null; currentId = null; closing = false; geo = null;
+      try { window.ticketStacks?.onDetailClosed?.(); } catch {}   // flush any render deferred while open
     };
     if (fc) fc.addEventListener("transitionend", (ev) => { if (ev.propertyName === "transform") finish(); });
-    setTimeout(finish, CLOSE_SLIDE_MS + CLOSE_FLY_MS + 90);
+    setTimeout(finish, cardStays ? CLOSE_SLIDE_MS + 60 : CLOSE_SLIDE_MS + CLOSE_FLY_MS + 90);   // no card fly to wait on
   };
 
-  window.ticketDetail = { open, close };
+  window.ticketDetail = { open, close, isOpen: () => !!(overlay && !overlay.hidden) };
 })();

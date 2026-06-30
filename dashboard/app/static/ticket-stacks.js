@@ -1076,8 +1076,8 @@
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
-      // Config opens on DOUBLE click; a single click does nothing (the card never moved).
-      if (!wasDrag) return;
+      // A plain click (the card never moved) opens its config — same one-click open as a bucket card.
+      if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
       const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
       if (dDrop && dDrop.track) {              // compensate for the track's transform so it doesn't jump by scrollX
         const tt = side === "left" ? dDrop.scrollX : -dDrop.scrollX;
@@ -1103,8 +1103,6 @@
       pointerId = e.pointerId; pointerType = e.pointerType || "mouse";
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });
-    // Double-click opens the ticket's config (flies to centre).
-    card.addEventListener("dblclick", (e) => { e.preventDefault(); window.ticketDetail?.open(t, card); });
   };
 
   // The card's inner markup — shared by the stack cards and the fly-home clone so they

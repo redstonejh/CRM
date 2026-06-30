@@ -342,7 +342,10 @@
         padding: 2px 4px 11px; font-size: 0.98rem; font-weight: 700; line-height: 1.25; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
-      .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; padding: 2px; }
+      /* body no longer clips — an inner .tk-zone-clip clips the scrolling track, so the scrollbar can sit
+         in the bucket's right gutter (breathing room) without being cut off. */
+      .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: visible; padding: 2px; }
+      .tk-zone-clip { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
       .tk-zone-track { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 100%; will-change: transform; }
       /* Bucket scrollbar — same look as the deck's, vertical on the right. */
       .tk-zsb { position: absolute; top: 4px; bottom: 4px; right: 4px; width: 8px; border-radius: 999px;
@@ -1284,6 +1287,15 @@
       if (!panel) return;
       panel.style.width = `${Math.round(bucketW)}px`;
       panel.style.left = `${Math.round(left)}px`;
+      // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
+      // letting it sit in the right gutter (the body no longer clips it) for breathing room.
+      const body = zoneBody[s.key], sb = body.querySelector(".tk-zsb");
+      if (sb) {
+        const gutter = panel.getBoundingClientRect().right - body.getBoundingClientRect().right;  // body edge → bucket edge
+        const ticketGap = Math.max(0, (body.clientWidth - CARD_W) / 2);                            // ticket edge → body edge
+        const center = (ticketGap - gutter) / 2;                                                    // midpoint, left of body's right edge
+        sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                    // 8px bar centred there, kept inside the bucket
+      }
     });
     drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
   };
@@ -1297,7 +1309,7 @@
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
       panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-count">0</span></div>` +
-        `<div class="tk-zone-body"><div class="tk-zone-track"></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
+        `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
       zoneTrack[s.key] = panel.querySelector(".tk-zone-track");

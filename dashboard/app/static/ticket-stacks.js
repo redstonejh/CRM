@@ -493,6 +493,23 @@
     }
   };
 
+  // While a card is dragged OUT of the fan (lifted toward a bucket), re-flow the cards left behind so
+  // they slide together and close the hole it left — a smooth collision, not a frozen gap. The dragged
+  // card is skipped (it follows the cursor); the others fill consecutive slots via their .42s transition.
+  const closeFanRanks = (side, dragged) => {
+    const deck = decks[side]; if (!deck) return;
+    const step = CARD_W + GAP_FAN;
+    let slot = 0;
+    deck.cards.forEach((c) => {
+      if (c === dragged) return;
+      let tx = slot * step + deck.scrollX; if (side === "right") tx = -tx;
+      c._tx = tx; c._ty = 0; c._rot = 0;
+      c.style.zIndex = String(3000 - slot);
+      c.style.transform = `translate(${tx}px, 0) rotate(0deg)`;
+      slot++;
+    });
+  };
+
   const toggleFan = (side) => {
     const open = !fanned[side];
     fanned[side] = open;
@@ -822,7 +839,7 @@
 
   const wireCard = (card, t, side) => {
     let startX = 0, startY = 0, dragging = false, down = false, handedOff = false;
-    let pointerId = null, pointerType = "mouse", baseTx = 0, baseTy = 0;
+    let pointerId = null, pointerType = "mouse", baseTx = 0, baseTy = 0, ranksClosed = false;
 
     // Materialise the ticket as a real grid widget, drop the source card from its
     // stack, then "pick up" the new widget mid-drag with the native widget-move runtime.
@@ -859,7 +876,7 @@
       if (!down || handedOff) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) {
-        dragging = true; dragActive = true; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
+        dragging = true; dragActive = true; ranksClosed = false; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
         baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
         dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
           if (y < stackTopY()) { flowHighlight(stackPos(side), x, y); const dt = dropTarget(stackPos(side), x, y); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
@@ -876,6 +893,7 @@
         flowHighlight(stackPos(side), e.clientX, e.clientY);
         const dt = dropTarget(stackPos(side), e.clientX, e.clientY);
         if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
+        if (fanned[side]) { closeFanRanks(side, card); ranksClosed = true; }  // remaining fan cards slide together to close the hole
         return;
       }
       clearZoneHighlight(); clearGap();
@@ -893,7 +911,9 @@
             deck.cards.splice(idx, 0, card);
             deck.order = deck.cards.map((c) => c.dataset.id);   // remember the custom order…
             saveOrder(side);                                    // …and persist it across reloads
-            layout(side);                                       // animate the OTHER cards (this one is skipped while dragging)
+            layout(side); ranksClosed = false;
+          } else if (ranksClosed) {
+            layout(side); ranksClosed = false;                 // re-entered the row after a lift-out → reopen the gap
           }
         }
       }

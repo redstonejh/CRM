@@ -467,6 +467,11 @@
     // De-emphasise the idle stack's cards + arrow while the OTHER stack is fanned — but the
     // create/trash button stays at full opacity (it's an always-available action).
     deck.box.classList.toggle("is-dimmed", fanned[otherSide]);
+    // The fanned deck must paint ABOVE the idle one. The idle deck's opacity:0.3 makes it a stacking
+    // context, and the cards' track is also one (its scroll transform), so the fanned cards' z-index no
+    // longer lifts them across decks — without this, the dimmed idle pile shows THROUGH the fanned cards
+    // where they overlap, making the fanned stack look transparent. A box-level z-index fixes the order.
+    deck.box.style.zIndex = fanned[side] ? "2" : "1";
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;

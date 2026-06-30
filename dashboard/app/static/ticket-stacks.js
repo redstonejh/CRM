@@ -564,10 +564,15 @@
     const deck = decks[side]; if (!deck) return;
     setTrack(side);   // live scroll = rigid track transform; card slots are untouched (no re-place) → collision keeps animating
     const min = scrollMinOf(deck), barW = barWidth();
-    const thumbW = Math.max(36, barW * (deck.viewW / Math.max(1, deck.contentW)));
-    const frac = min ? clamp(deck.scrollX, min, 0) / min : 0;
+    const base = Math.max(36, barW * (deck.viewW / Math.max(1, deck.contentW)));
+    // Apple-style overscroll: past an end, the thumb anchors to that end and shrinks by the overscroll
+    // amount (and grows back as the recoil settles, since this runs every frame of the scroll loop).
+    let thumbW = base, left;
+    if (deck.scrollX > 0) { thumbW = Math.max(20, base - deck.scrollX); left = 0; }                          // past the start
+    else if (deck.scrollX < min) { thumbW = Math.max(20, base - (min - deck.scrollX)); left = barW - thumbW; }  // past the end
+    else { left = (min ? deck.scrollX / min : 0) * (barW - thumbW); }
     deck.thumb.style.width = `${thumbW}px`;
-    deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
+    deck.thumb.style.left = `${left}px`;
     deck.thumb.style.right = "auto";
     placeArrow(side);   // arrow tracks the ticket edge (rigidly — its transition is off during scroll)
   };
@@ -1056,11 +1061,16 @@
     const over = content > view + 1;
     sb.classList.toggle("is-on", over);
     if (over) {
-      const trackH = view - 8;
-      const thumbH = Math.max(28, trackH * (view / content));
-      const frac = min ? clamp(st.sy, min, 0) / min : 0;
+      const trackH = view - 8;                                  // the thumb lives INSIDE the inset bar → no extra +4
+      const base = Math.max(28, trackH * (view / content));
+      // Apple-style overscroll: past an end, the thumb anchors to that end and shrinks by the overscroll
+      // amount (and grows back as the recoil settles, since this runs every frame of the scroll loop).
+      let thumbH = base, top;
+      if (st.sy > 0) { thumbH = Math.max(14, base - st.sy); top = 0; }                       // past the top
+      else if (st.sy < min) { thumbH = Math.max(14, base - (min - st.sy)); top = trackH - thumbH; }  // past the bottom
+      else { top = (min ? st.sy / min : 0) * (trackH - thumbH); }
       th.style.height = `${Math.round(thumbH)}px`;
-      th.style.top = `${Math.round(4 + frac * (trackH - thumbH))}px`;
+      th.style.top = `${Math.round(top)}px`;
     }
   };
   const runZoneScroll = (s) => {

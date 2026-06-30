@@ -1,9 +1,15 @@
-// ticket-detail.js — the ticket "open" view, with a choreographed open:
-//   left-click a ticket card → a clone of the card flies smoothly to screen centre
-//   → the config panel expands outward from the card's RIGHT edge.
+// ticket-detail.js — the ticket "open" view, with a CONTEXT-AWARE choreographed open:
+//   left-click a ticket card → a flat opaque clone glides from the card's spot in a
+//   direction that depends on WHERE the card lives, then the config panel slides out of
+//   the matching side:
+//     • bucket card        → pulls sideways toward centre (resolution bucket → left, the
+//                            earlier buckets → right); panel opens that same side.
+//     • fanned-deck card    → rises straight up above its spot; panel opens the deck's side
+//                            (left deck → left, right deck → right), flipping if no room.
+//     • closed-pile top card → stays put; panel opens the deck's side (flipping if no room).
+//   A corner pile can't open a panel over the screen edge, so the side auto-flips inward
+//   and the card stays where it is rather than being shoved across the screen.
 //   close → the panel collapses back in, then the card flies back to its place.
-//
-// Each field is a collapsible dropdown section (control stacked under the header).
 //
 // STYLING (DESIGN_SYSTEM.md §6): a MENU — the search/account/background sub-menu
 // recipe (frosted glass, flat colour-only items, no borders/blue/focus rings,
@@ -20,10 +26,11 @@
   const EASE = "cubic-bezier(.4, 0, .2, 1)"; // balanced glide (no front-loaded snap)
   const FLY_MS = 420, SLIDE_MS = 360, SLIDE_DELAY = 270, SETTLE_MS = 700;
   const CLOSE_SLIDE_MS = 190, CLOSE_FLY_MS = 280;   // close is snappier than open; panel fully retracts THEN card returns
+  const PULL = 64;           // how far a bucket card "pulls out" before its panel slides
   let overlay = null, panel = null, flyCard = null, wrap = null;
   let currentId = null, sourceEl = null, backTransform = "", subscribed = false, closing = false;
-  let geo = null, settleTimer = null;
-  const SLIDE_BACK = `translateX(-${TUCK}px)`;
+  let geo = null, settleTimer = null, panelSide = "right";   // which side the panel emerges from
+  const slideBack = () => `translateX(${panelSide === "left" ? "" : "-"}${TUCK}px)`;  // retract direction (mirrors per side)
   const openSections = new Set();
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -54,8 +61,10 @@
            • no widget/db-panel/surface class can ever wash it brighter than hover, and
            • no backdrop-filter ⇒ no saturate() compositing bloom mid-flight.
          Opaque also means it genuinely OCCLUDES the panel sliding out from behind it. */
-      .td-card { z-index: 2; margin: 0 !important; cursor: default !important;
+      .td-card { z-index: 2; margin: 0 !important; cursor: default !important; box-sizing: border-box;
         pointer-events: none !important;   /* inert: cursor passes through to the overlay */
+        /* border-box so width/height === the source card's border-box rect — the clone is a
+           pixel-exact stand-in (no size-pop on open) and targetLeft+cardW is the TRUE edge. */
         transition: transform ${FLY_MS}ms ${EASE} !important; will-change: transform; }
       /* On close the card returns ONLY after the panel has fully retracted (delay = the
          panel's retract time), and faster. !important to beat the base .td-card transition. */
@@ -74,6 +83,11 @@
       .td-wrap .ticket-detail { margin-left: ${GAP}px; transform: translateX(-${TUCK}px);
         transition: transform ${SLIDE_MS}ms ${EASE}; will-change: transform; }
       .td-wrap.is-open .ticket-detail { transform: translateX(0); transition-delay: ${SLIDE_DELAY}ms; }  /* slide out AFTER the card centres */
+      /* LEFT-side panel (mirror image): the panel sits to the card's LEFT, tucks to the RIGHT
+         behind the card, and slides out leftward. The wrap anchor + clip-path are set inline
+         per-side in buildStage(); these rules just flip the gap + tuck direction. */
+      .td-wrap.td-left .ticket-detail { margin-left: 0; margin-right: ${GAP}px; transform: translateX(${TUCK}px); }
+      .td-wrap.td-left.is-open .ticket-detail { transform: translateX(0); transition-delay: ${SLIDE_DELAY}ms; }
 
       /* THE MENU shell — the .dashboard-search-popover / .auth-profile-menu recipe.
          Drop shadow alpha starts at 0 (invisible) so it can be transitioned in at settle —
@@ -212,17 +226,60 @@
     flyCard.style.backgroundImage = layers.length ? layers.join(", ") : `linear-gradient(180deg, rgba(${fallbackRgb},0.16), rgba(${fallbackRgb},0.05))`;
   };
 
-  // Build the centred flyer card + the (collapsed) config panel, positioned for the
-  // fly-in. Returns once the DOM is laid out at the START of the animation.
+  // Map the clicked card to an OPEN CONTEXT — where the flyer travels (motion) and which
+  // side the config panel emerges from (side):
+  //   • bucket card → pull sideways toward centre (resolution = leftmost-room → left; the
+  //     earlier buckets → right) and open the panel on that same side;
+  //   • fanned-deck card → rise straight up above its spot;
+  //   • closed-pile top card → stay put.
+  // Side starts from the deck's hand (left deck → left, right deck → right) but buildStage
+  // flips it if that side has no room (a corner pile can't open over the screen edge).
+  const contextOf = (srcEl) => {
+    if (!srcEl || !srcEl.closest) return { motion: "center", side: "right" };
+    const zone = srcEl.closest(".tk-zone");
+    if (zone) return zone.dataset.stage === "resolution"
+      ? { motion: "left", side: "left" }
+      : { motion: "right", side: "right" };
+    const deck = srcEl.closest(".tk-deck");
+    if (deck) return {
+      motion: deck.classList.contains("is-fanned") ? "up" : "stay",
+      side: deck.classList.contains("tk-deck-left") ? "left" : "right",
+    };
+    return { motion: "center", side: "right" };
+  };
+
+  // Build the flyer card + the (collapsed) config panel, positioned for the context-aware
+  // open. Returns once the DOM is laid out at the START of the animation.
   const buildStage = (ticket) => {
     overlay.innerHTML = "";
     const vw = window.innerWidth, vh = window.innerHeight;
     const sr = sourceEl ? sourceEl.getBoundingClientRect() : { left: vw / 2 - 93, top: vh / 2 - 140, width: 186, height: 279 };
     const cardW = sr.width, cardH = sr.height;
-    // Card target: centred. Shift left only if the panel would overflow the right edge.
-    const targetTop = Math.round((vh - cardH) / 2);
-    const fitLeft = vw - 10 - PANEL_W - GAP - cardW;
-    const targetLeft = Math.max(10, Math.min(Math.round((vw - cardW) / 2), fitLeft));
+    const ctx = contextOf(sourceEl);
+
+    // Flyer destination from the motion intent (then clamped so the CARD stays on-screen).
+    const rise = Math.round(cardH * 0.9);
+    let tT = sr.top, tL = sr.left;
+    if (ctx.motion === "up") tT = sr.top - rise;
+    else if (ctx.motion === "right") tL = sr.left + PULL;
+    else if (ctx.motion === "left") tL = sr.left - PULL;
+    else if (ctx.motion === "center") { tL = (vw - cardW) / 2; tT = (vh - cardH) / 2; }
+    const targetTop = Math.round(Math.max(10, Math.min(tT, vh - 10 - cardH)));
+    let targetLeft = Math.round(Math.max(10, Math.min(tL, vw - 10 - cardW)));
+
+    // Choose the panel side: honour the requested hand when its panel fits beside the card,
+    // else flip to the side that does (corner piles open inward, the card staying put). If a
+    // bucket card still won't fit on the chosen side, slide it just enough that it does.
+    const fits = (left, side) => side === "left"
+      ? left - GAP - PANEL_W >= 10
+      : left + cardW + GAP + PANEL_W <= vw - 10;
+    let side = ctx.side;
+    const other = side === "left" ? "right" : "left";
+    if (!fits(targetLeft, side) && fits(targetLeft, other)) side = other;
+    if (!fits(targetLeft, side)) targetLeft = side === "left"
+      ? Math.round(Math.max(10 + GAP + PANEL_W, Math.min(targetLeft, vw - 10 - cardW)))
+      : Math.round(Math.min(targetLeft, vw - 10 - cardW - GAP - PANEL_W));
+    panelSide = side;
     geo = { targetLeft, targetTop, cardW, cardH };
 
     // Build the flyer FRESH (not a clone). A clone drags along every widget class +
@@ -239,8 +296,14 @@
     overlay.appendChild(flyCard);
 
     wrap = document.createElement("div");
-    wrap.className = "td-wrap";
-    wrap.style.left = `${targetLeft + cardW}px`;   // clip window starts at the card's RIGHT edge
+    wrap.className = panelSide === "left" ? "td-wrap td-left" : "td-wrap";
+    if (panelSide === "left") {
+      wrap.style.right = `${Math.round(vw - targetLeft)}px`;   // wrap RIGHT edge sits at the card's LEFT edge
+      wrap.style.clipPath = "inset(-260px 0 -260px -260px)";   // hide everything RIGHT of the card's left edge
+    } else {
+      wrap.style.left = `${targetLeft + cardW}px`;             // wrap LEFT edge sits at the card's RIGHT edge
+      wrap.style.clipPath = "inset(-260px -260px -260px 0)";   // hide everything LEFT of the card's right edge
+    }
     wrap.style.top = `${targetTop + cardH / 2}px`;
     wrap.style.transform = "translateY(-50%)";
     panel = document.createElement("div");
@@ -396,7 +459,7 @@
       panel.style.transform = "translateX(0)";
       void panel.offsetWidth;                 // commit current position
       panel.style.transition = `transform ${CLOSE_SLIDE_MS}ms ${EASE}`;
-      panel.style.transform = SLIDE_BACK;     // retract fully behind the card (fast)
+      panel.style.transform = slideBack();    // retract fully behind the card (fast, mirrored per side)
     }
     if (wrap) wrap.classList.remove("is-open");
     const fc = flyCard;

@@ -587,20 +587,22 @@
     if (!info.length) return;
     let listLeft = Infinity, listRight = -Infinity;
     info.forEach(({ r }) => { if (r.left < listLeft) listLeft = r.left; if (r.right > listRight) listRight = r.right; });
-    const paint = (ci, leftPx, w, grad) => {
-      const sh = ci.card.querySelector(":scope > .tk-edge-shade");
-      if (sh) sh.style.cssText = `position:absolute;top:0;height:${ci.r.height}px;left:${leftPx}px;width:${w}px;background:${grad};pointer-events:none;z-index:6;`;
-    };
-    if (listRight > VW + 0.5) {                                   // list extends past the RIGHT edge
-      const w = Math.min(MAXW, listRight - VW);
-      let tn = null; info.forEach((ci) => { if (ci.r.left < VW && (!tn || ci.r.right > tn.r.right)) tn = ci; });   // ticket at the edge (or just inside a gap)
-      if (tn) { const lead = Math.min(VW, tn.r.right); paint(tn, (lead - w) - tn.r.left, w, `linear-gradient(to right, rgba(0,0,0,0), ${SH})`); }
-    }
-    if (listLeft < -0.5) {                                        // list extends past the LEFT edge
-      const w = Math.min(MAXW, -listLeft);
-      let tm = null; info.forEach((ci) => { if (ci.r.right > 0 && (!tm || ci.r.left < tm.r.left)) tm = ci; });
-      if (tm) { const lead = Math.max(0, tm.r.left); paint(tm, lead - tm.r.left, w, `linear-gradient(to right, ${SH}, rgba(0,0,0,0))`); }
-    }
+    // ONE continuous band fixed at each viewport edge (depth = how far the LIST extends past it). Every
+    // ticket renders the SAME band, positioned in its own coords, and its overflow:hidden clips it to its
+    // slice — so the shadow reads as a single band the tickets slide under: continuous across gaps (you
+    // just can't see the slice that lands in a gap), never jumping or vanishing at a ticket edge.
+    const wR = listRight > VW + 0.5 ? Math.min(MAXW, listRight - VW) : 0;
+    const wL = listLeft < -0.5 ? Math.min(MAXW, -listLeft) : 0;
+    const gradR = `linear-gradient(to right, rgba(0,0,0,0), ${SH})`;   // dark at the right viewport edge
+    const gradL = `linear-gradient(to right, ${SH}, rgba(0,0,0,0))`;   // dark at the left viewport edge
+    info.forEach(({ card, r }) => {
+      const sh = card.querySelector(":scope > .tk-edge-shade"); if (!sh) return;
+      if (wR && r.right > VW - wR - 0.5 && r.left < VW + 0.5) {        // ticket overlaps the RIGHT-edge band
+        sh.style.cssText = `position:absolute;top:0;height:${r.height}px;left:${(VW - wR) - r.left}px;width:${wR}px;background:${gradR};pointer-events:none;z-index:6;`;
+      } else if (wL && r.left < wL + 0.5 && r.right > -0.5) {          // ticket overlaps the LEFT-edge band
+        sh.style.cssText = `position:absolute;top:0;height:${r.height}px;left:${-r.left}px;width:${wL}px;background:${gradL};pointer-events:none;z-index:6;`;
+      }
+    });
   };
   // Fanning out animates the cards over .42s, so their rects only reach the viewport edge mid-transition —
   // run the edge shadows each frame for the duration so they appear as the cards arrive, not on next scroll.

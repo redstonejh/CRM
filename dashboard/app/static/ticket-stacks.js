@@ -387,6 +387,12 @@
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
       .tk-seg { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.20); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
       .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
+      /* Live config-menu info on the card face (replaces the old "Down <time>" line). Each entered
+         field is one compact, ellipsised line: a muted label + the value. */
+      .ticket-fields { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; min-height: 0; overflow: hidden; }
+      .ticket-field { font-size: 0.75rem; line-height: 1.35; color: rgba(255,255,255,0.82);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .ticket-field-l { color: rgba(255,255,255,0.42); font-weight: 600; margin-right: 5px; }
       /* body no longer clips — an inner .tk-zone-clip clips the scrolling track, so the scrollbar can sit
          in the bucket's right gutter (breathing room) without being cut off. */
       .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: visible; padding: 2px; }
@@ -1106,16 +1112,26 @@
     });
   };
 
+  // The config-menu info entered for this ticket's CURRENT stage, shown on the card face and kept in
+  // sync as you type (see ticketStacks.setMeta). Severity is the card colour, so its field is skipped;
+  // blank / "n/a" fields show nothing.
+  const cardFieldsHTML = (t) => {
+    const stage = stageOf(t.id) || "triage";
+    return (STAGE_FIELDS[stage] || []).filter((f) => !f.prio).map((f) => {
+      const v = fieldRaw(t, f.key);
+      if (!v || isNA(v) || !String(v).trim()) return "";
+      return `<div class="ticket-field"><span class="ticket-field-l">${esc(f.label)}</span><span class="ticket-field-v">${esc(v)}</span></div>`;
+    }).join("");
+  };
+
   // The card's inner markup — shared by the stack cards and the fly-home clone so they
   // render identically. Uses the global .ticket-body/.ticket-company/etc. classes.
   const cardInner = (t) => {
-    const created = t.createdAt ? Date.parse(t.createdAt) : NaN;
-    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
     const sub = subOf(t);
     return `<div class="ticket-body">` +
       `<div class="ticket-company">${esc(titleOf(t))}</div>` +
       (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // n/a / empty → no line, no placeholder
-      `<div class="ticket-down">Down ${esc(human(endMs - created))}</div>` +
+      `<div class="ticket-fields">${cardFieldsHTML(t)}</div>` +     // live config-menu info (replaces the down-time)
       `</div>` +
       barsHTML(ticketBarClasses(t), true);
   };
@@ -1848,8 +1864,10 @@
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         const co = c.querySelector(".ticket-company"); if (co) co.textContent = titleOf(t);
         const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host"); const sub = subOf(t);
-        if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-down")); } if (ho) ho.textContent = sub; }
+        if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }
         else if (ho) ho.remove();   // n/a / empty → drop the line entirely (no placeholder)
+        let ff = c.querySelector(".ticket-fields"); const fh = cardFieldsHTML(t);   // live config-menu info on the card face
+        if (ff) ff.innerHTML = fh; else if (body) body.insertAdjacentHTML("beforeend", `<div class="ticket-fields">${fh}</div>`);
         const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
         if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
       });

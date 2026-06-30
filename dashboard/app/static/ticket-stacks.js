@@ -1021,7 +1021,7 @@
         const d0 = decks[side]; d0.box.appendChild(card);
         baseTx = card._tx + (side === "left" ? d0.scrollX : -d0.scrollX); baseTy = card._ty;
         dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
-          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y); const dt = dropTarget(stackPos(side), x, y); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
+          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
           else { clearZoneHighlight(); clearGap(); }
         };
         deckReorderFn = () => reorderTo(lastAlong);   // autoscroll re-runs the reorder at the held cursor
@@ -1033,8 +1033,8 @@
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
       if (e.clientY < stackTopY()) {
-        flowHighlight(stackPos(side), e.clientX, e.clientY);
-        const dt = dropTarget(stackPos(side), e.clientX, e.clientY);
+        flowHighlight(stackPos(side), e.clientX, e.clientY, t);
+        const dt = dropTarget(stackPos(side), e.clientX, e.clientY, t);
         if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
         if (fanned[side]) { closeFanRanks(side, card); ranksClosed = true; }  // remaining fan cards slide together to close the hole
         return;
@@ -1061,7 +1061,7 @@
       clearZoneHighlight();
       // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
       if (e.clientY < stackTopY()) {
-        const dt = dropTarget(stackPos(side), e.clientX, e.clientY);
+        const dt = dropTarget(stackPos(side), e.clientX, e.clientY, t);
         clearGap();
         if (dt) { dropIntoZone(card, t, dt.stage, dt.index); return; }
         layout(side); return;   // not over a VALID zone (none, or a red one) → spring back
@@ -1473,19 +1473,26 @@
   // Chain positions: inbox/left stack = -1, stages 0…n-1, resolved/right stack = n.
   const stackPos = (side) => (side === "right" ? STAGES.length : -1);
   const posOfStage = (key) => STAGE_KEYS.indexOf(key);
-  const canAdvance = (from, to) => to < from || to === from + 1;
+  // Backward = always; one step forward = only if leaving a STACK (inbox→first bucket) or the current
+  // bucket's required fields are all filled (its segment is green). Skipping a stage is never allowed.
+  const canAdvance = (from, to, t) => {
+    if (to < from) return true;
+    if (to !== from + 1) return false;
+    if (from < 0 || from >= STAGES.length || !t) return true;   // from a stack → into the pipeline: ungated
+    return stageComplete(t, from);                              // forward from a bucket needs that stage complete
+  };
   const distToRect = (x, y, r) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
   const HL_RANGE = 260;
   const baseZoneShadow = "inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28)";
   const clearGlow = (p) => { p.style.borderColor = ""; p.style.boxShadow = ""; };
   // Subtle glow on every bucket that intensifies as the cursor nears it: blue where a drop is
   // allowed from `from`, red where it would skip a stage (and so is rejected on release).
-  const flowHighlight = (from, x, y) => {
+  const flowHighlight = (from, x, y, tk) => {
     STAGES.forEach((s, i) => {
       const p = zoneBody[s.key]?.parentElement; if (!p) return;
       if (i === from) { clearGlow(p); return; }                  // the ticket's own bucket → neutral
       const t = clamp(1 - distToRect(x, y, p.getBoundingClientRect()) / HL_RANGE, 0.14, 1);
-      if (canAdvance(from, i)) {                                  // valid → blue
+      if (canAdvance(from, i, tk)) {                             // valid → blue (incl. stage-complete gate)
         p.style.borderColor = `rgba(125,180,255,${(0.2 + 0.72 * t).toFixed(3)})`;
         p.style.boxShadow = `inset 0 0 0 1px rgba(125,180,255,${(0.5 * t).toFixed(3)}), 0 0 ${Math.round(36 * t)}px rgba(90,150,255,${(0.5 * t).toFixed(3)}), ${baseZoneShadow}`;
       } else {                                                   // skips a stage → red (blocked)
@@ -1518,15 +1525,15 @@
         document.body.appendChild(clone);
         card.classList.add("tk-zdrag");
         dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
-          flowHighlight(posOfStage(stage), x, y); const dt = dropTarget(posOfStage(stage), x, y);
+          flowHighlight(posOfStage(stage), x, y, t); const dt = dropTarget(posOfStage(stage), x, y, t);
           if (dt) previewGap(dt.stage, dt.index); else clearGap();
         };
       }
       if (!dragging) return;
       clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket if the cursor nears a scrollable edge
-      flowHighlight(posOfStage(stage), e.clientX, e.clientY);
-      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY);
+      flowHighlight(posOfStage(stage), e.clientX, e.clientY, t);
+      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY, t);
       if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
     };
     const onUp = (e) => {
@@ -1536,7 +1543,7 @@
       if (clone) { clone.remove(); clone = null; }
       card.classList.remove("tk-zdrag");
       if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
-      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY);   // valid bucket (reorder or legal step) + layer
+      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY, t);   // valid bucket (reorder or legal step) + layer
       if (dt) { setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); return; }
       if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }   // onto a stack → inbox
       // else: a blocked (red) zone / nowhere → the card just un-hides in place.
@@ -1586,11 +1593,11 @@
     });
   };
   // The droppable bucket + insert index under (x,y) for a drag from chain position `from` — or null.
-  const dropTarget = (from, x, y) => {
+  const dropTarget = (from, x, y, tk) => {
     const z = zoneAt(x, y);
     if (!z) return null;
     const to = posOfStage(z);
-    if (from !== to && !canAdvance(from, to)) return null;   // same stage = reorder; else a legal step
+    if (from !== to && !canAdvance(from, to, tk)) return null;   // same stage = reorder; else a legal (gated) step
     return { stage: z, index: zoneInsertIndex(z, y) };
   };
 
@@ -1731,14 +1738,22 @@
     delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
     restore: (id) => { setDeleted(id, false); render(); },
     metaOf,
-    // Persist the override and update the card's text IN PLACE (no rebuild) so live edits from
-    // the open config don't detach the card the detail panel is animating from.
+    stageOf: (id) => stageOf(id),
+    // The current bucket's fields (config shows only these) — default to triage for an inbox ticket.
+    stageFields: (id) => { const key = stageOf(id) || "triage"; const st = STAGES.find((s) => s.key === key); return { key, label: st ? st.label : key, fields: STAGE_FIELDS[key] || [] }; },
+    fieldValue: (id, key) => { const t = tickets.find((x) => x.id === id); return t ? fieldRaw(t, key) : ((metaOf(id) || {})[key] || ""); },
+    // Persist the override and update the card's text + PROGRESS BARS IN PLACE (no rebuild) so live edits
+    // from the open config don't detach the card the detail panel is animating from.
     setMeta: (id, m) => {
       setMeta(id, m);
       const t = tickets.find((x) => x.id === id); if (!t) return;
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         const co = c.querySelector(".ticket-company"); if (co) co.textContent = titleOf(t);
-        const ho = c.querySelector(".ticket-host"); if (ho) ho.textContent = subOf(t);
+        const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host"); const sub = subOf(t);
+        if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-down")); } if (ho) ho.textContent = sub; }
+        else if (ho) ho.remove();   // n/a / empty → drop the line entirely (no placeholder)
+        const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
+        if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
       });
     },
   };

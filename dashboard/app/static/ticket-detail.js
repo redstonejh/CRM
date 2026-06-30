@@ -113,6 +113,7 @@
         color: rgba(255,255,255,0.5); font-size: 17px; line-height: 1; cursor: pointer; transition: color .14s ease; }
       .td-x:hover { color: #fff; }
       .td-meta { padding: 0 4px; font-size: 0.78rem; color: rgba(255,255,255,0.6); }
+      .td-stage { padding: 4px 4px 0; font-size: 0.72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(160,190,255,0.85); }
       .td-time { padding: 0 4px; margin-top: -4px; font-size: 0.74rem; color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
 
       /* Accordion section: dropdown header + a body that animates open below it. */
@@ -286,6 +287,18 @@
     const meta = (window.ticketStacks?.metaOf?.(t.id)) || {};
     const titleVal = meta.title != null ? meta.title : (t.companyLabel || "");
     const subVal = meta.subtitle != null ? meta.subtitle : (t.host || "");
+    // Show ONLY the current bucket's fields, each under its question. (Stage defaults to triage for an
+    // inbox ticket.) A field accepts "n/a" — which satisfies it and leaves no trace on the card.
+    const sf = (window.ticketStacks?.stageFields?.(t.id)) || { key: "triage", label: "Triage", fields: [] };
+    sf.fields.forEach((f) => openSections.add(f.key));
+    const fieldSection = (f) => {
+      const val = (window.ticketStacks?.fieldValue?.(t.id, f.key)) ?? "";
+      let inner;
+      if (f.prio) { const pr = t.priority || "medium"; inner = `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }
+      else if (f.area) inner = `<textarea class="td-in td-ta" rows="2" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
+      else inner = `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
+      return section(f.key, f.label, inner);
+    };
     panel.innerHTML = `
       <div class="td-head">
         <div class="td-title">
@@ -298,10 +311,8 @@
       <div class="td-meta">Down ${esc(human(downMs))}${t.recoveredAt ? " &middot; recovered" : ""}</div>
       ${created ? `<div class="td-time">${esc(created.toLocaleString())}</div>` : ""}
 
-      ${section("priority", "Priority", `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === prio ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`)}
-      ${section("assignee", "Assignee", `<input class="td-in" data-field="assignee" value="${esc(t.assignee || "")}" placeholder="unassigned" />`)}
-      ${section("description", "Description", `<textarea class="td-in td-ta" rows="1" data-field="description" placeholder="Add details…">${esc(t.description || "")}</textarea>`)}
-      ${section("note", "Note", `<input class="td-in td-note" id="td-note" placeholder="Add a note…" />`)}
+      <div class="td-stage">${esc(sf.label)}</div>
+      ${sf.fields.map(fieldSection).join("")}
       ${section("activity", "Activity", `<div class="td-log">${log || `<div class="td-log-empty">No activity.</div>`}</div>`)}
 
       <div class="td-acts">${acts.join("")}</div>`;
@@ -342,55 +353,31 @@
         refresh();
       };
     });
-    // Picking a priority advances the flow to Assignee (and persists the choice).
+    // Severity (the priority field of the Triage stage): set + recolour the flying card; persist via the
+    // ticket API (it drives the card's colour). The bars refresh on the resulting re-render.
     panel.querySelectorAll(".td-prio-opt").forEach((el) => {
       el.onclick = async () => {
         const val = el.dataset.prio;
         panel.querySelectorAll(".td-prio-opt").forEach((o) => o.classList.toggle("is-active", o === el));
         if (sourceEl) sourceEl.dataset.severity = val;   // recolour the (hidden) source so its computed bg matches
         paintFlyer(SEV_RGB[val] || SEV_RGB.medium);       // → repaint the flying card LIVE, not just on close
-        advanceSection("priority", "assignee", '[data-field="assignee"]');   // focus next NOW → refresh stays skipped
         if (val !== (t.priority || "medium")) { t.priority = val; await window.tickets.update(t.id, { priority: val }); }
       };
     });
-    // Assignee → Description → Note. Enter commits (via the blur from focusing the next field)
-    // and advances; Shift+Enter still inserts a newline in the description.
-    const nextField = { assignee: "description", description: "note" };
-    const nextFocus = { description: '[data-field="description"]', note: "#td-note" };
+    // The stage's text fields — live-saved as client-side overrides so the card + its progress bars
+    // update in real time as you type (and "n/a" satisfies the field while leaving no trace). Enter
+    // commits (Shift+Enter keeps a newline in the multi-line fields).
     panel.querySelectorAll("[data-field]").forEach((el) => {
-      el.onblur = async () => {
-        const field = el.dataset.field, val = el.value;
-        if ((t[field] || "") === val) return;
-        t[field] = val;
-        const r = await window.tickets.update(t.id, { [field]: val });
-        if (r && r.ok === false) el.value = t[field] || "";
-      };
-      el.onkeydown = (e) => {
-        if (e.key !== "Enter" || e.shiftKey) return;
-        e.preventDefault();
-        const next = nextField[el.dataset.field];
-        if (next) advanceSection(el.dataset.field, next, nextFocus[next]);   // blurs this field → onblur commits
-        else el.blur();
-      };
+      el.oninput = () => window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value });
+      el.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); el.blur(); } e.stopPropagation(); };
     });
-    // Note is the last step: post the comment, then collapse every section (nothing open).
-    const note = panel.querySelector("#td-note");
-    if (note) note.onkeydown = async (e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      const v = (note.value || "").trim();
-      note.value = "";
-      note.blur();
-      ["priority", "assignee", "description", "note", "activity"].forEach((k) => setAcc(k, false));
-      if (v) await window.tickets.comment(t.id, v);
-    };
   };
 
   const open = (ticket, srcEl) => {
     if (overlay && !overlay.hidden) return;
     ensureStyles(); ensureOverlay();
     closing = false;
-    openSections.clear(); openSections.add("priority");   // guided flow always starts on Priority
+    openSections.clear();   // render() opens the current stage's fields
     currentId = ticket && ticket.id ? ticket.id : null;
     sourceEl = srcEl || null;
     overlay.hidden = false;

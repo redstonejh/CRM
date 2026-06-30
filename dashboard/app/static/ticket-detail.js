@@ -26,10 +26,12 @@
   const EASE = "cubic-bezier(.4, 0, .2, 1)"; // balanced glide (no front-loaded snap)
   const FLY_MS = 420, SLIDE_MS = 360, SLIDE_DELAY = 270, SETTLE_MS = 700;
   const CLOSE_SLIDE_MS = 190, CLOSE_FLY_MS = 280;   // close is snappier than open; panel fully retracts THEN card returns
+  const DOF_BLUR = 4, DOF_OUT_MS = 320;             // depth-of-field: peak blur of the world behind the open ticket + its detransition
   let overlay = null, panel = null, flyCard = null, wrap = null;
   let currentId = null, sourceEl = null, backTransform = "", subscribed = false, closing = false;
   let geo = null, settleTimer = null, panelSide = "right";   // which side the panel emerges from
   let cardStays = false;     // true when the card doesn't move (front/closed-pile card) → panel opens with no delay
+  let scrim = null;          // full-screen backdrop-blur layer behind the flyer/panel (depth-of-field)
   const slideBack = () => `translateX(${panelSide === "left" ? "" : "-"}${TUCK}px)`;  // retract direction (mirrors per side)
   const openSections = new Set();
 
@@ -55,6 +57,11 @@
       /* The ONLY place text selection / a text caret is allowed: the config menu's editable fields. */
       .ticket-detail .td-edit, .ticket-detail .td-in { -webkit-user-select: text; user-select: text; cursor: text; }
       .ticket-detail-overlay[hidden] { display: none; }
+      /* Depth-of-field: a full-screen layer UNDER the flyer + panel whose backdrop-filter blurs
+         everything behind the overlay (dashboard, stacks, buckets). The flyer/panel paint above it
+         so they stay tack-sharp. Blur ramps 0→peak during the open and back to 0 on close (set in JS). */
+      .td-scrim { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+        -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
 
       /* The flyer that glides from the grid spot to centre (and back). It is a PLAIN,
          OPAQUE card built from scratch — NOT a clone of the live widget — so:
@@ -296,6 +303,9 @@
   // open. Returns once the DOM is laid out at the START of the animation.
   const buildStage = (ticket) => {
     overlay.innerHTML = "";
+    scrim = document.createElement("div");   // depth-of-field layer, behind everything else on the overlay
+    scrim.className = "td-scrim";
+    overlay.appendChild(scrim);
     const vw = window.innerWidth, vh = window.innerHeight;
     const sr = sourceEl ? sourceEl.getBoundingClientRect() : { left: vw / 2 - 93, top: vh / 2 - 140, width: 186, height: 279 };
     const cardW = sr.width, cardH = sr.height;
@@ -470,6 +480,13 @@
     };
   };
 
+  // Drive the depth-of-field scrim's blur (with a matching transition) — ramp in on open, out on close.
+  const setBlur = (px, ms, ease) => {
+    if (!scrim) return;
+    scrim.style.transition = `backdrop-filter ${ms}ms ${ease}, -webkit-backdrop-filter ${ms}ms ${ease}`;
+    scrim.style.backdropFilter = scrim.style.webkitBackdropFilter = `blur(${px}px)`;
+  };
+
   const open = (ticket, srcEl) => {
     if (overlay && !overlay.hidden) return;
     ensureStyles(); ensureOverlay();
@@ -481,9 +498,13 @@
     buildStage(ticket);
     if (sourceEl) sourceEl.style.visibility = "hidden";   // looks like the card lifted out
     if (flyCard) void flyCard.offsetWidth;                 // commit the START transform so the transition runs
+    // Depth-of-field ramps in lock-step with the open: blur grows from 0 and PEAKS exactly when the
+    // panel locks in (settle), then holds. ease-out so it builds smoothly rather than snapping on.
+    const dofMs = cardStays ? SLIDE_MS : SETTLE_MS;
     requestAnimationFrame(() => {
       if (flyCard) flyCard.style.transform = "translate(0, 0)";  // card flies smoothly to centre
       if (wrap) wrap.classList.add("is-open");                   // panel slides out from behind (delayed in CSS)
+      setBlur(DOF_BLUR, dofMs, "ease-out");
     });
     // Once the panel is fully out, SETTLE it: add .is-settled (drops the clip so the shadow
     // is no longer cut off, and FADES the real drop shadow in — it carried none while behind
@@ -506,6 +527,7 @@
     if (!overlay || overlay.hidden || closing) return;
     closing = true;
     clearTimeout(settleTimer);
+    setBlur(0, DOF_OUT_MS, "ease-in");   // smoothly pull the world back into focus as the panel leaves
     // Un-settle: re-clip + restore the centring transform, then tuck the panel back behind
     // the card. Removing .is-settled instantly drops the drop shadow (back to alpha 0) so
     // there's no shadow being dragged/clipped while it slides home, and re-enables the clip.
@@ -531,7 +553,7 @@
       if (done || !overlay) return; done = true;
       overlay.hidden = true; overlay.innerHTML = "";
       if (sourceEl) { sourceEl.style.visibility = ""; sourceEl = null; }
-      flyCard = wrap = panel = null; currentId = null; closing = false; geo = null;
+      flyCard = wrap = panel = scrim = null; currentId = null; closing = false; geo = null;
       try { window.ticketStacks?.onDetailClosed?.(); } catch {}   // flush any render deferred while open
     };
     if (fc) fc.addEventListener("transitionend", (ev) => { if (ev.propertyName === "transform") finish(); });

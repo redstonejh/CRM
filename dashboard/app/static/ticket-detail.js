@@ -279,25 +279,40 @@
     paintFlyer(SEV_RGB[active ? active.dataset.prio : "medium"] || SEV_RGB.medium);
   };
 
-  // Map the clicked card to its OPEN MOTION — how the flyer travels before the panel slides out.
-  // The panel side is UNIFORM (buildStage prefers LEFT, flipping right only when a left panel
-  // would run off-screen), so context only decides the card's movement:
-  //   • fanned-deck card     → RISE so its bottom edge meets the top edge of the resting row.
+  // For a FANNED-stack card: does the config panel fit beside it at its CURRENT height — clear of the
+  // other fanned cards AND on-screen? Prefer left. Returns "left" | "right" | null (null → no room).
+  const fannedSideRoom = (srcEl, deck) => {
+    const sr = srcEl.getBoundingClientRect(), vw = window.innerWidth;
+    const others = Array.from(deck.querySelectorAll(".tk-card"))
+      .filter((c) => c !== srcEl).map((c) => c.getBoundingClientRect());
+    const clear = (a, b) => !others.some((o) => o.right > a + 0.5 && o.left < b - 0.5);   // no card overlaps [a,b]
+    if (sr.left - GAP - PANEL_W >= 10 && clear(sr.left - GAP - PANEL_W, sr.left - GAP)) return "left";
+    if (sr.right + GAP + PANEL_W <= vw - 10 && clear(sr.right + GAP, sr.right + GAP + PANEL_W)) return "right";
+    return null;
+  };
+
+  // Map the clicked card to its OPEN MOTION (how the flyer travels) and an optional forced panel side.
+  // The side is otherwise UNIFORM (buildStage prefers LEFT, flipping right only at a screen edge):
+  //   • fanned-deck card     → if the config fits beside it at its current height (clear of the row,
+  //     on-screen) → STAY and open on that side; otherwise RISE (bottom edge meets the row's top).
   //   • closed-pile top card → STAY (it's already fully visible).
-  //   • bucket card, occluded → SLIDE right until its left edge clears the column, so it sits
-  //     BESIDE the others (never gaining z-order over them); the front-most (fully visible) card
-  //     is already clear → STAY.
+  //   • bucket card, occluded → SLIDE right until its left edge clears the column, so it sits BESIDE
+  //     the others (never gaining z-order over them); the front-most (visible) card → STAY.
   //   • anything else (grid widget / trash drawer) → fly to CENTRE.
   const contextOf = (srcEl) => {
-    if (!srcEl || !srcEl.closest) return "center";
+    if (!srcEl || !srcEl.closest) return { motion: "center" };
     if (srcEl.closest(".tk-zone")) {
       const track = srcEl.closest(".tk-zone-track");
       const cards = track ? track.querySelectorAll(".tk-zcard") : [];
-      return cards.length && cards[cards.length - 1] === srcEl ? "stay" : "slide";   // front-most card stays
+      return { motion: cards.length && cards[cards.length - 1] === srcEl ? "stay" : "slide" };
     }
     const deck = srcEl.closest(".tk-deck");
-    if (deck) return deck.classList.contains("is-fanned") ? "rise" : "stay";
-    return "center";
+    if (deck) {
+      if (!deck.classList.contains("is-fanned")) return { motion: "stay" };   // closed pile top card
+      const side = fannedSideRoom(srcEl, deck);
+      return side ? { motion: "stay", side } : { motion: "rise" };
+    }
+    return { motion: "center" };
   };
 
   // Build the flyer card + the (collapsed) config panel, positioned for the context-aware
@@ -310,7 +325,8 @@
     const vw = window.innerWidth, vh = window.innerHeight;
     const sr = sourceEl ? sourceEl.getBoundingClientRect() : { left: vw / 2 - 93, top: vh / 2 - 140, width: 186, height: 279 };
     const cardW = sr.width, cardH = sr.height;
-    const motion = contextOf(sourceEl);
+    const ctx = contextOf(sourceEl);
+    const motion = ctx.motion;
     const moves = motion === "slide" || motion === "center";   // these reposition the card itself
     cardStays = motion === "stay";
 
@@ -328,8 +344,8 @@
     const fits = (left, side) => side === "left"
       ? left - GAP - PANEL_W >= 10
       : left + cardW + GAP + PANEL_W <= vw - 10;
-    let side = "left";
-    if (!fits(targetLeft, "left") && fits(targetLeft, "right")) side = "right";
+    let side = ctx.side || "left";   // ctx.side is forced for a fanned card with verified room beside it
+    if (!ctx.side && !fits(targetLeft, "left") && fits(targetLeft, "right")) side = "right";
     if (moves && !fits(targetLeft, side)) targetLeft = side === "left"
       ? Math.round(Math.max(10 + GAP + PANEL_W, Math.min(targetLeft, vw - 10 - cardW)))
       : Math.round(Math.min(targetLeft, vw - 10 - cardW - GAP - PANEL_W));

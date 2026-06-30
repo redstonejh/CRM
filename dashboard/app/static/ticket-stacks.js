@@ -105,13 +105,13 @@
     if (g) { const r = g.getBoundingClientRect(); if (r.width > 40 && r.height > 40) { CARD_W = Math.round(r.width); CARD_H = Math.round(r.height); } }
   };
 
-  // The dark dashboard colour behind the grid card (its opaque ancestor) — the base the
-  // glass card sits over, so an opaque copy of the card matches.
-  const baseColor = () => {
-    let el = gridCard(); el = el ? el.parentElement : (document.querySelector(".dashboard-layout-grid") || document.body);
-    while (el) { const c = getComputedStyle(el).backgroundColor; if (c && c !== "transparent" && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(c)) return c; el = el.parentElement; }
-    return "rgb(26, 34, 51)";
-  };
+  // The opaque colour the (translucent) ticket fill sits over. A ticket's final colour = fill ⊕ this
+  // backdrop, so if this tracked the LIVE dashboard background, a dark background would show through
+  // and darken the ticket. Pin it to the "Dark grey" tone (#1f2937 — the default background), so every
+  // ticket renders EXACTLY as it does on the grey background (the source of truth), regardless of the
+  // active background. Change GRAY_BACKDROP if a different grey is the reference.
+  const GRAY_BACKDROP = "rgb(31, 41, 55)";   // tone-dark-grey #1f2937
+  const baseColor = () => GRAY_BACKDROP;
   // Per-severity OPAQUE fill matching the grid card exactly. Probe a hidden ticket card IN
   // THE GRID'S CONTEXT (so the db-panel white-mix var resolves identically — a probe on
   // <body> inherits a different mix and renders faded) and copy its resolved background.

@@ -208,6 +208,9 @@
     const style = document.createElement("style");
     style.id = "ticket-stacks-styles";
     style.textContent = `
+      /* Text in the ticket UI is never selectable — dragging/clicking must not highlight or capture text.
+         (The only place selection is allowed is the config menu's editable fields — see ticket-detail.js.) */
+      .tk-stacks, .tk-zones { -webkit-user-select: none; user-select: none; }
       .tk-stacks { position: fixed; inset: auto 0 0 0; z-index: 4000; pointer-events: none; -webkit-app-region: no-drag; }
       .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease; }
       .tk-deck-left { left: 0; } .tk-deck-right { right: 0; }

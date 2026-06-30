@@ -43,7 +43,10 @@
     style.id = "ticket-detail-styles";
     style.textContent = `
       /* No scrim — background not dimmed; the panel's backdrop-filter blurs the real bg. */
-      .ticket-detail-overlay { position: fixed; inset: 0; z-index: 5000; background: transparent; -webkit-app-region: no-drag; }
+      .ticket-detail-overlay { position: fixed; inset: 0; z-index: 5000; background: transparent; -webkit-app-region: no-drag;
+        -webkit-user-select: none; user-select: none; }
+      /* The ONLY place text selection / a text caret is allowed: the config menu's editable fields. */
+      .ticket-detail .td-edit, .ticket-detail .td-in { -webkit-user-select: text; user-select: text; cursor: text; }
       .ticket-detail-overlay[hidden] { display: none; }
 
       /* The flyer that glides from the grid spot to centre (and back). It is a PLAIN,

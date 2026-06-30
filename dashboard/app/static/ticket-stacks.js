@@ -110,7 +110,7 @@
   // and darken the ticket. Pin it to the "Dark grey" tone (#1f2937 — the default background), so every
   // ticket renders EXACTLY as it does on the grey background (the source of truth), regardless of the
   // active background. Change GRAY_BACKDROP if a different grey is the reference.
-  const GRAY_BACKDROP = "rgb(31, 41, 55)";   // tone-dark-grey #1f2937
+  const GRAY_BACKDROP = "rgb(107, 114, 128)";   // tone-grey #6b7280 (the "Grey" background)
   const baseColor = () => GRAY_BACKDROP;
   // Per-severity OPAQUE fill matching the grid card exactly. Probe a hidden ticket card IN
   // THE GRID'S CONTEXT (so the db-panel white-mix var resolves identically — a probe on
@@ -214,6 +214,10 @@
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
+      /* The cards live in this track; horizontal scroll is ONE rigid transform on the track, decoupled
+         from each card's own transform (slot/collision, which keeps its .42s transition). pointer-events
+         none so the full-size track never blocks clicks above the deck — the cards re-enable it. */
+      .tk-track { position: absolute; inset: 0; pointer-events: none; will-change: transform; }
       /* A stack card IS a real ticket card (same widget-card / ticket / db-panel-custom-color
          classes + .ticket-body markup) so its colour, glass, fonts and shape are IDENTICAL to
          the dashboard widget. .tk-card ONLY adds positioning + the fan/drag motion — no visual
@@ -390,6 +394,9 @@
     for (const side of ["left", "right"]) {
       const box = document.createElement("div");
       box.className = `tk-deck tk-deck-${side}`;
+      const track = document.createElement("div");   // holds the cards; scroll = ONE rigid transform on this
+      track.className = "tk-track";
+      box.appendChild(track);
       const arrow = document.createElement("button");
       arrow.className = "tk-arrow"; arrow.type = "button";
       arrow.setAttribute("aria-label", side === "left" ? "Fan out active tickets" : "Fan out resolved tickets");
@@ -416,7 +423,7 @@
         action.addEventListener("click", () => { trashMode = !trashMode; action.classList.toggle("is-active", trashMode); render(); });
       }
       root.appendChild(box); root.appendChild(action);
-      decks[side] = { box, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
+      decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
     document.body.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
@@ -446,6 +453,7 @@
     const scrollMin = Math.min(0, viewW - contentW);
     deck.scrollX = clamp(deck.scrollX, scrollMin, 0);
     cards.forEach((c, i) => place(c, side, i, open, step));
+    setTrack(side);     // apply scroll to the track (cards hold only their slot transform)
     placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
@@ -478,9 +486,12 @@
     }
   };
 
+  // The track carries scroll; each card's transform is its SLOT only (so a reorder's .42s collision
+  // animates independently of the rigid scroll). For left the track shifts by scrollX, for right by -scrollX.
+  const setTrack = (side) => { const deck = decks[side]; if (deck && deck.track) deck.track.style.transform = `translateX(${side === "left" ? deck.scrollX : -deck.scrollX}px)`; };
   const place = (card, side, i, open, step) => {
     let tx, ty, rot;
-    if (open) { tx = i * step + decks[side].scrollX; ty = 0; rot = 0; }
+    if (open) { tx = i * step; ty = 0; rot = 0; }   // slot position only — scroll is applied to the track
     else { const d = Math.min(i, 6); tx = d * 3; ty = -d * 4; rot = (i % 2 ? 1 : -1) * Math.min(i, 3) * 1.6; }
     if (side === "right") { tx = -tx; rot = -rot; }
     card._tx = tx; card._ty = ty; card._rot = rot;
@@ -502,7 +513,7 @@
     let slot = 0;
     deck.cards.forEach((c) => {
       if (c === dragged) return;
-      let tx = slot * step + deck.scrollX; if (side === "right") tx = -tx;
+      let tx = slot * step; if (side === "right") tx = -tx;   // slot only — track carries scroll
       c._tx = tx; c._ty = 0; c._rot = 0;
       c.style.zIndex = String(3000 - slot);
       c.style.transform = `translate(${tx}px, 0) rotate(0deg)`;
@@ -543,8 +554,7 @@
   // Reposition the fanned cards + thumb + arrow from the CURRENT (maybe overscrolled) scrollX — no clamp.
   const positionFan = (side) => {
     const deck = decks[side]; if (!deck) return;
-    const step = CARD_W + GAP_FAN;
-    deck.cards.forEach((c, i) => place(c, side, i, true, step));
+    setTrack(side);   // live scroll = rigid track transform; card slots are untouched (no re-place) → collision keeps animating
     const min = scrollMinOf(deck), barW = barWidth();
     const thumbW = Math.max(36, barW * (deck.viewW / Math.max(1, deck.contentW)));
     const frac = min ? clamp(deck.scrollX, min, 0) / min : 0;
@@ -557,15 +567,13 @@
   // inside the bounds once the gesture ends (rubber-band settle). Restores card transitions at rest.
   const runScroll = (side) => {
     const deck = decks[side]; if (!deck || deck._raf) return;   // already animating → loop reads targetX live
-    deck.cards.forEach((c) => { c.style.transition = "none"; });
     deck.arrow.style.transition = "none";                       // track the edge rigidly while scrolling
-    const tick = () => {
+    const tick = () => {                                        // scroll rides the track (rigid); cards keep their .42s
       const min = scrollMinOf(deck);
       const goal = deck._wheeling ? deck.targetX : clamp(deck.targetX, min, 0);
       deck.scrollX += (goal - deck.scrollX) * 0.22;
       if (!deck._wheeling && Math.abs(goal - deck.scrollX) < 0.4) {
         deck.scrollX = goal; deck.targetX = goal; positionFan(side);
-        deck.cards.forEach((c) => { c.style.transition = ""; });
         deck.arrow.style.transition = "";                       // restore (CSS .42s) so a fan-toggle glides
         deck._raf = 0; return;
       }
@@ -602,9 +610,8 @@
       const dxPx = (e.clientX - sx) * (side === "right" ? -1 : 1);
       const dFrac = dxPx / Math.max(1, barW - thumbW);
       deck.scrollX = damp(startScroll + dFrac * min, min);   // rubber-band past the ends
-      deck.cards.forEach((c) => { c.style.transition = "none"; });
       deck.arrow.style.transition = "none";                  // track the edge rigidly while dragging
-      positionFan(side);
+      positionFan(side);                                     // scroll = track transform; cards untouched
     };
     const up = () => {
       drag = false; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
@@ -839,7 +846,27 @@
 
   const wireCard = (card, t, side) => {
     let startX = 0, startY = 0, dragging = false, down = false, handedOff = false;
-    let pointerId = null, pointerType = "mouse", baseTx = 0, baseTy = 0, ranksClosed = false;
+    let pointerId = null, pointerType = "mouse", baseTx = 0, baseTy = 0, ranksClosed = false, lastAlong = 0;
+    // Move THIS card to the slot under it (box-space x) and let the others slide to fill — factored so the
+    // autoscroll loop can re-run it at the held cursor (so the collision keeps following the scroll).
+    const reorderTo = (alongBoxX) => {
+      if (!fanned[side]) return;
+      const deck = decks[side];
+      if (deck.cards.length <= 1) return;
+      const step = CARD_W + GAP_FAN;
+      const along = (side === "right" ? -alongBoxX : alongBoxX) - deck.scrollX;
+      const idx = clamp(Math.round(along / step), 0, deck.cards.length - 1);
+      const cur = deck.cards.indexOf(card);
+      if (cur !== -1 && idx !== cur) {
+        deck.cards.splice(cur, 1);
+        deck.cards.splice(idx, 0, card);
+        deck.order = deck.cards.map((c) => c.dataset.id);   // remember the custom order…
+        saveOrder(side);                                    // …and persist it across reloads
+        layout(side); ranksClosed = false;                  // others slide to their new slots (.42s collision)
+      } else if (ranksClosed) {
+        layout(side); ranksClosed = false;                  // re-entered the row after a lift-out → reopen the gap
+      }
+    };
 
     // Materialise the ticket as a real grid widget, drop the source card from its
     // stack, then "pick up" the new widget mid-drag with the native widget-move runtime.
@@ -877,11 +904,15 @@
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) {
         dragging = true; dragActive = true; ranksClosed = false; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
-        baseTx = card._tx; baseTy = card._ty;   // capture the resting slot ONCE — reorder re-lays-out the rest
+        // Lift the card OUT of the scroll track into the box, so it stays screen-fixed while the track
+        // autoscrolls underneath. Fold the current scroll into baseTx (the track no longer moves it).
+        const d0 = decks[side]; d0.box.appendChild(card);
+        baseTx = card._tx + (side === "left" ? d0.scrollX : -d0.scrollX); baseTy = card._ty;
         dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
           if (y < stackTopY()) { flowHighlight(stackPos(side), x, y); const dt = dropTarget(stackPos(side), x, y); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
           else { clearZoneHighlight(); clearGap(); }
         };
+        deckReorderFn = () => reorderTo(lastAlong);   // autoscroll re-runs the reorder at the held cursor
       }
       if (!dragging) return;
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
@@ -897,35 +928,24 @@
         return;
       }
       clearZoneHighlight(); clearGap();
-      // Fanned out → dragging reorders the row: move this card to the slot under it and let
-      // the others slide to fill the gap (the .tk-card transform transition animates it).
-      if (fanned[side]) {
-        const deck = decks[side];
-        if (deck.cards.length > 1) {
-          const step = CARD_W + GAP_FAN;
-          const along = (side === "right" ? -(baseTx + dx) : (baseTx + dx)) - deck.scrollX;
-          const idx = clamp(Math.round(along / step), 0, deck.cards.length - 1);
-          const cur = deck.cards.indexOf(card);
-          if (cur !== -1 && idx !== cur) {
-            deck.cards.splice(cur, 1);
-            deck.cards.splice(idx, 0, card);
-            deck.order = deck.cards.map((c) => c.dataset.id);   // remember the custom order…
-            saveOrder(side);                                    // …and persist it across reloads
-            layout(side); ranksClosed = false;
-          } else if (ranksClosed) {
-            layout(side); ranksClosed = false;                 // re-entered the row after a lift-out → reopen the gap
-          }
-        }
-      }
+      // Fanned out → dragging reorders the row: the others slide to fill the gap (.42s collision),
+      // while the scroll rides the track rigidly, so the two never fight even during autoscroll.
+      if (fanned[side]) { lastAlong = baseTx + dx; reorderTo(lastAlong); }
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      dragActive = false; stopAutoScroll(); dragPreviewFn = null;           // always clear, even on hand-off
+      dragActive = false; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null;   // always clear, even on hand-off
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       // Config opens on DOUBLE click; a single click does nothing (the card never moved).
       if (!wasDrag) return;
+      const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
+      if (dDrop && dDrop.track) {              // compensate for the track's transform so it doesn't jump by scrollX
+        const tt = side === "left" ? dDrop.scrollX : -dDrop.scrollX;
+        card.style.transform = `translate(${(baseTx + (e.clientX - startX)) - tt}px, ${baseTy + (e.clientY - startY)}px)`;
+        dDrop.track.appendChild(card);
+      }
       clearZoneHighlight();
       // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
       if (e.clientY < stackTopY()) {
@@ -988,7 +1008,7 @@
     }
     deck.cards.forEach((c) => c.remove());
     deck.cards = list.map((t) => cardEl(t, side));
-    deck.cards.forEach((c) => deck.box.appendChild(c));
+    deck.cards.forEach((c) => deck.track.appendChild(c));
     if (!deck.cards.length) { fanned[side] = false; deck.scrollX = 0; }   // keep deck.order — a temporarily-empty deck shouldn't forget the saved order
     layout(side);
   };
@@ -1011,6 +1031,7 @@
   let zonesRoot = null;
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   let dragPreviewFn = null;   // (x,y) => recompute the current drag's highlight + sandwich gap (re-run while autoscrolling)
+  let deckReorderFn = null;   // () => re-run the fanned-deck reorder at the held cursor (re-run while autoscrolling the deck)
   const zoneBody = {};    // stage key → body element (the scroll viewport)
   const zoneTrack = {};   // stage key → the translated track holding the card stack
   const zoneScroll = {};  // stage key → { sy, ty, raf, wheeling, releaseT } (custom smooth/recoil scroll)
@@ -1101,8 +1122,9 @@
       if (deck) { const min = scrollMinOf(deck), next = clamp(deck.scrollX + autoVel, min, 0);
         if (next !== deck.scrollX) {
           deck.scrollX = next; deck.targetX = next;
-          deck.cards.forEach((c) => { c.style.transition = "none"; }); deck.arrow.style.transition = "none";
-          positionFan(autoTarget.side);
+          deck.arrow.style.transition = "none";
+          positionFan(autoTarget.side);   // scroll = rigid track transform; card .42s transitions untouched → collision keeps animating
+          if (deckReorderFn) deckReorderFn();   // re-run the reorder at the held cursor so the gap follows the scroll
         } }
     }
     if (dragPreviewFn) dragPreviewFn(autoX, autoY);   // keep the sandwich gap / highlight under the cursor as content scrolls
@@ -1148,8 +1170,8 @@
     const deckSide = autoTarget && autoTarget.kind === "deck" ? autoTarget.side : null;
     autoTarget = null; autoVel = 0;
     if (autoRaf) { cancelAnimationFrame(autoRaf); autoRaf = 0; }
-    if (deckSide) { const deck = decks[deckSide]; if (deck) {   // restore the transitions autoscroll switched off
-      deck.cards.forEach((c) => { c.style.transition = ""; }); deck.arrow.style.transition = ""; deck.targetX = deck.scrollX; } }
+    if (deckSide) { const deck = decks[deckSide]; if (deck) {   // restore the arrow's transition autoscroll switched off
+      deck.arrow.style.transition = ""; deck.targetX = deck.scrollX; } }
   };
 
   const wireZoneThumb = (s) => {

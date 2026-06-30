@@ -82,6 +82,7 @@
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
 
   let root = null;
+  let edgeLeft = null, edgeRight = null;        // screen-edge scroll shadows for the fanned deck
   const decks = { left: null, right: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false };
   let tickets = [], subscribed = false;
@@ -356,6 +357,16 @@
         box-shadow: 0 1px 4px rgba(0,0,0,0.4); cursor: grab; transition: background .15s ease; }
       .tk-zth:hover { background: rgba(255,255,255,0.88); } .tk-zth:active { cursor: grabbing; background: #fff; }
       .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
+      /* Scroll-edge shadows: a soft shade ON THE TICKET where it's clipped by a scroll boundary. Sized to
+         the ticket (centred, CARD_W wide, card corner-radius) so it never spills onto the bucket; its
+         depth scales with how far the ticket is clipped (set per frame in JS) so it eases in, not pops. */
+      .tk-zedge { position: absolute; height: 0; pointer-events: none; z-index: 50; }   /* left/width set in JS to match the card exactly; radius confines it to the card's rounded corners */
+      .tk-zedge-top { top: 0; background: linear-gradient(to bottom, rgba(0,0,0,0.45), rgba(0,0,0,0)); border-radius: ${RADIUS}px ${RADIUS}px 0 0; }
+      .tk-zedge-bot { bottom: 0; background: linear-gradient(to top, rgba(0,0,0,0.45), rgba(0,0,0,0)); border-radius: 0 0 ${RADIUS}px ${RADIUS}px; }
+      /* Screen-edge shadows for a fanned deck: ON the clipped ticket (card height), width scales with overhang. */
+      .tk-edge { position: fixed; bottom: ${MARGIN}px; height: ${CARD_H}px; width: 0; pointer-events: none; z-index: 4500; }
+      .tk-edge-left { left: 0; background: linear-gradient(to right, rgba(0,0,0,0.45), rgba(0,0,0,0)); border-radius: ${RADIUS}px 0 0 ${RADIUS}px; }
+      .tk-edge-right { right: 0; background: linear-gradient(to left, rgba(0,0,0,0.45), rgba(0,0,0,0)); border-radius: 0 ${RADIUS}px ${RADIUS}px 0; }
 
       /* A FULL-size ticket card living in a zone — same dimensions + look as a stack card. They
          stack vertically with overlap (position+z-index set in renderZones) so only each card's
@@ -428,6 +439,9 @@
       root.appendChild(box); root.appendChild(action);
       decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
+    edgeLeft = document.createElement("div"); edgeLeft.className = "tk-edge tk-edge-left";
+    edgeRight = document.createElement("div"); edgeRight.className = "tk-edge tk-edge-right";
+    root.appendChild(edgeLeft); root.appendChild(edgeRight);
     document.body.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
     // Watch native widget drags from the outside so a grid ticket can be dropped back
@@ -492,6 +506,7 @@
       deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
       deck.thumb.style.right = "auto";
     }
+    updateDeckEdges();   // refresh the screen-edge scroll shadows after a relayout / fan toggle
   };
 
   // The track carries scroll; each card's transform is its SLOT only (so a reorder's .42s collision
@@ -559,6 +574,25 @@
     deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(inset)}px`;
     deck.arrow.style[side === "left" ? "right" : "left"] = "auto";
   };
+  // Screen-edge scroll shadows for the fanned deck: show a soft shade at a viewport edge when a card
+  // is clipped by it (measured from the first/last cards' on-screen rects, side-agnostic).
+  const updateDeckEdges = () => {
+    if (!edgeLeft || !edgeRight) return;
+    const side = fanned.left ? "left" : (fanned.right ? "right" : null);
+    const EDGE_MAXW = 34;
+    let lw = 0, rw = 0;
+    if (side) {
+      const vis = decks[side].cards.filter((c) => !c.classList.contains("tk-dragging"));
+      if (vis.length) {
+        const a = vis[0].getBoundingClientRect(), b = vis[vis.length - 1].getBoundingClientRect();
+        const minL = Math.min(a.left, b.left), maxR = Math.max(a.right, b.right);
+        lw = Math.min(EDGE_MAXW, Math.max(0, -minL));                       // overhang past the left edge
+        rw = Math.min(EDGE_MAXW, Math.max(0, maxR - window.innerWidth));    // overhang past the right edge
+      }
+    }
+    edgeLeft.style.width = `${Math.round(lw)}px`;
+    edgeRight.style.width = `${Math.round(rw)}px`;
+  };
   // Reposition the fanned cards + thumb + arrow from the CURRENT (maybe overscrolled) scrollX — no clamp.
   const positionFan = (side) => {
     const deck = decks[side]; if (!deck) return;
@@ -575,6 +609,7 @@
     deck.thumb.style.left = `${left}px`;
     deck.thumb.style.right = "auto";
     placeArrow(side);   // arrow tracks the ticket edge (rigidly — its transition is off during scroll)
+    updateDeckEdges();  // screen-edge scroll shadows track the live card positions
   };
   // One easing loop: each frame glide scrollX toward the target (smooth wheel), then ease it back
   // inside the bounds once the gesture ends (rubber-band settle). Restores card transitions at rest.
@@ -1072,6 +1107,22 @@
       th.style.height = `${Math.round(thumbH)}px`;
       th.style.top = `${Math.round(top)}px`;
     }
+    // Edge shadows ON the ticket: depth scales with how much is clipped past that edge (eases in/out as
+    // the ticket nears/leaves view), capped so it stays subtle; width = the card so it never spills.
+    const EDGE_MAXH = 30;
+    const ztop = body.querySelector(".tk-zedge-top"), zbot = body.querySelector(".tk-zedge-bot");
+    const hideAbove = over ? Math.min(EDGE_MAXH, Math.max(0, -st.sy)) : 0;        // content clipped above
+    const hideBelow = over ? Math.min(EDGE_MAXH, Math.max(0, st.sy - min)) : 0;   // content clipped below
+    // Align the shadow to the card EXACTLY (measured), so it never spills past the ticket's left/right edges.
+    const card = tr.querySelector(".tk-zcard");
+    if (card && (ztop || zbot)) {
+      const cr = card.getBoundingClientRect(), clr = tr.parentElement.getBoundingClientRect();
+      const left = `${cr.left - clr.left}px`, w = `${cr.width}px`;   // exact (subpixel) so it lines up with the card, no offset
+      if (ztop) { ztop.style.left = left; ztop.style.width = w; }
+      if (zbot) { zbot.style.left = left; zbot.style.width = w; }
+    }
+    if (ztop) ztop.style.height = `${Math.round(hideAbove)}px`;
+    if (zbot) zbot.style.height = `${Math.round(hideBelow)}px`;
   };
   const runZoneScroll = (s) => {
     const st = zoneScroll[s]; if (!st || st.raf) return;
@@ -1324,7 +1375,7 @@
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
       panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-count">0</span></div>` +
-        `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
+        `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div><div class="tk-zedge tk-zedge-top"></div><div class="tk-zedge tk-zedge-bot"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
       zoneTrack[s.key] = panel.querySelector(".tk-zone-track");

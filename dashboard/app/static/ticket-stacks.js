@@ -271,7 +271,7 @@
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
       .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
-      .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.94;   /* matches the dashboard's native drag ghost (.widget-dragging): a barely-translucent "picked up" look, no blur */
+      .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
       .tk-card.tk-flying { transition: transform .4s ${EASE}, opacity .4s ease; pointer-events: none; }
 
@@ -416,7 +416,7 @@
       .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 14px 18px -14px rgba(0,0,0,0.5); }
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
       .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
-        opacity: 0.94;   /* matches the native drag ghost — barely-translucent, no blur */
+        opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         padding: 14px 15px; border-radius: 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 24px 52px rgba(0,0,0,0.45);
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
 
@@ -577,6 +577,32 @@
       c.style.transform = `translate(${tx}px, 0) rotate(0deg)`;
       slot++;
     });
+  };
+
+  // Mirror of closeFanRanks for an INCOMING card (one dragged from a bucket toward the fanned
+  // row): open an empty slot at `gapIdx` so the cards at/after it slide one step over (the same
+  // .42s collision) to show exactly where the ticket would land. layout(side) closes it again.
+  const previewFanGap = (side, gapIdx) => {
+    const deck = decks[side]; if (!deck || !fanned[side]) return;
+    const step = CARD_W + GAP_FAN;
+    deck.cards.forEach((c, i) => {
+      const slot = i < gapIdx ? i : i + 1;   // cards at/after the gap shove one slot over
+      let tx = slot * step; if (side === "right") tx = -tx;
+      c._tx = tx; c._ty = 0; c._rot = 0;
+      c.style.zIndex = String(3000 - slot);
+      c.style.transform = `translate(${tx}px, 0) rotate(0deg)`;
+    });
+  };
+  // The slot a cursor at viewport-x would insert into within the fanned row (0..n; n = append).
+  // Inverts the layout maths in place(): left slots grow rightward from MARGIN, right slots grow
+  // leftward from the deck's right edge; both ride the track scroll (deck.scrollX).
+  const fanInsertIndex = (side, x) => {
+    const deck = decks[side]; const n = deck ? deck.cards.length : 0; if (!n) return 0;
+    const step = CARD_W + GAP_FAN;
+    const idx = side === "left"
+      ? Math.round((x - deck.scrollX - MARGIN - CARD_W / 2) / step)
+      : Math.round((window.innerWidth - MARGIN - deck.scrollX - CARD_W / 2 - x) / step);
+    return clamp(idx, 0, n);
   };
 
   const toggleFan = (side) => {
@@ -1509,7 +1535,19 @@
   // Drag a zone card to ANOTHER zone (reassign stage), DOWN onto the corner stacks (un-assign
   // → back to the inbox), or release on its own zone / nowhere (snap back). Click opens config.
   const wireZoneCard = (card, t, stage) => {
-    let down = false, dragging = false, sx = 0, sy = 0, clone = null;
+    let down = false, dragging = false, sx = 0, sy = 0, clone = null, fanGap = null;
+    // The fanned deck this ticket would re-join (its own side, when that side is the open fan), else null.
+    const fanTarget = () => { const fs = fanned.left ? "left" : (fanned.right ? "right" : null); return fs && fs === deckSideFor(t) ? fs : null; };
+    // Pick the right preview for the cursor: over the matching fanned stack → part its cards at the
+    // insert slot (the deck's own .42s collision); otherwise the bucket "sandwich" gap + zone glow.
+    const preview = (x, y) => {
+      const ft = (y >= stackTopY()) ? fanTarget() : null;
+      if (ft) { clearZoneHighlight(); clearGap(); fanGap = ft; previewFanGap(ft, fanInsertIndex(ft, x)); return; }
+      if (fanGap) { layout(fanGap); fanGap = null; }   // moved off the stack → close the fan gap
+      flowHighlight(posOfStage(stage), x, y, t);
+      const dt = dropTarget(posOfStage(stage), x, y, t);
+      if (dt) previewGap(dt.stage, dt.index); else clearGap();
+    };
     const onMove = (e) => {
       if (!down) return;
       const dx = e.clientX - sx, dy = e.clientY - sy;
@@ -1524,28 +1562,34 @@
         clone.innerHTML = zoneCardInner(t);
         document.body.appendChild(clone);
         card.classList.add("tk-zdrag");
-        dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
-          flowHighlight(posOfStage(stage), x, y, t); const dt = dropTarget(posOfStage(stage), x, y, t);
-          if (dt) previewGap(dt.stage, dt.index); else clearGap();
-        };
+        dragPreviewFn = preview;                 // re-run while autoscrolling so the gap follows the cursor
       }
       if (!dragging) return;
       clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
-      updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket if the cursor nears a scrollable edge
-      flowHighlight(posOfStage(stage), e.clientX, e.clientY, t);
-      const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY, t);
-      if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
+      updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
+      preview(e.clientX, e.clientY);
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
       const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null;
       clearZoneHighlight(); clearGap();
+      if (fanGap) { layout(fanGap); fanGap = null; }
       if (clone) { clone.remove(); clone = null; }
       card.classList.remove("tk-zdrag");
       if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
+      // Released over the matching fanned stack → splice into its row at the cursor slot, then
+      // un-assign the stage so the ticket re-joins the inbox deck exactly there.
+      const ft = (e.clientY >= stackTopY()) ? fanTarget() : null;
+      if (ft) {
+        const deck = decks[ft];
+        const ids = deck.cards.map((c) => c.dataset.id).filter((id) => id && id !== t.id);
+        ids.splice(clamp(fanInsertIndex(ft, e.clientX), 0, ids.length), 0, t.id);
+        deck.order = ids; saveOrder(ft);
+        setStage(t.id, null); setStageAt(t.id, null); render(); return;
+      }
       const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY, t);   // valid bucket (reorder or legal step) + layer
       if (dt) { setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); return; }
-      if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }   // onto a stack → inbox
+      if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); return; }   // onto a stack → inbox (append)
       // else: a blocked (red) zone / nowhere → the card just un-hides in place.
     };
     card.addEventListener("pointerdown", (e) => {

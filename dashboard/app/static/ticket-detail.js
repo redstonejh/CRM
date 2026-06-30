@@ -136,6 +136,11 @@
       .td-prio-opt:hover { color: rgba(255,255,255,0.8); }
       .td-prio-opt.is-active { color: #fff; font-weight: 700; }
 
+      .td-head-bare { justify-content: flex-end; padding: 0; min-height: 0; }   /* just the close × */
+      /* Flat field rows (no dropdowns) — a label with a required * and the input below it. */
+      .td-field { display: flex; flex-direction: column; gap: 5px; padding: 1px 4px; }
+      .td-field-label { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.72); }
+      .td-req { color: rgba(255,140,140,0.95); font-weight: 700; }
       .td-in { width: 100%; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
         background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
@@ -268,54 +273,22 @@
   const render = (t) => {
     if (!panel) return;
     if (!t) { panel.innerHTML = `<div class="td-empty">Ticket not found.</div>`; wire(null); return; }
-    const created = t.createdAt ? new Date(t.createdAt) : null;
-    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
-    const downMs = created ? endMs - created.getTime() : NaN;
-    const state = t.state || "open";
-    const prio = t.priority || "medium";
-    const acts = [];
-    if (state !== "claimed" && state !== "resolved") acts.push(`<button class="td-act" data-act="claim">Claim</button>`);
-    if (state !== "resolved") acts.push(`<button class="td-act" data-act="resolve">Resolve</button>`);
-    if (state === "resolved") acts.push(`<button class="td-act" data-act="reopen">Reopen</button>`);
-    // Delete sends the ticket to the trash (right stack, trash view); Restore brings it back.
-    if (window.ticketStacks?.isDeleted?.(t.id)) acts.push(`<button class="td-act td-danger" data-act="restore">Restore</button>`);
-    else acts.push(`<button class="td-act td-danger" data-act="delete">Delete</button>`);
-    const log = (t.history || []).slice().reverse().map((h) =>
-      `<div class="td-ev"><b>${esc(h.by)}</b> ${esc(h.action)} <span class="td-at">${shortTime(h.at)}</span>${h.action === "comment" && h.detail ? `<div class="td-ev-note">${esc(h.detail)}</div>` : ""}</div>`
-    ).join("");
-
-    const meta = (window.ticketStacks?.metaOf?.(t.id)) || {};
-    const titleVal = meta.title != null ? meta.title : (t.companyLabel || "");
-    const subVal = meta.subtitle != null ? meta.subtitle : (t.host || "");
-    // Show ONLY the current bucket's fields, each under its question. (Stage defaults to triage for an
-    // inbox ticket.) A field accepts "n/a" — which satisfies it and leaves no trace on the card.
+    // Lean config: ONLY the current bucket's fields, flat (no dropdowns) — each with its label + a *
+    // (all are required to complete the stage), the question as the prompt, and "n/a" satisfies it.
+    // No title/subtitle (set at creation, already on the card), no metadata / claim-resolve-delete.
     const sf = (window.ticketStacks?.stageFields?.(t.id)) || { key: "triage", label: "Triage", fields: [] };
-    sf.fields.forEach((f) => openSections.add(f.key));
-    const fieldSection = (f) => {
+    const fieldRow = (f) => {
       const val = (window.ticketStacks?.fieldValue?.(t.id, f.key)) ?? "";
       let inner;
       if (f.prio) { const pr = t.priority || "medium"; inner = `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }
       else if (f.area) inner = `<textarea class="td-in td-ta" rows="2" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
       else inner = `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
-      return section(f.key, f.label, inner);
+      const star = f.req === false ? "" : ` <span class="td-req">*</span>`;
+      return `<div class="td-field"><div class="td-field-label">${esc(f.label)}${star}</div>${inner}</div>`;
     };
-    panel.innerHTML = `
-      <div class="td-head">
-        <div class="td-title">
-          <input class="td-name td-edit" data-meta="title" value="${esc(titleVal)}" placeholder="Title" aria-label="Title" />
-          <span class="td-sep">|</span>
-          <input class="td-ip td-edit" data-meta="subtitle" value="${esc(subVal)}" placeholder="Subtitle" aria-label="Subtitle" />
-        </div>
-        <button class="td-x" data-act="close" aria-label="Close">&times;</button>
-      </div>
-      <div class="td-meta">Down ${esc(human(downMs))}${t.recoveredAt ? " &middot; recovered" : ""}</div>
-      ${created ? `<div class="td-time">${esc(created.toLocaleString())}</div>` : ""}
-
-      <div class="td-stage">${esc(sf.label)}</div>
-      ${sf.fields.map(fieldSection).join("")}
-      ${section("activity", "Activity", `<div class="td-log">${log || `<div class="td-log-empty">No activity.</div>`}</div>`)}
-
-      <div class="td-acts">${acts.join("")}</div>`;
+    panel.innerHTML =
+      `<div class="td-head td-head-bare"><button class="td-x" data-act="close" aria-label="Close">&times;</button></div>` +
+      sf.fields.map(fieldRow).join("");
     wire(t);
   };
 
@@ -329,30 +302,8 @@
   const wire = (t) => {
     if (!panel) return;
     panel.querySelectorAll("[data-act='close']").forEach((b) => (b.onclick = close));
-    panel.querySelectorAll("[data-sec-toggle]").forEach((el) => {
-      el.onclick = () => {
-        const key = el.dataset.secToggle;
-        const acc = panel.querySelector(`.td-acc[data-sec="${key}"]`);
-        if (acc.classList.toggle("is-open")) openSections.add(key); else openSections.delete(key);
-      };
-    });
     if (!t) return;
-    // Title / subtitle: live-saved as client-side overrides (the card updates in place as you type).
-    panel.querySelectorAll(".td-edit").forEach((el) => {
-      el.oninput = () => window.ticketStacks?.setMeta?.(t.id, { [el.dataset.meta]: el.value });
-      el.onkeydown = (e) => { if (e.key === "Enter") el.blur(); e.stopPropagation(); };
-    });
-    panel.querySelectorAll(".td-act").forEach((el) => {
-      el.onclick = async () => {
-        const a = el.dataset.act;
-        if (a === "delete") { window.ticketStacks?.delete?.(t.id); close(); return; }   // → trash
-        if (a === "restore") { window.ticketStacks?.restore?.(t.id); refresh(); return; }
-        if (a === "claim") await window.tickets.claim(t.id);
-        else if (a === "resolve") await window.tickets.resolve(t.id);
-        else if (a === "reopen") await window.tickets.reopen(t.id);
-        refresh();
-      };
-    });
+    // (Title/subtitle removed — set at creation, already on the card. Claim/Resolve/Delete live elsewhere.)
     // Severity (the priority field of the Triage stage): set + recolour the flying card; persist via the
     // ticket API (it drives the card's colour). The bars refresh on the resulting re-render.
     panel.querySelectorAll(".td-prio-opt").forEach((el) => {

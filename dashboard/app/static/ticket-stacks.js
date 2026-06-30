@@ -211,8 +211,8 @@
   // fields (the config menu shows only the current bucket's, each with its question) — a field is
   // satisfied when it has any value, and "n/a" counts as satisfied while showing nothing on the card.
   const STAGE_FIELDS = {
-    triage:        [ { key: "description", label: "Description", q: "What's the issue?", area: true },
-                     { key: "priority",    label: "Severity",    q: "How severe is it?", prio: true },
+    triage:        [ { key: "priority",    label: "Severity",    q: "How severe is it?", prio: true },
+                     { key: "description", label: "Description", q: "What's the issue?", area: true },
                      { key: "assignee",    label: "Assignee",    q: "Who's handling it?" } ],
     investigation: [ { key: "investigation", label: "Findings", q: "What did the investigation find?", area: true },
                      { key: "fix",           label: "Fix",      q: "What's the fix?", area: true } ],

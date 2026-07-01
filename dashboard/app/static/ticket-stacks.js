@@ -311,6 +311,19 @@
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
+      /* Empty-stack placeholder: a subtle dashed bounding box in the closed pile's resting spot that says
+         what lands where. JS (layout()) shows it only when that corner stack has no cards; sized to the card. */
+      .tk-empty { position: absolute; bottom: ${MARGIN}px; box-sizing: border-box; pointer-events: none;
+        border: 1.5px dashed rgba(255,255,255,0.16); border-radius: ${RADIUS}px;
+        display: flex; align-items: center; justify-content: center; text-align: center;
+        color: rgba(255,255,255,0.30); font-size: 0.92rem; font-weight: 600; line-height: 1.42; padding: 14px;
+        transition: border-color .2s ease, color .2s ease, box-shadow .2s ease; }
+      .tk-empty-left { left: ${MARGIN}px; } .tk-empty-right { right: ${MARGIN}px; }
+      /* Eligible drop target while dragging a trashed card out: light up the placeholder (empty stack) or
+         the pile's cards (non-empty stack). */
+      .tk-empty.tk-drop-ok { border-color: rgba(125,180,255,0.85); border-style: solid; color: rgba(190,215,255,0.85);
+        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.4), 0 0 26px rgba(90,150,255,0.35); }
+      .tk-deck.tk-drop-ok .tk-card { box-shadow: 0 0 0 2px rgba(125,180,255,0.7), 0 10px 26px rgba(0,0,0,0.42) !important; }
       /* The cards live in this track; horizontal scroll is ONE rigid transform on the track, decoupled
          from each card's own transform (slot/collision, which keeps its .42s transition). pointer-events
          none so the full-size track never blocks clicks above the deck — the cards re-enable it. */
@@ -556,20 +569,61 @@
   const hideTicketMenu = () => { if (ticketMenu) { ticketMenu.remove(); ticketMenu = null; } };
   const showTicketMenu = (t, card, x, y) => {
     hideTicketMenu();
+    const trashed = isDeleted(t.id);
     const m = document.createElement("div");
     m.className = "tk-menu";
+    // State-aware items: a live ticket can be MOVED TO TRASH (reversible); a trashed one can be
+    // RESTORED or DELETED PERMANENTLY (the only truly destructive action → the lone red item).
     m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
       `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
-      `<button class="tk-menu-item tk-menu-danger" data-act="delete">delete</button>`;
+      (trashed
+        ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
+          `<button class="tk-menu-item tk-menu-danger" data-act="purge">delete permanently</button>`
+        : `<button class="tk-menu-item" data-act="trash">move to trash</button>`);
     document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;
-    m.querySelector('[data-act="edit"]').onclick = () => { hideTicketMenu(); window.ticketDetail?.open(t, card); };
-    m.querySelector('[data-act="appearance"]').onclick = () => { hideTicketMenu(); /* placeholder */ };
-    m.querySelector('[data-act="delete"]').onclick = () => { hideTicketMenu(); deleteToBin(t, card); };
+    const on = (act, fn) => { const b = m.querySelector(`[data-act="${act}"]`); if (b) b.onclick = () => { hideTicketMenu(); fn(); }; };
+    on("edit", () => window.ticketDetail?.open(t, card));
+    on("appearance", () => { /* placeholder */ });
+    on("trash", () => deleteToBin(t, card));
+    on("restore", () => window.ticketStacks?.restore?.(t.id));
+    on("purge", () => purgeTicket(t, card));
   };
   const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); showTicketMenu(t, card, e.clientX, e.clientY); });
+
+  // Wipe every CLIENT-SIDE trace of a ticket id — stage, stage-order, trash flag, title/date/desc
+  // overrides, its blank-ticket colour, and its slot in every deck order. Used by "delete permanently"
+  // so a purged ticket leaves nothing behind in localStorage.
+  const forgetClientState = (id) => {
+    setDeleted(id, false); setStage(id, null); setStageAt(id, null);
+    if (metaMap[id]) { delete metaMap[id]; try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {} }
+    if (colorMap[id]) { delete colorMap[id]; try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); } catch {} }
+    DECK_SIDES.forEach((s) => { const d = decks[s]; if (d && Array.isArray(d.order)) { d.order = d.order.filter((x) => x !== id); saveOrder(s); } });
+  };
+  // Permanently delete a trashed ticket: implode the card into nothing, then hard-remove it from the
+  // backend store AND forget all its client state, so it can never come back.
+  const purgeTicket = (t, card) => {
+    const doPurge = () => {
+      forgetClientState(t.id);
+      try { window.tickets?.remove?.(t.id); } catch {}
+      tickets = tickets.filter((x) => x.id !== t.id);   // drop locally so the re-render is instant
+      render();
+    };
+    const r = card && card.isConnected ? card.getBoundingClientRect() : null;
+    if (!r || r.width < 4) { doPurge(); return; }
+    card.style.opacity = "0";
+    const clone = document.createElement("div");
+    clone.className = "tk-zfly";
+    clone.style.cssText = `left:${r.left}px; top:${r.top}px; width:${Math.round(r.width)}px; height:${Math.round(r.height)}px; transform-origin: center center; z-index: 6000; opacity: 1; transition: transform .3s cubic-bezier(.4,0,1,1), opacity .3s ease;`;
+    clone.style.backgroundColor = baseColor();
+    clone.style.backgroundImage = cardBg(t);
+    clone.innerHTML = cardInner(t);
+    document.body.appendChild(clone);
+    requestAnimationFrame(() => { clone.style.transform = "scale(0.12)"; clone.style.opacity = "0"; });
+    setTimeout(() => { clone.remove(); doPurge(); }, 320);
+  };
 
   // Fly a clone of a ticket from `fromRect` into its freshly-rendered resting card `destEl`, then run
   // onLanded. (destEl must already exist — the target deck/bucket has been rendered.)
@@ -590,15 +644,24 @@
   // A corner stack (left/right) under the cursor — fanned OR closed — for dragging a card OUT of the bin
   // back into a stack. Uses the visible cards' bounds so a closed corner pile counts too.
   const overCornerStack = (x, y) => ["left", "right"].find((s) => {
-    const r = deckCardsRect(s);
+    const r = deckCardsRect(s) || emptyStackRect(s);   // empty stacks have no cards → use their placeholder region
     return !!r && x >= r.left - 16 && x <= r.right + 16 && y >= r.top - 16 && y <= r.bottom + 16;
   }) || null;
-  // Restore a deleted ticket by dragging it onto a corner stack: un-delete and send it to the stack it
-  // BELONGS to (open → left inbox, resolved → right), inserted at the cursor slot if that stack is fanned,
+  // Which corner stack may a trashed ticket be dragged back INTO: everything EXCEPT a literally-resolved
+  // ticket may enter the LEFT (active) stack; only a resolved one may enter the RIGHT (resolved) stack.
+  const stackEligible = (side, t) => {
+    const resolved = !!t && (t.state || "open") === "resolved";
+    return side === "left" ? !resolved : side === "right" ? resolved : false;
+  };
+  // The corner stack under the cursor that this ticket is ALLOWED to restore into (eligibility-gated);
+  // hovering/dropping over an ineligible stack returns null → the drag springs back to the bin.
+  const eligibleCornerStack = (x, y, t) => { const s = overCornerStack(x, y); return s && stackEligible(s, t) ? s : null; };
+  // Restore a deleted ticket by dragging it onto a corner stack: un-delete and send it into the stack it
+  // was dropped on (already eligibility-checked), inserted at the cursor slot if that stack is fanned,
   // else at the TOP (front card). Then slide the clone home.
-  const restoreToDeck = (t, x, fromRect) => {
+  const restoreToDeck = (t, x, fromRect, side) => {
     setDeleted(t.id, false);
-    const fd = deckSideFor(t);                                     // its home stack, by state
+    const fd = side || deckSideFor(t);                             // the stack it was dropped on, else its home by state
     const deck = decks[fd];
     const ids = deck.cards.map((c) => c.dataset.id).filter((id) => id && id !== t.id);
     ids.splice(fanned[fd] ? clamp(fanInsertIndex(fd, x), 0, ids.length) : 0, 0, t.id);
@@ -685,8 +748,14 @@
         action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20"/></svg>';
         action.addEventListener("click", () => setTrashMode(!trashMode));
       }
-      root.appendChild(box); root.appendChild(action);
-      decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
+      // Empty-stack placeholder: lives on root (like the action button) so it shows when the deck box is
+      // hidden (.is-empty). Sized + toggled in layout(); tells the user what this corner collects.
+      const empty = document.createElement("div");
+      empty.className = `tk-empty tk-empty-${side}`;
+      empty.innerHTML = `<span>${side === "left" ? "New tickets<br>get added here" : "Resolved tickets<br>get added here"}</span>`;
+      empty.style.display = "none";
+      root.appendChild(box); root.appendChild(action); root.appendChild(empty);
+      decks[side] = { box, track, arrow, bar, thumb, action, empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
     // The recycle bin: a THIRD stack on the right, lifted above the trash icon (positioned in render),
     // shown only in trash mode. Same machinery as the right deck (fans left) — no action button of its own.
@@ -795,6 +864,18 @@
     d.cards.forEach((c) => { const r = c.getBoundingClientRect(); if (r.width < 1) return; L = Math.min(L, r.left); T = Math.min(T, r.top); R = Math.max(R, r.right); B = Math.max(B, r.bottom); });
     return L === Infinity ? null : { left: L, top: T, right: R, bottom: B };
   };
+  // The drop region of an EMPTY corner stack = its "add here" placeholder box (shown only when the stack
+  // has no cards). Lets a trashed card be dragged back into a stack that's currently empty.
+  const emptyStackRect = (side) => { const el = decks[side]?.empty; return el && el.isConnected && el.offsetParent !== null ? el.getBoundingClientRect() : null; };
+  // Highlight the corner stack (its cards' box AND its empty placeholder) a trashed card would restore
+  // into, so the eligible drop target reads clearly while dragging out of the bin.
+  let stackDropSide = null;
+  const setStackDrop = (side) => {
+    if (side === stackDropSide) return;
+    ["left", "right"].forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); decks[s]?.empty?.classList.remove("tk-drop-ok"); });
+    stackDropSide = side || null;
+    if (side) { decks[side]?.box?.classList.add("tk-drop-ok"); decks[side]?.empty?.classList.add("tk-drop-ok"); }
+  };
   const nearRect = (x, y, r, pad) => !!r && x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
   const inFocusDeadzone = (x, y) => {
     if (nearRect(x, y, decks.left?.action?.getBoundingClientRect(), 18)) return true;    // the "+" button
@@ -831,10 +912,11 @@
     const sr = side ? deckCardsRect(side) : null;
     if (!sr || inFocusDeadzone(e.clientX, e.clientY)) { clearHoverPreview(); setBucketsFocus(false); return; }   // nothing fanned / heading to +/bin
     // Hovering a specific card → auto-focus the buckets THAT ticket can enter (+ blue outline + arrows).
+    // EXCEPT trashed cards: a ticket in the bin doesn't preview eligible buckets on hover.
     const hov = hoveredFanCard(e.clientX, e.clientY);
-    if (hov && hov.t) { setBucketsFocus(false); showHoverPreview(hov.side, hov.t); return; }
+    if (hov && hov.t) { setBucketsFocus(false); if (hov.side === "trash") { clearHoverPreview(); return; } showHoverPreview(hov.side, hov.t); return; }
     clearHoverPreview();
-    setBucketsFocus(e.clientY < sr.top - 10);       // above the fanned stack (not on a card) → co-focus ALL buckets
+    setBucketsFocus(side !== "trash" && e.clientY < sr.top - 10);   // above a fanned (non-trash) stack → co-focus ALL buckets
   };
 
   const layout = (side) => {
@@ -843,6 +925,14 @@
     const cards = deck.cards, n = cards.length;
     deck.box.classList.toggle("is-empty", n === 0);
     deck.box.classList.toggle("is-fanned", fanned[side] && n > 0);
+    // Empty-stack placeholder: shown in the closed pile's spot when this corner has no cards. The RIGHT
+    // one hides only while the bin is FANNED OUT along the bottom (which would overlap it); a closed bin
+    // pile is lifted above this spot, so a resolved card can still be dragged back down here. Sized to card.
+    if (deck.empty) {
+      const showPh = n === 0 && (side === "left" || (side === "right" && !fanned.trash));
+      deck.empty.style.display = showPh ? "" : "none";
+      if (showPh) { deck.empty.style.width = `${CARD_W}px`; deck.empty.style.height = `${CARD_H}px`; }
+    }
     const open = fanned[side];
     const step = CARD_W + GAP_FAN;
     const viewW = fanViewW();
@@ -1409,8 +1499,9 @@
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
-      // Dragging a TRASH card over a fanned corner stack → it'll restore there; don't reorder the bin.
-      if (side === "trash" && overCornerStack(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
+      // Dragging a TRASH card over an ELIGIBLE corner stack → it'll restore there; highlight it and
+      // don't reorder the bin. Over an ineligible stack, no highlight → it'll spring back on release.
+      if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(es); if (es) { clearZoneHighlight(); clearGap(); return; } }
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
@@ -1428,7 +1519,7 @@
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus();   // always clear
+      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus(); setStackDrop(null);   // always clear
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
@@ -1436,8 +1527,9 @@
       if (!wasDrag) { if (side !== "trash") window.ticketDetail?.open(t, card); return; }
       // Dropped on the recycle bin (icon or open stack) → delete it into the bin (except trash cards).
       if (side !== "trash" && overTrashTarget(e.clientX, e.clientY)) { dropTicketToTrash(t, card.getBoundingClientRect()); return; }
-      // A trash card dropped on a fanned corner stack → restore it there.
-      if (side === "trash" && overCornerStack(e.clientX, e.clientY)) { restoreToDeck(t, e.clientX, card.getBoundingClientRect()); return; }
+      // A trash card dropped on an ELIGIBLE corner stack → restore it into THAT stack; over an
+      // ineligible one it falls through and springs back into the bin.
+      if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(null); if (es) { restoreToDeck(t, e.clientX, card.getBoundingClientRect(), es); return; } }
       const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
       if (dDrop && dDrop.track) {              // compensate for the track's transform so it doesn't jump by scrollX
         const tt = side === "left" ? dDrop.scrollX : -dDrop.scrollX;
@@ -1507,7 +1599,7 @@
     card.innerHTML = cardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');   // viewport-edge scroll shadow (clipped to this card)
     wireCard(card, t, side);
-    if (side !== "trash") wireContextMenu(card, t);   // right-click menu (trash cards use their restore button)
+    wireContextMenu(card, t);   // right-click menu (state-aware: trash cards get restore + delete-permanently)
     // Trash cards carry their own "restore" action bottom-right (no config menu for deleted tickets).
     if (side === "trash") {
       card.insertAdjacentHTML("beforeend", '<button class="tk-restore" type="button">restore</button>');

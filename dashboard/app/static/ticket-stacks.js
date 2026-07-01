@@ -84,6 +84,8 @@
   const titleOf = (t) => { const m = metaOf(t.id); const ok = (v) => v && v.trim() && !isNA(v) ? v : null; return ok(m.client) || ok(m.title) || (t.companyLabel || "Unknown"); };
   const subOf = (t) => { const m = metaOf(t.id); const v = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || ""); return isNA(v) ? "" : v; };  // n/a → no trace on the card
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
+  let draftId = null;         // a just-created ticket that isn't "real" yet — it only commits once its
+                              // create fields (client/date/description) are saved; cancelling discards it
   let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
 
   let root = null, stackScrim = null;
@@ -2297,8 +2299,17 @@
       const tryOpen = (tries) => {
         const card = decks.left?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`);
         const tk = tickets.find((x) => x.id === id);
-        if (card && card.isConnected && card.getBoundingClientRect().width > 10 && tk) window.ticketDetail?.open?.(tk, card);
-        else if (tries > 0) setTimeout(() => tryOpen(tries - 1), 120);
+        if (card && card.isConnected && card.getBoundingClientRect().width > 10 && tk) {
+          // A brand-new ticket opens as a DRAFT: its config must be saved (all create fields filled) to
+          // commit it; closing/cancelling flies the card back INTO the "+" and discards it entirely.
+          const opts = id === draftId ? {
+            draft: true,
+            homeRect: () => decks.left?.action?.getBoundingClientRect() || null,
+            onCommit: () => { if (draftId === id) draftId = null; },
+            onAbandon: () => { if (draftId === id) draftId = null; discardDraft(id); },
+          } : undefined;
+          window.ticketDetail?.open?.(tk, card, opts);
+        } else if (tries > 0) setTimeout(() => tryOpen(tries - 1), 120);
       };
       setTimeout(() => tryOpen(8), 420);
     }
@@ -2308,10 +2319,19 @@
   // the centre and expand its config — where the client, incident date and description are filled in (the
   // "new ticket" stage of the config; see stageFields). No pre-baked modal.
   const openCreate = async () => {
+    if (draftId) return;   // one draft at a time
     let tk = null;
     try { const res = await window.tickets?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
-    if (tk && tk.id) pendingOpenId = tk.id;
-    load();   // re-fetch + render; render() flies the new card out and opens its config
+    if (tk && tk.id) { pendingOpenId = tk.id; draftId = tk.id; }
+    load();   // re-fetch + render; render() flies the new card out and opens its config as a draft
+  };
+  // Abandon a never-completed draft: hard-remove the backend ticket and forget every client-side trace,
+  // so a cancelled create leaves nothing behind. The card has already flown back into the "+" by now.
+  const discardDraft = (id) => {
+    forgetClientState(id);
+    try { window.tickets?.remove?.(id); } catch {}
+    tickets = tickets.filter((x) => x.id !== id);   // drop locally so the re-render is instant
+    render();
   };
 
   const load = async () => {

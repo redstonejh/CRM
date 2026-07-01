@@ -29,6 +29,7 @@
   const DOF_BLUR = 4, DOF_OUT_MS = 320;             // depth-of-field: peak blur of the world behind the open ticket + its detransition
   let overlay = null, panel = null, flyCard = null, wrap = null;
   let currentId = null, sourceEl = null, backTransform = "", subscribed = false, closing = false;
+  let detailOpts = null, committed = false;   // draft-mode opts + whether this draft was saved (committed)
   let geo = null, settleTimer = null, panelSide = "right";   // which side the panel emerges from
   let cardStays = false;     // true when the card doesn't move (front/closed-pile card) → panel opens with no delay
   let scrim = null;          // full-screen backdrop-blur layer behind the flyer/panel (depth-of-field)
@@ -206,8 +207,8 @@
     overlay = document.createElement("div");
     overlay.className = "ticket-detail-overlay";
     overlay.hidden = true;
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && overlay && !overlay.hidden) close(); });
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) requestClose(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && overlay && !overlay.hidden) requestClose(); });
     document.body.appendChild(overlay);
   };
 
@@ -462,7 +463,7 @@
 
   const wire = (t) => {
     if (!panel) return;
-    panel.querySelectorAll("[data-act='close']").forEach((b) => (b.onclick = close));
+    panel.querySelectorAll("[data-act='close']").forEach((b) => (b.onclick = requestClose));
     if (!t) return;
     // (Title/subtitle removed — set at creation, already on the card. Claim/Resolve/Delete live elsewhere.)
     // Severity (the priority field of the Triage stage): set + recolour the flying card; persist via the
@@ -492,9 +493,22 @@
     const msg = panel.querySelector(".td-msg");
     const saveBtn = panel.querySelector("[data-act='save']");
     if (saveBtn) saveBtn.onclick = () => {
+      const draft = !!(detailOpts && detailOpts.draft);
+      // For a DRAFT (new ticket), the create fields must be genuinely filled — blank OR "n/a" is rejected,
+      // because a ticket can't exist without a real client / date / description. Stage fields still allow n/a.
+      const bad = (v) => String(v).trim() === "" || (draft && String(v).trim().toLowerCase() === "n/a");
       let blank = null;
-      panel.querySelectorAll(".td-field [data-field]").forEach((el) => { if (!blank && String(el.value).trim() === "") blank = el; });
-      if (blank) { if (msg) { msg.textContent = "Some fields are blank — for anything not applicable, type “n/a”."; msg.hidden = false; } blank.focus(); return; }
+      panel.querySelectorAll(".td-field [data-field]").forEach((el) => { if (!blank && bad(el.value)) blank = el; });
+      if (blank) {
+        if (msg) {
+          msg.textContent = draft
+            ? "A client, date of incident and description are all required to create the ticket."
+            : "Some fields are blank — for anything not applicable, type “n/a”.";
+          msg.hidden = false;
+        }
+        blank.focus(); return;
+      }
+      if (draft) { committed = true; if (detailOpts.onCommit) detailOpts.onCommit(); }   // the draft is now a real ticket
       close();
     };
   };
@@ -514,10 +528,11 @@
     });
   };
 
-  const open = (ticket, srcEl) => {
+  const open = (ticket, srcEl, opts) => {
     if (overlay && !overlay.hidden) return;
     ensureStyles(); ensureOverlay();
     closing = false;
+    detailOpts = opts || null; committed = false;   // draft mode (create flow) vs a normal edit
     openSections.clear();   // render() opens the current stage's fields
     currentId = ticket && ticket.id ? ticket.id : null;
     sourceEl = srcEl || null;
@@ -550,9 +565,21 @@
     if (!subscribed) { subscribed = true; window.tickets?.onChanged?.(() => refresh()); }
   };
 
-  const close = () => {
+  // The close entry point for the × / Escape / click-off: a still-uncommitted DRAFT is ABANDONED (the
+  // card flies back into the "+" and the ticket is discarded); anything else closes normally.
+  const requestClose = () => {
+    if (detailOpts && detailOpts.draft && !committed) {
+      return close({ abandon: true, home: detailOpts.homeRect ? detailOpts.homeRect() : null });
+    }
+    close();
+  };
+
+  const close = (opts = {}) => {
     if (!overlay || overlay.hidden || closing) return;
     closing = true;
+    const abandoning = !!opts.abandon;      // discard the draft: card flies into the "+", ticket is removed
+    const home = opts.home || null;         // the "+" button's rect (fly target for an abandon)
+    const onAbandon = abandoning && detailOpts ? detailOpts.onAbandon : null;
     clearTimeout(settleTimer);
     setBlur(0, DOF_OUT_MS, "ease-in");   // smoothly pull the world back into focus as the panel leaves
     // Un-settle: re-clip + restore the centring transform, then tuck the panel back behind
@@ -571,19 +598,38 @@
     }
     if (wrap) wrap.classList.remove("is-open");
     const fc = flyCard;
-    if (fc) { fc.classList.add("returning"); fc.style.transform = backTransform; }  // card returns after the panel
-    // Tear everything down the INSTANT the card lands on its spot — no lingering animation
-    // layer / inert flyer sitting over the real card. transitionend fires exactly on arrival;
+    if (fc) {
+      if (abandoning && home && geo) {
+        // Suck the card back INTO the "+": translate its centre onto the button's centre while shrinking
+        // + fading — it "un-creates" into the button it came from.
+        const cx = geo.targetLeft + geo.cardW / 2, cy = geo.targetTop + geo.cardH / 2;
+        const hx = home.left + home.width / 2, hy = home.top + home.height / 2;
+        const scale = Math.max(0.06, Math.min(0.5, (home.width || 34) / geo.cardW));
+        fc.style.transformOrigin = "center center";
+        fc.style.transition = `transform ${CLOSE_FLY_MS + 80}ms ${EASE}, opacity ${CLOSE_FLY_MS + 80}ms ease`;
+        fc.style.transform = `translate(${Math.round(hx - cx)}px, ${Math.round(hy - cy)}px) scale(${scale.toFixed(3)})`;
+        fc.style.opacity = "0";
+      } else if (abandoning) {
+        fc.style.transition = `opacity ${CLOSE_FLY_MS}ms ease`; fc.style.opacity = "0";   // no "+" rect → just fade out
+      } else {
+        fc.classList.add("returning"); fc.style.transform = backTransform;   // normal close: card returns to its spot
+      }
+    }
+    // Tear everything down the INSTANT the card lands. transitionend fires exactly on arrival;
     // the timeout is just a safety net if it doesn't.
     let done = false;
     const finish = () => {
       if (done || !overlay) return; done = true;
       overlay.hidden = true; overlay.innerHTML = "";
-      if (sourceEl) { sourceEl.style.visibility = ""; sourceEl = null; }
+      // On abandon the ticket is being discarded → keep its source card hidden (the abandon callback
+      // re-renders the stacks without it). On a normal close, reveal the card again.
+      if (sourceEl) { if (!abandoning) sourceEl.style.visibility = ""; sourceEl = null; }
       flyCard = wrap = panel = scrim = null; currentId = null; closing = false; geo = null;
+      detailOpts = null; committed = false;
       try { window.ticketStacks?.onDetailClosed?.(); } catch {}   // flush any render deferred while open
+      if (onAbandon) { try { onAbandon(); } catch {} }            // remove the draft ticket + re-render
     };
-    if (fc) fc.addEventListener("transitionend", (ev) => { if (ev.propertyName === "transform") finish(); });
+    if (fc) fc.addEventListener("transitionend", (ev) => { if (ev.propertyName === "transform" || ev.propertyName === "opacity") finish(); });
     setTimeout(finish, cardStays ? CLOSE_SLIDE_MS + 60 : CLOSE_SLIDE_MS + CLOSE_FLY_MS + 90);   // no card fly to wait on
   };
 

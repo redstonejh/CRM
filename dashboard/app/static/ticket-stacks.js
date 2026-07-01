@@ -403,10 +403,9 @@
         border: 1px solid rgba(255,255,255,0.14);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
         transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, filter .32s cubic-bezier(.4,0,.2,1), opacity .32s ease; }
-      /* Out of focus: a bucket the cursor isn't co-focusing, or (mid-drag) one the ticket can't legally
-         land in. The blur is on the bucket ITSELF (keeps its backdrop-filter acrylic — it just softens),
-         so the frosted glass is ALWAYS present, only the sharpness changes. */
-      .tk-zone.tk-out { filter: blur(6px); opacity: 0.72; }
+      /* Mid-drag only: a bucket the ticket can't legally land in softens so the valid target stands out.
+         Full opacity (no fade) keeps the frosted acrylic reading as glass, not a washed-out ghost. */
+      .tk-zone.tk-out { filter: blur(5px); }
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
@@ -703,9 +702,12 @@
   };
   const applyBucketFocus = () => {
     if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
-    const anyFan = DECK_SIDES.some((s) => fanned[s]);
-    [zonesRoot, flowRoot].forEach((el) => { if (el) el.classList.toggle("tk-cofocus", anyFan); });   // above the scrim while fanned
-    setZoneOut(anyFan && !bucketsFocused);   // all buckets/arrows out until the cursor co-focuses them
+    // Co-focus is a clean z-flip across the scrim: lift the buckets/arrows ABOVE it (sharp) ONLY while the
+    // cursor is drifting up to co-focus them; otherwise leave them BELOW it so the SCRIM blurs them — the
+    // exact crisp depth-of-field of an un-fanned bin. No per-element filter → no washed-out acrylic.
+    const sharp = DECK_SIDES.some((s) => fanned[s]) && bucketsFocused;
+    [zonesRoot, flowRoot].forEach((el) => { if (el) el.classList.toggle("tk-cofocus", sharp); });
+    setZoneOut(false);
   };
   const setBucketsFocus = (on) => { if (on !== bucketsFocused) { bucketsFocused = on; applyBucketFocus(); } };
   const deckCardsRect = (side) => {

@@ -259,7 +259,11 @@
       /* Depth-of-field: a full-screen blur layer BETWEEN the focused stack (z 3) and everything else
          (idle decks z 1, and the whole dashboard/buckets behind .tk-stacks). Shown when a stack is
          fanned or the recycle bin is open — that stack stays sharp, the rest goes soft. No dimming. */
-      .tk-scrim { position: fixed; inset: 0; z-index: 2; pointer-events: none;
+      /* Depth-of-field scrim. It lives at BODY level (not inside .tk-stacks) at a z BELOW the stacks
+         (4000) but ABOVE the resting buckets/arrows — so it blurs the dashboard + idle buckets, the
+         stacks stay sharp above it, and a focused bucket can rise above it (3950) yet still below the
+         stacks. That ordering is what keeps an open recycle bin from hiding behind the Resolution panel. */
+      .tk-scrim { position: fixed; inset: 0; z-index: 3900; pointer-events: none;
         -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px);
         transition: backdrop-filter .42s cubic-bezier(.4,0,.2,1), -webkit-backdrop-filter .42s cubic-bezier(.4,0,.2,1); }
       .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.2,.9,.3,1); }
@@ -386,12 +390,12 @@
       }
 
       /* ── Pipeline zones (glass buckets) — each panel snaps to dashboard grid columns. ─── */
-      .tk-zones { position: fixed; left: 0; right: 0; top: 64px; z-index: 800; pointer-events: none;
-        transition: filter .42s cubic-bezier(.4,0,.2,1); }
-      /* While a stack is fanned the buckets + flow arrows ride ABOVE the depth-of-field scrim and
-         blur/un-blur via their OWN filter (so the co-focus glides in/out instead of snapping). */
-      .tk-zones.tk-cofocus { z-index: 4500; }
-      .tk-zones.tk-dim { filter: blur(4px); }
+      .tk-zones { position: fixed; left: 0; right: 0; top: 64px; z-index: 800; pointer-events: none; }
+      /* While a stack is fanned the buckets + flow arrows ride ABOVE the depth-of-field scrim (so the
+         scrim can't blur them) but stay BELOW the stacks (so an open bin never hides behind a bucket).
+         Focus is then a PER-ELEMENT blur on each bucket (see .tk-zone.tk-out) — never a filter on this
+         container, which would knock out the children's backdrop-filter acrylic and make it flash. */
+      .tk-zones.tk-cofocus { z-index: 3950; }
       .tk-zone { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
@@ -399,9 +403,10 @@
         border: 1px solid rgba(255,255,255,0.14);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
         transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, filter .32s cubic-bezier(.4,0,.2,1), opacity .32s ease; }
-      /* Dragging OUT of a fanned stack: buckets the ticket can't legally land in drop out of focus,
-         so only the valid target(s) stay sharp. */
-      .tk-zone.tk-out { filter: blur(4px); opacity: 0.5; }
+      /* Out of focus: a bucket the cursor isn't co-focusing, or (mid-drag) one the ticket can't legally
+         land in. The blur is on the bucket ITSELF (keeps its backdrop-filter acrylic — it just softens),
+         so the frosted glass is ALWAYS present, only the sharpness changes. */
+      .tk-zone.tk-out { filter: blur(6px); opacity: 0.72; }
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
@@ -459,18 +464,19 @@
       /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
          then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
-        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)) blur(0px);
-        transition: filter .42s cubic-bezier(.4,0,.2,1); }
-      /* The arrows share the buckets' focus: lifted above the scrim while a stack is fanned, and the
-         SAME blur toggled on when the buckets are out of focus (identical filter list → smooth ramp). */
-      .tk-flow.tk-cofocus { z-index: 4400; }
-      .tk-flow.tk-dim { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)) blur(4px); }
+        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
+      /* The arrows share the buckets' focus: lifted above the scrim while a stack is fanned (below the
+         stacks), and each segment fades out per-element (see .tk-flow-*.tk-out) when out of focus. */
+      .tk-flow.tk-cofocus { z-index: 3945; }
       .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
       .tk-flow-head { fill: #d2e3ff; stroke: none; }
       /* An arrow segment that isn't part of the chain to a reachable bucket fades right down. */
       .tk-flow-shaft, .tk-flow-head { transition: opacity .32s ease; }
       .tk-flow-shaft.tk-out, .tk-flow-head.tk-out { opacity: 0.08; }
+      /* The round window/page controls at the top stay in PERMANENT focus above the DoF scrim (3900)
+         — the depth-of-field never blurs them. (Injected late, so it wins over themes.css by order.) */
+      .window-control-cluster { z-index: 4100; }
     `;
     document.head.appendChild(style);
   };
@@ -575,7 +581,9 @@
     ensureStyles();
     root = document.createElement("div");
     root.className = "tk-stacks";
-    stackScrim = document.createElement("div"); stackScrim.className = "tk-scrim"; root.appendChild(stackScrim);   // depth-of-field layer
+    // Depth-of-field scrim — a BODY-level layer (z 3900), NOT a child of .tk-stacks, so it sits below
+    // the stacks (which stay sharp) yet above the resting buckets/dashboard (which it blurs).
+    stackScrim = document.createElement("div"); stackScrim.className = "tk-scrim"; document.body.appendChild(stackScrim);
     for (const side of ["left", "right"]) {
       const box = document.createElement("div");
       box.className = `tk-deck tk-deck-${side}`;
@@ -660,12 +668,17 @@
   const fanViewW = () => Math.max(CARD_W, window.innerWidth - MARGIN * 2 - (CARD_W + 78));  // leave room for the opposite stack
 
   // Which stacks are in focus — any fanned deck, PLUS the recycle bin whenever it's open. Focused decks
-  // ride ABOVE the depth-of-field scrim (z 3) and stay sharp; the rest sit below (z 1) and blur. So a
-  // fanned stack + an open bin are BOTH sharp at once.
+  // stack ABOVE the idle ones (z 3 vs 1) and stay sharp; the idle ones blur via their OWN filter (the
+  // whole .tk-stacks now sits above the scrim, so the scrim can't do it for us). A fanned stack + an
+  // open bin are BOTH sharp at once.
   const isFocused = (s) => !!(decks[s] && (fanned[s] || (s === "trash" && trashMode && decks.trash.cards.length)));
   const updateStackFocus = () => {
-    let any = false;
-    DECK_SIDES.forEach((s) => { const d = decks[s]; if (!d) return; const f = isFocused(s); if (f) any = true; d.box.style.zIndex = f ? "3" : "1"; });
+    const focus = {}; let any = false;
+    DECK_SIDES.forEach((s) => { const d = decks[s]; if (!d) return; focus[s] = isFocused(s); if (focus[s]) any = true; });
+    DECK_SIDES.forEach((s) => { const d = decks[s]; if (!d) return;
+      d.box.style.zIndex = focus[s] ? "3" : "1";
+      d.box.style.filter = (any && !focus[s]) ? "blur(4px)" : "";   // idle decks go soft while another is focused
+    });
     if (stackScrim) {
       stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = any ? "blur(4px)" : "blur(0px)";
       // While the bin is open it's MODAL: the scrim eats clicks so the blurred dashboard isn't
@@ -679,17 +692,20 @@
   // ── Cursor-driven co-focus of the buckets (+ the flow arrows) while a stack is fanned ───────────────
   // Moving the cursor UP off the fanned stack toward the buckets lifts them AND the flow arrows into
   // focus alongside the stack; moving back down to the stack — or toward the +/bin buttons — drops them
-  // back out. While any stack is fanned the buckets/arrows stay ABOVE the scrim the whole time and just
-  // blur/un-blur via their own filter, so the shift glides. Gaps between fanned cards count as "on the
-  // stack" (inside its bounding box), so hovering an empty gap doesn't pull the buckets in.
+  // back out. While any stack is fanned the buckets/arrows stay ABOVE the scrim (via .tk-cofocus) so the
+  // scrim can't blur them; the out-of-focus softening is a PER-BUCKET filter (.tk-out) that leaves the
+  // acrylic intact. Gaps between fanned cards count as "on the stack", so hovering one doesn't pull them in.
   let bucketsFocused = false;
+  const setZoneOut = (out) => {
+    STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-out", out));
+    flowShafts.forEach((el) => el.classList.toggle("tk-out", out));
+    flowHeads.forEach((el) => el.classList.toggle("tk-out", out));
+  };
   const applyBucketFocus = () => {
+    if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
     const anyFan = DECK_SIDES.some((s) => fanned[s]);
-    [zonesRoot, flowRoot].forEach((el) => {
-      if (!el) return;
-      el.classList.toggle("tk-cofocus", anyFan);                 // above the scrim while any stack is fanned
-      el.classList.toggle("tk-dim", anyFan && !bucketsFocused);  // …and blurred until co-focused
-    });
+    [zonesRoot, flowRoot].forEach((el) => { if (el) el.classList.toggle("tk-cofocus", anyFan); });   // above the scrim while fanned
+    setZoneOut(anyFan && !bucketsFocused);   // all buckets/arrows out until the cursor co-focuses them
   };
   const setBucketsFocus = (on) => { if (on !== bucketsFocused) { bucketsFocused = on; applyBucketFocus(); } };
   const deckCardsRect = (side) => {
@@ -1817,7 +1833,7 @@
     });
     flowShafts.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
     flowHeads.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
-    [zonesRoot, flowRoot].forEach((el) => { if (el) { el.classList.add("tk-cofocus"); el.classList.remove("tk-dim"); } });  // group sharp; per-element .tk-out dims
+    [zonesRoot, flowRoot].forEach((el) => { if (el) el.classList.add("tk-cofocus"); });  // lift above the scrim; per-element .tk-out dims
   };
   const clearDropFocus = () => {
     STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.remove("tk-out"));

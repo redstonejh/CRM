@@ -521,6 +521,13 @@
          over EVERYTHING: lifted above the DoF scrim (3900) and the whole ticket UI so nothing ever blurs
          or covers them. (Injected late, so this wins over themes.css / auth-ui.js by order.) */
       .window-control-cluster, .auth-profile-cluster, .dashboard-search-popover { z-index: 4600 !important; }
+      /* Every top-menu dropdown (background picker, dash switcher, panel-add, status, account, etc.) is
+         PORTALED out of its trigger into the body-level .workspace-menu-overlay-layer, which has
+         isolation:isolate — so it's one self-contained stacking context capped at its own z (default 2600),
+         BELOW the ticket stacks (4000) and the "+" create button. That's why the "+" showed on top of an
+         open dropdown. Lift the whole isolated layer above the stacks and the DoF scrim in a single move;
+         its children keep their internal order, so the dropdowns now sit sharp above everything. */
+      .workspace-menu-overlay-layer { z-index: 4600 !important; }
       /* "| date of incident" beside the client name in the header — a lighter, non-bold secondary tone. */
       .ticket-date { color: rgba(255,255,255,0.55); font-weight: 400; white-space: nowrap; }
     `;

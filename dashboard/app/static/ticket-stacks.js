@@ -82,9 +82,10 @@
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
   let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
 
-  let root = null;
-  const decks = { left: null, right: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
-  const fanned = { left: false, right: false };
+  let root = null, stackScrim = null;
+  const decks = { left: null, right: null, trash: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
+  const fanned = { left: false, right: false, trash: false };
+  const DECK_SIDES = ["left", "right", "trash"];   // trash = the recycle bin, a right-hand stack lifted above the icon
   let tickets = [], subscribed = false;
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -231,7 +232,14 @@
   const fieldSatisfied = (t, key) => key === "priority" ? hasPriority(t) : String(fieldRaw(t, key) ?? "").trim() !== "";
   const stageComplete = (t, i) => (STAGE_FIELDS[STAGE_KEYS[i]] || []).every((f) => fieldSatisfied(t, f.key));
   const ticketBarClasses = (t) => {
-    if (isDeleted(t.id)) { const d = STAGE_KEYS.indexOf(metaOf(t.id).delStage || ""); return STAGE_KEYS.map((_, i) => (i < d ? "g" : i === d ? "r" : "")); }
+    if (isDeleted(t.id)) {
+      const ds = metaOf(t.id).delStage || "";
+      // No bucket stage recorded → deleted from a corner STACK: all-green = resolved stack, empty = inbox
+      // (the left stack). A bucket deletion reds the segment it died in, greens the ones it had passed.
+      if (!ds) return STAGE_KEYS.map(() => ((t.state || "open") === "resolved" ? "g" : ""));
+      const d = STAGE_KEYS.indexOf(ds);
+      return STAGE_KEYS.map((_, i) => (i < d ? "g" : i === d ? "r" : ""));
+    }
     const s = STAGE_KEYS.indexOf(stageOf(t.id) || "");           // -1 = in a stack (inbox/resolved/trash)
     if (s < 0) return STAGE_KEYS.map(() => "");
     return STAGE_KEYS.map((_, i) => (i < s ? "g" : i === s ? (stageComplete(t, i) ? "g" : "y") : ""));
@@ -248,8 +256,14 @@
          (The only place selection is allowed is the config menu's editable fields — see ticket-detail.js.) */
       .tk-stacks, .tk-zones { -webkit-user-select: none; user-select: none; }
       .tk-stacks { position: fixed; inset: auto 0 0 0; z-index: 4000; pointer-events: none; -webkit-app-region: no-drag; }
+      /* Depth-of-field: a full-screen blur layer BETWEEN the focused stack (z 3) and everything else
+         (idle decks z 1, and the whole dashboard/buckets behind .tk-stacks). Shown when a stack is
+         fanned or the recycle bin is open — that stack stays sharp, the rest goes soft. No dimming. */
+      .tk-scrim { position: fixed; inset: 0; z-index: 2; pointer-events: none;
+        -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px);
+        transition: backdrop-filter .3s ease, -webkit-backdrop-filter .3s ease; }
       .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.2,.9,.3,1); }
-      .tk-deck-left { left: 0; } .tk-deck-right { right: 0; }
+      .tk-deck-left { left: 0; } .tk-deck-right, .tk-deck-trash { right: 0; }
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
@@ -270,15 +284,15 @@
         padding: 14px 15px; border-radius: 15px; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18);
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
-      .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card { right: ${MARGIN}px; }
+      .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card, .tk-deck-trash .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
       .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
       .tk-card.tk-flying { transition: transform .4s ${EASE}, opacity .4s ease; pointer-events: none; }
-      /* Recycle bin: when the right deck is flipped to its deleted tickets, ring every card in the same
-         transient blue as the active trash button so it reads as the trash view, not the resolved pile. */
-      .tk-deck.is-trash .tk-card { box-shadow: inset 0 0 0 2px rgba(125,180,255,0.85), 0 0 18px rgba(90,150,255,0.30), inset 0 1px 0 rgba(255,255,255,0.24), 0 8px 22px rgba(0,0,0,0.18); }
-      .tk-deck.is-trash .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 0 0 2px rgba(125,180,255,0.95), 0 0 22px rgba(90,150,255,0.42), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
+      /* Recycle bin: its cards are ringed in the same transient blue as the active bin button, so the
+         lifted trash stack reads clearly as the deleted-tickets view (distinct from the resolved pile). */
+      .tk-deck-trash .tk-card { box-shadow: inset 0 0 0 2px rgba(125,180,255,0.85), 0 0 18px rgba(90,150,255,0.30), inset 0 1px 0 rgba(255,255,255,0.24), 0 8px 22px rgba(0,0,0,0.18); }
+      .tk-deck-trash .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 0 0 2px rgba(125,180,255,0.95), 0 0 22px rgba(90,150,255,0.42), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
 
       .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
         border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
@@ -431,6 +445,7 @@
     ensureStyles();
     root = document.createElement("div");
     root.className = "tk-stacks";
+    stackScrim = document.createElement("div"); stackScrim.className = "tk-scrim"; root.appendChild(stackScrim);   // depth-of-field layer
     for (const side of ["left", "right"]) {
       const box = document.createElement("div");
       box.className = `tk-deck tk-deck-${side}`;
@@ -465,8 +480,25 @@
       root.appendChild(box); root.appendChild(action);
       decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
+    // The recycle bin: a THIRD stack on the right, lifted above the trash icon (positioned in render),
+    // shown only in trash mode. Same machinery as the right deck (fans left) — no action button of its own.
+    {
+      const box = document.createElement("div");
+      box.className = "tk-deck tk-deck-trash";
+      const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
+      const arrow = document.createElement("button"); arrow.className = "tk-arrow"; arrow.type = "button";
+      arrow.setAttribute("aria-label", "Fan out deleted tickets");
+      arrow.addEventListener("click", () => toggleFan("trash"));
+      const bar = document.createElement("div"); bar.className = "tk-bar";
+      const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
+      box.appendChild(arrow); box.appendChild(bar);
+      box.addEventListener("wheel", (e) => onWheel("trash", e), { passive: false });
+      wireThumb("trash", thumb);
+      root.appendChild(box);
+      decks.trash = { box, track, arrow, bar, thumb, action: null, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
+    }
     document.body.appendChild(root);
-    window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); layout("left"); layout("right"); });
+    window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); DECK_SIDES.forEach(layout); });
     // Watch native widget drags from the outside so a grid ticket can be dropped back
     // into its stack. Capture phase → these run before the native drag's own document
     // handlers, letting us read the under-cursor rect before it commits.
@@ -478,6 +510,14 @@
   const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + 34}px`; };
 
   const fanViewW = () => Math.max(CARD_W, window.innerWidth - MARGIN * 2 - (CARD_W + 78));  // leave room for the opposite stack
+
+  // The single stack in focus — the fanned deck, or the recycle bin while it's open — rides ABOVE the
+  // depth-of-field scrim (z 3); the others sit below it (z 1) and blur. The scrim's blur ramps via CSS.
+  const updateStackFocus = () => {
+    const focus = DECK_SIDES.find((s) => decks[s] && fanned[s]) || (trashMode && decks.trash?.cards.length ? "trash" : null);
+    DECK_SIDES.forEach((s) => { const d = decks[s]; if (d) d.box.style.zIndex = s === focus ? "3" : "1"; });
+    if (stackScrim) stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = focus ? "blur(4px)" : "blur(0px)";
+  };
 
   const layout = (side) => {
     const deck = decks[side];
@@ -497,18 +537,12 @@
     placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
-    const otherSide = side === "left" ? "right" : "left";
-    // Hide this side's fan arrow entirely while the OTHER stack is fanned (or with ≤1 card).
-    deck.arrow.classList.toggle("is-hidden", n <= 1 || fanned[otherSide]);
+    const otherFanned = DECK_SIDES.some((s) => s !== side && decks[s] && fanned[s]);
+    // Hide this deck's fan arrow entirely while ANOTHER stack is fanned (or with ≤1 card).
+    deck.arrow.classList.toggle("is-hidden", n <= 1 || otherFanned);
     deck.arrow.style.zIndex = "5000";
-    // De-emphasise the idle stack's cards + arrow while the OTHER stack is fanned — but the
-    // create/trash button stays at full opacity (it's an always-available action).
-    deck.box.classList.toggle("is-dimmed", fanned[otherSide]);
-    // The fanned deck must paint ABOVE the idle one. The idle deck's opacity:0.3 makes it a stacking
-    // context, and the cards' track is also one (its scroll transform), so the fanned cards' z-index no
-    // longer lifts them across decks — without this, the dimmed idle pile shows THROUGH the fanned cards
-    // where they overlap, making the fanned stack look transparent. A box-level z-index fixes the order.
-    deck.box.style.zIndex = fanned[side] ? "2" : "1";
+    // Focus (which deck rides above the depth-of-field scrim, which are behind it) is set globally.
+    updateStackFocus();
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
@@ -539,7 +573,7 @@
     let tx, ty, rot;
     if (open) { tx = i * step; ty = 0; rot = 0; }   // slot position only — scroll is applied to the track
     else { const d = Math.min(i, 6); tx = d * 3; ty = -d * 4; rot = (i % 2 ? 1 : -1) * Math.min(i, 3) * 1.6; }
-    if (side === "right") { tx = -tx; rot = -rot; }
+    if (side !== "left") { tx = -tx; rot = -rot; }   // right + trash decks fan LEFT
     card._tx = tx; card._ty = ty; card._rot = rot;
     // Leave the dragged card alone — keep its on-top z-index (9999, set at drag start) and
     // its follow transform. Otherwise a reorder re-layout drops it BEHIND its neighbours, so
@@ -559,7 +593,7 @@
     let slot = 0;
     deck.cards.forEach((c) => {
       if (c === dragged) return;
-      let tx = slot * step; if (side === "right") tx = -tx;   // slot only — track carries scroll
+      let tx = slot * step; if (side !== "left") tx = -tx;   // slot only — track carries scroll (right/trash fan left)
       c._tx = tx; c._ty = 0; c._rot = 0;
       c.style.zIndex = String(3000 - slot);
       c.style.transform = `translate(${tx}px, 0) rotate(0deg)`;
@@ -597,9 +631,8 @@
     const open = !fanned[side];
     fanned[side] = open;
     if (!open) decks[side].scrollX = 0;
-    const other = side === "left" ? "right" : "left";
-    if (open && fanned[other]) { fanned[other] = false; decks[other].scrollX = 0; }  // only one fanned at a time
-    layout(side); layout(other);   // re-lay BOTH: each arrow's z depends on the other side's fan state
+    if (open) DECK_SIDES.forEach((o) => { if (o !== side && decks[o] && fanned[o]) { fanned[o] = false; decks[o].scrollX = 0; } });  // only one fanned at a time
+    DECK_SIDES.forEach(layout);   // re-lay ALL: each arrow's z + dimming depend on which deck is fanned
     trackFanEdges();               // edge shadows appear as the cards animate out (not on next scroll)
   };
 
@@ -628,10 +661,10 @@
   // edge (clipped to the card's rounded shape) — square through the body, the real corner curve only near
   // a corner, and never over the inter-card gaps (only a straddling card gets one).
   const updateDeckEdges = () => {
-    const side = fanned.left ? "left" : (fanned.right ? "right" : null);
+    const side = fanned.left ? "left" : fanned.right ? "right" : fanned.trash ? "trash" : null;
     const VW = window.innerWidth, MAXW = 34, SH = "rgba(0,0,0,0.45)";
     const hide = (c) => { const sh = c.querySelector(":scope > .tk-edge-shade"); if (sh) sh.style.cssText = "position:absolute;width:0;height:0;"; };
-    ["left", "right"].forEach((sd) => { const d = decks[sd]; if (d) d.cards.forEach(hide); });
+    DECK_SIDES.forEach((sd) => { const d = decks[sd]; if (d) d.cards.forEach(hide); });
     if (!side) return;
     // Treat the whole fanned row as ONE clipped object: the shadow's depth tracks how far the LIST
     // extends past the viewport edge (not an individual ticket), and it leaps inter-ticket gaps by
@@ -733,7 +766,7 @@
       if (!drag) return;
       const deck = decks[side], min = scrollMinOf(deck), barW = barWidth();
       const thumbW = Math.max(36, barW * (deck.viewW / deck.contentW));
-      const dxPx = (e.clientX - sx) * (side === "right" ? -1 : 1);
+      const dxPx = (e.clientX - sx) * (side !== "left" ? -1 : 1);
       const dFrac = dxPx / Math.max(1, barW - thumbW);
       deck.scrollX = damp(startScroll + dFrac * min, min);   // rubber-band past the ends
       deck.arrow.style.transition = "none";                  // track the edge rigidly while dragging
@@ -980,7 +1013,7 @@
       const deck = decks[side];
       if (deck.cards.length <= 1) return;
       const step = CARD_W + GAP_FAN;
-      const along = (side === "right" ? -alongBoxX : alongBoxX) - deck.scrollX;
+      const along = (side !== "left" ? -alongBoxX : alongBoxX) - deck.scrollX;
       const idx = clamp(Math.round(along / step), 0, deck.cards.length - 1);
       const cur = deck.cards.indexOf(card);
       if (cur !== -1 && idx !== cur) {
@@ -1327,7 +1360,7 @@
       break;   // cursor is over this bucket → don't also consider the deck
     }
     if (!overBucket) {
-      for (const side of ["left", "right"]) {
+      for (const side of DECK_SIDES) {
         const deck = decks[side]; if (!deck || !fanned[side]) continue;
         const min = scrollMinOf(deck); if (min >= 0) continue;
         const nearL = x < EDGE_ZONE, nearR = x > window.innerWidth - EDGE_ZONE;
@@ -1752,12 +1785,12 @@
     buildDeck("left", avail.filter((t) => (t.state || "open") !== "resolved").sort(order));
     // The right stack is the recycle bin when toggled (its DELETED tickets, blue-outlined), else the
     // resolved/closed pile — same stack mechanics either way (fan, scroll, drag, reorder).
+    buildDeck("right", avail.filter((t) => (t.state || "open") === "resolved").sort(order));   // resolved pile ALWAYS stays
+    // The recycle bin is its OWN stack, lifted above the icon and shown only when toggled — the resolved
+    // pile below it never disappears. It fans/scrolls/drags exactly like the corner stacks.
     const deleted = tickets.filter((t) => isDeleted(t.id)).sort(order);
-    buildDeck("right", trashMode ? deleted : avail.filter((t) => (t.state || "open") === "resolved").sort(order));
-    decks.right?.box?.classList.toggle("is-trash", trashMode);
-    // The recycle bin opens as a TRANSIENT stack lifted above its icon (where the old drawer sat), so it
-    // doesn't sit on the bottom row over the inbox stack. The right deck slides up in trash mode, back down out of it.
-    if (decks.right?.box) decks.right.box.style.transform = trashMode ? `translateY(-${Math.round(CARD_H + 62)}px)` : "";
+    buildDeck("trash", trashMode ? deleted : []);
+    if (decks.trash?.box) decks.trash.box.style.transform = `translateY(-${Math.round(CARD_H + 62)}px)`;
     renderZones();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then
     // fly it to the centre and expand its config. Creating fires several re-renders that REPLACE
@@ -1805,7 +1838,15 @@
     reload: load,
     isDeleted,
     delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
-    restore: (id) => { setDeleted(id, false); render(); },
+    // Send the ticket back to exactly where it was deleted from: its bucket (as the visual-TOP card, i.e.
+    // bottom-most z / index 0), or the corner stack it lived in (left inbox / right resolved, by state).
+    restore: (id) => {
+      const ds = (metaOf(id) || {}).delStage || "";
+      setDeleted(id, false);
+      if (ds && STAGE_KEYS.includes(ds)) { setStage(id, ds); setStageAt(id, ds, 0); }
+      else { setStage(id, null); setStageAt(id, null); }
+      render();
+    },
     metaOf,
     stageOf: (id) => stageOf(id),
     // The current bucket's fields (config shows only these) — default to triage for an inbox ticket.

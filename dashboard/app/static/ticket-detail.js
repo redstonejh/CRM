@@ -443,11 +443,15 @@
     // The FIRST field's label shares the row with the close × (top-right); the rest are plain rows. A
     // "save" text-button at the bottom-right validates the required fields before it closes.
     const first = sf.fields[0], rest = sf.fields.slice(1);
+    // A DELETED ticket (opened from the recycle bin) shows a "restore" action instead of "save" — it
+    // sends the ticket back to where it was deleted from.
+    const isDel = !!(window.ticketStacks?.isDeleted?.(t.id));
+    const action = isDel ? `<button class="td-save" data-act="restore">restore</button>` : `<button class="td-save" data-act="save">save</button>`;
     panel.innerHTML =
       (first ? `<div class="td-field"><div class="td-field-head"><span class="td-field-label">${label(first)}</span><button class="td-x" data-act="close" aria-label="Close">&times;</button></div>${input(first)}</div>` : "") +
       rest.map((f) => `<div class="td-field"><span class="td-field-label">${label(f)}</span>${input(f)}</div>`).join("") +
       `<div class="td-msg" hidden></div>` +
-      `<div class="td-save-row"><button class="td-save" data-act="save">save</button></div>`;
+      `<div class="td-save-row">${action}</div>`;
     wire(t);
   };
 
@@ -495,6 +499,9 @@
       if (blank) { if (msg) { msg.textContent = "Some fields are blank — for anything not applicable, type “n/a”."; msg.hidden = false; } blank.focus(); return; }
       close();
     };
+    // Restore: send the deleted ticket back to where it died, then close the panel.
+    const restoreBtn = panel.querySelector("[data-act='restore']");
+    if (restoreBtn) restoreBtn.onclick = () => { const id = t.id; close(); window.ticketStacks?.restore?.(id); };
   };
 
   // Drive the depth-of-field blur (with a matching transition) — ramp in on open, out on close. The

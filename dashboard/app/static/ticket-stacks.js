@@ -293,6 +293,21 @@
          lifted trash stack reads clearly as the deleted-tickets view (distinct from the resolved pile). */
       .tk-deck-trash .tk-card { box-shadow: inset 0 0 0 2px rgba(125,180,255,0.85), 0 0 18px rgba(90,150,255,0.30), inset 0 1px 0 rgba(255,255,255,0.24), 0 8px 22px rgba(0,0,0,0.18); }
       .tk-deck-trash .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.10), inset 0 0 0 2px rgba(125,180,255,0.95), 0 0 22px rgba(90,150,255,0.42), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
+      /* "restore" action on a trash card — plain text, bottom-right, same look as the config menu's buttons. */
+      .tk-restore { position: absolute; bottom: 11px; right: 14px; z-index: 8; pointer-events: auto; -webkit-appearance: none; appearance: none;
+        background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; font: inherit; font-size: 0.8rem; font-weight: 700;
+        color: rgba(255,255,255,0.78); transition: color .14s ease; }
+      .tk-restore:hover { color: #fff; }
+      /* Right-click ticket menu — the config-menu recipe (frosted glass, flat plain-text items). */
+      .tk-menu { position: fixed; z-index: 7000; display: flex; flex-direction: column; gap: 1px; padding: 6px; border-radius: 12px; color: #fff;
+        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
+        -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
+        border: 1px solid rgba(255,255,255,0.22); box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 18px 42px rgba(0,0,0,0.42); }
+      .tk-menu-item { -webkit-appearance: none; appearance: none; background: transparent; border: 0; cursor: pointer; text-align: left; white-space: nowrap;
+        padding: 6px 22px 6px 12px; border-radius: 8px; font: inherit; font-size: 0.85rem; font-weight: 600; color: rgba(255,255,255,0.72); transition: background .12s ease, color .12s ease; }
+      .tk-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+      .tk-menu-danger { color: rgba(255,135,135,0.85); }
+      .tk-menu-danger:hover { background: rgba(255,90,90,0.14); color: #ff8a8a; }
 
       .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
         border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
@@ -440,6 +455,65 @@
   // Recycle symbol (three chasing arrows) — the trash stack is a recycle bin you can dig back through.
   const RECYCLE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/></svg>`;
 
+  // Open/close the recycle bin. Closing it ALSO un-fans the bin's stack — otherwise fanned.trash stays
+  // true and the "only one fanned at a time" rule keeps the other stacks' fan buttons hidden.
+  const setTrashMode = (on) => {
+    trashMode = on;
+    if (!on && decks.trash) { fanned.trash = false; decks.trash.scrollX = 0; }
+    decks.right?.action?.classList.toggle("is-active", on);
+    render();
+  };
+
+  // Right-click menu on a ticket — a small frosted-glass menu (config-menu styling) with plain-text
+  // actions: edit (opens the config), appearance (placeholder), delete (animated into the recycle bin).
+  let ticketMenu = null;
+  const hideTicketMenu = () => { if (ticketMenu) { ticketMenu.remove(); ticketMenu = null; } };
+  const showTicketMenu = (t, card, x, y) => {
+    hideTicketMenu();
+    const m = document.createElement("div");
+    m.className = "tk-menu";
+    m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
+      `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
+      `<button class="tk-menu-item tk-menu-danger" data-act="delete">delete</button>`;
+    document.body.appendChild(m);
+    m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
+    m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
+    ticketMenu = m;
+    m.querySelector('[data-act="edit"]').onclick = () => { hideTicketMenu(); window.ticketDetail?.open(t, card); };
+    m.querySelector('[data-act="appearance"]').onclick = () => { hideTicketMenu(); /* placeholder */ };
+    m.querySelector('[data-act="delete"]').onclick = () => { hideTicketMenu(); deleteToBin(t, card); };
+  };
+  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); showTicketMenu(t, card, e.clientX, e.clientY); });
+
+  // Delete → the bin opens automatically, the ticket SLIDES over and nests into it, then the bin
+  // closes again. (The recorded delStage/red-bar happens in setDeleted's caller, here via setMeta.)
+  const deleteToBin = (t, card) => {
+    const from = card.getBoundingClientRect();
+    setMeta(t.id, { delStage: stageOf(t.id) || "" });
+    setDeleted(t.id, true);
+    setTrashMode(true);   // bin opens (render places the ticket into the trash stack)
+    const dest = decks.trash?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`);
+    const to = dest ? dest.getBoundingClientRect() : null;
+    const closeBin = () => setTrashMode(false);
+    if (!from || !to || to.width < 4) { setTimeout(closeBin, 700); return; }
+    dest.style.opacity = "0";
+    const clone = document.createElement("div");
+    clone.className = "tk-zfly";
+    clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${Math.round(from.width)}px; height:${Math.round(from.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
+    clone.style.backgroundColor = baseColor();
+    clone.style.backgroundImage = cardBg(t);
+    clone.innerHTML = cardInner(t);
+    document.body.appendChild(clone);
+    requestAnimationFrame(() => {
+      clone.style.transform = `translate(${Math.round(to.left - from.left)}px, ${Math.round(to.top - from.top)}px) scale(${(to.width / from.width).toFixed(4)}, ${(to.height / from.height).toFixed(4)})`;
+    });
+    setTimeout(() => {
+      clone.remove();
+      if (dest.isConnected) dest.style.opacity = "";
+      setTimeout(closeBin, 450);   // let it sit in the bin a beat, then the bin closes automatically
+    }, 490);
+  };
+
   const ensureRoot = () => {
     if (root) return;
     ensureStyles();
@@ -475,7 +549,7 @@
         action.setAttribute("aria-label", "Recycle bin (deleted tickets)");
         action.title = "Recycle bin";
         action.innerHTML = RECYCLE_SVG;
-        action.addEventListener("click", () => { trashMode = !trashMode; action.classList.toggle("is-active", trashMode); render(); });
+        action.addEventListener("click", () => setTrashMode(!trashMode));
       }
       root.appendChild(box); root.appendChild(action);
       decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
@@ -505,6 +579,10 @@
     document.addEventListener("pointermove", onDragWatchMove, true);
     document.addEventListener("pointerup", onDragWatchUp, true);
     document.addEventListener("pointercancel", resetDragWatch, true);
+    // Dismiss the right-click menu on an outside press, Escape, or scroll.
+    document.addEventListener("pointerdown", (e) => { if (ticketMenu && !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTicketMenu(); });
+    window.addEventListener("wheel", () => hideTicketMenu(), true);
   };
 
   const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + 34}px`; };
@@ -1098,8 +1176,8 @@
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
-      // A plain click (the card never moved) opens its config — same one-click open as a bucket card.
-      if (!wasDrag) { window.ticketDetail?.open(t, card); return; }
+      // A plain click opens its config — EXCEPT trash cards, which have no config (their restore button does the work).
+      if (!wasDrag) { if (side !== "trash") window.ticketDetail?.open(t, card); return; }
       const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
       if (dDrop && dDrop.track) {              // compensate for the track's transform so it doesn't jump by scrollX
         const tt = side === "left" ? dDrop.scrollX : -dDrop.scrollX;
@@ -1165,6 +1243,14 @@
     card.innerHTML = cardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');   // viewport-edge scroll shadow (clipped to this card)
     wireCard(card, t, side);
+    if (side !== "trash") wireContextMenu(card, t);   // right-click menu (trash cards use their restore button)
+    // Trash cards carry their own "restore" action bottom-right (no config menu for deleted tickets).
+    if (side === "trash") {
+      card.insertAdjacentHTML("beforeend", '<button class="tk-restore" type="button">restore</button>');
+      const rb = card.querySelector(".tk-restore");
+      rb.addEventListener("pointerdown", (e) => e.stopPropagation());   // don't start a card drag
+      rb.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); window.ticketStacks?.restore?.(t.id); });
+    }
     return card;
   };
 
@@ -1685,6 +1771,7 @@
     card.innerHTML = zoneCardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade tk-zs-t"></div><div class="tk-edge-shade tk-zs-b"></div>');   // top/bottom scroll shadows (clipped to this card)
     wireZoneCard(card, t, stage);
+    wireContextMenu(card, t);   // right-click menu (edit / appearance / delete)
     return card;
   };
 

@@ -747,7 +747,9 @@
       // bin would wrongly close. composedPath() is captured at dispatch and keeps the real ancestors.
       const path = (e.composedPath && e.composedPath()) || [];
       const hit = (el) => !!el && (path.includes(el) || el.contains(e.target));
-      if (hit(decks.trash?.box) || hit(decks.right?.action)) return;
+      // Clicking the bin, OR either corner stack (so you can fan/interact with one while the bin is
+      // open — they can be out together), keeps it open. Un-fanning a corner still closes it (toggleFan).
+      if (hit(decks.trash?.box) || hit(decks.right?.action) || hit(decks.left?.box) || hit(decks.right?.box)) return;
       setTrashMode(false);
     });
     // Co-focus the buckets when the cursor drifts up toward them off a fanned stack.
@@ -840,12 +842,11 @@
     placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
-    const otherFanned = DECK_SIDES.some((s) => s !== side && decks[s] && fanned[s]);
-    // Hide this deck's fan arrow while ANOTHER stack is fanned (or with ≤1 card) — EXCEPT the recycle
-    // bin, which keeps its fan arrow whenever it's OPEN (a corner stack can be fanned at the same time;
-    // fanning the bin just collapses that other fan). Without this you couldn't fan an open bin.
-    const keepBinArrow = side === "trash" && trashMode && n > 1;
-    deck.arrow.classList.toggle("is-hidden", n <= 1 || (otherFanned && !keepBinArrow));
+    // Only the two CORNERS are mutually exclusive; the trash fans independently and can be open alongside
+    // one of them. So hide a corner's fan arrow only while the OTHER corner is fanned (and this one isn't);
+    // the trash arrow shows whenever the bin holds ≥2 cards, regardless of a fanned corner.
+    const otherCornerFanned = side !== "trash" && ["left", "right"].some((o) => o !== side && decks[o] && fanned[o]);
+    deck.arrow.classList.toggle("is-hidden", n <= 1 || (otherCornerFanned && !fanned[side]));
     deck.arrow.style.zIndex = "5000";
     // Focus (which deck rides above the depth-of-field scrim, which are behind it) is set globally.
     updateStackFocus();
@@ -938,8 +939,12 @@
     const open = !fanned[side];
     fanned[side] = open;
     if (!open) decks[side].scrollX = 0;
-    if (open) DECK_SIDES.forEach((o) => { if (o !== side && decks[o] && fanned[o]) { fanned[o] = false; decks[o].scrollX = 0; } });  // only one fanned at a time
-    // Closing a fanned corner stack also closes the bin — they were brought into focus together.
+    // The two CORNERS are mutually exclusive, but the trash can fan out ALONGSIDE a corner (so you can
+    // drag cards between them). Opening a corner collapses the other corner; opening the trash collapses
+    // nothing; and opening a corner leaves a fanned trash open.
+    if (open && side !== "trash") ["left", "right"].forEach((o) => { if (o !== side && decks[o] && fanned[o]) { fanned[o] = false; decks[o].scrollX = 0; } });
+    // Collapsing a CORNER closes the bin too (they came into focus together); collapsing the trash leaves
+    // the corner alone.
     if (!open && side !== "trash" && trashMode) { setTrashMode(false); return; }   // setTrashMode() re-renders
     DECK_SIDES.forEach(layout);   // re-lay ALL: each arrow's z + dimming depend on which deck is fanned
     trackFanEdges();               // edge shadows appear as the cards animate out (not on next scroll)

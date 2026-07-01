@@ -816,12 +816,36 @@
     }
     return false;
   };
+  // Topmost ticket card under the cursor that lives in a FANNED deck (any of them), + its ticket.
+  const hoveredFanCard = (x, y) => {
+    const card = document.elementFromPoint(x, y)?.closest?.(".tk-card");
+    if (!card) return null;
+    const side = DECK_SIDES.find((s) => fanned[s] && decks[s]?.box?.contains(card));
+    return side ? { side, t: tickets.find((tk) => tk.id === card.dataset.id) } : null;
+  };
+  // Steady blue outline on every bucket THIS ticket may legally land in (no proximity fade — it's a hover
+  // preview, not a live drag). Pairs with focusDropTargets, which also lifts them into focus + the arrows.
+  const hoverHighlight = (from, t) => STAGES.forEach((s, i) => { const p = zoneBody[s.key]?.parentElement; if (!p) return;
+    if (i !== from && canAdvance(from, i, t)) { p.style.borderColor = "rgba(125,180,255,0.85)"; p.style.boxShadow = `inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 30px rgba(90,150,255,0.4), ${baseZoneShadow}`; }
+    else clearGlow(p); });
+  let hoverPrev = null;   // "side:id" of the ticket currently previewed on hover (dedupe re-applies)
+  const showHoverPreview = (side, t) => {
+    const key = `${side}:${t.id}`; if (hoverPrev === key) return;
+    hoverPrev = key; const from = stackPos(side);
+    focusDropTargets(from, t);   // eligible buckets + their arrow chain go sharp
+    hoverHighlight(from, t);     // …and the eligible buckets get the blue outline
+  };
+  const clearHoverPreview = () => { if (!hoverPrev) return; hoverPrev = null; clearDropFocus(); clearZoneHighlight(); };
   const onFanHover = (e) => {
     if (dragActive) return;                        // drags do their own targeting
-    const sr = deckCardsRect(DECK_SIDES.find((s) => fanned[s]));
-    if (!sr) { setBucketsFocus(false); return; }
-    if (inFocusDeadzone(e.clientX, e.clientY)) { setBucketsFocus(false); return; }   // heading to +/bin → drop focus
-    setBucketsFocus(e.clientY < sr.top - 10);       // above the fanned stack → co-focus the buckets
+    const side = DECK_SIDES.find((s) => fanned[s]);
+    const sr = side ? deckCardsRect(side) : null;
+    if (!sr || inFocusDeadzone(e.clientX, e.clientY)) { clearHoverPreview(); setBucketsFocus(false); return; }   // nothing fanned / heading to +/bin
+    // Hovering a specific card → auto-focus the buckets THAT ticket can enter (+ blue outline + arrows).
+    const hov = hoveredFanCard(e.clientX, e.clientY);
+    if (hov && hov.t) { setBucketsFocus(false); showHoverPreview(hov.side, hov.t); return; }
+    clearHoverPreview();
+    setBucketsFocus(e.clientY < sr.top - 10);       // above the fanned stack (not on a card) → co-focus ALL buckets
   };
 
   const layout = (side) => {
@@ -1955,6 +1979,7 @@
     setArrowSharp((i) => liveArrows.has(i));   // on-path arrows lift sharp; the rest stay scrim-blurred
   };
   const clearDropFocus = () => {
+    hoverPrev = null;     // a drag just ended → let the next hover re-preview from scratch
     setBucketSharp(() => false);
     setArrowSharp(() => false);
     applyBucketFocus();   // hand focus back to the normal (cursor-driven) co-focus

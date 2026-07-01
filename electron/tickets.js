@@ -1,115 +1,80 @@
-// ─── Tickets backend (thin MQTT) ───────────────────────────────────────────────
+// ─── Tickets backend (local store) ─────────────────────────────────────────────
 //
-// The ENTIRE cross-app contract is one retained MQTT topic tree: `tickets/<id>`.
-// Each ticket is a retained JSON doc; an empty retained payload is a tombstone
-// (delete). Because the messages are retained, the broker is the source of truth
-// and a fresh launch replays every open ticket on subscribe — no local DB.
+// The MQTT broker layer has been GUTTED. Tickets now live entirely in a local
+// store persisted to `userData/tickets.json` — this app is a self-contained
+// ticket manager (create / claim / assign / resolve / reopen / comment / edit /
+// delete), no broker, no network. The exported surface is unchanged so main.js
+// and the renderer keep working; connectTickets/endTickets are now no-ops kept
+// only for signature compatibility, and the connection state is always 'live'.
 //
-//   • The MONITOR is the only AUTOMATIC creator: on a sustained-outage (red)
-//     rising edge it publishes one retained ticket (see the monitor's
-//     maybeCreateTicket / detectTicketTransitions). It also records `recoveredAt`
-//     on recovery WITHOUT closing the ticket.
-//   • THIS app is the human side: list/claim/assign/resolve/reopen/comment, each
-//     a read-modify-write that republishes the retained doc.
-//
-// Schema (must stay identical to the monitor's maybeCreateTicket):
+// Schema (unchanged — still mirrors the old retained doc):
 //   { id, episodeKey, companyId, companyLabel, host,
 //     severity, state, createdAt,
 //     assignee, assignedBy, claimedBy,
 //     recoveredAt, resolvedAt, resolvedBy,
 //     updatedAt, version, history:[{at,by,action,detail}] }
 //   state ∈ open | claimed | assigned | resolved   (severity is informational)
-import mqtt from 'mqtt';
+import { app } from 'electron';
+import path from 'path';
+import fs from 'fs';
 
-const TOPIC_PREFIX = 'tickets/';
+let onChange = () => {};                // called whenever the store changes
+const cache = new Map();                // id -> ticket doc
+let loaded = false;
 
-let client = null;
-let connState = 'grey';                 // grey (connecting) | live | black (error)
-let onChange = () => {};                // called whenever the cache changes
-let onConnection = () => {};            // called whenever connState changes
-const cache = new Map();                // id -> retained ticket doc
+// ─── Persistence ───────────────────────────────────────────────────────────────
+// One JSON file under userData. Writes are synchronous (the store is tiny and
+// mutations are user-paced), so a created/edited/deleted ticket survives a restart.
 
-function setConn(state) {
-  if (state === connState) return;
-  connState = state;
-  try { onConnection(state); } catch { /* ignore */ }
+function storeFile() {
+  return path.join(app.getPath('userData'), 'tickets.json');
+}
+
+function loadStore() {
+  if (loaded) return;
+  loaded = true;
+  try {
+    const raw = JSON.parse(fs.readFileSync(storeFile(), 'utf8'));
+    const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.tickets) ? raw.tickets : []);
+    cache.clear();
+    for (const t of list) if (t && t.id) cache.set(safeId(t.id), t);
+  } catch { /* no file yet → empty store */ }
+}
+
+function persist() {
+  try { fs.writeFileSync(storeFile(), JSON.stringify([...cache.values()], null, 2)); }
+  catch (err) { console.error('[TICKETS] persist failed:', err && err.message); }
 }
 
 function emitChange() {
+  persist();
   try { onChange(); } catch { /* ignore */ }
 }
 
-// id is used as the topic suffix, so it must be topic-safe. The monitor derives
-// ids from the episode key via the same sanitiser; manual ids are pre-sanitised.
+// id doubles as a filename-safe key. Manual ids are pre-sanitised.
 function safeId(id) {
   return String(id || '').replace(/[^a-zA-Z0-9_.-]/g, '_');
 }
 
-function publish(id, doc) {
-  if (!client) return;
-  // qos 1 + retain so the doc survives offline clients and is replayed on
-  // subscribe; mqtt.js queues qos-1 publishes while briefly disconnected.
-  try { client.publish(`${TOPIC_PREFIX}${safeId(id)}`, JSON.stringify(doc), { qos: 1, retain: true }); }
-  catch { /* offline — the retained echo will reconcile later */ }
-}
+// ─── Lifecycle (no-op broker stubs) ─────────────────────────────────────────────
 
-// ─── Connect / lifecycle ───────────────────────────────────────────────────────
-
-export function initTickets({ host, port, onChange: changeCb, onConnection: connCb } = {}) {
+export function initTickets({ onChange: changeCb } = {}) {
   onChange = typeof changeCb === 'function' ? changeCb : onChange;
-  onConnection = typeof connCb === 'function' ? connCb : onConnection;
-  connectTickets({ host, port });
+  loadStore();
+  emitChange();
 }
 
-export function connectTickets({ host, port } = {}) {
-  if (client) { try { client.end(true); } catch { /* ignore */ } client = null; }
-  cache.clear();
-  setConn('grey');
+// Broker reconnect used to live here — now a no-op kept so settings:save's call
+// doesn't throw. Just re-emits from the (already loaded) local store.
+export function connectTickets() { loadStore(); emitChange(); }
+export function endTickets() { /* nothing to tear down */ }
 
-  const url = `mqtt://${host}:${port}`;
-  console.log(`[TICKETS] Connecting to ${url}`);
-  client = mqtt.connect(url, { clean: true, reconnectPeriod: 15_000 });
-
-  client.on('connect', () => {
-    console.log('[TICKETS] Connected — subscribing to tickets/#');
-    // Fresh subscribe replays every retained ticket; rebuild the cache from it.
-    cache.clear();
-    client.subscribe(`${TOPIC_PREFIX}#`, { qos: 1 });
-    setConn('live');
-    emitChange();
-  });
-
-  client.on('message', (topic, message) => {
-    if (!topic.startsWith(TOPIC_PREFIX)) return;
-    const id = topic.slice(TOPIC_PREFIX.length);
-    if (!message || message.length === 0) {
-      // Tombstone: the retained record was cleared → ticket deleted.
-      if (cache.delete(id)) emitChange();
-      return;
-    }
-    try {
-      cache.set(id, JSON.parse(message.toString()));
-      emitChange();
-    } catch { /* ignore malformed */ }
-  });
-
-  client.on('reconnect', () => setConn('grey'));
-  client.on('offline', () => setConn('grey'));
-  client.on('close', () => { if (connState === 'live') setConn('grey'); });
-  client.on('error', (err) => {
-    console.error('[TICKETS] MQTT error:', err && err.message);
-    setConn('black');
-  });
-}
-
-export function endTickets() {
-  if (client) { try { client.end(true); } catch { /* ignore */ } client = null; }
-}
-
-export function ticketConnectionState() { return connState; }
+// The store is always "live" now (no connection to be grey/black about).
+export function ticketConnectionState() { return 'live'; }
 
 // Newest first; resolved tickets sink below open ones.
 export function ticketList() {
+  loadStore();
   const rank = (t) => (t.state === 'resolved' ? 1 : 0);
   return [...cache.values()].sort((a, b) => {
     const r = rank(a) - rank(b);
@@ -118,14 +83,14 @@ export function ticketList() {
   });
 }
 
-export function ticketGet(id) { return cache.get(safeId(id)) || null; }
+export function ticketGet(id) { loadStore(); return cache.get(safeId(id)) || null; }
 
 // ─── Mutations ─────────────────────────────────────────────────────────────────
-// Every mutation is a read-modify-write on the latest cached (retained) doc, so
-// it preserves whatever the monitor most recently merged (e.g. recoveredAt) and
-// never clobbers machine-owned fields. Returns { ok, ticket } or { ok:false, error }.
+// Read-modify-write on the cached doc, then persist + notify. Returns
+// { ok, ticket } or { ok:false, error }.
 
 function mutate(id, actor, action, mutator) {
+  loadStore();
   const key = safeId(id);
   const cur = cache.get(key);
   if (!cur) return { ok: false, error: 'No such ticket' };
@@ -137,7 +102,6 @@ function mutate(id, actor, action, mutator) {
   next.updatedAt = Date.now();
   next.version = (cur.version || 0) + 1;
   cache.set(key, next);
-  publish(key, next);     // optimistic: local cache + retained publish
   emitChange();
   return { ok: true, ticket: next };
 }
@@ -162,7 +126,7 @@ export function unclaimTicket(id, actor) {
   });
 }
 
-// Delegate to someone else (admin action — gated in main.js).
+// Delegate to someone else.
 export function assignTicket(id, assignee, actor) {
   const who = String(assignee || '').trim();
   if (!who) return { ok: false, error: 'An assignee is required' };
@@ -175,7 +139,7 @@ export function assignTicket(id, assignee, actor) {
   });
 }
 
-// A human closes the ticket (recovery alone never closes it).
+// A human closes the ticket.
 export function resolveTicket(id, actor) {
   return mutate(id, actor, 'resolved', (t, nowIso) => {
     if (t.state === 'resolved') return { error: 'Ticket is already resolved' };
@@ -204,8 +168,7 @@ export function commentTicket(id, text, actor) {
   return mutate(id, actor, 'comment', () => body);
 }
 
-// ERPNext-style document editing: set the human-editable fields on the ticket.
-// System fields (companyId/host/createdAt/recoveredAt) stay machine-owned.
+// Set the human-editable fields on the ticket.
 const EDITABLE_TICKET_FIELDS = ['title', 'description', 'priority', 'assignee'];
 export function updateTicket(id, fields = {}, actor) {
   return mutate(id, actor, 'edited', (t) => {
@@ -222,21 +185,20 @@ export function updateTicket(id, fields = {}, actor) {
   });
 }
 
-// Tombstone (delete) a ticket — clears its retained record on the broker.
+// Hard-delete a ticket from the local store.
 export function deleteTicket(id) {
+  loadStore();
   const key = safeId(id);
-  if (!cache.has(key)) return { ok: false, error: 'No such ticket' };
-  cache.delete(key);
-  if (client) { try { client.publish(`${TOPIC_PREFIX}${key}`, '', { qos: 1, retain: true }); } catch { /* ignore */ } }
+  if (!cache.delete(key)) return { ok: false, error: 'No such ticket' };
   emitChange();
   return { ok: true };
 }
 
-// Manually raise a ticket (the monitor auto-creates outage tickets; this is for
-// human-reported issues). Mirrors the monitor's doc shape exactly.
+// Manually raise a ticket.
 export function createTicket({ companyLabel, host, severity } = {}, actor) {
+  loadStore();
   const nowIso = new Date().toISOString();
-  // Unique, topic-safe id. (Date.now() is fine in the main process.)
+  // Unique, key-safe id. (Date.now() is fine in the main process.)
   const id = safeId(`manual_${Date.now()}_${Math.floor(Math.random() * 1e6)}`);
   const doc = {
     id, episodeKey: null,
@@ -248,7 +210,6 @@ export function createTicket({ companyLabel, host, severity } = {}, actor) {
     history: [{ at: nowIso, by: actor || 'unknown', action: 'created', detail: 'Created manually' }],
   };
   cache.set(id, doc);
-  publish(id, doc);
   emitChange();
   return { ok: true, ticket: doc };
 }

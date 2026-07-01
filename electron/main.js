@@ -277,8 +277,8 @@ ipcMain.handle('dashboard:minimize', (e) => { if (isMainSender(e)) mainWindow.mi
 ipcMain.handle('dashboard:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
 
 // ─── IPC: tickets ────────────────────────────────────────────────────────────────
-// Reads are open; writes require a signed-in user; delegate (assign) and delete
-// require an admin. All writes flow through tickets.js → retained MQTT.
+// Reads are open; writes require a signed-in user; delegate (assign) still requires
+// an admin. All writes flow through tickets.js → the local userData store.
 
 ipcMain.handle('tickets:list', () => ticketsPayload());
 ipcMain.handle('tickets:connection', () => ticketConnectionState());
@@ -323,7 +323,6 @@ ipcMain.handle('tickets:create', (_e, payload = {}) => {
 });
 ipcMain.handle('tickets:delete', (_e, { id } = {}) => {
   const g = requireUser(); if (g.error) return g.error;
-  if (!canManageUsers()) return { ok: false, error: 'Only an admin can delete tickets' };
   return deleteTicket(id);
 });
 
@@ -334,11 +333,9 @@ app.whenReady().then(() => {
 
   auth.init();
 
+  // Tickets are a local store now (no broker) — just wire the change broadcast.
   initTickets({
-    host: settings.mqttHost,
-    port: settings.mqttPort,
     onChange: () => { broadcastTickets(); refreshTray(); },
-    onConnection: (state) => { broadcastTicketConnection(state); refreshTray(); },
   });
 
   tray = new Tray(icons.grey);

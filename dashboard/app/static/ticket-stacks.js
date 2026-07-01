@@ -81,7 +81,7 @@
     metaMap[id] = { ...metaOf(id), ...m };
     try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
   };
-  const titleOf = (t) => { const m = metaOf(t.id); return (m.title && m.title.trim() && !isNA(m.title)) ? m.title : (t.companyLabel || "Unknown"); };
+  const titleOf = (t) => { const m = metaOf(t.id); const ok = (v) => v && v.trim() && !isNA(v) ? v : null; return ok(m.client) || ok(m.title) || (t.companyLabel || "Unknown"); };
   const subOf = (t) => { const m = metaOf(t.id); const v = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || ""); return isNA(v) ? "" : v; };  // n/a → no trace on the card
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
   let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
@@ -521,28 +521,6 @@
       .window-control-cluster { z-index: 4100; }
       /* "| date of incident" beside the client name in the header — a lighter, non-bold secondary tone. */
       .ticket-date { color: rgba(255,255,255,0.55); font-weight: 400; white-space: nowrap; }
-
-      /* ── New-ticket precondition form (client / incident date / description before the ticket exists). ── */
-      .tk-create-back { position: fixed; inset: 0; z-index: 5200; display: flex; align-items: center; justify-content: center;
-        background: rgba(6,10,16,0.42); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
-      .tk-create { width: 340px; max-width: calc(100vw - 40px); box-sizing: border-box; padding: 16px 16px 14px; border-radius: 16px; color: #fff;
-        display: flex; flex-direction: column; gap: 11px;
-        background: linear-gradient(180deg, rgba(34,40,54,0.96), rgba(20,26,38,0.96)); border: 1px solid rgba(255,255,255,0.22);
-        box-shadow: 0 30px 80px rgba(0,0,0,0.5); }
-      .tk-create-hd { font-size: 0.95rem; font-weight: 700; }
-      .tk-cf { display: flex; flex-direction: column; gap: 5px; }
-      .tk-cf > span { font-size: 0.8rem; font-weight: 600; color: rgba(255,255,255,0.72); }
-      .tk-cf > span b { color: rgba(255,140,140,0.95); }
-      .tk-ci { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
-        background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px;
-        color-scheme: dark; -webkit-user-select: text; user-select: text; }
-      .tk-ci:focus { outline: none; border-color: rgba(125,180,255,0.7); }
-      .tk-cta { resize: none; min-height: 3em; line-height: 1.4; }
-      .tk-create-row { display: flex; justify-content: flex-end; gap: 14px; padding-top: 2px; }
-      .tk-create-x, .tk-create-go { appearance: none; background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 0.85rem; font-weight: 700; }
-      .tk-create-x { color: rgba(255,255,255,0.55); }
-      .tk-create-go { color: rgba(125,180,255,0.95); }
-      .tk-create-go[disabled] { color: rgba(255,255,255,0.28); cursor: default; }
     `;
     document.head.appendChild(style);
   };
@@ -2225,41 +2203,14 @@
     }
   };
 
-  // The left "+": spawn a blank ticket into the inbox stack, then (once its card has visibly
-  // landed) fly it to the centre and expand its config — where the user sets title & subtitle.
-  // Creating a ticket is GATED on a client, an incident date and a short description — a modal collects
-  // them first; only when all three are filled does the ticket actually get created (then triage opens).
-  const openCreate = () => {
-    const back = document.createElement("div"); back.className = "tk-create-back";
-    const fieldHTML = (f) => {
-      const inp = f.date ? `<input type="date" class="tk-ci" data-k="${f.key}">`
-        : f.area ? `<textarea class="tk-ci tk-cta" data-k="${f.key}" placeholder="${esc(f.q || "")}"></textarea>`
-        : `<input class="tk-ci" data-k="${f.key}" placeholder="${esc(f.q || "")}" />`;
-      return `<label class="tk-cf"><span>${esc(f.label)} <b>*</b></span>${inp}</label>`;
-    };
-    back.innerHTML = `<div class="tk-create" role="dialog" aria-label="New ticket"><div class="tk-create-hd">New ticket</div>` +
-      CREATE_FIELDS.map(fieldHTML).join("") +
-      `<div class="tk-create-row"><button class="tk-create-x" type="button" data-act="cancel">cancel</button><button class="tk-create-go" type="button" data-act="create" disabled>create</button></div></div>`;
-    document.body.appendChild(back);
-    const vals = {}; CREATE_FIELDS.forEach((f) => (vals[f.key] = ""));
-    const goBtn = back.querySelector('[data-act="create"]');
-    const validate = () => { goBtn.disabled = !CREATE_FIELDS.every((f) => String(vals[f.key] || "").trim()); };
-    const closeForm = () => back.remove();
-    back.querySelectorAll("[data-k]").forEach((el) => {
-      el.oninput = () => { vals[el.dataset.k] = el.value; validate(); };
-      el.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") closeForm(); else if (e.key === "Enter" && el.tagName !== "TEXTAREA" && !goBtn.disabled) goBtn.click(); };
-    });
-    back.querySelector('[data-act="cancel"]').onclick = closeForm;
-    back.addEventListener("pointerdown", (e) => { if (e.target === back) closeForm(); });
-    goBtn.onclick = async () => {
-      goBtn.disabled = true;
-      let tk = null;
-      try { const res = await window.tickets?.create?.({ companyLabel: vals.client.trim(), host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
-      if (tk && tk.id) { setMeta(tk.id, { title: vals.client.trim(), incidentDate: vals.incidentDate, description: vals.description.trim() }); pendingOpenId = tk.id; }
-      closeForm();
-      load();   // re-fetch + render; render() auto-opens the triage config on the new card
-    };
-    setTimeout(() => back.querySelector(".tk-ci")?.focus(), 30);
+  // The left "+": spawn the real ticket into the inbox stack, then (once its card has landed) fly it to
+  // the centre and expand its config — where the client, incident date and description are filled in (the
+  // "new ticket" stage of the config; see stageFields). No pre-baked modal.
+  const openCreate = async () => {
+    let tk = null;
+    try { const res = await window.tickets?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
+    if (tk && tk.id) pendingOpenId = tk.id;
+    load();   // re-fetch + render; render() flies the new card out and opens its config
   };
 
   const load = async () => {
@@ -2324,7 +2275,12 @@
     metaOf,
     stageOf: (id) => stageOf(id),
     // The current bucket's fields (config shows only these) — default to triage for an inbox ticket.
-    stageFields: (id) => { const key = stageOf(id) || "triage"; const st = STAGES.find((s) => s.key === key); return { key, label: st ? st.label : key, fields: STAGE_FIELDS[key] || [] }; },
+    stageFields: (id) => {
+      const key = stageOf(id);
+      if (!key) return { key: "new", label: "New ticket", fields: CREATE_FIELDS };   // inbox / not yet staged → the creation details
+      const st = STAGES.find((s) => s.key === key);
+      return { key, label: st ? st.label : key, fields: STAGE_FIELDS[key] || [] };
+    },
     fieldValue: (id, key) => { const t = tickets.find((x) => x.id === id); return t ? fieldRaw(t, key) : ((metaOf(id) || {})[key] || ""); },
     // Persist the override and update the card's text + PROGRESS BARS IN PLACE (no rebuild) so live edits
     // from the open config don't detach the card the detail panel is animating from.

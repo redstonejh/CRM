@@ -1329,7 +1329,9 @@
     deck.cards.forEach((c) => c.remove());
     deck.cards = list.map((t) => cardEl(t, side));
     deck.cards.forEach((c) => deck.track.appendChild(c));
-    if (!deck.cards.length) { fanned[side] = false; deck.scrollX = 0; }   // keep deck.order — a temporarily-empty deck shouldn't forget the saved order
+    // ≤1 card can't be fanned (the fan arrow hides at n≤1), so drop the fan state — otherwise a fanned
+    // stack dragged down to its last card stays fanned with no arrow to collapse it, stuck in focus/blur.
+    if (deck.cards.length <= 1) { fanned[side] = false; deck.scrollX = 0; }   // keep deck.order (a temporarily-small deck shouldn't forget it)
     layout(side);
   };
 

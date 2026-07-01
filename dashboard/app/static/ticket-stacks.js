@@ -516,9 +516,11 @@
       .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
       .tk-flow-head { fill: #d2e3ff; stroke: none; }
-      /* The round window/page controls at the top stay in PERMANENT focus above the DoF scrim (3900)
-         — the depth-of-field never blurs them. (Injected late, so it wins over themes.css by order.) */
-      .window-control-cluster { z-index: 4100; }
+      /* The round window/page controls at the top — AND their dropdowns (background/effects picker, the
+         search popover) and the account button + its menu — stay in PERMANENT focus and take z-precedence
+         over EVERYTHING: lifted above the DoF scrim (3900) and the whole ticket UI so nothing ever blurs
+         or covers them. (Injected late, so this wins over themes.css / auth-ui.js by order.) */
+      .window-control-cluster, .auth-profile-cluster, .dashboard-search-popover { z-index: 4600 !important; }
       /* "| date of incident" beside the client name in the header — a lighter, non-bold secondary tone. */
       .ticket-date { color: rgba(255,255,255,0.55); font-weight: 400; white-space: nowrap; }
     `;

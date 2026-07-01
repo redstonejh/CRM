@@ -261,7 +261,7 @@
          fanned or the recycle bin is open — that stack stays sharp, the rest goes soft. No dimming. */
       .tk-scrim { position: fixed; inset: 0; z-index: 2; pointer-events: none;
         -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px);
-        transition: backdrop-filter .3s ease, -webkit-backdrop-filter .3s ease; }
+        transition: backdrop-filter .42s cubic-bezier(.4,0,.2,1), -webkit-backdrop-filter .42s cubic-bezier(.4,0,.2,1); }
       .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.2,.9,.3,1); }
       .tk-deck-left { left: 0; } .tk-deck-right, .tk-deck-trash { right: 0; }
       .tk-deck.is-fanned { pointer-events: auto; }
@@ -386,7 +386,12 @@
       }
 
       /* ── Pipeline zones (glass buckets) — each panel snaps to dashboard grid columns. ─── */
-      .tk-zones { position: fixed; left: 0; right: 0; top: 64px; z-index: 800; pointer-events: none; }
+      .tk-zones { position: fixed; left: 0; right: 0; top: 64px; z-index: 800; pointer-events: none;
+        transition: filter .42s cubic-bezier(.4,0,.2,1); }
+      /* While a stack is fanned the buckets + flow arrows ride ABOVE the depth-of-field scrim and
+         blur/un-blur via their OWN filter (so the co-focus glides in/out instead of snapping). */
+      .tk-zones.tk-cofocus { z-index: 4500; }
+      .tk-zones.tk-dim { filter: blur(4px); }
       .tk-zone { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
@@ -451,7 +456,12 @@
       /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
          then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
-        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
+        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)) blur(0px);
+        transition: filter .42s cubic-bezier(.4,0,.2,1); }
+      /* The arrows share the buckets' focus: lifted above the scrim while a stack is fanned, and the
+         SAME blur toggled on when the buckets are out of focus (identical filter list → smooth ramp). */
+      .tk-flow.tk-cofocus { z-index: 4400; }
+      .tk-flow.tk-dim { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)) blur(4px); }
       .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
       .tk-flow-head { fill: #d2e3ff; stroke: none; }
@@ -626,7 +636,13 @@
     // Clicking anywhere OFF the open bin (its stack or its icon) closes it.
     document.addEventListener("click", (e) => {
       if (!trashMode || dragActive) return;
-      if (decks.trash?.box?.contains(e.target) || decks.right?.action?.contains(e.target)) return;
+      // Test the event's propagation PATH, not the live e.target: clicking the bin's fan arrow re-runs
+      // layout() mid-dispatch, which rewrites the arrow's inner <svg> — orphaning the very node that was
+      // clicked. By the time this bubbles up, decks.trash.box.contains(e.target) would be false and the
+      // bin would wrongly close. composedPath() is captured at dispatch and keeps the real ancestors.
+      const path = (e.composedPath && e.composedPath()) || [];
+      const hit = (el) => !!el && (path.includes(el) || el.contains(e.target));
+      if (hit(decks.trash?.box) || hit(decks.right?.action)) return;
       setTrashMode(false);
     });
     // Co-focus the buckets when the cursor drifts up toward them off a fanned stack.
@@ -650,20 +666,26 @@
       // interactable. Clicking the scrim still bubbles to the "click off the bin closes it" handler.
       stackScrim.style.pointerEvents = trashMode ? "auto" : "none";
     }
-    if (!DECK_SIDES.some((s) => fanned[s])) setBucketsFocus(false);   // no fanned stack → buckets can't be co-focused
+    if (!DECK_SIDES.some((s) => fanned[s])) bucketsFocused = false;   // no fanned stack → buckets can't be co-focused
+    applyBucketFocus();
   };
 
-  // ── Cursor-driven co-focus of the buckets while a stack is fanned ─────────────────────────────────
-  // Moving the cursor UP off the fanned stack toward the buckets lifts them above the DoF scrim too, so
-  // both are sharp; moving back down to the stack drops them. Dead-zones (the +/bin buttons, the gap
-  // between the lifted bin stack and its icon) don't flip the state, so you can reach those without the
-  // buckets flashing in. Gaps between fanned cards count as "on the stack" (inside its bounding box).
+  // ── Cursor-driven co-focus of the buckets (+ the flow arrows) while a stack is fanned ───────────────
+  // Moving the cursor UP off the fanned stack toward the buckets lifts them AND the flow arrows into
+  // focus alongside the stack; moving back down to the stack — or toward the +/bin buttons — drops them
+  // back out. While any stack is fanned the buckets/arrows stay ABOVE the scrim the whole time and just
+  // blur/un-blur via their own filter, so the shift glides. Gaps between fanned cards count as "on the
+  // stack" (inside its bounding box), so hovering an empty gap doesn't pull the buckets in.
   let bucketsFocused = false;
-  function setBucketsFocus(on) {
-    if (on === bucketsFocused) return;
-    bucketsFocused = on;
-    if (zonesRoot) zonesRoot.style.zIndex = on ? "4500" : "";   // above / back below the scrim
-  }
+  const applyBucketFocus = () => {
+    const anyFan = DECK_SIDES.some((s) => fanned[s]);
+    [zonesRoot, flowRoot].forEach((el) => {
+      if (!el) return;
+      el.classList.toggle("tk-cofocus", anyFan);                 // above the scrim while any stack is fanned
+      el.classList.toggle("tk-dim", anyFan && !bucketsFocused);  // …and blurred until co-focused
+    });
+  };
+  const setBucketsFocus = (on) => { if (on !== bucketsFocused) { bucketsFocused = on; applyBucketFocus(); } };
   const deckCardsRect = (side) => {
     const d = decks[side]; if (!d || !d.cards.length) return null;
     let L = Infinity, T = Infinity, R = -Infinity, B = -Infinity;
@@ -684,7 +706,7 @@
     if (dragActive) return;                        // drags do their own targeting
     const sr = deckCardsRect(DECK_SIDES.find((s) => fanned[s]));
     if (!sr) { setBucketsFocus(false); return; }
-    if (inFocusDeadzone(e.clientX, e.clientY)) return;   // dead-zone → keep the current focus
+    if (inFocusDeadzone(e.clientX, e.clientY)) { setBucketsFocus(false); return; }   // heading to +/bin → drop focus
     setBucketsFocus(e.clientY < sr.top - 10);       // above the fanned stack → co-focus the buckets
   };
 

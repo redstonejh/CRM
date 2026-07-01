@@ -6,3 +6,6 @@ out/
 .env
 .env.*
 *.log
+
+# playwright MCP test output
+.playwright-mcp/

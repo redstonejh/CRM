@@ -331,11 +331,15 @@
       .tk-stack-btn svg { width: 16px; height: 16px; }
       .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
-      /* "Hold to open the bin" ring: a blue stroke that draws a full trip around the icon while a
-         dragged ticket rests on it; completing the trip opens the bin (JS timer matches the .72s). */
-      .tk-ring { position: absolute; inset: -4px; width: calc(100% + 8px); height: calc(100% + 8px); pointer-events: none; opacity: 0; transform: rotate(-90deg); }
-      .tk-ring circle { fill: none; stroke: rgba(125,180,255,0.95); stroke-width: 2.6; stroke-linecap: round;
-        filter: drop-shadow(0 0 4px rgba(90,150,255,0.6)); stroke-dasharray: 113.1; stroke-dashoffset: 113.1; }
+      /* "Hold to open the bin" ring: a blue stroke that draws a full trip AROUND the icon while a
+         dragged ticket rests on it (completing the trip opens the bin — the JS timer matches the .72s).
+         Centred on the button and sized just outside its edge; blue matches the toggled (.is-active) glow. */
+      /* NB: qualified with .tk-stack-btn to outrank ".tk-stack-btn svg { width:16px }" (the icon rule),
+         which would otherwise shrink the ring to 16px (smaller than + offset from the button). */
+      .tk-stack-btn .tk-ring { position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; pointer-events: none; opacity: 0;
+        transform: translate(-50%, -50%) rotate(-90deg); }
+      .tk-stack-btn .tk-ring circle { fill: none; stroke: rgba(125,180,255,0.9); stroke-width: 2.5; stroke-linecap: round;
+        filter: drop-shadow(0 0 5px rgba(90,150,255,0.5)); stroke-dasharray: 125.7; stroke-dashoffset: 125.7; }
       .tk-stack-btn.tk-ringing .tk-ring { opacity: 1; }
       .tk-stack-btn.tk-ringing .tk-ring circle { stroke-dashoffset: 0; transition: stroke-dashoffset .72s linear; }
 
@@ -570,7 +574,7 @@
       } else {
         action.setAttribute("aria-label", "Recycle bin (deleted tickets)");
         action.title = "Recycle bin";
-        action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18"/></svg>';
+        action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20"/></svg>';
         action.addEventListener("click", () => setTrashMode(!trashMode));
       }
       root.appendChild(box); root.appendChild(action);
@@ -603,8 +607,14 @@
     document.addEventListener("pointercancel", resetDragWatch, true);
     // Dismiss the right-click menu on an outside press, Escape, or scroll.
     document.addEventListener("pointerdown", (e) => { if (ticketMenu && !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTicketMenu(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { hideTicketMenu(); if (trashMode) setTrashMode(false); } });
     window.addEventListener("wheel", () => hideTicketMenu(), true);
+    // Clicking anywhere OFF the open bin (its stack or its icon) closes it.
+    document.addEventListener("click", (e) => {
+      if (!trashMode || dragActive) return;
+      if (decks.trash?.box?.contains(e.target) || decks.right?.action?.contains(e.target)) return;
+      setTrashMode(false);
+    });
   };
 
   const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + 34}px`; };
@@ -1912,6 +1922,10 @@
     const deleted = tickets.filter((t) => isDeleted(t.id)).sort(order);
     buildDeck("trash", trashMode ? deleted : []);
     if (decks.trash?.box) decks.trash.box.style.transform = `translateY(-${Math.round(CARD_H + 62)}px)`;
+    // An empty bin closes itself (e.g. after restoring the last deleted ticket) — clear the state and
+    // unblur in place (the deck already rendered empty, so no re-render is needed → no recursion).
+    if (trashMode && !deleted.length) { trashMode = false; fanned.trash = false; decks.right?.action?.classList.remove("is-active"); }
+    updateStackFocus();
     renderZones();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then
     // fly it to the centre and expand its config. Creating fires several re-renders that REPLACE

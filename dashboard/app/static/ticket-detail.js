@@ -171,6 +171,7 @@
       .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
         background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
+      .td-date { color-scheme: dark; }   /* render the native date picker + its glyph on the dark field */
       .td-ta { resize: none; min-height: 2.4em; line-height: 1.4; overflow-y: auto; max-height: 200px; }   /* auto-grown in JS, scrolls past max */
       .td-ta-big { min-height: 7.6em; }   /* Resolution: tall enough to show the long prompt un-truncated */
       /* Save: a plain text action (same style as the severity option buttons), pinned bottom-right. */
@@ -437,6 +438,7 @@
     const input = (f) => {
       const val = (window.ticketStacks?.fieldValue?.(t.id, f.key)) ?? "";
       if (f.prio) { const pr = t.priority || "medium"; return `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }
+      if (f.date) return `<input type="date" class="td-in td-date" data-field="${esc(f.key)}" value="${esc(val)}" />`;
       if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
       return `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
     };

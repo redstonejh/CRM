@@ -74,6 +74,10 @@
   const metaOf = (id) => (id && metaMap[id]) || {};
   const setMeta = (id, m) => {
     if (!id) return;
+    // The effort fields keep their natural-language text AND a parsed minutes value ("the data
+    // understands it") — durationMin is 8h-day work time, overtimeMin the extra beyond that.
+    if ("duration" in m) m = { ...m, durationMin: parseDuration(m.duration) };
+    if ("overtime" in m) m = { ...m, overtimeMin: parseDuration(m.overtime) };
     metaMap[id] = { ...metaOf(id), ...m };
     try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
   };
@@ -212,13 +216,38 @@
   // stages grey; a deleted ticket shows the bucket it was deleted from red. Per-stage required
   // fields (the config menu shows only the current bucket's, each with its question) — a field is
   // satisfied when it has any value, and "n/a" counts as satisfied while showing nothing on the card.
+  // Client name, date of incident and the short description are collected UP FRONT (the create form,
+  // openCreate) — they're preconditions for the ticket existing, so they're not stage fields. Triage is
+  // then just severity + who's on it; resolution additionally records the date it was resolved.
   const STAGE_FIELDS = {
     triage:        [ { key: "priority",    label: "Severity",    q: "How severe is it?", prio: true },
-                     { key: "description", label: "Description", q: "What's the issue?", area: true },
                      { key: "assignee",    label: "Assignee",    q: "Who's handling it?" } ],
     investigation: [ { key: "investigation", label: "Cause", q: "What caused the issue?", area: true },
                      { key: "fix",           label: "Fix",   q: "What's the fix?", area: true } ],
-    resolution:    [ { key: "resolution", label: "Resolution", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true, big: true } ],
+    resolution:    [ { key: "resolution", label: "Resolution", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true, big: true },
+                     { key: "resolutionDate", label: "Date resolved", date: true },
+                     { key: "duration", label: "Time taken", q: "e.g. 15 minutes, 2 hours, 1 week — a day is 8 working hours" },
+                     { key: "overtime", label: "Overtime", q: "any extra hours beyond 8/day? (or “none”)" } ],
+  };
+  // Required up-front to create a ticket at all. Client → the card title; incident date → the header.
+  const CREATE_FIELDS = [
+    { key: "client",       label: "Client",           q: "Client name" },
+    { key: "incidentDate", label: "Date of incident", date: true },
+    { key: "description",  label: "Description",       q: "What's the issue?", area: true },
+  ];
+  // ISO date (yyyy-mm-dd, from <input type=date>) → dd-mm-yy for the compact header/card display.
+  const fmtDate = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "")); return m ? `${m[3]}-${m[2]}-${m[1].slice(2)}` : String(v || ""); };
+  // Natural-language work-effort → MINUTES. A "day" is 8 working hours and a "week" is 5 of those days,
+  // so "1 week" = 40h; overtime beyond that is captured separately. Sums every "<n> <unit>" it finds
+  // ("1 hour 30 min", "2d 4h"…); returns null if nothing parseable (e.g. "none").
+  const DUR_UNIT = { s: 1 / 60, sec: 1 / 60, second: 1 / 60, m: 1, min: 1, minute: 1, hr: 60, hour: 60, h: 60,
+                     day: 480, d: 480, week: 2400, wk: 2400, w: 2400, month: 9600, mo: 9600, year: 124800, yr: 124800, y: 124800 };
+  const parseDuration = (s) => {
+    if (!s || isNA(s)) return null;
+    let total = 0, found = false, mm; const re = /(\d+(?:\.\d+)?)\s*([a-z]+)/gi;
+    while ((mm = re.exec(s))) { const n = parseFloat(mm[1]); const u = mm[2].toLowerCase(); const f = DUR_UNIT[u] ?? (u.endsWith("s") ? DUR_UNIT[u.slice(0, -1)] : undefined);
+      if (f != null) { total += n * f; found = true; } }
+    return found ? Math.round(total) : null;
   };
   const fieldRaw = (t, key) => {
     const m = metaOf(t.id);
@@ -488,6 +517,30 @@
       /* The round window/page controls at the top stay in PERMANENT focus above the DoF scrim (3900)
          — the depth-of-field never blurs them. (Injected late, so it wins over themes.css by order.) */
       .window-control-cluster { z-index: 4100; }
+      /* "| date of incident" beside the client name in the header — a lighter, non-bold secondary tone. */
+      .ticket-date { color: rgba(255,255,255,0.55); font-weight: 400; white-space: nowrap; }
+
+      /* ── New-ticket precondition form (client / incident date / description before the ticket exists). ── */
+      .tk-create-back { position: fixed; inset: 0; z-index: 5200; display: flex; align-items: center; justify-content: center;
+        background: rgba(6,10,16,0.42); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+      .tk-create { width: 340px; max-width: calc(100vw - 40px); box-sizing: border-box; padding: 16px 16px 14px; border-radius: 16px; color: #fff;
+        display: flex; flex-direction: column; gap: 11px;
+        background: linear-gradient(180deg, rgba(34,40,54,0.96), rgba(20,26,38,0.96)); border: 1px solid rgba(255,255,255,0.22);
+        box-shadow: 0 30px 80px rgba(0,0,0,0.5); }
+      .tk-create-hd { font-size: 0.95rem; font-weight: 700; }
+      .tk-cf { display: flex; flex-direction: column; gap: 5px; }
+      .tk-cf > span { font-size: 0.8rem; font-weight: 600; color: rgba(255,255,255,0.72); }
+      .tk-cf > span b { color: rgba(255,140,140,0.95); }
+      .tk-ci { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
+        background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px;
+        color-scheme: dark; -webkit-user-select: text; user-select: text; }
+      .tk-ci:focus { outline: none; border-color: rgba(125,180,255,0.7); }
+      .tk-cta { resize: none; min-height: 3em; line-height: 1.4; }
+      .tk-create-row { display: flex; justify-content: flex-end; gap: 14px; padding-top: 2px; }
+      .tk-create-x, .tk-create-go { appearance: none; background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 0.85rem; font-weight: 700; }
+      .tk-create-x { color: rgba(255,255,255,0.55); }
+      .tk-create-go { color: rgba(125,180,255,0.95); }
+      .tk-create-go[disabled] { color: rgba(255,255,255,0.28); cursor: default; }
     `;
     document.head.appendChild(style);
   };
@@ -1401,18 +1454,22 @@
     // Show EVERY filled-in field across ALL stages (not just the current bucket's), so a ticket that has
     // triage + investigation done shows both stages' work — mirroring its green progress bars.
     STAGE_KEYS.flatMap((k) => STAGE_FIELDS[k] || []).filter((f) => !f.prio).map((f) => {
-      const v = fieldRaw(t, f.key);
-      if (!v || isNA(v) || !String(v).trim()) return "";
+      const raw = fieldRaw(t, f.key);
+      if (!raw || isNA(raw) || !String(raw).trim()) return "";
+      const v = f.date ? fmtDate(raw) : raw;
       return `<div class="ticket-field"><span class="ticket-field-l">${esc(f.label)}</span><span class="ticket-field-v">${esc(v)}</span></div>`;
     }).join("");
 
-  // The card's inner markup — shared by the stack cards and the fly-home clone so they
-  // render identically. Uses the global .ticket-body/.ticket-company/etc. classes.
+  // The card's inner markup — shared by the stack cards and the fly-home clone so they render
+  // identically. Header = CLIENT (title) + " | date of incident" (the date in a secondary colour); the
+  // short description sits on the sub-line; then the live stage-field info.
   const cardInner = (t) => {
-    const sub = subOf(t);
+    const dateS = fmtDate(metaOf(t.id).incidentDate);
+    const desc = fieldRaw(t, "description");
+    const sub = (desc && !isNA(desc) && String(desc).trim()) ? desc : subOf(t);
     return `<div class="ticket-body">` +
-      `<div class="ticket-company">${esc(titleOf(t))}</div>` +
-      (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // n/a / empty → no line, no placeholder
+      `<div class="ticket-company">${esc(titleOf(t))}${dateS ? ` <span class="ticket-date">| ${esc(dateS)}</span>` : ""}</div>` +
+      (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // short description (else host); n/a/empty → no line
       `<div class="ticket-fields">${cardFieldsHTML(t)}</div>` +     // live config-menu info (replaces the down-time)
       `</div>` +
       barsHTML(ticketBarClasses(t), true);
@@ -2136,11 +2193,39 @@
 
   // The left "+": spawn a blank ticket into the inbox stack, then (once its card has visibly
   // landed) fly it to the centre and expand its config — where the user sets title & subtitle.
-  const openCreate = async () => {
-    let tk = null;
-    try { const res = await window.tickets?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
-    if (tk && tk.id) pendingOpenId = tk.id;
-    load();   // re-fetch + render; render() auto-opens the config when the new card appears
+  // Creating a ticket is GATED on a client, an incident date and a short description — a modal collects
+  // them first; only when all three are filled does the ticket actually get created (then triage opens).
+  const openCreate = () => {
+    const back = document.createElement("div"); back.className = "tk-create-back";
+    const fieldHTML = (f) => {
+      const inp = f.date ? `<input type="date" class="tk-ci" data-k="${f.key}">`
+        : f.area ? `<textarea class="tk-ci tk-cta" data-k="${f.key}" placeholder="${esc(f.q || "")}"></textarea>`
+        : `<input class="tk-ci" data-k="${f.key}" placeholder="${esc(f.q || "")}" />`;
+      return `<label class="tk-cf"><span>${esc(f.label)} <b>*</b></span>${inp}</label>`;
+    };
+    back.innerHTML = `<div class="tk-create" role="dialog" aria-label="New ticket"><div class="tk-create-hd">New ticket</div>` +
+      CREATE_FIELDS.map(fieldHTML).join("") +
+      `<div class="tk-create-row"><button class="tk-create-x" type="button" data-act="cancel">cancel</button><button class="tk-create-go" type="button" data-act="create" disabled>create</button></div></div>`;
+    document.body.appendChild(back);
+    const vals = {}; CREATE_FIELDS.forEach((f) => (vals[f.key] = ""));
+    const goBtn = back.querySelector('[data-act="create"]');
+    const validate = () => { goBtn.disabled = !CREATE_FIELDS.every((f) => String(vals[f.key] || "").trim()); };
+    const closeForm = () => back.remove();
+    back.querySelectorAll("[data-k]").forEach((el) => {
+      el.oninput = () => { vals[el.dataset.k] = el.value; validate(); };
+      el.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") closeForm(); else if (e.key === "Enter" && el.tagName !== "TEXTAREA" && !goBtn.disabled) goBtn.click(); };
+    });
+    back.querySelector('[data-act="cancel"]').onclick = closeForm;
+    back.addEventListener("pointerdown", (e) => { if (e.target === back) closeForm(); });
+    goBtn.onclick = async () => {
+      goBtn.disabled = true;
+      let tk = null;
+      try { const res = await window.tickets?.create?.({ companyLabel: vals.client.trim(), host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
+      if (tk && tk.id) { setMeta(tk.id, { title: vals.client.trim(), incidentDate: vals.incidentDate, description: vals.description.trim() }); pendingOpenId = tk.id; }
+      closeForm();
+      load();   // re-fetch + render; render() auto-opens the triage config on the new card
+    };
+    setTimeout(() => back.querySelector(".tk-ci")?.focus(), 30);
   };
 
   const load = async () => {
@@ -2213,8 +2298,10 @@
       setMeta(id, m);
       const t = tickets.find((x) => x.id === id); if (!t) return;
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
-        const co = c.querySelector(".ticket-company"); if (co) co.textContent = titleOf(t);
-        const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host"); const sub = subOf(t);
+        const co = c.querySelector(".ticket-company"), dateS = fmtDate(metaOf(t.id).incidentDate);
+        if (co) co.innerHTML = `${esc(titleOf(t))}${dateS ? ` <span class="ticket-date">| ${esc(dateS)}</span>` : ""}`;   // client + | incident date
+        const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
+        const descRaw = fieldRaw(t, "description"); const sub = (descRaw && !isNA(descRaw) && String(descRaw).trim()) ? descRaw : subOf(t);
         if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }
         else if (ho) ho.remove();   // n/a / empty → drop the line entirely (no placeholder)
         let ff = c.querySelector(".ticket-fields"); const fh = cardFieldsHTML(t);   // live config-menu info on the card face

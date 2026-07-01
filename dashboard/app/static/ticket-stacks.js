@@ -398,7 +398,10 @@
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
         border: 1px solid rgba(255,255,255,0.14);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
-        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, filter .32s cubic-bezier(.4,0,.2,1), opacity .32s ease; }
+      /* Dragging OUT of a fanned stack: buckets the ticket can't legally land in drop out of focus,
+         so only the valid target(s) stay sharp. */
+      .tk-zone.tk-out { filter: blur(4px); opacity: 0.5; }
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
@@ -465,6 +468,9 @@
       .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
       .tk-flow-head { fill: #d2e3ff; stroke: none; }
+      /* An arrow segment that isn't part of the chain to a reachable bucket fades right down. */
+      .tk-flow-shaft, .tk-flow-head { transition: opacity .32s ease; }
+      .tk-flow-shaft.tk-out, .tk-flow-head.tk-out { opacity: 0.08; }
     `;
     document.head.appendChild(style);
   };
@@ -1262,8 +1268,8 @@
         const d0 = decks[side]; d0.box.appendChild(card);
         baseTx = card._tx + (side === "left" ? d0.scrollX : -d0.scrollX); baseTy = card._ty;
         dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
-          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
-          else { clearZoneHighlight(); clearGap(); }
+          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); focusDropTargets(stackPos(side), t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
+          else { clearZoneHighlight(); clearGap(); clearDropFocus(); }
         };
         deckReorderFn = () => reorderTo(lastAlong);   // autoscroll re-runs the reorder at the held cursor
       }
@@ -1271,27 +1277,28 @@
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
-      if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
+      if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); clearDropFocus(); return; }
       // Dragging a TRASH card over a fanned corner stack → it'll restore there; don't reorder the bin.
-      if (side === "trash" && overFannedDeck(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
+      if (side === "trash" && overFannedDeck(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); clearDropFocus(); return; }
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
       if (e.clientY < stackTopY()) {
         flowHighlight(stackPos(side), e.clientX, e.clientY, t);
+        focusDropTargets(stackPos(side), t);   // sharpen only the legal target bucket(s) + their arrow chain
         const dt = dropTarget(stackPos(side), e.clientX, e.clientY, t);
         if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
         if (fanned[side]) { closeFanRanks(side, card); ranksClosed = true; }  // remaining fan cards slide together to close the hole
         return;
       }
-      clearZoneHighlight(); clearGap();
+      clearZoneHighlight(); clearGap(); clearDropFocus();
       // Fanned out → dragging reorders the row: the others slide to fill the gap (.42s collision),
       // while the scroll rides the track rigidly, so the two never fight even during autoscroll.
       if (fanned[side]) { lastAlong = baseTx + dx; reorderTo(lastAlong); }
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      dragActive = false; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing();   // always clear
+      dragActive = false; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus();   // always clear
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
@@ -1791,6 +1798,33 @@
     });
   };
   const clearZoneHighlight = () => STAGES.forEach((s) => { const p = zoneBody[s.key]?.parentElement; if (p) { p.classList.remove("is-target"); clearGlow(p); } });
+
+  // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally
+  // land in (per canAdvance) into focus, plus the chain of arrows running from the stack to them —
+  // everything else drops out of focus. The chain nodes are [inbox, …buckets…, resolved]; arrow k
+  // joins node k→k+1, so the segments between the stack's node and a reachable bucket's node are the
+  // run [min,max). The buckets/arrows already ride above the scrim (tk-cofocus); here we blur/fade the
+  // ones that DON'T qualify, per element, instead of the whole group.
+  const focusDropTargets = (from, t) => {
+    ensureFlow();
+    const fromNode = from < 0 ? 0 : from + 1;
+    const liveArrows = new Set();
+    STAGES.forEach((s, i) => {
+      const p = zoneBody[s.key]?.parentElement;
+      const ok = canAdvance(from, i, t);
+      if (p) p.classList.toggle("tk-out", !ok);
+      if (ok) { const to = i + 1, lo = Math.min(fromNode, to), hi = Math.max(fromNode, to); for (let a = lo; a < hi; a++) liveArrows.add(a); }
+    });
+    flowShafts.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
+    flowHeads.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
+    [zonesRoot, flowRoot].forEach((el) => { if (el) { el.classList.add("tk-cofocus"); el.classList.remove("tk-dim"); } });  // group sharp; per-element .tk-out dims
+  };
+  const clearDropFocus = () => {
+    STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.remove("tk-out"));
+    flowShafts.forEach((el) => el.classList.remove("tk-out"));
+    flowHeads.forEach((el) => el.classList.remove("tk-out"));
+    applyBucketFocus();   // hand the group focus back to the normal (cursor-driven) co-focus
+  };
 
   // A zone card is a FULL ticket card — identical layout/size to a corner-stack card.
   const zoneCardInner = (t) => cardInner(t);

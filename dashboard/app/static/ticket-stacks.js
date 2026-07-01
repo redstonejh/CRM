@@ -1840,12 +1840,40 @@
     delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
     // Send the ticket back to exactly where it was deleted from: its bucket (as the visual-TOP card, i.e.
     // bottom-most z / index 0), or the corner stack it lived in (left inbox / right resolved, by state).
+    // It SLIDES there from the bin, and the depth-of-field opens up to keep the bin AND the destination
+    // in focus during the flight, then settles back onto just the bin.
     restore: (id) => {
+      const t = tickets.find((x) => x.id === id);
       const ds = (metaOf(id) || {}).delStage || "";
+      const fromCard = decks.trash?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`);
+      const from = fromCard ? fromCard.getBoundingClientRect() : null;
       setDeleted(id, false);
       if (ds && STAGE_KEYS.includes(ds)) { setStage(id, ds); setStageAt(id, ds, 0); }
       else { setStage(id, null); setStageAt(id, null); }
       render();
+      const dest = document.querySelector(`.tk-zcard[data-id="${cssEsc(id)}"], .tk-deck-left .tk-card[data-id="${cssEsc(id)}"], .tk-deck-right .tk-card[data-id="${cssEsc(id)}"]`);
+      const to = dest ? dest.getBoundingClientRect() : null;
+      if (!t || !from || !to || to.width < 4) return;   // can't animate → it's already placed
+      // Focus shift: bring the destination above the DoF scrim so it's sharp alongside the bin.
+      const destZone = dest.classList.contains("tk-zcard"), destDeck = destZone ? null : dest.closest(".tk-deck");
+      if (destZone && zonesRoot) zonesRoot.style.zIndex = "4500"; else if (destDeck) destDeck.style.zIndex = "3";
+      dest.style.opacity = "0";   // hide the real card until the slide lands on it
+      const clone = document.createElement("div");
+      clone.className = "tk-zfly";
+      clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${Math.round(from.width)}px; height:${Math.round(from.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
+      clone.style.backgroundColor = baseColor();
+      clone.style.backgroundImage = cardBg(t);
+      clone.innerHTML = cardInner(t);
+      document.body.appendChild(clone);
+      requestAnimationFrame(() => {
+        clone.style.transform = `translate(${Math.round(to.left - from.left)}px, ${Math.round(to.top - from.top)}px) scale(${(to.width / from.width).toFixed(4)}, ${(to.height / from.height).toFixed(4)})`;
+      });
+      setTimeout(() => {
+        clone.remove();
+        if (dest.isConnected) dest.style.opacity = "";
+        if (destZone && zonesRoot) zonesRoot.style.zIndex = ""; else if (destDeck) destDeck.style.zIndex = "";
+        updateStackFocus();   // settle the focus back onto just the bin
+      }, 480);
     },
     metaOf,
     stageOf: (id) => stageOf(id),

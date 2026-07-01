@@ -231,18 +231,27 @@
   };
   const fieldSatisfied = (t, key) => key === "priority" ? hasPriority(t) : String(fieldRaw(t, key) ?? "").trim() !== "";
   const stageComplete = (t, i) => (STAGE_FIELDS[STAGE_KEYS[i]] || []).every((f) => fieldSatisfied(t, f.key));
+  // The FURTHEST stage a ticket has actually completed (that stage's fields all filled), or the last stage
+  // if it's already resolved. This is a property of the ticket's DATA — not which bucket/stack it sits in
+  // — so progress survives being thrown back into a stack, and it's what earns the ticket permission to
+  // traverse buckets (see canAdvance). Contiguous: reaching a later stage greens all the ones before it.
+  const progressOf = (t) => {
+    if (!t) return -1;
+    if ((t.state || "open") === "resolved") return STAGE_KEYS.length - 1;
+    let p = -1;
+    for (let i = 0; i < STAGE_KEYS.length; i++) if (stageComplete(t, i)) p = i;
+    return p;
+  };
   const ticketBarClasses = (t) => {
+    const furthest = progressOf(t);                              // green up to here, wherever the ticket goes
+    const cur = STAGE_KEYS.indexOf(stageOf(t.id) || "");         // the bucket it's currently in (-1 = a stack)
     if (isDeleted(t.id)) {
-      const ds = metaOf(t.id).delStage || "";
-      // No bucket stage recorded → deleted from a corner STACK: all-green = resolved stack, empty = inbox
-      // (the left stack). A bucket deletion reds the segment it died in, greens the ones it had passed.
-      if (!ds) return STAGE_KEYS.map(() => ((t.state || "open") === "resolved" ? "g" : ""));
-      const d = STAGE_KEYS.indexOf(ds);
-      return STAGE_KEYS.map((_, i) => (i < d ? "g" : i === d ? "r" : ""));
+      const d = STAGE_KEYS.indexOf(metaOf(t.id).delStage || "");  // the stage it was deleted from
+      return STAGE_KEYS.map((_, i) => (i <= furthest ? "g" : i === d ? "r" : ""));   // completed green; died-in-unfinished red
     }
-    const s = STAGE_KEYS.indexOf(stageOf(t.id) || "");           // -1 = in a stack (inbox/resolved/trash)
-    if (s < 0) return STAGE_KEYS.map(() => "");
-    return STAGE_KEYS.map((_, i) => (i < s ? "g" : i === s ? (stageComplete(t, i) ? "g" : "y") : ""));
+    // Completed stages stay green no matter where the ticket lives; the stage it's currently IN, if not
+    // yet finished, shows amber "in progress"; the rest are empty.
+    return STAGE_KEYS.map((_, i) => (i <= furthest ? "g" : i === cur ? "y" : ""));
   };
   const bucketBarClasses = (j) => STAGE_KEYS.map((_, i) => (i === j ? "g" : ""));
   const barsHTML = (classes, onCard) => `<div class="tk-bars${onCard ? " tk-bars-card" : ""}">${classes.map((c) => `<span class="tk-seg${c ? " " + c : ""}"></span>`).join("")}</div>`;
@@ -1355,14 +1364,14 @@
   // The config-menu info entered for this ticket's CURRENT stage, shown on the card face and kept in
   // sync as you type (see ticketStacks.setMeta). Severity is the card colour, so its field is skipped;
   // blank / "n/a" fields show nothing.
-  const cardFieldsHTML = (t) => {
-    const stage = stageOf(t.id) || "triage";
-    return (STAGE_FIELDS[stage] || []).filter((f) => !f.prio).map((f) => {
+  const cardFieldsHTML = (t) =>
+    // Show EVERY filled-in field across ALL stages (not just the current bucket's), so a ticket that has
+    // triage + investigation done shows both stages' work — mirroring its green progress bars.
+    STAGE_KEYS.flatMap((k) => STAGE_FIELDS[k] || []).filter((f) => !f.prio).map((f) => {
       const v = fieldRaw(t, f.key);
       if (!v || isNA(v) || !String(v).trim()) return "";
       return `<div class="ticket-field"><span class="ticket-field-l">${esc(f.label)}</span><span class="ticket-field-v">${esc(v)}</span></div>`;
     }).join("");
-  };
 
   // The card's inner markup — shared by the stack cards and the fly-home clone so they
   // render identically. Uses the global .ticket-body/.ticket-company/etc. classes.
@@ -1806,14 +1815,11 @@
   // Chain positions: inbox/left stack = -1, stages 0…n-1, resolved/right stack = n.
   const stackPos = (side) => (side === "right" ? STAGES.length : -1);
   const posOfStage = (key) => STAGE_KEYS.indexOf(key);
-  // Backward = always; one step forward = only if leaving a STACK (inbox→first bucket) or the current
-  // bucket's required fields are all filled (its segment is green). Skipping a stage is never allowed.
-  const canAdvance = (from, to, t) => {
-    if (to < from) return true;
-    if (to !== from + 1) return false;
-    if (from < 0 || from >= STAGES.length || !t) return true;   // from a stack → into the pipeline: ungated
-    return stageComplete(t, from);                              // forward from a bucket needs that stage complete
-  };
+  // A ticket may land anywhere it has EARNED: any bucket at/behind its current position (backward is
+  // always fine), or forward up to ONE past its furthest COMPLETED stage. That reach comes from the
+  // ticket's data (progressOf), NOT its location — so a ticket that finished triage + investigation keeps
+  // the right to drop straight into resolution even after it's thrown back into the left stack.
+  const canAdvance = (from, to, t) => to < from || to <= progressOf(t) + 1;
   const distToRect = (x, y, r) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
   const HL_RANGE = 260;
   const baseZoneShadow = "inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28)";

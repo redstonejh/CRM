@@ -751,8 +751,11 @@
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
     deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
     const otherFanned = DECK_SIDES.some((s) => s !== side && decks[s] && fanned[s]);
-    // Hide this deck's fan arrow entirely while ANOTHER stack is fanned (or with ≤1 card).
-    deck.arrow.classList.toggle("is-hidden", n <= 1 || otherFanned);
+    // Hide this deck's fan arrow while ANOTHER stack is fanned (or with ≤1 card) — EXCEPT the recycle
+    // bin, which keeps its fan arrow whenever it's OPEN (a corner stack can be fanned at the same time;
+    // fanning the bin just collapses that other fan). Without this you couldn't fan an open bin.
+    const keepBinArrow = side === "trash" && trashMode && n > 1;
+    deck.arrow.classList.toggle("is-hidden", n <= 1 || (otherFanned && !keepBinArrow));
     deck.arrow.style.zIndex = "5000";
     // Focus (which deck rides above the depth-of-field scrim, which are behind it) is set globally.
     updateStackFocus();
@@ -1278,14 +1281,16 @@
       if (!down || handedOff) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) {
-        dragging = true; dragActive = true; ranksClosed = false; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
+        dragging = true; dragActive = true; draggingSide = side; ranksClosed = false; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
+        focusDropTargets(stackPos(side), t);   // show ONLY the eligible bucket(s) for the WHOLE drag — from the
+                                               // moment it's lifted, even while the cursor is still on the stack
         // Lift the card OUT of the scroll track into the box, so it stays screen-fixed while the track
         // autoscrolls underneath. Fold the current scroll into baseTx (the track no longer moves it).
         const d0 = decks[side]; d0.box.appendChild(card);
         baseTx = card._tx + (side === "left" ? d0.scrollX : -d0.scrollX); baseTy = card._ty;
         dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
-          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); focusDropTargets(stackPos(side), t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
-          else { clearZoneHighlight(); clearGap(); clearDropFocus(); }
+          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
+          else { clearZoneHighlight(); clearGap(); }
         };
         deckReorderFn = () => reorderTo(lastAlong);   // autoscroll re-runs the reorder at the held cursor
       }
@@ -1293,28 +1298,27 @@
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
-      if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); clearDropFocus(); return; }
+      if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
       // Dragging a TRASH card over a fanned corner stack → it'll restore there; don't reorder the bin.
-      if (side === "trash" && overFannedDeck(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); clearDropFocus(); return; }
+      if (side === "trash" && overFannedDeck(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
       if (e.clientY < stackTopY()) {
         flowHighlight(stackPos(side), e.clientX, e.clientY, t);
-        focusDropTargets(stackPos(side), t);   // sharpen only the legal target bucket(s) + their arrow chain
         const dt = dropTarget(stackPos(side), e.clientX, e.clientY, t);
         if (dt) previewGap(dt.stage, dt.index); else clearGap();   // open a sandwich slot under the cursor
         if (fanned[side]) { closeFanRanks(side, card); ranksClosed = true; }  // remaining fan cards slide together to close the hole
         return;
       }
-      clearZoneHighlight(); clearGap(); clearDropFocus();
+      clearZoneHighlight(); clearGap();
       // Fanned out → dragging reorders the row: the others slide to fill the gap (.42s collision),
       // while the scroll rides the track rigidly, so the two never fight even during autoscroll.
       if (fanned[side]) { lastAlong = baseTx + dx; reorderTo(lastAlong); }
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      dragActive = false; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus();   // always clear
+      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus();   // always clear
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
@@ -1402,6 +1406,11 @@
 
   const buildDeck = (side, list) => {
     const deck = decks[side];
+    // NEVER rebuild the deck that owns the card currently in hand: a render fired mid-drag (e.g. the bin
+    // opening as you hover its icon) would c.remove() the dragged element out from under the pointer —
+    // the card "snaps" away and a fresh duplicate is rebuilt in the stack. Leave it be; the drop's own
+    // render (drag already ended) rebuilds it correctly. Other decks (incl. the bin) still build.
+    if (dragActive && side === draggingSide) return;
     // Honour a user-defined order (from dragging cards around the fanned row); tickets not
     // in that order (new arrivals) keep their incoming order and fall to the end.
     if (deck.order && deck.order.length) {
@@ -1435,6 +1444,7 @@
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
+  let draggingSide = null;    // which deck owns the in-flight card → its deck is NOT rebuilt mid-drag
   let dragPreviewFn = null;   // (x,y) => recompute the current drag's highlight + sandwich gap (re-run while autoscrolling)
   let deckReorderFn = null;   // () => re-run the fanned-deck reorder at the held cursor (re-run while autoscrolling the deck)
   const zoneBody = {};    // stage key → body element (the scroll viewport)
@@ -1741,9 +1751,17 @@
       }
     });
     drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
-    // Recompute every bucket's scroll-edge shadows for the new geometry — the deck does the same via
-    // updateDeckEdges() at the end of layout(); without this the bucket shadows go stale on a resize.
-    STAGES.forEach((s) => positionZone(s.key));
+    // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does
+    // the same via updateDeckEdges() at the end of layout(). Without the re-clamp a bucket scrolled to
+    // the bottom stays pinned there after the window grows past being scrollable (no way back up).
+    STAGES.forEach((s) => clampZoneScroll(s.key));
+  };
+  // Pull a bucket's scroll back inside [zMin, 0] for the current viewport height, then reposition. Skips
+  // while a scroll animation owns st.sy (its own loop clamps). Runs on every resize/reflow → live update.
+  const clampZoneScroll = (s) => {
+    const st = zoneScroll[s];
+    if (st && !st.raf) { st.sy = clamp(st.sy, zMin(s), 0); st.ty = st.sy; }
+    positionZone(s);
   };
   const ensureZones = () => {
     if (zonesRoot) return;
@@ -1762,8 +1780,9 @@
       zoneScroll[s.key] = { sy: 0, ty: 0, raf: 0, wheeling: false, releaseT: 0 };
       zoneBody[s.key].addEventListener("wheel", (e) => onZoneWheel(s.key, e), { passive: false });
       // Any change to this bucket's viewport size (window resize, grid reflow, bucket resize) re-runs
-      // its edge-shadow math live — matching how the fanned deck's shadows stay reactive.
-      if (window.ResizeObserver) new ResizeObserver(() => positionZone(s.key)).observe(zoneBody[s.key]);
+      // its edge-shadow math AND re-clamps its scroll live — so growing the window past scrollable
+      // never strands the viewport pinned at the old bottom.
+      if (window.ResizeObserver) new ResizeObserver(() => clampZoneScroll(s.key)).observe(zoneBody[s.key]);
       wireZoneThumb(s.key);
     });
     document.body.appendChild(zonesRoot);

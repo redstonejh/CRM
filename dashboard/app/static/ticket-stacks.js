@@ -496,13 +496,12 @@
   };
   const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); showTicketMenu(t, card, e.clientX, e.clientY); });
 
-  // Fly a clone of the deleted ticket from `fromRect` into its freshly-rendered card in the bin, then
-  // run onLanded. (The bin must already be open / rendered so the destination card exists.)
-  const flyIntoTrash = (t, fromRect, onLanded) => {
-    const dest = decks.trash?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`);
-    const to = dest ? dest.getBoundingClientRect() : null;
+  // Fly a clone of a ticket from `fromRect` into its freshly-rendered resting card `destEl`, then run
+  // onLanded. (destEl must already exist — the target deck/bucket has been rendered.)
+  const flyCloneTo = (t, fromRect, destEl, onLanded) => {
+    const to = (destEl && destEl.isConnected) ? destEl.getBoundingClientRect() : null;
     if (!fromRect || !to || to.width < 4) { if (onLanded) setTimeout(onLanded, 260); return; }
-    dest.style.opacity = "0";
+    destEl.style.opacity = "0";
     const clone = document.createElement("div");
     clone.className = "tk-zfly";
     clone.style.cssText = `left:${fromRect.left}px; top:${fromRect.top}px; width:${Math.round(fromRect.width)}px; height:${Math.round(fromRect.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
@@ -511,7 +510,22 @@
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
     requestAnimationFrame(() => { clone.style.transform = `translate(${Math.round(to.left - fromRect.left)}px, ${Math.round(to.top - fromRect.top)}px) scale(${(to.width / fromRect.width).toFixed(4)}, ${(to.height / fromRect.height).toFixed(4)})`; });
-    setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; if (onLanded) onLanded(); }, 470);
+    setTimeout(() => { clone.remove(); if (destEl.isConnected) destEl.style.opacity = ""; if (onLanded) onLanded(); }, 470);
+  };
+  const flyIntoTrash = (t, fromRect, onLanded) => flyCloneTo(t, fromRect, decks.trash?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`), onLanded);
+  // A fanned corner stack under the cursor (left/right only), for dragging a card OUT of the bin into it.
+  const overFannedDeck = (x, y) => ["left", "right"].find((s) => fanned[s] && decks[s]?.cards.some((c) => { const r = c.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; })) || null;
+  // Restore a deleted ticket by dropping it onto a fanned stack: un-delete, splice into that deck's order
+  // at the cursor slot, and slide it home.
+  const restoreToDeck = (t, fd, x, fromRect) => {
+    setDeleted(t.id, false);
+    const deck = decks[fd];
+    const ids = deck.cards.map((c) => c.dataset.id).filter((id) => id && id !== t.id);
+    ids.splice(clamp(fanInsertIndex(fd, x), 0, ids.length), 0, t.id);
+    deck.order = ids; saveOrder(fd);
+    setStage(t.id, null); setStageAt(t.id, null);
+    render();
+    flyCloneTo(t, fromRect, deck.box.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`));
   };
   const markDeleted = (t) => { setMeta(t.id, { delStage: stageOf(t.id) || "" }); setDeleted(t.id, true); };
   // Delete via the right-click menu → the bin opens on its own, the ticket nests, then the bin closes.
@@ -628,7 +642,12 @@
   const updateStackFocus = () => {
     let any = false;
     DECK_SIDES.forEach((s) => { const d = decks[s]; if (!d) return; const f = isFocused(s); if (f) any = true; d.box.style.zIndex = f ? "3" : "1"; });
-    if (stackScrim) stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = any ? "blur(4px)" : "blur(0px)";
+    if (stackScrim) {
+      stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = any ? "blur(4px)" : "blur(0px)";
+      // While the bin is open it's MODAL: the scrim eats clicks so the blurred dashboard isn't
+      // interactable. Clicking the scrim still bubbles to the "click off the bin closes it" handler.
+      stackScrim.style.pointerEvents = trashMode ? "auto" : "none";
+    }
   };
 
   const layout = (side) => {
@@ -1193,6 +1212,8 @@
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
+      // Dragging a TRASH card over a fanned corner stack → it'll restore there; don't reorder the bin.
+      if (side === "trash" && overFannedDeck(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
@@ -1218,6 +1239,8 @@
       if (!wasDrag) { if (side !== "trash") window.ticketDetail?.open(t, card); return; }
       // Dropped on the recycle bin (icon or open stack) → delete it into the bin (except trash cards).
       if (side !== "trash" && overTrashTarget(e.clientX, e.clientY)) { dropTicketToTrash(t, card.getBoundingClientRect()); return; }
+      // A trash card dropped on a fanned corner stack → restore it there.
+      if (side === "trash") { const fd = overFannedDeck(e.clientX, e.clientY); if (fd) { restoreToDeck(t, fd, e.clientX, card.getBoundingClientRect()); return; } }
       const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
       if (dDrop && dDrop.track) {              // compensate for the track's transform so it doesn't jump by scrollX
         const tt = side === "left" ? dDrop.scrollX : -dDrop.scrollX;

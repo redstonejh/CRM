@@ -1835,12 +1835,13 @@
   };
   const clearZoneHighlight = () => STAGES.forEach((s) => { const p = zoneBody[s.key]?.parentElement; if (p) { p.classList.remove("is-target"); clearGlow(p); } });
 
-  // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally
-  // land in (per canAdvance) into focus, plus the chain of arrows running from the stack to them —
-  // everything else drops out of focus. The chain nodes are [inbox, …buckets…, resolved]; arrow k
-  // joins node k→k+1, so the segments between the stack's node and a reachable bucket's node are the
-  // run [min,max). Eligible buckets lift ABOVE the scrim (sharp); the rest rest below it and the scrim
-  // blurs them — the clean depth-of-field. The arrows lift as a group; off-path segments just fade.
+  // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally land
+  // in (per canAdvance) into focus — they lift ABOVE the scrim (sharp); the rest rest below it and the
+  // scrim blurs them cleanly. The flow arrows are ONE SVG (can't cross the scrim per-segment), so they
+  // are NOT raised here — they stay in their scrim-blurred resting state so the blur never morphs mid-
+  // drag. The chain toward reachable buckets is still marked by fading the off-path segments' opacity.
+  // Chain nodes are [inbox, …buckets…, resolved]; arrow k joins node k→k+1, so the on-path segments are
+  // the run [min,max) between the stack's node and a reachable bucket's node.
   const focusDropTargets = (from, t) => {
     ensureFlow();
     const fromNode = from < 0 ? 0 : from + 1;
@@ -1852,7 +1853,6 @@
     });
     flowShafts.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
     flowHeads.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
-    if (flowRoot) flowRoot.classList.add("tk-cofocus");   // arrows lift above the scrim; off-path ones fade
   };
   const clearDropFocus = () => {
     setBucketSharp(() => false);

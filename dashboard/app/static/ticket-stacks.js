@@ -465,15 +465,13 @@
          then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
       .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
         opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
-      /* The arrows share the buckets' focus: lifted above the scrim while a stack is fanned (below the
-         stacks), and each segment fades out per-element (see .tk-flow-*.tk-out) when out of focus. */
+      /* Each arrow's own SVG lifts above the scrim (3945, still below the stacks) when it's in focus —
+         sharp — and rests at 790 (below the scrim) when out, where the scrim blurs it, matching the
+         bucket it points at. So on-path arrows go sharp with the target, off-path ones stay blurred. */
       .tk-flow.tk-cofocus { z-index: 3945; }
       .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
         stroke-linecap: round; stroke-linejoin: round; }
       .tk-flow-head { fill: #d2e3ff; stroke: none; }
-      /* An arrow segment that isn't part of the chain to a reachable bucket fades right down. */
-      .tk-flow-shaft, .tk-flow-head { transition: opacity .32s ease; }
-      .tk-flow-shaft.tk-out, .tk-flow-head.tk-out { opacity: 0.08; }
       /* The round window/page controls at the top stay in PERMANENT focus above the DoF scrim (3900)
          — the depth-of-field never blurs them. (Injected late, so it wins over themes.css by order.) */
       .window-control-cluster { z-index: 4100; }
@@ -697,15 +695,14 @@
   // never a filter. Gaps between fanned cards count as "on the stack", so hovering one doesn't pull them in.
   let bucketsFocused = false;
   const setBucketSharp = (fn) => STAGES.forEach((s, i) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-sharp", fn(i)));
-  const setArrowsFaded = (out) => { flowShafts.forEach((el) => el.classList.toggle("tk-out", out)); flowHeads.forEach((el) => el.classList.toggle("tk-out", out)); };
+  const setArrowSharp = (fn) => flowSvgs.forEach((svg, i) => svg.classList.toggle("tk-cofocus", fn(i)));   // per-arrow lift across the scrim
   const applyBucketFocus = () => {
     if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
     // Co-focus: lift ALL buckets/arrows above the scrim (sharp) ONLY while the cursor is drifting up to
     // co-focus them; otherwise leave them below it so the SCRIM blurs them — the crisp un-fanned-bin look.
     const sharp = DECK_SIDES.some((s) => fanned[s]) && bucketsFocused;
     setBucketSharp(() => sharp);
-    if (flowRoot) flowRoot.classList.toggle("tk-cofocus", sharp);
-    setArrowsFaded(false);
+    setArrowSharp(() => sharp);
   };
   const setBucketsFocus = (on) => { if (on !== bucketsFocused) { bucketsFocused = on; applyBucketFocus(); } };
   const deckCardsRect = (side) => {
@@ -1656,20 +1653,24 @@
   // A stylized translucent line through the pipeline: left (inbox) stack → triage, an arrow
   // between each bucket, then resolution → right (resolved) stack. Drawn as one SVG overlay,
   // each arrow a glowing glass body with a bright core + a glassy arrowhead.
-  let flowRoot = null, flowShafts = [], flowHeads = [];
+  let flowSvgs = [], flowShafts = [], flowHeads = [];
   const ensureFlow = () => {
-    if (flowRoot) return;
+    if (flowSvgs.length) return;
     ensureStyles();
     const arrows = STAGES.length + 1;
-    let lines = "";
-    // Per arrow: a stroked shaft + a SOLID triangle head built forward from where the shaft ends.
-    for (let i = 0; i < arrows; i++) lines += `<path class="tk-flow-shaft"></path><path class="tk-flow-head"></path>`;
-    const wrap = document.createElement("div");
-    wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg">${lines}</svg>`;
-    flowRoot = wrap.firstElementChild;
-    document.body.appendChild(flowRoot);
-    flowShafts = [...flowRoot.querySelectorAll(".tk-flow-shaft")];
-    flowHeads = [...flowRoot.querySelectorAll(".tk-flow-head")];
+    // ONE full-viewport SVG per arrow (a stroked shaft + a SOLID triangle head), so every segment can
+    // cross the DoF scrim on its OWN — an on-path arrow lifts above it (sharp), an off-path one rests
+    // below it (scrim-blurred) — exactly how the buckets behave. They never overlap, so their z-order
+    // among themselves is irrelevant.
+    for (let i = 0; i < arrows; i++) {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><path class="tk-flow-shaft"></path><path class="tk-flow-head"></path></svg>`;
+      const svg = wrap.firstElementChild;
+      document.body.appendChild(svg);
+      flowSvgs.push(svg);
+      flowShafts.push(svg.querySelector(".tk-flow-shaft"));
+      flowHeads.push(svg.querySelector(".tk-flow-head"));
+    }
   };
   const HEAD_LEN = 20, HEAD_HALF = 9, CORNER = 46;
   // A solid arrowhead whose BASE CENTRE is where the shaft stops; the shaft's round cap just
@@ -1837,9 +1838,8 @@
 
   // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally land
   // in (per canAdvance) into focus — they lift ABOVE the scrim (sharp); the rest rest below it and the
-  // scrim blurs them cleanly. The flow arrows are ONE SVG (can't cross the scrim per-segment), so they
-  // are NOT raised here — they stay in their scrim-blurred resting state so the blur never morphs mid-
-  // drag. The chain toward reachable buckets is still marked by fading the off-path segments' opacity.
+  // scrim blurs them cleanly. Each on-path arrow lifts above the scrim (sharp) too, the off-path ones
+  // rest below it (scrim-blurred) — so every arrow's blur MATCHES its bucket and none morph or vanish.
   // Chain nodes are [inbox, …buckets…, resolved]; arrow k joins node k→k+1, so the on-path segments are
   // the run [min,max) between the stack's node and a reachable bucket's node.
   const focusDropTargets = (from, t) => {
@@ -1851,12 +1851,11 @@
       if (ok) { const to = i + 1, lo = Math.min(fromNode, to), hi = Math.max(fromNode, to); for (let a = lo; a < hi; a++) liveArrows.add(a); }
       return ok;
     });
-    flowShafts.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
-    flowHeads.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
+    setArrowSharp((i) => liveArrows.has(i));   // on-path arrows lift sharp; the rest stay scrim-blurred
   };
   const clearDropFocus = () => {
     setBucketSharp(() => false);
-    setArrowsFaded(false);
+    setArrowSharp(() => false);
     applyBucketFocus();   // hand focus back to the normal (cursor-driven) co-focus
   };
 

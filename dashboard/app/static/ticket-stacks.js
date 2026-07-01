@@ -390,22 +390,23 @@
       }
 
       /* ── Pipeline zones (glass buckets) — each panel snaps to dashboard grid columns. ─── */
-      .tk-zones { position: fixed; left: 0; right: 0; top: 64px; z-index: 800; pointer-events: none; }
-      /* While a stack is fanned the buckets + flow arrows ride ABOVE the depth-of-field scrim (so the
-         scrim can't blur them) but stay BELOW the stacks (so an open bin never hides behind a bucket).
-         Focus is then a PER-ELEMENT blur on each bucket (see .tk-zone.tk-out) — never a filter on this
-         container, which would knock out the children's backdrop-filter acrylic and make it flash. */
-      .tk-zones.tk-cofocus { z-index: 3950; }
-      .tk-zone { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; pointer-events: auto;
+      /* display:contents so .tk-zones creates NO box / stacking context — each .tk-zone (position:fixed)
+         then participates in the body's stacking order and can cross the DoF scrim (3900) on its OWN:
+         resting BELOW it (z 800) so the scrim blurs it cleanly, or lifted ABOVE it (z 3950, .tk-sharp)
+         to go sharp — while still below the stacks (4000) so an open bin never hides behind a bucket.
+         No per-element filter blur → the blur is always the crisp scrim one, never a scuffed filter. */
+      .tk-zones { display: contents; }
+      .tk-zone { position: fixed; z-index: 800; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
         border: 1px solid rgba(255,255,255,0.14);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
-        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, filter .32s cubic-bezier(.4,0,.2,1), opacity .32s ease; }
-      /* Mid-drag only: a bucket the ticket can't legally land in softens so the valid target stands out.
-         Full opacity (no fade) keeps the frosted acrylic reading as glass, not a washed-out ghost. */
-      .tk-zone.tk-out { filter: blur(5px); }
+        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+      /* In focus: lift the bucket above the scrim (sharp). Out of focus it simply rests below the scrim
+         and the scrim blurs it — the same crisp depth-of-field whether the bin is closed, a stack is
+         fanned, or a drag is in flight (the valid target lifts, the rest stay scrim-blurred). */
+      .tk-zone.tk-sharp { z-index: 3950; }
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
@@ -691,23 +692,20 @@
   // ── Cursor-driven co-focus of the buckets (+ the flow arrows) while a stack is fanned ───────────────
   // Moving the cursor UP off the fanned stack toward the buckets lifts them AND the flow arrows into
   // focus alongside the stack; moving back down to the stack — or toward the +/bin buttons — drops them
-  // back out. While any stack is fanned the buckets/arrows stay ABOVE the scrim (via .tk-cofocus) so the
-  // scrim can't blur them; the out-of-focus softening is a PER-BUCKET filter (.tk-out) that leaves the
-  // acrylic intact. Gaps between fanned cards count as "on the stack", so hovering one doesn't pull them in.
+  // back out. Focus is a clean z-flip across the scrim, PER bucket: a sharp bucket lifts above the scrim
+  // (.tk-sharp), an out-of-focus one rests below it and the scrim blurs it — always the crisp scrim blur,
+  // never a filter. Gaps between fanned cards count as "on the stack", so hovering one doesn't pull them in.
   let bucketsFocused = false;
-  const setZoneOut = (out) => {
-    STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-out", out));
-    flowShafts.forEach((el) => el.classList.toggle("tk-out", out));
-    flowHeads.forEach((el) => el.classList.toggle("tk-out", out));
-  };
+  const setBucketSharp = (fn) => STAGES.forEach((s, i) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-sharp", fn(i)));
+  const setArrowsFaded = (out) => { flowShafts.forEach((el) => el.classList.toggle("tk-out", out)); flowHeads.forEach((el) => el.classList.toggle("tk-out", out)); };
   const applyBucketFocus = () => {
     if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
-    // Co-focus is a clean z-flip across the scrim: lift the buckets/arrows ABOVE it (sharp) ONLY while the
-    // cursor is drifting up to co-focus them; otherwise leave them BELOW it so the SCRIM blurs them — the
-    // exact crisp depth-of-field of an un-fanned bin. No per-element filter → no washed-out acrylic.
+    // Co-focus: lift ALL buckets/arrows above the scrim (sharp) ONLY while the cursor is drifting up to
+    // co-focus them; otherwise leave them below it so the SCRIM blurs them — the crisp un-fanned-bin look.
     const sharp = DECK_SIDES.some((s) => fanned[s]) && bucketsFocused;
-    [zonesRoot, flowRoot].forEach((el) => { if (el) el.classList.toggle("tk-cofocus", sharp); });
-    setZoneOut(false);
+    setBucketSharp(() => sharp);
+    if (flowRoot) flowRoot.classList.toggle("tk-cofocus", sharp);
+    setArrowsFaded(false);
   };
   const setBucketsFocus = (on) => { if (on !== bucketsFocused) { bucketsFocused = on; applyBucketFocus(); } };
   const deckCardsRect = (side) => {
@@ -1725,8 +1723,7 @@
   // they fill from just under the nav buttons down to a MARGIN above the corner stacks.
   const layoutZones = () => {
     if (!zonesRoot) return;
-    zonesRoot.style.top = `${ZONE_TOP}px`;
-    zonesRoot.style.bottom = `${CARD_H + MARGIN * 2}px`;        // a MARGIN above the stacks' top card
+    const zTop = ZONE_TOP, zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
     const region = g
@@ -1740,6 +1737,8 @@
       lefts.push(left);
       const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;
+      panel.style.top = `${zTop}px`;                            // fixed panels position themselves now
+      panel.style.bottom = `${zBottom}px`;
       panel.style.width = `${Math.round(bucketW)}px`;
       panel.style.left = `${Math.round(left)}px`;
       // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
@@ -1840,27 +1839,25 @@
   // land in (per canAdvance) into focus, plus the chain of arrows running from the stack to them —
   // everything else drops out of focus. The chain nodes are [inbox, …buckets…, resolved]; arrow k
   // joins node k→k+1, so the segments between the stack's node and a reachable bucket's node are the
-  // run [min,max). The buckets/arrows already ride above the scrim (tk-cofocus); here we blur/fade the
-  // ones that DON'T qualify, per element, instead of the whole group.
+  // run [min,max). Eligible buckets lift ABOVE the scrim (sharp); the rest rest below it and the scrim
+  // blurs them — the clean depth-of-field. The arrows lift as a group; off-path segments just fade.
   const focusDropTargets = (from, t) => {
     ensureFlow();
     const fromNode = from < 0 ? 0 : from + 1;
     const liveArrows = new Set();
-    STAGES.forEach((s, i) => {
-      const p = zoneBody[s.key]?.parentElement;
+    setBucketSharp((i) => {
       const ok = canAdvance(from, i, t);
-      if (p) p.classList.toggle("tk-out", !ok);
       if (ok) { const to = i + 1, lo = Math.min(fromNode, to), hi = Math.max(fromNode, to); for (let a = lo; a < hi; a++) liveArrows.add(a); }
+      return ok;
     });
     flowShafts.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
     flowHeads.forEach((el, i) => el.classList.toggle("tk-out", !liveArrows.has(i)));
-    [zonesRoot, flowRoot].forEach((el) => { if (el) el.classList.add("tk-cofocus"); });  // lift above the scrim; per-element .tk-out dims
+    if (flowRoot) flowRoot.classList.add("tk-cofocus");   // arrows lift above the scrim; off-path ones fade
   };
   const clearDropFocus = () => {
-    STAGES.forEach((s) => zoneBody[s.key]?.parentElement?.classList.remove("tk-out"));
-    flowShafts.forEach((el) => el.classList.remove("tk-out"));
-    flowHeads.forEach((el) => el.classList.remove("tk-out"));
-    applyBucketFocus();   // hand the group focus back to the normal (cursor-driven) co-focus
+    setBucketSharp(() => false);
+    setArrowsFaded(false);
+    applyBucketFocus();   // hand focus back to the normal (cursor-driven) co-focus
   };
 
   // A zone card is a FULL ticket card — identical layout/size to a corner-stack card.
@@ -2147,7 +2144,8 @@
       if (!t || !from || !to || to.width < 4) return;   // can't animate → it's already placed
       // Focus shift: bring the destination above the DoF scrim so it's sharp alongside the bin.
       const destZone = dest.classList.contains("tk-zcard"), destDeck = destZone ? null : dest.closest(".tk-deck");
-      if (destZone && zonesRoot) zonesRoot.style.zIndex = "4500"; else if (destDeck) destDeck.style.zIndex = "3";
+      const destPanel = destZone ? dest.closest(".tk-zone") : null;
+      if (destPanel) destPanel.classList.add("tk-sharp"); else if (destDeck) destDeck.style.zIndex = "3";
       dest.style.opacity = "0";   // hide the real card until the slide lands on it
       const clone = document.createElement("div");
       clone.className = "tk-zfly";
@@ -2162,7 +2160,7 @@
       setTimeout(() => {
         clone.remove();
         if (dest.isConnected) dest.style.opacity = "";
-        if (destZone && zonesRoot) zonesRoot.style.zIndex = ""; else if (destDeck) destDeck.style.zIndex = "";
+        if (destPanel) destPanel.classList.remove("tk-sharp"); else if (destDeck) destDeck.style.zIndex = "";
         updateStackFocus();   // settle the focus back onto just the bin
       }, 480);
     },

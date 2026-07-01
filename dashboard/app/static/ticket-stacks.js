@@ -282,7 +282,9 @@
     // yet finished, shows amber "in progress"; the rest are empty.
     return STAGE_KEYS.map((_, i) => (i <= furthest ? "g" : i === cur ? "y" : ""));
   };
-  const bucketBarClasses = (j) => STAGE_KEYS.map((_, i) => (i === j ? "g" : ""));
+  // A bucket's bars fill green CUMULATIVELY up to (and including) its own stage — Triage = [g,·,·],
+  // Investigation = [g,g,·], Resolution = [g,g,g] — so the bucket reads as "progress up to here".
+  const bucketBarClasses = (j) => STAGE_KEYS.map((_, i) => (i <= j ? "g" : ""));
   const barsHTML = (classes, onCard) => `<div class="tk-bars${onCard ? " tk-bars-card" : ""}">${classes.map((c) => `<span class="tk-seg${c ? " " + c : ""}"></span>`).join("")}</div>`;
 
   const ensureStyles = () => {
@@ -1870,6 +1872,10 @@
       panel.style.bottom = `${zBottom}px`;
       panel.style.width = `${Math.round(bucketW)}px`;
       panel.style.left = `${Math.round(left)}px`;
+      // Slide the header's bars left so they sit directly above the CENTRED ticket cards' bars (which are
+      // at right:13 of a CARD_W-wide card) → the header + every ticket's bars line up in one column.
+      const hdR = panel.querySelector(".tk-zone-hd-r");
+      if (hdR) hdR.style.marginRight = `${Math.round((bucketW - CARD_W) / 2 + 9)}px`;   // card bars right:13 − header pad 4
       // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
       // letting it sit in the right gutter (the body no longer clips it) for breathing room.
       const body = zoneBody[s.key], sb = body.querySelector(".tk-zsb");
@@ -1902,7 +1908,7 @@
       const panel = document.createElement("div");
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
-      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-hd-r"><span class="tk-zone-count">0</span>${barsHTML(bucketBarClasses(i), false)}</span></div>` +
+      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}</span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
@@ -2151,8 +2157,6 @@
         card.style.zIndex = String(i + 1);
         track.appendChild(card);
       });
-      const count = body.parentElement.querySelector(".tk-zone-count");
-      if (count) count.textContent = String(list.length);
       const st = zoneScroll[s.key];   // re-clamp scroll to the new content height + reposition
       if (st) { st.sy = clamp(st.sy, zMin(s.key), 0); st.ty = st.sy; positionZone(s.key); }
     });

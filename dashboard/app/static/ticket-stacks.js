@@ -248,7 +248,7 @@
          (The only place selection is allowed is the config menu's editable fields — see ticket-detail.js.) */
       .tk-stacks, .tk-zones { -webkit-user-select: none; user-select: none; }
       .tk-stacks { position: fixed; inset: auto 0 0 0; z-index: 4000; pointer-events: none; -webkit-app-region: no-drag; }
-      .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease; }
+      .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.2,.9,.3,1); }
       .tk-deck-left { left: 0; } .tk-deck-right { right: 0; }
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
@@ -1755,6 +1755,9 @@
     const deleted = tickets.filter((t) => isDeleted(t.id)).sort(order);
     buildDeck("right", trashMode ? deleted : avail.filter((t) => (t.state || "open") === "resolved").sort(order));
     decks.right?.box?.classList.toggle("is-trash", trashMode);
+    // The recycle bin opens as a TRANSIENT stack lifted above its icon (where the old drawer sat), so it
+    // doesn't sit on the bottom row over the inbox stack. The right deck slides up in trash mode, back down out of it.
+    if (decks.right?.box) decks.right.box.style.transform = trashMode ? `translateY(-${Math.round(CARD_H + 62)}px)` : "";
     renderZones();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then
     // fly it to the centre and expand its config. Creating fires several re-renders that REPLACE

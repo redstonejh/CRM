@@ -355,6 +355,10 @@
         filter: drop-shadow(0 0 5px rgba(90,150,255,0.5)); stroke-dasharray: 125.7; stroke-dashoffset: 125.7; }
       .tk-stack-btn.tk-ringing .tk-ring { opacity: 1; }
       .tk-stack-btn.tk-ringing .tk-ring circle { stroke-dashoffset: 0; transition: stroke-dashoffset .72s linear; }
+      /* Delete "suck-in": the ring fills as the shrinking ticket is drawn into the icon, then fades out. */
+      .tk-stack-btn.tk-suck .tk-ring { opacity: 1; }
+      .tk-stack-btn.tk-suck .tk-ring circle { stroke-dashoffset: 0; transition: stroke-dashoffset .5s ease-out; }
+      .tk-stack-btn.tk-suck-done .tk-ring { opacity: 0; transition: opacity .3s ease; }
 
       /* Full-width, high-contrast horizontal scrollbar across the bottom under a fanned stack. */
       .tk-bar { position: absolute; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.16);
@@ -557,15 +561,42 @@
     flyCloneTo(t, fromRect, deck.box.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`));
   };
   const markDeleted = (t) => { setMeta(t.id, { delStage: stageOf(t.id) || "" }); setDeleted(t.id, true); };
-  // Delete via the right-click menu → the bin opens on its own, the ticket nests, then the bin closes.
+  // Delete animation when the bin is CLOSED: shrink a clone of the ticket into the recycle-bin ICON while
+  // its blue ring fills — the ticket looks sucked in. Then it lives in the trash (open the bin to see it).
+  const flyIntoIcon = (t, fromRect, onDone) => {
+    const btn = decks.right?.action, ir = btn ? btn.getBoundingClientRect() : null;
+    if (!fromRect || !ir) { if (onDone) onDone(); return; }
+    const clone = document.createElement("div");
+    clone.className = "tk-zfly";
+    clone.style.cssText = `left:${fromRect.left}px; top:${fromRect.top}px; width:${Math.round(fromRect.width)}px; height:${Math.round(fromRect.height)}px; transform-origin: center; z-index: 6000; opacity: 1; transition: transform .5s cubic-bezier(.5,0,.75,1), opacity .5s ease-in;`;
+    clone.style.backgroundColor = baseColor();
+    clone.style.backgroundImage = cardBg(t);
+    clone.innerHTML = cardInner(t);
+    document.body.appendChild(clone);
+    const dx = Math.round((ir.left + ir.width / 2) - (fromRect.left + fromRect.width / 2));
+    const dy = Math.round((ir.top + ir.height / 2) - (fromRect.top + fromRect.height / 2));
+    btn.classList.remove("tk-suck-done"); btn.classList.add("tk-suck");   // ring fills as the ticket is drawn in
+    requestAnimationFrame(() => { clone.style.transform = `translate(${dx}px, ${dy}px) scale(0.05)`; clone.style.opacity = "0"; });
+    setTimeout(() => {
+      clone.remove();
+      btn.classList.remove("tk-suck"); btn.classList.add("tk-suck-done");   // then the ring fades back out
+      setTimeout(() => btn.classList.remove("tk-suck-done"), 320);
+      if (onDone) onDone();
+    }, 520);
+  };
+  // Delete via the right-click menu. Bin closed → suck the ticket into the icon; bin open → nest in the pile.
   const deleteToBin = (t, card) => {
     const from = card.getBoundingClientRect();
-    markDeleted(t); setTrashMode(true);
-    flyIntoTrash(t, from, () => setTimeout(() => setTrashMode(false), 450));   // sit a beat, then auto-close
+    if (trashMode) { markDeleted(t); render(); flyIntoTrash(t, from); return; }
+    markDeleted(t); render(); flyIntoIcon(t, from);
   };
-  // Delete by DRAGGING onto the bin (icon or open stack) → nest it, and leave the bin OPEN (you dragged
-  // here on purpose). Shared by the deck + bucket drag handlers.
-  const dropTicketToTrash = (t, fromRect) => { stopTrashRing(); markDeleted(t); setTrashMode(true); flyIntoTrash(t, fromRect); };
+  // Delete by DRAGGING onto the bin. Bin closed → suck it into the icon (ring fills); bin already open →
+  // nest it into the pile and leave it open (you dragged there on purpose). Shared by deck + bucket drags.
+  const dropTicketToTrash = (t, fromRect) => {
+    stopTrashRing();
+    if (trashMode) { markDeleted(t); flyIntoTrash(t, fromRect); return; }
+    markDeleted(t); render(); flyIntoIcon(t, fromRect);
+  };
 
   // ── Drag-into-bin targeting + the "hold on the icon to open it" ring ──────────
   const overTrashBtn = (x, y) => { const b = decks.right?.action; if (!b) return false; const r = b.getBoundingClientRect(); return x >= r.left - 7 && x <= r.right + 7 && y >= r.top - 7 && y <= r.bottom + 7; };
@@ -605,7 +636,6 @@
       const thumb = document.createElement("div"); thumb.className = "tk-thumb";
       bar.appendChild(thumb);
       box.appendChild(arrow); box.appendChild(bar);
-      box.addEventListener("wheel", (e) => onWheel(side, e), { passive: false });
       wireThumb(side, thumb);
       // Action button above the stack: LEFT "+" creates a ticket; RIGHT trash toggles the stack
       // between resolved and deleted. Lives on root (not the deck box) so it stays visible when
@@ -637,7 +667,6 @@
       const bar = document.createElement("div"); bar.className = "tk-bar";
       const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
       box.appendChild(arrow); box.appendChild(bar);
-      box.addEventListener("wheel", (e) => onWheel("trash", e), { passive: false });
       wireThumb("trash", thumb);
       root.appendChild(box);
       decks.trash = { box, track, arrow, bar, thumb, action: null, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
@@ -654,6 +683,17 @@
     document.addEventListener("pointerdown", (e) => { if (ticketMenu && !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { hideTicketMenu(); if (trashMode) setTrashMode(false); } });
     window.addEventListener("wheel", () => hideTicketMenu(), true);
+    // Scroll a fanned deck whenever the cursor is anywhere over its card band — INCLUDING the gaps
+    // between fanned cards. The deck box is pointer-events:none, so a wheel in a gap never reaches it;
+    // routing by cursor position here catches those gaps (and replaces the old per-box wheel handlers).
+    window.addEventListener("wheel", (e) => {
+      if (dragActive) return;                                   // drags route their own wheel (onDragWheel)
+      const side = DECK_SIDES.find((s) => fanned[s]); if (!side) return;
+      const d = decks[side]; if (!d || d.contentW <= d.viewW) return;
+      const r = deckCardsRect(side); if (!r) return;
+      const pad = 18;
+      if (e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad) onWheel(side, e);
+    }, { passive: false });
     // Clicking anywhere OFF the open bin (its stack or its icon) closes it.
     document.addEventListener("click", (e) => {
       if (!trashMode || dragActive) return;
@@ -780,7 +820,8 @@
       deck.bar.style[side === "left" ? "left" : "right"] = `${MARGIN}px`;
       deck.bar.style[side === "left" ? "right" : "left"] = "auto";
       const thumbW = Math.max(36, barW * (viewW / contentW));
-      const frac = scrollMin ? clamp(deck.scrollX, scrollMin, 0) / scrollMin : 0;   // 0..1
+      let frac = scrollMin ? clamp(deck.scrollX, scrollMin, 0) / scrollMin : 0;   // 0..1
+      if (side !== "left") frac = 1 - frac;   // mirror for the left-fanning decks (right/trash)
       deck.thumb.style.width = `${thumbW}px`;
       deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
       deck.thumb.style.right = "auto";
@@ -936,12 +977,13 @@
     const base = Math.max(36, barW * (deck.viewW / Math.max(1, deck.contentW)));
     // Apple-style overscroll: past an end, the thumb anchors to that end and shrinks by the overscroll
     // amount (and grows back as the recoil settles, since this runs every frame of the scroll loop).
-    let thumbW = base, left;
-    if (deck.scrollX > 0) { thumbW = Math.max(20, base - deck.scrollX); left = 0; }                          // past the start
-    else if (deck.scrollX < min) { thumbW = Math.max(20, base - (min - deck.scrollX)); left = barW - thumbW; }  // past the end
-    else { left = (min ? deck.scrollX / min : 0) * (barW - thumbW); }
+    let thumbW = base, frac;
+    if (deck.scrollX > 0) { thumbW = Math.max(20, base - deck.scrollX); frac = 0; }                          // past the start
+    else if (deck.scrollX < min) { thumbW = Math.max(20, base - (min - deck.scrollX)); frac = 1; }             // past the end
+    else { frac = min ? deck.scrollX / min : 0; }
+    if (side !== "left") frac = 1 - frac;   // right/trash fan LEFT → mirror so the thumb tracks the cursor, not against it
     deck.thumb.style.width = `${thumbW}px`;
-    deck.thumb.style.left = `${left}px`;
+    deck.thumb.style.left = `${frac * (barW - thumbW)}px`;
     deck.thumb.style.right = "auto";
     placeArrow(side);   // arrow tracks the ticket edge (rigidly — its transition is off during scroll)
     updateDeckEdges();  // screen-edge scroll shadows track the live card positions

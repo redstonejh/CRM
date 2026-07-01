@@ -629,6 +629,8 @@
       if (decks.trash?.box?.contains(e.target) || decks.right?.action?.contains(e.target)) return;
       setTrashMode(false);
     });
+    // Co-focus the buckets when the cursor drifts up toward them off a fanned stack.
+    document.addEventListener("pointermove", onFanHover);
   };
 
   const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + 34}px`; };
@@ -648,6 +650,42 @@
       // interactable. Clicking the scrim still bubbles to the "click off the bin closes it" handler.
       stackScrim.style.pointerEvents = trashMode ? "auto" : "none";
     }
+    if (!DECK_SIDES.some((s) => fanned[s])) setBucketsFocus(false);   // no fanned stack → buckets can't be co-focused
+  };
+
+  // ── Cursor-driven co-focus of the buckets while a stack is fanned ─────────────────────────────────
+  // Moving the cursor UP off the fanned stack toward the buckets lifts them above the DoF scrim too, so
+  // both are sharp; moving back down to the stack drops them. Dead-zones (the +/bin buttons, the gap
+  // between the lifted bin stack and its icon) don't flip the state, so you can reach those without the
+  // buckets flashing in. Gaps between fanned cards count as "on the stack" (inside its bounding box).
+  let bucketsFocused = false;
+  function setBucketsFocus(on) {
+    if (on === bucketsFocused) return;
+    bucketsFocused = on;
+    if (zonesRoot) zonesRoot.style.zIndex = on ? "4500" : "";   // above / back below the scrim
+  }
+  const deckCardsRect = (side) => {
+    const d = decks[side]; if (!d || !d.cards.length) return null;
+    let L = Infinity, T = Infinity, R = -Infinity, B = -Infinity;
+    d.cards.forEach((c) => { const r = c.getBoundingClientRect(); if (r.width < 1) return; L = Math.min(L, r.left); T = Math.min(T, r.top); R = Math.max(R, r.right); B = Math.max(B, r.bottom); });
+    return L === Infinity ? null : { left: L, top: T, right: R, bottom: B };
+  };
+  const nearRect = (x, y, r, pad) => !!r && x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+  const inFocusDeadzone = (x, y) => {
+    if (nearRect(x, y, decks.left?.action?.getBoundingClientRect(), 18)) return true;    // the "+" button
+    if (nearRect(x, y, decks.right?.action?.getBoundingClientRect(), 18)) return true;   // the bin icon
+    if (trashMode) {   // the empty gap between the lifted bin stack and its icon
+      const tr = deckCardsRect("trash"), ir = decks.right?.action?.getBoundingClientRect();
+      if (tr && ir && x >= Math.min(tr.left, ir.left) - 18 && x <= Math.max(tr.right, ir.right) + 18 && y >= tr.bottom - 10 && y <= ir.bottom + 10) return true;
+    }
+    return false;
+  };
+  const onFanHover = (e) => {
+    if (dragActive) return;                        // drags do their own targeting
+    const sr = deckCardsRect(DECK_SIDES.find((s) => fanned[s]));
+    if (!sr) { setBucketsFocus(false); return; }
+    if (inFocusDeadzone(e.clientX, e.clientY)) return;   // dead-zone → keep the current focus
+    setBucketsFocus(e.clientY < sr.top - 10);       // above the fanned stack → co-focus the buckets
   };
 
   const layout = (side) => {

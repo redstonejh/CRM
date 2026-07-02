@@ -12,7 +12,7 @@
   const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
   const SEV_RGB = { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
-  const sevOf = (t) => (t && ["low", "medium", "high", "critical"].includes(t.priority)) ? t.priority : (t ? "medium" : "none");
+  const sevOf = (t) => { const p = priorityOf(t); return ["low", "medium", "high", "critical"].includes(p) ? p : (t ? "medium" : "none"); };
 
   // Persist the per-deck custom card order (from drag-to-reorder) across reloads.
   const ORDER_KEY = (side) => `tk-stack-order-${side}`;
@@ -65,6 +65,7 @@
     try { localStorage.setItem(DELETED_STORE, JSON.stringify([...deletedSet])); } catch {}
   };
   let trashMode = false;   // right stack: false → resolved/closed, true → deleted (trash)
+  let trashShowEmpty = false;   // true while the user has DELIBERATELY opened the empty bin — keep it open to show its placeholder instead of auto-closing
 
   // Per-ticket title/subtitle overrides (e.g. for a manually-created ticket the user names in the
   // config). The ticket API can't edit companyLabel/host, so — like the stage & deleted flags —
@@ -72,6 +73,10 @@
   const META_STORE = "tk-ticket-meta";
   let metaMap = (() => { try { return JSON.parse(localStorage.getItem(META_STORE) || "{}") || {}; } catch { return {}; } })();
   const metaOf = (id) => (id && metaMap[id]) || {};
+  // Effective severity/priority. A meta-stored value (persisted in localStorage, exactly like every other
+  // stage field) wins over the ticket store's copy — so a chosen severity survives a refresh even if the
+  // auth-gated store round-trip didn't take. This is what keeps triage's progress from resetting.
+  const priorityOf = (t) => { if (!t) return ""; const mp = metaOf(t.id).priority; return (mp != null && mp !== "") ? mp : (t.priority || ""); };
   const setMeta = (id, m) => {
     if (!id) return;
     // The effort fields keep their natural-language text AND a parsed minutes value ("the data
@@ -80,6 +85,13 @@
     if ("overtime" in m) m = { ...m, overtimeMin: parseDuration(m.overtime) };
     metaMap[id] = { ...metaOf(id), ...m };
     try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
+  };
+  // Client-side activity trail (stage moves, trash/restore, severity…) — the store's own history
+  // (created / edited / resolved / …) covers the backend events; the right-click Activity view merges both.
+  const logActivity = (id, text) => {
+    if (!id || !text) return;
+    const a = [...(metaOf(id).activity || []), { at: Date.now(), text }].slice(-100);   // keep the last 100
+    setMeta(id, { activity: a });
   };
   const titleOf = (t) => { const m = metaOf(t.id); const ok = (v) => v && v.trim() && !isNA(v) ? v : null; return ok(m.client) || ok(m.title) || (t.companyLabel || "Unknown"); };
   const subOf = (t) => { const m = metaOf(t.id); const v = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || ""); return isNA(v) ? "" : v; };  // n/a → no trace on the card
@@ -174,7 +186,7 @@
     try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); localStorage.setItem(COLOR_LAST, c); } catch {}
     return c;
   };
-  const hasPriority = (t) => ["low", "medium", "high", "critical"].includes(t.priority);
+  const hasPriority = (t) => ["low", "medium", "high", "critical"].includes(priorityOf(t));
   const isBlank = (t) => {
     const m = metaOf(t.id);
     const title = (m.title && m.title.trim()) || (t.companyLabel && !["", "Untitled", "(manual)"].includes(t.companyLabel) ? t.companyLabel : "");
@@ -183,6 +195,8 @@
   };
   const colorFor = (t) => {
     if (!t || !t.id) return null;
+    const oc = metaOf(t.id).color;              // appearance-menu override: an explicit colour wins over EVERYTHING
+    if (oc) return oc;                          // (absent/"" → "match severity", the default: fall through)
     if (hasPriority(t)) return null;            // explicit priority → use the severity colour
     if (colorMap[t.id]) return colorMap[t.id];  // already coloured → keep it (sticky)
     if (isBlank(t)) return assignColor(t.id);   // blank & unassigned (new OR retroactive) → assign one
@@ -226,7 +240,7 @@
                      { key: "assignee",    label: "Assignee",    q: "Who's handling it?" } ],
     investigation: [ { key: "investigation", label: "Cause", q: "What caused the issue?", area: true },
                      { key: "fix",           label: "Fix",   q: "What's the fix?", area: true } ],
-    resolution:    [ { key: "resolution", label: "Resolution", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true, big: true },
+    resolution:    [ { key: "resolution", label: "Proof", q: "How do you know it's resolved? (you confirmed it / it auto-resolved / a client confirmed…)", area: true, big: true },
                      { key: "resolutionDate", label: "Date resolved", date: true },
                      { key: "duration", label: "Time taken", q: "e.g. 15 minutes, 2 hours, 1 week — a day is 8 working hours" },
                      { key: "overtime", label: "Overtime", q: "any extra hours beyond 8/day? (or “none”)" } ],
@@ -237,8 +251,8 @@
     { key: "incidentDate", label: "Date of incident", date: true },
     { key: "description",  label: "Description",       q: "What's the issue?", area: true },
   ];
-  // ISO date (yyyy-mm-dd, from <input type=date>) → dd-mm-yy for the compact header/card display.
-  const fmtDate = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "")); return m ? `${m[3]}-${m[2]}-${m[1].slice(2)}` : String(v || ""); };
+  // ISO date (yyyy-mm-dd, from <input type=date>) → mm-dd-yy (month-day-year) for the compact header/card display.
+  const fmtDate = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "")); return m ? `${m[2]}-${m[3]}-${m[1].slice(2)}` : String(v || ""); };
   // Natural-language work-effort → MINUTES. A "day" is 8 working hours and a "week" is 5 of those days,
   // so "1 week" = 40h; overtime beyond that is captured separately. Sums every "<n> <unit>" it finds
   // ("1 hour 30 min", "2d 4h"…); returns null if nothing parseable (e.g. "none").
@@ -257,7 +271,7 @@
     if (key === "subtitle") return m.subtitle != null ? m.subtitle : (t.host ?? "");
     if (key === "description") return m.description != null ? m.description : (t.description ?? "");
     if (key === "assignee") return m.assignee != null ? m.assignee : (t.assignee ?? "");
-    if (key === "priority") return t.priority || "";
+    if (key === "priority") return priorityOf(t);
     return m[key] != null ? m[key] : "";   // investigation / fix / resolution (client-side meta)
   };
   const fieldSatisfied = (t, key) => key === "priority" ? hasPriority(t) : String(fieldRaw(t, key) ?? "").trim() !== "";
@@ -315,12 +329,17 @@
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
       /* Empty-stack placeholder: a subtle dashed bounding box in the closed pile's resting spot that says
          what lands where. JS (layout()) shows it only when that corner stack has no cards; sized to the card. */
+      /* Styled to READ like the .tk-flow pipeline arrows: the same light-blue body (#d2e3ff) and soft
+         blue glow, instead of the old near-invisible faint white. */
       .tk-empty { position: absolute; bottom: ${MARGIN}px; box-sizing: border-box; pointer-events: none;
-        border: 1.5px dashed rgba(255,255,255,0.16); border-radius: ${RADIUS}px;
+        border: 2px dashed rgba(210, 227, 255, 0.6); border-radius: ${RADIUS}px;
         display: flex; align-items: center; justify-content: center; text-align: center;
-        color: rgba(255,255,255,0.30); font-size: 0.92rem; font-weight: 600; line-height: 1.42; padding: 14px;
+        color: rgba(210, 227, 255, 0.92); font-size: 0.92rem; font-weight: 600; line-height: 1.42; padding: 14px;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55));
         transition: border-color .2s ease, color .2s ease, box-shadow .2s ease; }
       .tk-empty-left { left: ${MARGIN}px; } .tk-empty-right { right: ${MARGIN}px; }
+      /* The empty recycle bin's placeholder, lifted to the open-bin spot (its bottom offset is set in render). */
+      .tk-empty-trash { right: ${MARGIN}px; z-index: 3; }
       /* Eligible drop target while dragging a trashed card out: light up the placeholder (empty stack) or
          the pile's cards (non-empty stack). */
       .tk-empty.tk-drop-ok { border-color: rgba(125,180,255,0.85); border-style: solid; color: rgba(190,215,255,0.85);
@@ -367,6 +386,26 @@
       .tk-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
       .tk-menu-danger { color: rgba(255,135,135,0.85); }
       .tk-menu-danger:hover { background: rgba(255,90,90,0.14); color: #ff8a8a; }
+      /* Appearance submenu: the widget palette as swatches + a "match severity" check item. */
+      .tk-swatches { display: grid; grid-template-columns: repeat(8, 20px); gap: 7px; padding: 8px 12px 6px; }
+      .tk-swatch { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
+        border: 1px solid rgba(255,255,255,0.30); padding: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+        transition: transform .12s ease, box-shadow .12s ease; }
+      .tk-swatch:hover { transform: scale(1.18); }
+      .tk-swatch.is-active { box-shadow: 0 0 0 2px rgba(255,255,255,0.95), inset 0 1px 0 rgba(255,255,255,0.25); }
+      .tk-menu-check { display: flex; align-items: center; gap: 7px; }
+      .tk-menu-check .tk-tick { width: 13px; flex: 0 0 auto; font-weight: 800; color: rgba(140,255,180,0.95); }
+      /* Activity view — a scrollable trail in the same frosted shell. */
+      .tk-activity { width: 285px; max-height: 330px; overflow-y: auto; overscroll-behavior: contain;
+        scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.5) transparent; }
+      .tk-act-hd { font-size: 0.82rem; font-weight: 700; color: rgba(255,255,255,0.88); padding: 4px 8px 7px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tk-act-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 8px; }
+      .tk-act-row:hover { background: rgba(255,255,255,0.05); }
+      .tk-act-when { font-size: 0.68rem; color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
+      .tk-act-text { font-size: 0.8rem; line-height: 1.35; color: rgba(255,255,255,0.82); }
+      .tk-act-by { color: rgba(255,255,255,0.5); }
+      .tk-act-none { color: rgba(255,255,255,0.45); font-size: 0.8rem; }
 
       .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
         border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
@@ -479,12 +518,28 @@
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
       .tk-seg { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.20); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
       .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
+      /* Incident date: pinned right under the top-right stage bars, right-aligned to them. A fixed spot that
+         never moves with the card's content, in a smaller, quieter font. */
+      /* Snug under the bars (bars: top 11 + 4 tall) and tight-leaded so BOTH lines (incident date +
+         resolution date/time) sit inside the ${ZCARD_PEEK}px header band a stacked card leaves visible. */
+      .tk-date-under { position: absolute; top: 16px; right: 13px; z-index: 7; pointer-events: none;
+        font-size: 0.6rem; font-weight: 600; line-height: 1.3; letter-spacing: .02em; white-space: nowrap;
+        text-align: right; color: rgba(255,255,255,0.6); }
+      /* On the stack/zone cards the client name is a single ellipsised line, leaving the top-right column
+         (bars + date) clear so they never collide with a long name. */
+      .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 1; padding-right: 56px; }
       /* Live config-menu info on the card face (replaces the old "Down <time>" line). Each entered
          field is one compact, ellipsised line: a muted label + the value. */
       .ticket-fields { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; min-height: 0; overflow: hidden; }
+      /* Smart-fit: entries WRAP to show their full text by default; fitCardFields() clamps the longest
+         one (line by line, gaining an ellipsis) only once the card's content overflows its fixed height. */
       .ticket-field { font-size: 0.75rem; line-height: 1.35; color: rgba(255,255,255,0.82);
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        flex: 0 0 auto;   /* keep the natural height — rows must OVERFLOW (measurably), not silently squash */
+        white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
       .ticket-field-l { color: rgba(255,255,255,0.42); font-weight: 600; margin-right: 5px; }
+      /* The description line joins the smart-fit too (scoped to OUR cards — the grid widget keeps its own look). */
+      .tk-card .ticket-host, .tk-zcard .ticket-host, .tk-zfly .ticket-host, .td-flyer .ticket-host {
+        display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
       /* body no longer clips — an inner .tk-zone-clip clips the scrolling track, so the scrollbar can sit
          in the bucket's right gutter (breathing room) without being cut off. */
       .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: visible; padding: 2px; }
@@ -558,9 +613,10 @@
 
   // Open/close the recycle bin. Closing it ALSO un-fans the bin's stack — otherwise fanned.trash stays
   // true and the "only one fanned at a time" rule keeps the other stacks' fan buttons hidden.
-  const setTrashMode = (on) => {
+  const setTrashMode = (on, showEmpty = false) => {
     trashMode = on;
-    if (!on && decks.trash) { fanned.trash = false; decks.trash.scrollX = 0; }
+    if (on) trashShowEmpty = showEmpty;   // opened deliberately? let an empty bin stay open to show its placeholder
+    else { trashShowEmpty = false; if (decks.trash) { fanned.trash = false; decks.trash.scrollX = 0; } }
     decks.right?.action?.classList.toggle("is-active", on);
     render();
   };
@@ -578,6 +634,7 @@
     // RESTORED or DELETED PERMANENTLY (the only truly destructive action → the lone red item).
     m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
       `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
+      `<button class="tk-menu-item" data-act="activity">activity</button>` +
       (trashed
         ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
           `<button class="tk-menu-item tk-menu-danger" data-act="purge">delete permanently</button>`
@@ -588,12 +645,68 @@
     ticketMenu = m;
     const on = (act, fn) => { const b = m.querySelector(`[data-act="${act}"]`); if (b) b.onclick = () => { hideTicketMenu(); fn(); }; };
     on("edit", () => window.ticketDetail?.open(t, card));
-    on("appearance", () => { /* placeholder */ });
+    on("appearance", () => showAppearanceMenu(t, x, y));
+    on("activity", () => showActivityMenu(t, x, y));
     on("trash", () => deleteToBin(t, card));
     on("restore", () => window.ticketStacks?.restore?.(t.id));
     on("purge", () => purgeTicket(t, card));
   };
   const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); showTicketMenu(t, card, e.clientX, e.clientY); });
+
+  // Appearance: an explicit palette colour (meta.color, persisted) or "match severity" (the default —
+  // no override, the card follows its severity colour and tracks live severity changes). Recolours every
+  // card instance IN PLACE (no rebuild), the same pattern as setPriority.
+  const setAppearance = (t, hex) => {
+    setMeta(t.id, { color: hex || "" });
+    document.querySelectorAll(`.tk-card[data-id="${cssEsc(t.id)}"], .tk-zcard[data-id="${cssEsc(t.id)}"]`).forEach((c) => { c.style.backgroundImage = cardBg(t); });
+  };
+  // The appearance submenu — same frosted .tk-menu shell: the widget palette as a swatch grid, then a
+  // "match severity" check item. The current state reads back: the active swatch rings white, or the
+  // check shows when no override is set.
+  const showAppearanceMenu = (t, x, y) => {
+    hideTicketMenu();
+    const cur = metaOf(t.id).color || "";
+    const m = document.createElement("div");
+    m.className = "tk-menu";
+    m.innerHTML =
+      `<div class="tk-swatches">${TICKET_COLORS.map((c) =>
+        `<button class="tk-swatch${c === cur ? " is-active" : ""}" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join("")}</div>` +
+      `<button class="tk-menu-item tk-menu-check" data-act="match"><span class="tk-tick">${cur ? "" : "&#10003;"}</span><span>match severity</span></button>`;
+    document.body.appendChild(m);
+    m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
+    m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
+    ticketMenu = m;   // reuse the main menu's dismiss wiring (outside press / Escape / wheel)
+    // Selections apply LIVE but keep the menu open (so you can try colours) — the active ring / check
+    // moves in place. Clicking off, Escape, or scrolling still dismisses it.
+    const sync = () => {
+      const now = metaOf(t.id).color || "";
+      m.querySelectorAll(".tk-swatch").forEach((b) => b.classList.toggle("is-active", b.dataset.color === now));
+      const tick = m.querySelector(".tk-tick"); if (tick) tick.innerHTML = now ? "" : "&#10003;";
+    };
+    m.querySelectorAll(".tk-swatch").forEach((b) => { b.onclick = () => { setAppearance(t, b.dataset.color); sync(); }; });
+    const mb = m.querySelector('[data-act="match"]'); if (mb) mb.onclick = () => { setAppearance(t, ""); sync(); };
+  };
+
+  // Activity view: the ticket's full trail — the STORE's history (created / edited / resolved / …,
+  // stamped with who) merged with the CLIENT trail (stage moves, trash/restore, severity), newest first.
+  const showActivityMenu = (t, x, y) => {
+    hideTicketMenu();
+    const when = (ms) => { try { return new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+    const entries = [
+      ...((t.history || []).map((h) => ({ at: Date.parse(h.at) || 0, text: h.detail || h.action || "", by: h.by || "" }))),
+      ...((metaOf(t.id).activity || []).map((a) => ({ at: a.at || 0, text: a.text || "", by: "" }))),
+    ].filter((e) => e.text).sort((a, b) => b.at - a.at);
+    const m = document.createElement("div");
+    m.className = "tk-menu tk-activity";
+    m.innerHTML = `<div class="tk-act-hd">Activity — ${esc(titleOf(t))}</div>` +
+      (entries.length
+        ? entries.map((e) => `<div class="tk-act-row"><span class="tk-act-when">${esc(when(e.at))}</span><span class="tk-act-text">${esc(e.text)}${e.by ? ` <span class="tk-act-by">— ${esc(e.by)}</span>` : ""}</span></div>`).join("")
+        : `<div class="tk-act-row tk-act-none">No activity yet</div>`);
+    document.body.appendChild(m);
+    m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
+    m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
+    ticketMenu = m;   // same dismiss wiring: outside press / Escape (wheel INSIDE it scrolls the list)
+  };
 
   // Wipe every CLIENT-SIDE trace of a ticket id — stage, stage-order, trash flag, title/date/desc
   // overrides, its blank-ticket colour, and its slot in every deck order. Used by "delete permanently"
@@ -623,6 +736,7 @@
     clone.style.backgroundImage = cardBg(t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
+    fitCardFields(clone);
     requestAnimationFrame(() => { clone.style.transform = "scale(0.12)"; clone.style.opacity = "0"; });
     setTimeout(() => { clone.remove(); doPurge(); }, 320);
   };
@@ -640,6 +754,7 @@
     clone.style.backgroundImage = cardBg(t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
+    fitCardFields(clone);
     requestAnimationFrame(() => { clone.style.transform = `translate(${Math.round(to.left - fromRect.left)}px, ${Math.round(to.top - fromRect.top)}px) scale(${(to.width / fromRect.width).toFixed(4)}, ${(to.height / fromRect.height).toFixed(4)})`; });
     setTimeout(() => { clone.remove(); if (destEl.isConnected) destEl.style.opacity = ""; if (onLanded) onLanded(); }, 470);
   };
@@ -663,6 +778,7 @@
   // else at the TOP (front card). Then slide the clone home.
   const restoreToDeck = (t, x, fromRect, side) => {
     setDeleted(t.id, false);
+    logActivity(t.id, "Restored from the trash");
     const fd = side || deckSideFor(t);                             // the stack it was dropped on, else its home by state
     const deck = decks[fd];
     const ids = deck.cards.map((c) => c.dataset.id).filter((id) => id && id !== t.id);
@@ -674,6 +790,7 @@
   };
   const markDeleted = (t) => {
     setMeta(t.id, { delStage: stageOf(t.id) || "" });
+    logActivity(t.id, "Moved to trash");
     setDeleted(t.id, true);
     // Newest deletion goes to the TOP of the pile (front card, index 0) — not sorted to the bottom by age.
     if (decks.trash) { decks.trash.order = [t.id, ...(decks.trash.order || []).filter((id) => id !== t.id)]; saveOrder("trash"); }
@@ -697,16 +814,26 @@
   const dropTicketToTrash = (t, fromRect) => { stopTrashRing(); flyIntoBin(t, fromRect); };
 
   // ── Drag-into-bin targeting + the "hold on the icon to open it" ring ──────────
-  const overTrashBtn = (x, y) => { const b = decks.right?.action; if (!b) return false; const r = b.getBoundingClientRect(); return x >= r.left - 7 && x <= r.right + 7 && y >= r.top - 7 && y <= r.bottom + 7; };
+  const overTrashBtn = (x, y) => { const b = decks.right?.action; if (!b) return false; const r = b.getBoundingClientRect();
+    const pad = dragActive ? 24 : 7;   // generous catch area while dragging — esp. for an EMPTY bin, whose only drop target is this icon
+    return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad; };
   const overOpenTrash = (x, y) => trashMode && !!decks.trash?.cards.some((c) => { const r = c.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
-  const overTrashTarget = (x, y) => overTrashBtn(x, y) || overOpenTrash(x, y);
+  // The OPEN-but-EMPTY bin's "Deleted tickets get added here" placeholder is a full-size drop target too —
+  // without it an empty bin's only target is the 34px icon.
+  const overEmptyTrashPh = (x, y) => {
+    if (!trashMode || decks.trash?.cards.length) return false;
+    const el = decks.trash?.emptyPh; if (!el || el.style.display === "none") return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
+  };
+  const overTrashTarget = (x, y) => overTrashBtn(x, y) || overOpenTrash(x, y) || overEmptyTrashPh(x, y);
   // Resting the cursor on the CLOSED bin icon while dragging draws a blue ring around it; when the ring
   // completes its trip the bin opens automatically so you can drop into it.
   let ringTimer = 0;
   const startTrashRing = () => {
     const b = decks.right?.action; if (!b || trashMode || b.classList.contains("tk-ringing")) return;
     b.classList.add("tk-ringing");
-    ringTimer = setTimeout(() => { b.classList.remove("tk-ringing"); ringTimer = 0; setTrashMode(true); }, 720);
+    ringTimer = setTimeout(() => { b.classList.remove("tk-ringing"); ringTimer = 0; setTrashMode(true, true); }, 720);   // showEmpty: an EMPTY bin opens to its placeholder (a big drop target) instead of auto-closing
   };
   function stopTrashRing() { const b = decks.right?.action; if (b) b.classList.remove("tk-ringing"); if (ringTimer) { clearTimeout(ringTimer); ringTimer = 0; } }
   // While dragging: ring the closed bin when hovering it; report whether the bin is the drag target.
@@ -748,7 +875,7 @@
         action.setAttribute("aria-label", "Recycle bin (deleted tickets)");
         action.title = "Recycle bin";
         action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20"/></svg>';
-        action.addEventListener("click", () => setTrashMode(!trashMode));
+        action.addEventListener("click", () => setTrashMode(!trashMode, true));
       }
       // Empty-stack placeholder: lives on root (like the action button) so it shows when the deck box is
       // hidden (.is-empty). Sized + toggled in layout(); tells the user what this corner collects.
@@ -772,8 +899,14 @@
       const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
       box.appendChild(arrow); box.appendChild(bar);
       wireThumb("trash", thumb);
-      root.appendChild(box);
-      decks.trash = { box, track, arrow, bar, thumb, action: null, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
+      // Empty-bin placeholder: lives on root (the deck box is display:none while empty) and is shown in the
+      // lifted open-bin spot when the user opens an empty recycle bin. Sized + positioned in render().
+      const empty = document.createElement("div");
+      empty.className = "tk-empty tk-empty-trash";
+      empty.innerHTML = `<span>Deleted tickets<br>get added here</span>`;
+      empty.style.display = "none";
+      root.appendChild(box); root.appendChild(empty);
+      decks.trash = { box, track, arrow, bar, thumb, action: null, emptyPh: empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
     }
     document.body.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); DECK_SIDES.forEach(layout); });
@@ -786,7 +919,7 @@
     // Dismiss the right-click menu on an outside press, Escape, or scroll.
     document.addEventListener("pointerdown", (e) => { if (ticketMenu && !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { hideTicketMenu(); if (trashMode) setTrashMode(false); } });
-    window.addEventListener("wheel", () => hideTicketMenu(), true);
+    window.addEventListener("wheel", (e) => { if (!ticketMenu || !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);   // wheel INSIDE a menu (activity list) scrolls it instead
     // Scroll a fanned deck whenever the cursor is anywhere over its card band — INCLUDING the gaps
     // between fanned cards. The deck box is pointer-events:none, so a wheel in a gap never reaches it;
     // routing by cursor position here catches those gaps (and replaces the old per-box wheel handlers).
@@ -824,13 +957,18 @@
   // stack ABOVE the idle ones (z 3 vs 1) and stay sharp; the idle ones blur via their OWN filter (the
   // whole .tk-stacks now sits above the scrim, so the scrim can't do it for us). A fanned stack + an
   // open bin are BOTH sharp at once.
-  const isFocused = (s) => !!(decks[s] && (fanned[s] || (s === "trash" && trashMode && decks.trash.cards.length)));
+  const isFocused = (s) => !!(decks[s] && (fanned[s] || (s === "trash" && trashMode && (decks.trash.cards.length || trashShowEmpty))));
   const updateStackFocus = () => {
     const focus = {}; let any = false;
     DECK_SIDES.forEach((s) => { const d = decks[s]; if (!d) return; focus[s] = isFocused(s); if (focus[s]) any = true; });
     DECK_SIDES.forEach((s) => { const d = decks[s]; if (!d) return;
+      const dim = any && !focus[s];
       d.box.style.zIndex = focus[s] ? "3" : "1";
-      d.box.style.filter = (any && !focus[s]) ? "blur(4px)" : "";   // idle decks go soft while another is focused
+      d.box.style.filter = dim ? "blur(4px)" : "";   // idle decks go soft while another is focused
+      // The empty-stack placeholder blurs WITH its (out-of-focus) deck; "" reverts to the CSS glow filter.
+      // A placeholder that's an active drag drop-target (.tk-drop-ok) stays sharp so it reads as eligible.
+      const ph = d.empty || d.emptyPh;
+      if (ph) ph.style.filter = (dim && !ph.classList.contains("tk-drop-ok")) ? "blur(4px)" : "";
     });
     if (stackScrim) {
       stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = any ? "blur(4px)" : "blur(0px)";
@@ -917,6 +1055,12 @@
     // EXCEPT trashed cards: a ticket in the bin doesn't preview eligible buckets on hover.
     const hov = hoveredFanCard(e.clientX, e.clientY);
     if (hov && hov.t) { setBucketsFocus(false); if (hov.side === "trash") { clearHoverPreview(); return; } showHoverPreview(hov.side, hov.t); return; }
+    // Deadzone: between cards but still within the fanned row's band → HOLD the last ticket's preview. The
+    // focus only changes when the cursor reaches a NEW ticket, not while crossing the gaps between them.
+    // Trash rows never preview (kept focus-free), so there's nothing to hold there.
+    if (side !== "trash" && hoverPrev &&
+        e.clientY >= sr.top && e.clientY <= sr.bottom + 12 &&
+        e.clientX >= sr.left - 12 && e.clientX <= sr.right + 12) return;
     clearHoverPreview();
     setBucketsFocus(side !== "trash" && e.clientY < sr.top - 10);   // above a fanned (non-trash) stack → co-focus ALL buckets
   };
@@ -1402,6 +1546,7 @@
     clone.style.backgroundImage = cardBg(t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
+    fitCardFields(clone);
     if (!target) { requestAnimationFrame(() => { clone.style.opacity = "0"; }); setTimeout(() => clone.remove(), 420); return; }
     // Measure the card's resting slot with its transition suppressed, then hide it
     // behind the flying clone until the clone lands.
@@ -1504,6 +1649,8 @@
       // Dragging a TRASH card over an ELIGIBLE corner stack → it'll restore there; highlight it and
       // don't reorder the bin. Over an ineligible stack, no highlight → it'll spring back on release.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(es); if (es) { clearZoneHighlight(); clearGap(); return; } }
+      // A fully-completed LEFT-stack card over the RIGHT (resolved) pile → light the pile it would resolve into.
+      if (side === "left") setStackDrop(e.clientY >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(e.clientX, e.clientY) === "right" ? "right" : null);
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
@@ -1521,17 +1668,30 @@
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
+      // Evaluate the trash target BEFORE dragActive resets — the generous drag-time catch pad (and the
+      // open placeholder) must still count at the moment of release.
+      const overTrash = dragging && overTrashTarget(e.clientX, e.clientY);
       dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus(); setStackDrop(null);   // always clear
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       // A plain click opens its config — EXCEPT trash cards, which have no config (their restore button does the work).
       if (!wasDrag) { if (side !== "trash") window.ticketDetail?.open(t, card); return; }
-      // Dropped on the recycle bin (icon or open stack) → delete it into the bin (except trash cards).
-      if (side !== "trash" && overTrashTarget(e.clientX, e.clientY)) { dropTicketToTrash(t, card.getBoundingClientRect()); return; }
+      // Dropped on the recycle bin (icon, open stack, or empty placeholder) → delete it into the bin (except trash cards).
+      if (side !== "trash" && overTrash) { dropTicketToTrash(t, card.getBoundingClientRect()); return; }
       // A trash card dropped on an ELIGIBLE corner stack → restore it into THAT stack; over an
       // ineligible one it falls through and springs back into the bin.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(null); if (es) { restoreToDeck(t, e.clientX, card.getBoundingClientRect(), es); return; } }
+      // A fully-completed (3-green) LEFT-stack card dropped on the RIGHT (resolved) pile → resolve it there.
+      if (side === "left" && overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
+        const fromRect = card.getBoundingClientRect();
+        t.state = "resolved"; const live = tickets.find((x) => x.id === t.id); if (live) live.state = "resolved";
+        try { window.tickets?.resolve?.(t.id); } catch {}
+        if (decks.right) { decks.right.order = [t.id, ...(decks.right.order || []).filter((x) => x !== t.id)]; saveOrder("right"); }
+        render();
+        flyCloneTo(t, fromRect, decks.right?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`));
+        return;
+      }
       const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
       if (dDrop && dDrop.track) {              // compensate for the track's transform so it doesn't jump by scrollX
         const tt = side === "left" ? dDrop.scrollX : -dDrop.scrollX;
@@ -1575,16 +1735,51 @@
   // The card's inner markup — shared by the stack cards and the fly-home clone so they render
   // identically. Header = CLIENT (title) + " | date of incident" (the date in a secondary colour); the
   // short description sits on the sub-line; then the live stage-field info.
+  // The pinned date block under the top-right bars: the incident date, and — once a resolution date is
+  // entered — a second line: resolved SAME day → the time it took ("15 minutes"); a LATER day → the
+  // resolution date. (Both stay in the card's detail rows too; this is just the at-a-glance header.)
+  const dateUnderHTML = (t) => {
+    const m = metaOf(t.id);
+    const dateS = fmtDate(m.incidentDate);
+    if (!dateS) return "";
+    const ok = (v) => v && !isNA(v) && String(v).trim() ? String(v).trim() : "";
+    const resD = ok(m.resolutionDate) ? fmtDate(m.resolutionDate) : "";
+    const second = resD ? (resD === dateS ? ok(m.duration) : resD) : "";
+    return `<div class="tk-date-under">${esc(dateS)}${second ? `<br>${esc(second)}` : ""}</div>`;
+  };
+
   const cardInner = (t) => {
-    const dateS = fmtDate(metaOf(t.id).incidentDate);
     const desc = fieldRaw(t, "description");
     const sub = (desc && !isNA(desc) && String(desc).trim()) ? desc : subOf(t);
     return `<div class="ticket-body">` +
-      `<div class="ticket-company">${esc(titleOf(t))}${dateS ? ` <span class="ticket-date">| ${esc(dateS)}</span>` : ""}</div>` +
+      `<div class="ticket-company">${esc(titleOf(t))}</div>` +      // client (ellipsised); date now lives pinned under the bars
       (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // short description (else host); n/a/empty → no line
       `<div class="ticket-fields">${cardFieldsHTML(t)}</div>` +     // live config-menu info (replaces the down-time)
       `</div>` +
-      barsHTML(ticketBarClasses(t), true);
+      barsHTML(ticketBarClasses(t), true) +
+      dateUnderHTML(t);   // incident date (+ resolution info), fixed snugly under the top-right bars
+  };
+
+  // Smart-fit the card's detail lines. Every entry renders FULL (wrapped) by default; only when the
+  // body overflows the card's fixed height does the LONGEST entry lose one line at a time (gaining an
+  // ellipsis via line-clamp) until everything fits — so a card with room never truncates anything.
+  // Runs after the card is in the DOM (it measures real layout); re-run whenever the text changes.
+  const fitCardFields = (card) => {
+    const body = card.querySelector(".ticket-body"); if (!body) return;
+    const rows = [...card.querySelectorAll(".ticket-host, .ticket-field")]; if (!rows.length) return;
+    rows.forEach((r) => { r.style.webkitLineClamp = ""; });   // reset → fully expanded
+    const fields = card.querySelector(".ticket-fields");
+    const over = () => body.scrollHeight > body.clientHeight + 1 || (fields && fields.scrollHeight > fields.clientHeight + 1);
+    for (let guard = 0; guard < 40 && over(); guard++) {
+      let tallest = null, h = 0;
+      for (const r of rows) { const rh = r.getBoundingClientRect().height; if (rh > h) { h = rh; tallest = r; } }
+      if (!tallest) return;
+      const cs = getComputedStyle(tallest);
+      const lineH = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 12) * 1.35;
+      const lines = Math.max(1, Math.round(h / lineH));
+      if (lines <= 1) return;   // every entry is single-line already — the container's clip takes the rest
+      tallest.style.webkitLineClamp = String(lines - 1);
+    }
   };
 
   const cardEl = (t, side) => {
@@ -1629,6 +1824,13 @@
     deck.cards.forEach((c) => c.remove());
     deck.cards = list.map((t) => cardEl(t, side));
     deck.cards.forEach((c) => deck.track.appendChild(c));
+    deck.cards.forEach(fitCardFields);   // measure in the DOM → expand entries, clamp only on overflow
+    // Fresh elements must MATERIALISE in their pile slots, not animate into them from (0,0) — otherwise
+    // every render (a ticket moved anywhere, the bin opening…) makes the whole pile jump and resettle.
+    // Suppress the transform transition for the initial placement; restore it once that's committed.
+    const fresh = deck.cards;
+    fresh.forEach((c) => { c.style.transition = "none"; });
+    requestAnimationFrame(() => requestAnimationFrame(() => fresh.forEach((c) => { if (c.isConnected) c.style.transition = ""; })));
     // ≤1 card can't be fanned (the fan arrow hides at n≤1), so drop the fan state — otherwise a fanned
     // stack dragged down to its last card stays fanned with no arrow to collapse it, stuck in focus/blur.
     if (deck.cards.length <= 1) { fanned[side] = false; deck.scrollX = 0; }   // keep deck.order (a temporarily-small deck shouldn't forget it)
@@ -1954,9 +2156,20 @@
       panel.style.width = `${Math.round(bucketW)}px`;
       panel.style.left = `${Math.round(left)}px`;
       // Slide the header's bars left so they sit directly above the CENTRED ticket cards' bars (which are
-      // at right:13 of a CARD_W-wide card) → the header + every ticket's bars line up in one column.
+      // at right:13 of a CARD_W-wide card) → the header + every ticket's bars line up in one column. The
+      // header's hd-r rests 18px in from the panel edge (14 panel pad + 4 header pad); a centred card's bars
+      // rest 13px in → slide by (gap/2 − 5). When a ticket is present, measure its real bars and correct any
+      // residual box-model drift (the same measured approach as the scrollbar centring below).
       const hdR = panel.querySelector(".tk-zone-hd-r");
-      if (hdR) hdR.style.marginRight = `${Math.round((bucketW - CARD_W) / 2 + 9)}px`;   // card bars right:13 − header pad 4
+      if (hdR) {
+        const base = (bucketW - CARD_W) / 2 - 5;
+        hdR.style.marginRight = `${Math.round(base)}px`;
+        const cardBars = zoneBody[s.key]?.querySelector(".tk-zcard .tk-bars-card");
+        if (cardBars) {
+          const delta = hdR.getBoundingClientRect().right - cardBars.getBoundingClientRect().right;
+          if (Math.abs(delta) > 0.5) hdR.style.marginRight = `${Math.round(base + delta)}px`;
+        }
+      }
       // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
       // letting it sit in the right gutter (the body no longer clips it) for breathing room.
       const body = zoneBody[s.key], sb = body.querySelector(".tk-zsb");
@@ -2087,6 +2300,8 @@
       const ft = (y >= stackTopY()) ? fanTarget() : null;
       if (ft) { clearZoneHighlight(); clearGap(); fanGap = ft; previewFanGap(ft, fanInsertIndex(ft, x)); return; }
       if (fanGap) { layout(fanGap); fanGap = null; }   // moved off the stack → close the fan gap
+      // A fully-completed ticket hovering the RIGHT (resolved) pile → light it as the eligible drop target.
+      setStackDrop(y >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(x, y) === "right" ? "right" : null);
       flowHighlight(posOfStage(stage), x, y, t);
       const dt = dropTarget(posOfStage(stage), x, y, t);
       if (dt) previewGap(dt.stage, dt.index); else clearGap();
@@ -2096,6 +2311,10 @@
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (!dragging && Math.hypot(dx, dy) > 6) {
         dragging = true; dragActive = true;
+        // Depth-of-field for the WHOLE drag: eligible buckets (+ their arrow chain) lift above the scrim
+        // (sharp), everything else rests below it — and the scrim engages even with no stack fanned.
+        focusDropTargets(posOfStage(stage), t);
+        if (stackScrim) stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = "blur(4px)";
         r0 = card.getBoundingClientRect();
         clone = document.createElement("div");
         clone.className = "tk-zfly";
@@ -2106,6 +2325,7 @@
         clone.style.backgroundImage = cardBg(t);
         clone.innerHTML = zoneCardInner(t);
         document.body.appendChild(clone);
+        fitCardFields(clone);
         card.classList.add("tk-zdrag");
         dragPreviewFn = preview;                 // re-run while autoscrolling so the gap follows the cursor
         requestAnimationFrame(() => { if (clone) clone.style.scale = "1.04"; });   // ease up off the bucket
@@ -2136,7 +2356,10 @@
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
-      const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null; stopTrashRing();
+      // Trash target BEFORE dragActive resets (keeps the drag-time catch pad live at release).
+      const overTrash = dragging && overTrashTarget(e.clientX, e.clientY);
+      const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null; stopTrashRing(); setStackDrop(null);
+      if (wasDrag) { clearDropFocus(); updateStackFocus(); }   // drop the drag DoF: focus back to normal, scrim back to fan/bin state
       clearZoneHighlight(); clearGap();
       if (fanGap) { layout(fanGap); fanGap = null; }
       if (!wasDrag) {   // a plain click — no drag clone to settle
@@ -2145,8 +2368,8 @@
         revealZoneCard(stage, card, () => window.ticketDetail?.open(t, card));   // scroll into view, then open
         return;
       }
-      // Dropped on the recycle bin (icon or open stack) → delete it into the bin.
-      if (overTrashTarget(e.clientX, e.clientY)) { const r = clone ? clone.getBoundingClientRect() : card.getBoundingClientRect(); if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); dropTicketToTrash(t, r); return; }
+      // Dropped on the recycle bin (icon, open stack, or empty placeholder) → delete it into the bin.
+      if (overTrash) { const r = clone ? clone.getBoundingClientRect() : card.getBoundingClientRect(); if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); dropTicketToTrash(t, r); return; }
       // A real drag → apply the drop, render, then SETTLE the clone into the ticket's resting card.
       // Released over the matching fanned stack → splice into its row at the cursor slot, un-assigning
       // the stage so the ticket re-joins the inbox deck exactly there.
@@ -2159,8 +2382,24 @@
         setStage(t.id, null); setStageAt(t.id, null); render(); settleClone(t.id); return;
       }
       const dt = dropTarget(posOfStage(stage), e.clientX, e.clientY, t);   // valid bucket (reorder or legal step) + layer
-      if (dt) { setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); settleClone(t.id); return; }
-      if (e.clientY >= stackTopY()) { setStage(t.id, null); setStageAt(t.id, null); render(); settleClone(t.id); return; }   // onto a stack → inbox (append)
+      if (dt) {
+        if (dt.stage !== stage) logActivity(t.id, `Moved to ${STAGES.find((s) => s.key === dt.stage)?.label || dt.stage}`);
+        setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); settleClone(t.id); return;
+      }
+      if (e.clientY >= stackTopY()) {
+        // Dropped on the RIGHT (resolved) pile with EVERY stage complete (3 green bars) → RESOLVE it:
+        // flip the state (locally for the instant render + in the store) so the render routes it into
+        // the resolved pile — without this, the state-gated left/right split sent it to the inbox.
+        if (overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
+          t.state = "resolved"; const live = tickets.find((x) => x.id === t.id); if (live) live.state = "resolved";
+          try { window.tickets?.resolve?.(t.id); } catch {}
+          setStage(t.id, null); setStageAt(t.id, null);
+          if (decks.right) { decks.right.order = [t.id, ...(decks.right.order || []).filter((x) => x !== t.id)]; saveOrder("right"); }   // newest → front card
+          render(); settleClone(t.id); return;
+        }
+        if (stageOf(t.id)) logActivity(t.id, "Moved back to the new-tickets stack");
+        setStage(t.id, null); setStageAt(t.id, null); render(); settleClone(t.id); return;   // onto a stack → inbox (append)
+      }
       render(); settleClone(t.id);   // a blocked (red) zone / nowhere → rebuild in place + settle home
     };
     card.addEventListener("pointerdown", (e) => {
@@ -2237,6 +2476,7 @@
         if (i > 0) card.style.marginTop = `-${CARD_H - ZCARD_PEEK}px`;
         card.style.zIndex = String(i + 1);
         track.appendChild(card);
+        fitCardFields(card);   // measure in the DOM → expand entries, clamp only on overflow
       });
       const st = zoneScroll[s.key];   // re-clamp scroll to the new content height + reposition
       if (st) { st.sy = clamp(st.sy, zMin(s.key), 0); st.ty = st.sy; positionZone(s.key); }
@@ -2248,6 +2488,7 @@
   const dropIntoZone = (fromCard, t, stage, index) => {
     const from = fromCard.getBoundingClientRect();
     setDeleted(t.id, false);   // entering the pipeline un-deletes (a ticket can't be both staged and trashed)
+    if (stageOf(t.id) !== stage) logActivity(t.id, `Moved to ${STAGES.find((s) => s.key === stage)?.label || stage}`);
     setStage(t.id, stage);
     setStageAt(t.id, stage, index);   // bottom by default, or the layer the cursor was over
     render();
@@ -2261,6 +2502,7 @@
     clone.style.backgroundImage = cardBg(t);
     clone.innerHTML = zoneCardInner(t);
     document.body.appendChild(clone);
+    fitCardFields(clone);
     dest.style.opacity = "0";
     requestAnimationFrame(() => {
       clone.style.transform = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`;
@@ -2285,9 +2527,23 @@
     const deleted = tickets.filter((t) => isDeleted(t.id)).sort(order);
     buildDeck("trash", trashMode ? deleted : []);
     if (decks.trash?.box) decks.trash.box.style.transform = `translateY(-${Math.round(CARD_H + 62)}px)`;
-    // An empty bin closes itself (e.g. after restoring the last deleted ticket) — clear the state and
-    // unblur in place (the deck already rendered empty, so no re-render is needed → no recursion).
-    if (trashMode && !deleted.length) { trashMode = false; fanned.trash = false; decks.right?.action?.classList.remove("is-active"); }
+    // Once the bin actually holds cards, the deliberate-empty intent is spent — so emptying it later
+    // (restoring the last card) falls back to the normal auto-close below.
+    if (deleted.length) trashShowEmpty = false;
+    // An empty bin closes itself (e.g. after restoring the last deleted ticket) — UNLESS the user just
+    // opened it empty on purpose (trashShowEmpty), in which case it stays open to show the placeholder.
+    if (trashMode && !deleted.length && !trashShowEmpty) { trashMode = false; fanned.trash = false; decks.right?.action?.classList.remove("is-active"); }
+    // Deliberately-opened empty bin: show the "Deleted tickets get added here" placeholder in the lifted
+    // open-bin spot (the deck box itself is display:none while empty), matching where the cards would fan up.
+    if (decks.trash?.emptyPh) {
+      const showTrashPh = trashMode && !deleted.length;
+      decks.trash.emptyPh.style.display = showTrashPh ? "" : "none";
+      if (showTrashPh) {
+        decks.trash.emptyPh.style.width = `${CARD_W}px`;
+        decks.trash.emptyPh.style.height = `${CARD_H}px`;
+        decks.trash.emptyPh.style.bottom = `${MARGIN + CARD_H + 62}px`;
+      }
+    }
     updateStackFocus();
     renderZones();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then
@@ -2365,6 +2621,7 @@
       const fromCard = decks.trash?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`);
       const from = fromCard ? fromCard.getBoundingClientRect() : null;
       setDeleted(id, false);
+      logActivity(id, "Restored from the trash");
       if (ds && STAGE_KEYS.includes(ds)) { setStage(id, ds); setStageAt(id, ds, 0); }
       else { setStage(id, null); setStageAt(id, null); }
       render();
@@ -2383,6 +2640,7 @@
       clone.style.backgroundImage = cardBg(t);
       clone.innerHTML = cardInner(t);
       document.body.appendChild(clone);
+      fitCardFields(clone);
       requestAnimationFrame(() => {
         clone.style.transform = `translate(${Math.round(to.left - from.left)}px, ${Math.round(to.top - from.top)}px) scale(${(to.width / from.width).toFixed(4)}, ${(to.height / from.height).toFixed(4)})`;
       });
@@ -2409,8 +2667,11 @@
       setMeta(id, m);
       const t = tickets.find((x) => x.id === id); if (!t) return;
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
-        const co = c.querySelector(".ticket-company"), dateS = fmtDate(metaOf(t.id).incidentDate);
-        if (co) co.innerHTML = `${esc(titleOf(t))}${dateS ? ` <span class="ticket-date">| ${esc(dateS)}</span>` : ""}`;   // client + | incident date
+        const co = c.querySelector(".ticket-company");
+        if (co) co.textContent = titleOf(t);   // client only; the date lives in its own pinned element
+        const du = c.querySelector(".tk-date-under"), duh = dateUnderHTML(t);   // date (+ resolution info) under the bars
+        if (du) du.remove();
+        if (duh) c.insertAdjacentHTML("beforeend", duh);
         const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
         const descRaw = fieldRaw(t, "description"); const sub = (descRaw && !isNA(descRaw) && String(descRaw).trim()) ? descRaw : subOf(t);
         if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }
@@ -2419,14 +2680,17 @@
         if (ff) ff.innerHTML = fh; else if (body) body.insertAdjacentHTML("beforeend", `<div class="ticket-fields">${fh}</div>`);
         const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
         if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
+        fitCardFields(c);   // re-fit: the text just changed (expand what fits, clamp the longest if not)
       });
     },
     // Severity → recolour + refresh the card(s) IN PLACE (like setMeta) and persist the priority,
     // WITHOUT a rebuild — so the open config's source card stays put (no snap-back copy). The persist
     // fires onChanged, which is deferred while the config is open (see the subscription above).
     setPriority: (id, val) => {
-      const t = tickets.find((x) => x.id === id); if (!t || t.priority === val) return;
-      t.priority = val;
+      const t = tickets.find((x) => x.id === id); if (!t || priorityOf(t) === val) return;
+      logActivity(id, `Severity set to ${val}`);
+      setMeta(id, { priority: val });   // persist in localStorage meta (survives refresh, like every other stage field)
+      t.priority = val;                 // keep the in-memory store copy in sync (colour + cross-app)
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         c.style.backgroundImage = cardBg(t);
         const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);

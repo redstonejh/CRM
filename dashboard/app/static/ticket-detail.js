@@ -357,7 +357,8 @@
     // Build the flyer FRESH (not a clone). A clone drags along every widget class +
     // backdrop-filter, which is what washed it brighter-than-hover mid-flight. A plain
     // opaque div with only the visual styles can't be highlighted by anything.
-    const prio = (ticket && ["low", "medium", "high", "critical"].includes(ticket.priority)) ? ticket.priority : (ticket ? "medium" : "none");
+    const pv = ticket ? (window.ticketStacks?.fieldValue?.(ticket.id, "priority") || "") : "";   // meta-aware saved severity
+    const prio = ["low", "medium", "high", "critical"].includes(pv) ? pv : (ticket ? "medium" : "none");
     flyCard = document.createElement("div");
     flyCard.className = "td-card td-flyer";
     flyCard.innerHTML = flyerInner();   // body + progress bars
@@ -438,7 +439,7 @@
     const label = (f) => `${esc(f.label)}${f.req === false ? "" : ` <span class="td-req">*</span>`}`;
     const input = (f) => {
       const val = (window.ticketStacks?.fieldValue?.(t.id, f.key)) ?? "";
-      if (f.prio) { const pr = t.priority || "medium"; return `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }
+      if (f.prio) { const pr = val; return `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }   // pr = the ticket's saved severity (meta-aware); unset → NO option highlighted
       if (f.date) return `<input type="date" class="td-in td-date" data-field="${esc(f.key)}" value="${esc(val)}" />`;
       if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
       return `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
@@ -484,11 +485,33 @@
     // update in real time as you type (and "n/a" satisfies the field while leaving no trace). Enter
     // commits (Shift+Enter keeps a newline in the multi-line fields). Textareas auto-grow to fit.
     const grow = (el) => { if (el.tagName === "TEXTAREA") { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; } };
+    // Keyboard flow through the prompts: Enter / ArrowDown → the next field (typing engaged), ArrowUp →
+    // the previous one; Enter on the LAST prompt saves; Escape closes (a draft is abandoned entirely).
+    // Textareas only hand arrows over at their text boundaries (else the caret moves normally); date
+    // inputs keep their native arrow behaviour (segment +/-) and navigate via Enter.
+    const fieldEls = [...panel.querySelectorAll(".td-field [data-field]")];
+    const focusField = (el) => { el.focus(); try { if (el.select && el.type !== "date") el.select(); } catch {} };
+    const goFrom = (el, dir) => { const n = fieldEls[fieldEls.indexOf(el) + dir]; if (n) focusField(n); return !!n; };
     panel.querySelectorAll("[data-field]").forEach((el) => {
       grow(el);
       el.oninput = () => { window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value }); grow(el); syncFlyer(); };
-      el.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); el.blur(); } e.stopPropagation(); };
+      el.onkeydown = (e) => {
+        e.stopPropagation();   // typing never triggers dashboard-wide hotkeys…
+        if (e.key === "Escape") { e.preventDefault(); requestClose(); return; }   // …but Escape still closes
+        const ta = el.tagName === "TEXTAREA", date = el.type === "date";
+        if (e.key === "ArrowDown" && !date && (!ta || el.selectionEnd >= el.value.length)) { e.preventDefault(); goFrom(el, 1); return; }
+        if (e.key === "ArrowUp" && !date && (!ta || el.selectionStart <= 0)) { e.preventDefault(); goFrom(el, -1); return; }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          if (!goFrom(el, 1)) panel.querySelector("[data-act='save']")?.click();   // last prompt → save
+        }
+      };
     });
+    // Opening the config lands you typing in the first unanswered prompt (or the first one).
+    if (fieldEls.length && !panel.contains(document.activeElement)) {
+      const f0 = fieldEls.find((x) => !String(x.value || "").trim()) || fieldEls[0];
+      setTimeout(() => { if (panel && panel.contains(f0)) focusField(f0); }, 0);
+    }
     // Save: required fields must be answered; a blank one prompts "use n/a" and focuses it, else close.
     const msg = panel.querySelector(".td-msg");
     const saveBtn = panel.querySelector("[data-act='save']");

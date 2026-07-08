@@ -30,7 +30,7 @@
   gate.className = "auth-gate";
   gate.innerHTML = `
     <form class="auth-card" autocomplete="off">
-      <div class="auth-brand">Ticketing</div>
+      <div class="auth-brand">CRM</div>
       <div class="auth-sub"></div>
       <label class="auth-field auth-field-username"><span>Username</span>
         <input class="auth-input" name="username" autocomplete="username"></label>

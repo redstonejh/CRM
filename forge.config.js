@@ -1,14 +1,12 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
-// Ticketing client — same Electron Forge + Vite shell as the status monitor, but
-// MQTT is reduced to a thin tickets/# client (no ping/check monitoring) and there
-// is no React popover renderer yet: the main window loads a static page from
-// dashboard/ (shipped as an extraResource), exactly like the monitor's dashboard.
+// CRM client — same Electron Forge + Vite shell as the status monitor, with the
+// CRM modules assembled on the canonical dashboard canvas.
 module.exports = {
   packagerConfig: {
-    name: 'TicketingClient',
-    appId: 'com.status-monitor.ticketing',
+    name: 'CRM',
+    appId: 'com.redstone.crm',
     asar: true,
     extraResource: ['dashboard'],
   },
@@ -18,9 +16,9 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       platforms: ['win32'],
       config: {
-        name: 'TicketingClient',
-        authors: 'Status Monitor',
-        setupExe: 'TicketingClient-Setup.exe',
+        name: 'CRM',
+        authors: 'Redstone',
+        setupExe: 'CRM-Setup.exe',
         noMsi: true,
       },
     },

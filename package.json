@@ -1,7 +1,8 @@
 {
-  "name": "ticketing-client",
+  "name": "crm-client",
+  "productName": "CRM",
   "version": "0.1.0",
-  "description": "System-tray ticketing client — companion to the status monitor (shared SSO + tickets/# MQTT)",
+  "description": "Modular CRM client assembled from the shared ticketing canvas, card stacks, and fractal calendar.",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {

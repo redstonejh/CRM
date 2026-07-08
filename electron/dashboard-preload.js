@@ -78,7 +78,7 @@ const sessionUser = (() => {
   try { return String(ipcRenderer.sendSync('auth:current-username') || ''); } catch { return ''; }
 })();
 const storeUserKey = sessionUser.replace(/[^a-z0-9_-]/gi, '_') || '_anon';
-const storePath = path.join(os.homedir(), '.status-monitor', `ticketing-layout-store--${storeUserKey}.json`);
+const storePath = path.join(os.homedir(), '.status-monitor', `crm-layout-store--${storeUserKey}.json`);
 
 function readStore() {
   try { return JSON.parse(fs.readFileSync(storePath, 'utf8')); } catch { return {}; }

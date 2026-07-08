@@ -1,4 +1,4 @@
-// Ticketing client — main process.
+// CRM client — main process.
 //
 // This is the status monitor's Electron shell with the MQTT *monitoring* layer
 // stripped out (no checks/connections/heartbeat ingestion, no ping history, no
@@ -167,10 +167,10 @@ function buildContextMenu() {
   const who = s.user ? `Signed in as ${s.user.username}` : 'Not signed in';
   const open = ticketList().filter((t) => t.state !== 'resolved').length;
   return Menu.buildFromTemplate([
-    { label: `Tickets — ${open} open`, enabled: false },
+    { label: `CRM — ${open} open tickets`, enabled: false },
     { label: who, enabled: false },
     { type: 'separator' },
-    { label: 'Open Tickets', click: () => showMainWindow() },
+    { label: 'Open CRM', click: () => showMainWindow() },
     { label: 'Quit', click: () => { endTickets(); app.quit(); } },
   ]);
 }
@@ -179,7 +179,7 @@ function refreshTray() {
   if (!tray) return;
   tray.setImage(ticketConnectionState() === 'live' ? icons.blue : icons.grey);
   const open = ticketList().filter((t) => t.state !== 'resolved').length;
-  tray.setToolTip(open ? `Tickets — ${open} open` : 'Tickets');
+  tray.setToolTip(open ? `CRM — ${open} open tickets` : 'CRM');
 }
 
 // ─── Auth helpers ──────────────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const showDateUnder = config.showDateUnder !== false;
   const showFlow = config.showFlow !== false;
   const stageMovement = config.stageMovement || "gated";
+  const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
   const configuredCardBg = typeof config.cardBackground === "function" ? config.cardBackground : null;
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
   const rightDeckFilter = typeof config.rightDeckFilter === "function" ? config.rightDeckFilter : ((record) => isResolved(record));
@@ -103,11 +104,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const setStage = (id, stage) => {
     if (!id) return;
-    if (stage && STAGE_KEYS.includes(stage)) stageMap[id] = stage; else delete stageMap[id];
+    const nextStage = stage && STAGE_KEYS.includes(stage) ? stage : null;
+    if (nextStage) stageMap[id] = nextStage; else delete stageMap[id];
     try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
     const t = ticketById(id);
-    if (t) t.stage = stage && STAGE_KEYS.includes(stage) ? stage : null;
-    patchTicketDoc(id, { stage: stage && STAGE_KEYS.includes(stage) ? stage : null });
+    const extra = stageUpdateFields ? (stageUpdateFields(id, nextStage, t) || {}) : {};
+    if (t) {
+      t.stage = nextStage;
+      Object.assign(t, extra);
+    }
+    patchTicketDoc(id, { stage: nextStage, ...extra });
   };
 
   // Per-stage card order = the vertical stacking order within a bucket. A ticket ENTERING a bucket
@@ -125,13 +131,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       arr.splice(clamp(index | 0, 0, arr.length), 0, id);
       arr.forEach((rankedId, rank) => {
         const t = ticketById(rankedId);
-        if (t) { t.stage = stage; t.stageRank = rank; }
-        patchTicketDoc(rankedId, { stage, stageRank: rank });
+        const extra = stageUpdateFields ? (stageUpdateFields(rankedId, stage, t) || {}) : {};
+        if (t) { t.stage = stage; t.stageRank = rank; Object.assign(t, extra); }
+        patchTicketDoc(rankedId, { stage, stageRank: rank, ...extra });
       });
     } else {
       const t = ticketById(id);
-      if (t) t.stageRank = null;
-      patchTicketDoc(id, { stageRank: null });
+      const extra = stageUpdateFields ? (stageUpdateFields(id, null, t) || {}) : {};
+      if (t) { t.stageRank = null; Object.assign(t, extra); }
+      patchTicketDoc(id, { stageRank: null, ...extra });
     }
     try { localStorage.setItem(STAGE_ORDER_STORE, JSON.stringify(stageOrder)); } catch {}
   };
@@ -393,6 +401,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     for (let i = 0; i < STAGE_KEYS.length; i++) if (stageComplete(t, i)) p = i;
     return p;
   };
+  const canResolveRecord = (t) => (
+    typeof config.canResolve === "function"
+      ? !!config.canResolve(t, { progressOf, stageOf, metaOf })
+      : progressOf(t) >= STAGE_KEYS.length - 1
+  );
   const ticketBarClasses = (t) => {
     const furthest = progressOf(t);                              // green up to here, wherever the ticket goes
     const cur = STAGE_KEYS.indexOf(stageOf(t.id) || "");         // the bucket it's currently in (-1 = a stack)
@@ -1776,7 +1789,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // don't reorder the bin. Over an ineligible stack, no highlight → it'll spring back on release.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(es); if (es) { clearZoneHighlight(); clearGap(); return; } }
       // A fully-completed LEFT-stack card over the RIGHT (resolved) pile → light the pile it would resolve into.
-      if (rightDeckEnabled && side === "left") setStackDrop(e.clientY >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(e.clientX, e.clientY) === "right" ? "right" : null);
+      if (rightDeckEnabled && side === "left") setStackDrop(e.clientY >= stackTopY() && canResolveRecord(t) && overCornerStack(e.clientX, e.clientY) === "right" ? "right" : null);
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
@@ -1810,7 +1823,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // ineligible one it falls through and springs back into the bin.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(null); if (es) { restoreToDeck(t, e.clientX, card.getBoundingClientRect(), es); return; } }
       // A fully-completed (3-green) LEFT-stack card dropped on the RIGHT (resolved) pile → resolve it there.
-      if (rightDeckEnabled && side === "left" && overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
+      if (rightDeckEnabled && side === "left" && overCornerStack(e.clientX, e.clientY) === "right" && canResolveRecord(t)) {
         const fromRect = card.getBoundingClientRect();
         t.state = resolvedState; const live = tickets.find((x) => x.id === t.id); if (live) live.state = resolvedState;
         try { source?.resolve?.(t.id); } catch {}
@@ -2489,7 +2502,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (ft) { clearZoneHighlight(); clearGap(); fanGap = ft; previewFanGap(ft, fanInsertIndex(ft, x)); return; }
       if (fanGap) { layout(fanGap); fanGap = null; }   // moved off the stack → close the fan gap
       // A fully-completed ticket hovering the RIGHT (resolved) pile → light it as the eligible drop target.
-      setStackDrop(rightDeckEnabled && y >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(x, y) === "right" ? "right" : null);
+      setStackDrop(rightDeckEnabled && y >= stackTopY() && canResolveRecord(t) && overCornerStack(x, y) === "right" ? "right" : null);
       flowHighlight(posOfStage(stage), x, y, t);
       const dt = dropTarget(posOfStage(stage), x, y, t);
       if (dt) previewGap(dt.stage, dt.index); else clearGap();
@@ -2584,7 +2597,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         // Dropped on the RIGHT (resolved) pile with EVERY stage complete (3 green bars) → RESOLVE it:
         // flip the state (locally for the instant render + in the store) so the render routes it into
         // the resolved pile — without this, the state-gated left/right split sent it to the inbox.
-        if (rightDeckEnabled && overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
+        if (rightDeckEnabled && overCornerStack(e.clientX, e.clientY) === "right" && canResolveRecord(t)) {
           t.state = resolvedState; const live = tickets.find((x) => x.id === t.id); if (live) live.state = resolvedState;
           try { source?.resolve?.(t.id); } catch {}
           setStage(t.id, null); setStageAt(t.id, null);

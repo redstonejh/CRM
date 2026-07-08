@@ -68,7 +68,7 @@ function normalizeApiUrl(value) {
 let tray = null;
 let mainWindow = null;
 let settings = loadSettings();
-const CRM_ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports'];
+const CRM_ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —

@@ -4,6 +4,7 @@
     { key: "ticket", label: "Ticket", module: "tickets", api: () => window.ticketStacks },
     { key: "deal", label: "Deal", module: "pipeline", api: () => window.dealPipeline },
     { key: "contact", label: "Contact", module: "people", api: () => window.peopleCards },
+    { key: "invoice", label: "Invoice", module: "money", api: () => window.moneyPipeline },
   ];
 
   let root = null;

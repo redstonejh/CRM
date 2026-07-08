@@ -7,8 +7,9 @@
 
   const MODULES = [
     { key: "tickets", label: "Tickets", note: "Active queue and issue history", enabled: true },
-    { key: "pipeline", label: "Pipeline", note: "Deals, stages and wins", enabled: true },
     { key: "people", label: "People", note: "Contacts and relationship attention", enabled: true },
+    { key: "pipeline", label: "Pipeline", note: "Deals, stages and wins", enabled: true },
+    { key: "money", label: "Money", note: "Invoices, cash aging and paid work", enabled: true },
     { key: "calendar", label: "Calendar", note: "Scheduled work by day", enabled: true },
     { key: "tasks", label: "Tasks", note: "Work items from the same card system", status: "Planned" },
     { key: "reports", label: "Reports", note: "Aggregates and builder widgets", enabled: true },
@@ -31,7 +32,7 @@
       .crm-home-surface[hidden] { display: none; }
       .crm-home-level { position: absolute; inset: 0; transform-origin: 0 0; }
       .crm-home-grid { position: absolute; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
-        grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: 14px; }
+        grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 14px; }
       .crm-home-bucket { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
         overflow: hidden; color: #fff; cursor: pointer;
         border-radius: 16px; padding: 14px 16px;
@@ -56,6 +57,7 @@
       .crm-home-preview { margin-top: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; opacity: .76; }
       .crm-home-tile { height: 9px; border-radius: 999px; background: rgba(255,255,255,0.14); }
       .crm-home-bucket[data-module="pipeline"] .crm-home-tile:nth-child(2),
+      .crm-home-bucket[data-module="money"] .crm-home-tile:nth-child(2),
       .crm-home-bucket[data-module="calendar"] .crm-home-tile:nth-child(3),
       .crm-home-bucket[data-module="people"] .crm-home-tile:nth-child(4) { background: rgba(125,180,255,0.42); }
       .crm-home-expander { position: absolute; z-index: 5; pointer-events: auto; -webkit-app-region: no-drag;
@@ -98,9 +100,9 @@
     if (!grid) return;
     const E = expRect();
     const maxW = Math.min(E.w, 980);
-    const maxH = Math.min(E.h, 560);
+    const maxH = Math.min(E.h, 640);
     const width = Math.max(320, maxW);
-    const height = Math.max(260, maxH);
+    const height = Math.max(360, maxH);
     Object.assign(grid.style, {
       left: `${Math.round(E.x + (E.w - width) / 2)}px`,
       top: `${Math.round(E.y + (E.h - height) / 2)}px`,

@@ -7,10 +7,11 @@
 import WebSocket from 'ws';
 
 const DEFAULT_API_URL = process.env.CRM_API_URL || 'http://127.0.0.1:3899';
-const ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports'];
+const ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'history', 'version']);
 const CLOSED_STATES = new Set(['resolved', 'done', 'closed', 'complete', 'completed', 'cancelled', 'archived']);
 const DEAL_OUTCOME_STATES = new Set(['won', 'lost']);
+const PAID_INVOICE_STATES = new Set(['paid', 'void', 'cancelled', 'canceled']);
 const DEAL_STAGE_LABELS = {
   lead: 'Lead',
   qualified: 'Qualified',
@@ -285,6 +286,7 @@ function titleOf(record) {
   return firstText(
     record?.title,
     record?.name,
+    record?.number,
     record?.client,
     record?.company,
     record?.companyLabel,
@@ -311,6 +313,87 @@ function amountOf(record) {
   return numberValue(firstText(record?.amount, record?.value, record?.dealValue, meta.amount, meta.value, meta.dealValue));
 }
 
+function dateOnly(value) {
+  const text = String(value ?? '').trim();
+  const direct = /^(\d{4}-\d{2}-\d{2})/.exec(text);
+  if (direct) return direct[1];
+  const ms = timestampOf(value);
+  return ms ? new Date(ms).toISOString().slice(0, 10) : '';
+}
+
+function daysPastDue(value, now = Date.now()) {
+  const day = dateOnly(value);
+  if (!day) return 0;
+  const today = new Date(now).toISOString().slice(0, 10);
+  const dueMs = Date.parse(`${day}T00:00:00.000Z`);
+  const todayMs = Date.parse(`${today}T00:00:00.000Z`);
+  if (!Number.isFinite(dueMs) || !Number.isFinite(todayMs) || dueMs >= todayMs) return 0;
+  return Math.floor((todayMs - dueMs) / 86400000);
+}
+
+function invoiceDueDate(record) {
+  const meta = metaOf(record);
+  return firstText(record?.dueDate, meta.dueDate);
+}
+
+function invoiceState(record, now = Date.now()) {
+  const meta = metaOf(record);
+  const state = firstText(record?.state, meta.state, record?.status, meta.status, record?.stage, meta.stage).toLowerCase();
+  if (state === 'sent' && daysPastDue(invoiceDueDate(record), now) > 0) return 'overdue';
+  return state || 'draft';
+}
+
+function isPaidInvoice(record, now = Date.now()) {
+  const state = invoiceState(record, now);
+  const meta = metaOf(record);
+  return PAID_INVOICE_STATES.has(state) || !!firstText(record?.paidAt, meta.paidAt);
+}
+
+function invoiceRow(record, now = Date.now()) {
+  const dueDate = dateOnly(invoiceDueDate(record));
+  const state = invoiceState(record, now);
+  const overdueDays = state === 'overdue' ? daysPastDue(dueDate, now) : 0;
+  return {
+    ...rowBase(record, 'invoices'),
+    state,
+    stage: state,
+    stageLabel: state ? state.charAt(0).toUpperCase() + state.slice(1) : 'Draft',
+    amountValue: amountOf(record),
+    amount: amountOf(record),
+    dueDate,
+    dueAt: dueDate ? Date.parse(`${dueDate}T00:00:00.000Z`) : 0,
+    overdueDays,
+    isOverdue: state === 'overdue',
+    paidAt: firstText(record?.paidAt, metaOf(record).paidAt),
+    companyId: record.companyId || metaOf(record).companyId || '',
+    dealId: record.dealId || metaOf(record).dealId || '',
+  };
+}
+
+function invoiceAgingBucket(row) {
+  if (!row.isOverdue) return 'current';
+  if (row.overdueDays <= 30) return '1-30';
+  if (row.overdueDays <= 60) return '31-60';
+  return '61+';
+}
+
+function invoiceAgingRows(rows) {
+  const labels = {
+    current: 'Current',
+    '1-30': '1-30 days',
+    '31-60': '31-60 days',
+    '61+': '61+ days',
+  };
+  const buckets = Object.fromEntries(Object.keys(labels).map((bucket) => [bucket, { bucket, bucketLabel: labels[bucket], count: 0, amountValue: 0, amount: 0 }]));
+  rows.forEach((row) => {
+    const bucket = buckets[invoiceAgingBucket(row)] || buckets.current;
+    bucket.count += 1;
+    bucket.amountValue += numberValue(row.amountValue);
+    bucket.amount = bucket.amountValue;
+  });
+  return Object.values(buckets);
+}
+
 function isWonDeal(record) {
   return stateOf(record) === 'won' || dealStage(record) === 'won';
 }
@@ -327,7 +410,7 @@ function isOpenRecord(record) {
 
 function contactDue(record, now = Date.now()) {
   const meta = metaOf(record);
-  const lastTouch = timestampOf(firstText(record?.lastContactAt, meta.lastContactAt, record?.updatedAt, record?.createdAt));
+  const lastTouch = timestampOf(firstText(record?.lastTouchAt, meta.lastTouchAt, record?.lastContactAt, meta.lastContactAt, record?.updatedAt, record?.createdAt));
   return !lastTouch || now - lastTouch >= 30 * 24 * 60 * 60 * 1000;
 }
 
@@ -363,8 +446,10 @@ function summarizeCachedReports() {
   const contacts = records('contacts');
   const tasks = records('tasks');
   const calendarItems = records('calendarItems');
+  const invoices = records('invoices');
   const all = ENTITIES.flatMap((entity) => records(entity).map((record) => ({ entity, record })));
   const now = Date.now();
+  const today = new Date(now).toISOString().slice(0, 10);
   const openTickets = tickets.filter(isOpenRecord).map((record) => rowBase(record, 'tickets'));
   const allDealRows = deals.map(dealRow);
   const openDeals = allDealRows.filter((row) => isOpenDeal(row));
@@ -372,6 +457,34 @@ function summarizeCachedReports() {
   const contactsDue = contacts.filter((record) => contactDue(record, now)).map((record) => rowBase(record, 'contacts'));
   const openTasks = tasks.filter(isOpenRecord).map((record) => rowBase(record, 'tasks'));
   const scheduledItems = calendarItems.map((record) => rowBase(record, 'calendarItems'));
+  const allInvoiceRows = invoices.map((record) => invoiceRow(record, now));
+  const outstandingInvoices = allInvoiceRows.filter((row) => !isPaidInvoice(row, now));
+  const overdueInvoices = outstandingInvoices.filter((row) => row.isOverdue);
+  const invoiceAging = invoiceAgingRows(outstandingInvoices);
+  const datedTaskRows = openTasks.map((row) => {
+    const record = tasks.find((task) => task.id === row.id) || {};
+    const meta = metaOf(record);
+    return {
+      ...row,
+      dueDate: dateOnly(firstText(record.dueDate, meta.dueDate, record.scheduledDate, meta.scheduledDate)),
+      reason: 'task',
+    };
+  });
+  const datedCalendarRows = scheduledItems.map((row) => {
+    const record = calendarItems.find((item) => item.id === row.id) || {};
+    const meta = metaOf(record);
+    return {
+      ...row,
+      dueDate: dateOnly(firstText(record.date, meta.date, record.scheduledDate, meta.scheduledDate, record.startDate, meta.startDate, record.at, meta.at)),
+      reason: 'calendar',
+    };
+  });
+  const todayHand = [
+    ...datedTaskRows.filter((row) => row.dueDate === today),
+    ...datedCalendarRows.filter((row) => row.dueDate === today),
+    ...outstandingInvoices.filter((row) => row.isOverdue || row.dueDate === today).map((row) => ({ ...row, reason: row.isOverdue ? 'invoice-overdue' : 'invoice-due' })),
+    ...contactsDue.map((row) => ({ ...row, reason: 'contact-touch' })),
+  ].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 100);
   const activity = new Map();
   all.forEach(({ record }) => {
     const history = Array.isArray(record.history) ? record.history : [];
@@ -388,12 +501,13 @@ function summarizeCachedReports() {
   const recentRecords = all
     .map(({ entity, record }) => ({
       ...rowBase(record, entity),
-      stageLabel: entity === 'deals' ? dealRow(record).stageLabel : '',
-      amount: entity === 'deals' ? amountOf(record) : '',
+      stageLabel: entity === 'deals' ? dealRow(record).stageLabel : (entity === 'invoices' ? invoiceRow(record, now).stageLabel : ''),
+      amount: ['deals', 'invoices'].includes(entity) ? amountOf(record) : '',
     }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 50);
   const pipelineValue = openDeals.reduce((sum, row) => sum + numberValue(row.amountValue), 0);
+  const outstandingCash = outstandingInvoices.reduce((sum, row) => sum + numberValue(row.amountValue), 0);
   return {
     generatedAt: new Date().toISOString(),
     connection: connectionState,
@@ -402,9 +516,14 @@ function summarizeCachedReports() {
       openDeals: openDeals.length,
       wonDeals: wonDeals.length,
       pipelineValue,
+      outstandingCash,
+      outstandingInvoices: outstandingInvoices.length,
+      overdueInvoices: overdueInvoices.length,
+      invoiceAgingTotal: outstandingCash,
       contactsDue: contactsDue.length,
       openTasks: openTasks.length,
       scheduledCount: scheduledItems.length,
+      todayHand: todayHand.length,
     },
     datasets: {
       openTickets,
@@ -414,6 +533,10 @@ function summarizeCachedReports() {
       contactsDue,
       openTasks,
       scheduledItems,
+      outstandingInvoices,
+      overdueInvoices,
+      invoiceAging,
+      todayHand,
       pipelineByStage: openDeals,
       activityByDay,
       recentRecords,

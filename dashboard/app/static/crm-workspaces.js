@@ -3,8 +3,9 @@
   const MODULES = [
     { key: "home", label: "Home", api: () => window.crmHome },
     { key: "tickets", label: "Tickets", api: () => window.ticketStacks },
-    { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
     { key: "people", label: "People", api: () => window.peopleCards },
+    { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
+    { key: "money", label: "Money", api: () => window.moneyPipeline },
     { key: "calendar", label: "Calendar", api: () => window.fractalCalendar },
     { key: "reports", label: "Reports", api: () => window.crmReports },
   ];

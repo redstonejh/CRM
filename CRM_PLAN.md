@@ -104,6 +104,8 @@ The swap happens at the preload seam: `electron/tickets.js` becomes a compatibil
 
 ## 6. Roadmap
 
+`CRM_VISION.md` in the parent CRM workspace extends this original roadmap beyond Phase 7. The active continuation is Phase 8: invoices/interactions, the Money pipeline, invoice aging reports, interaction fan-out, and server-side overdue nudges on the Postgres/API backend.
+
 | Phase | Work | Layer touched |
 |---|---|---|
 | **1** | Mechanical merge; both experiences in one shell; decision log opened | none (assembly) |

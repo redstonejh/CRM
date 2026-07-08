@@ -7,11 +7,14 @@ const { WebSocket, WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.PORT || process.env.CRM_API_PORT || 3899);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/crm';
-const VALID_ENTITIES = new Set(['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports']);
+const VALID_ENTITIES = new Set(['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions']);
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'updatedAt', 'version']);
 const REPORT_ENTITIES = [...VALID_ENTITIES];
+const CREATE_BODY_KEYS = new Set(['fields', 'actor', 'options']);
+const PATCH_BODY_KEYS = new Set(['fields', 'actor', 'options', 'expectedVersion']);
 const CLOSED_STATES = new Set(['resolved', 'done', 'closed', 'complete', 'completed', 'cancelled', 'archived']);
 const DEAL_OUTCOME_STATES = new Set(['won', 'lost']);
+const PAID_INVOICE_STATES = new Set(['paid', 'void', 'cancelled', 'canceled']);
 const DEAL_STAGE_LABELS = {
   lead: 'Lead',
   qualified: 'Qualified',
@@ -83,6 +86,23 @@ function docFrom(fields) {
   return doc;
 }
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function objectBody(body) {
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : null;
+}
+
+function rejectUnknownBodyKeys(res, body, allowed) {
+  if (!objectBody(body)) { fail(res, 400, 'JSON body must be an object'); return true; }
+  if (hasOwn(body, 'doc')) { fail(res, 400, 'Use fields instead of doc'); return true; }
+  const unknown = Object.keys(body).filter((key) => !allowed.has(key));
+  if (unknown.length) { fail(res, 400, `Unknown body keys: ${unknown.join(', ')}`); return true; }
+  if (hasOwn(body, 'fields') && (!objectBody(body.fields))) { fail(res, 400, 'fields must be an object'); return true; }
+  return false;
+}
+
 function changedValue(a, b) {
   if (Object.is(a, b)) return false;
   if (a && b && typeof a === 'object' && typeof b === 'object') {
@@ -103,6 +123,129 @@ function broadcast(message) {
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) client.send(body);
   }
+}
+
+const RELATED_ENTITY_FIELDS = {
+  ticketId: 'tickets',
+  ticketIds: 'tickets',
+  relatedTicketIds: 'tickets',
+  dealId: 'deals',
+  dealIds: 'deals',
+  relatedDealIds: 'deals',
+  contactId: 'contacts',
+  contactIds: 'contacts',
+  relatedContactIds: 'contacts',
+  companyId: 'companies',
+  companyIds: 'companies',
+  relatedCompanyIds: 'companies',
+  invoiceId: 'invoices',
+  invoiceIds: 'invoices',
+  relatedInvoiceIds: 'invoices',
+  taskId: 'tasks',
+  taskIds: 'tasks',
+  relatedTaskIds: 'tasks',
+  calendarItemId: 'calendarItems',
+  calendarItemIds: 'calendarItems',
+  relatedCalendarItemIds: 'calendarItems',
+};
+
+function toArray(value) {
+  return Array.isArray(value) ? value : (value == null || value === '' ? [] : [value]);
+}
+
+function fanoutEntity(raw) {
+  const entity = entityName(raw);
+  return entity && !['interactions', 'reports'].includes(entity) ? entity : null;
+}
+
+function normalizeRelatedRefs(record) {
+  const refs = [];
+  const seen = new Set();
+  const push = (entityRaw, idRaw) => {
+    const entity = fanoutEntity(entityRaw);
+    const id = safeId(idRaw);
+    if (!entity || !id) return;
+    const key = `${entity}:${id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push({ entity, id });
+    }
+  };
+
+  const relatedIds = record?.relatedIds;
+  if (Array.isArray(relatedIds)) {
+    relatedIds.forEach((item) => {
+      if (typeof item === 'string') {
+        const match = /^([a-zA-Z][\w-]*)[:/](.+)$/.exec(item.trim());
+        if (match) push(match[1], match[2]);
+        return;
+      }
+      if (item && typeof item === 'object') {
+        push(item.entity || item.entityType || item.type, item.id || item.recordId);
+      }
+    });
+  } else if (relatedIds && typeof relatedIds === 'object') {
+    Object.entries(relatedIds).forEach(([entity, ids]) => {
+      toArray(ids).forEach((id) => push(entity, id));
+    });
+  }
+
+  Object.entries(RELATED_ENTITY_FIELDS).forEach(([field, entity]) => {
+    toArray(record?.[field]).forEach((id) => push(entity, id));
+  });
+  return refs;
+}
+
+async function fanOutInteraction(interaction, actor = 'unknown') {
+  const refs = normalizeRelatedRefs(interaction);
+  if (!refs.length) return [];
+  const at = interaction.at || new Date().toISOString();
+  const detail = firstText(interaction.note, interaction.description, interaction.summary, interaction.kind, 'Interaction logged');
+  const changed = [];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const ref of refs) {
+      const rows = await client.query(
+        'SELECT * FROM crm_records WHERE entity_type = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE',
+        [ref.entity, ref.id],
+      );
+      const cur = rows.rows[0];
+      if (!cur) continue;
+      const prevDoc = cur.doc && typeof cur.doc === 'object' ? cur.doc : {};
+      const nextDoc = {
+        ...prevDoc,
+        lastTouchAt: at,
+        history: [
+          ...(Array.isArray(prevDoc.history) ? prevDoc.history : []),
+          {
+            at,
+            by: actor,
+            action: 'interaction',
+            detail,
+            interactionId: interaction.id,
+            kind: interaction.kind || null,
+          },
+        ],
+      };
+      const updated = await client.query(
+        `UPDATE crm_records
+         SET doc = $3, version = version + 1, updated_at = now()
+         WHERE entity_type = $1 AND id = $2
+         RETURNING *`,
+        [ref.entity, ref.id, nextDoc],
+      );
+      changed.push({ entity: ref.entity, record: rowToRecord(updated.rows[0]) });
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  changed.forEach(({ entity, record }) => broadcast({ type: 'changed', entity, record }));
+  return changed.map(({ entity, record }) => ({ entity, id: record.id, version: record.version }));
 }
 
 async function initDb() {
@@ -127,9 +270,17 @@ async function getRecord(res, entity, id) {
 }
 
 async function createRecord(res, entity, body) {
-  const fields = body.fields && typeof body.fields === 'object' ? body.fields : body;
-  const actor = body.actor || 'unknown';
-  const options = body.options || {};
+  const payload = objectBody(body);
+  if (!payload) return fail(res, 400, 'JSON body must be an object');
+  if (hasOwn(payload, 'fields')) {
+    const rejected = rejectUnknownBodyKeys(res, payload, CREATE_BODY_KEYS);
+    if (rejected) return rejected;
+  } else if (hasOwn(payload, 'doc')) {
+    return fail(res, 400, 'Use fields instead of doc');
+  }
+  const fields = hasOwn(payload, 'fields') ? payload.fields : payload;
+  const actor = hasOwn(payload, 'fields') ? (payload.actor || 'unknown') : 'unknown';
+  const options = hasOwn(payload, 'fields') ? (payload.options || {}) : {};
   const nowIso = new Date().toISOString();
   const id = safeId(fields.id || `${options.idPrefix || entity}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`);
   const createdAt = fields.createdAt || nowIso;
@@ -154,16 +305,22 @@ async function createRecord(res, entity, body) {
   });
   if (!result) return fail(res, 409, `${entity} already exists`);
   const record = rowToRecord(result.rows[0]);
+  let relatedRecords = [];
+  if (entity === 'interactions') relatedRecords = await fanOutInteraction(record, actor);
   broadcast({ type: 'changed', entity, record });
-  json(res, 201, { ok: true, entity, record });
+  json(res, 201, { ok: true, entity, record, relatedRecords });
 }
 
 async function patchRecord(res, entity, id, body, req) {
-  const fields = body.fields && typeof body.fields === 'object' ? body.fields : {};
-  const actor = body.actor || 'unknown';
-  const options = body.options || {};
+  const payload = objectBody(body);
+  if (!payload) return fail(res, 400, 'JSON body must be an object');
+  const rejected = rejectUnknownBodyKeys(res, payload, PATCH_BODY_KEYS);
+  if (rejected) return rejected;
+  const fields = hasOwn(payload, 'fields') ? payload.fields : {};
+  const actor = payload.actor || 'unknown';
+  const options = payload.options || {};
   const ifMatch = req.headers['if-match'] ? Number(String(req.headers['if-match']).replace(/^W\//, '').replace(/"/g, '')) : undefined;
-  const expectedVersion = Number.isFinite(body.expectedVersion) ? body.expectedVersion : ifMatch;
+  const expectedVersion = Number.isFinite(payload.expectedVersion) ? payload.expectedVersion : ifMatch;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -294,6 +451,7 @@ function titleOf(record) {
   return firstText(
     record?.title,
     record?.name,
+    record?.number,
     record?.client,
     record?.company,
     record?.companyLabel,
@@ -320,6 +478,87 @@ function amountOf(record) {
   return numberValue(firstText(record?.amount, record?.value, record?.dealValue, meta.amount, meta.value, meta.dealValue));
 }
 
+function dateOnly(value) {
+  const text = String(value ?? '').trim();
+  const direct = /^(\d{4}-\d{2}-\d{2})/.exec(text);
+  if (direct) return direct[1];
+  const ms = timestampOf(value);
+  return ms ? new Date(ms).toISOString().slice(0, 10) : '';
+}
+
+function daysPastDue(value, now = Date.now()) {
+  const day = dateOnly(value);
+  if (!day) return 0;
+  const today = new Date(now).toISOString().slice(0, 10);
+  const dueMs = Date.parse(`${day}T00:00:00.000Z`);
+  const todayMs = Date.parse(`${today}T00:00:00.000Z`);
+  if (!Number.isFinite(dueMs) || !Number.isFinite(todayMs) || dueMs >= todayMs) return 0;
+  return Math.floor((todayMs - dueMs) / 86400000);
+}
+
+function invoiceDueDate(record) {
+  const meta = metaOf(record);
+  return firstText(record?.dueDate, meta.dueDate);
+}
+
+function invoiceState(record, now = Date.now()) {
+  const meta = metaOf(record);
+  const state = firstText(record?.state, meta.state, record?.status, meta.status, record?.stage, meta.stage).toLowerCase();
+  if (state === 'sent' && daysPastDue(invoiceDueDate(record), now) > 0) return 'overdue';
+  return state || 'draft';
+}
+
+function isPaidInvoice(record, now = Date.now()) {
+  const state = invoiceState(record, now);
+  const meta = metaOf(record);
+  return PAID_INVOICE_STATES.has(state) || !!firstText(record?.paidAt, meta.paidAt);
+}
+
+function invoiceRow(record, now = Date.now()) {
+  const dueDate = dateOnly(invoiceDueDate(record));
+  const state = invoiceState(record, now);
+  const overdueDays = state === 'overdue' ? daysPastDue(dueDate, now) : 0;
+  return {
+    ...rowBase(record, 'invoices'),
+    state,
+    stage: state,
+    stageLabel: state ? state.charAt(0).toUpperCase() + state.slice(1) : 'Draft',
+    amountValue: amountOf(record),
+    amount: amountOf(record),
+    dueDate,
+    dueAt: dueDate ? Date.parse(`${dueDate}T00:00:00.000Z`) : 0,
+    overdueDays,
+    isOverdue: state === 'overdue',
+    paidAt: firstText(record?.paidAt, metaOf(record).paidAt),
+    companyId: record.companyId || metaOf(record).companyId || '',
+    dealId: record.dealId || metaOf(record).dealId || '',
+  };
+}
+
+function invoiceAgingBucket(row) {
+  if (!row.isOverdue) return 'current';
+  if (row.overdueDays <= 30) return '1-30';
+  if (row.overdueDays <= 60) return '31-60';
+  return '61+';
+}
+
+function invoiceAgingRows(rows) {
+  const labels = {
+    current: 'Current',
+    '1-30': '1-30 days',
+    '31-60': '31-60 days',
+    '61+': '61+ days',
+  };
+  const buckets = Object.fromEntries(Object.keys(labels).map((bucket) => [bucket, { bucket, bucketLabel: labels[bucket], count: 0, amountValue: 0, amount: 0 }]));
+  rows.forEach((row) => {
+    const bucket = buckets[invoiceAgingBucket(row)] || buckets.current;
+    bucket.count += 1;
+    bucket.amountValue += numberValue(row.amountValue);
+    bucket.amount = bucket.amountValue;
+  });
+  return Object.values(buckets);
+}
+
 function isWonDeal(record) {
   return stateOf(record) === 'won' || dealStage(record) === 'won';
 }
@@ -336,7 +575,7 @@ function isOpenRecord(record) {
 
 function contactDue(record, now = Date.now()) {
   const meta = metaOf(record);
-  const lastTouch = timestampOf(firstText(record?.lastContactAt, meta.lastContactAt, record?.updatedAt, record?.createdAt));
+  const lastTouch = timestampOf(firstText(record?.lastTouchAt, meta.lastTouchAt, record?.lastContactAt, meta.lastContactAt, record?.updatedAt, record?.createdAt));
   if (!lastTouch) return true;
   return now - lastTouch >= 30 * 24 * 60 * 60 * 1000;
 }
@@ -373,8 +612,10 @@ function summarizeRecords(recordsByEntity, connection = 'live') {
   const contacts = records('contacts');
   const tasks = records('tasks');
   const calendarItems = records('calendarItems');
+  const invoices = records('invoices');
   const all = REPORT_ENTITIES.flatMap((entity) => records(entity).map((record) => ({ entity, record })));
   const now = Date.now();
+  const today = new Date(now).toISOString().slice(0, 10);
 
   const openTickets = tickets.filter(isOpenRecord).map((record) => rowBase(record, 'tickets'));
   const allDealRows = deals.map(dealRow);
@@ -383,6 +624,34 @@ function summarizeRecords(recordsByEntity, connection = 'live') {
   const contactsDue = contacts.filter((record) => contactDue(record, now)).map((record) => rowBase(record, 'contacts'));
   const openTasks = tasks.filter(isOpenRecord).map((record) => rowBase(record, 'tasks'));
   const scheduledItems = calendarItems.map((record) => rowBase(record, 'calendarItems'));
+  const allInvoiceRows = invoices.map((record) => invoiceRow(record, now));
+  const outstandingInvoices = allInvoiceRows.filter((row) => !isPaidInvoice(row, now));
+  const overdueInvoices = outstandingInvoices.filter((row) => row.isOverdue);
+  const invoiceAging = invoiceAgingRows(outstandingInvoices);
+  const datedTaskRows = openTasks.map((row) => {
+    const record = tasks.find((task) => task.id === row.id) || {};
+    const meta = metaOf(record);
+    return {
+      ...row,
+      dueDate: dateOnly(firstText(record.dueDate, meta.dueDate, record.scheduledDate, meta.scheduledDate)),
+      reason: 'task',
+    };
+  });
+  const datedCalendarRows = scheduledItems.map((row) => {
+    const record = calendarItems.find((item) => item.id === row.id) || {};
+    const meta = metaOf(record);
+    return {
+      ...row,
+      dueDate: dateOnly(firstText(record.date, meta.date, record.scheduledDate, meta.scheduledDate, record.startDate, meta.startDate, record.at, meta.at)),
+      reason: 'calendar',
+    };
+  });
+  const todayHand = [
+    ...datedTaskRows.filter((row) => row.dueDate === today),
+    ...datedCalendarRows.filter((row) => row.dueDate === today),
+    ...outstandingInvoices.filter((row) => row.isOverdue || row.dueDate === today).map((row) => ({ ...row, reason: row.isOverdue ? 'invoice-overdue' : 'invoice-due' })),
+    ...contactsDue.map((row) => ({ ...row, reason: 'contact-touch' })),
+  ].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 100);
 
   const activity = new Map();
   const bumpActivity = (date) => {
@@ -403,13 +672,14 @@ function summarizeRecords(recordsByEntity, connection = 'live') {
   const recentRecords = all
     .map(({ entity, record }) => ({
       ...rowBase(record, entity),
-      stageLabel: entity === 'deals' ? dealRow(record).stageLabel : '',
-      amount: entity === 'deals' ? amountOf(record) : '',
+      stageLabel: entity === 'deals' ? dealRow(record).stageLabel : (entity === 'invoices' ? invoiceRow(record, now).stageLabel : ''),
+      amount: ['deals', 'invoices'].includes(entity) ? amountOf(record) : '',
     }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 50);
 
   const pipelineValue = openDeals.reduce((sum, row) => sum + numberValue(row.amountValue), 0);
+  const outstandingCash = outstandingInvoices.reduce((sum, row) => sum + numberValue(row.amountValue), 0);
   return {
     generatedAt: new Date().toISOString(),
     connection,
@@ -418,9 +688,14 @@ function summarizeRecords(recordsByEntity, connection = 'live') {
       openDeals: openDeals.length,
       wonDeals: wonDeals.length,
       pipelineValue,
+      outstandingCash,
+      outstandingInvoices: outstandingInvoices.length,
+      overdueInvoices: overdueInvoices.length,
+      invoiceAgingTotal: outstandingCash,
       contactsDue: contactsDue.length,
       openTasks: openTasks.length,
       scheduledCount: scheduledItems.length,
+      todayHand: todayHand.length,
     },
     datasets: {
       openTickets,
@@ -430,6 +705,10 @@ function summarizeRecords(recordsByEntity, connection = 'live') {
       contactsDue,
       openTasks,
       scheduledItems,
+      outstandingInvoices,
+      overdueInvoices,
+      invoiceAging,
+      todayHand,
       pipelineByStage: openDeals,
       activityByDay,
       recentRecords,
@@ -449,6 +728,70 @@ async function reportSummary(res) {
     if (recordsByEntity[record.entityType]) recordsByEntity[record.entityType].push(record);
   });
   ok(res, { summary: summarizeRecords(recordsByEntity, 'live') });
+}
+
+let overdueSweepRunning = false;
+
+async function sweepOverdueInvoices() {
+  if (overdueSweepRunning) return [];
+  overdueSweepRunning = true;
+  const changed = [];
+  const now = Date.now();
+  let client = null;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const rows = await client.query(
+      `SELECT * FROM crm_records
+       WHERE entity_type = 'invoices' AND deleted_at IS NULL
+       FOR UPDATE`,
+    );
+    for (const cur of rows.rows) {
+      const doc = cur.doc && typeof cur.doc === 'object' ? cur.doc : {};
+      const rawState = firstText(doc.state, metaOf(doc).state, doc.status, metaOf(doc).status).toLowerCase();
+      if (rawState !== 'sent' || daysPastDue(invoiceDueDate(doc), now) <= 0) continue;
+      const nextDoc = {
+        ...doc,
+        state: 'overdue',
+        stage: 'overdue',
+        priority: 'overdue',
+        history: [
+          ...(Array.isArray(doc.history) ? doc.history : []),
+          {
+            at: new Date().toISOString(),
+            by: 'system',
+            action: 'overdue',
+            detail: 'Invoice moved overdue',
+          },
+        ],
+      };
+      const updated = await client.query(
+        `UPDATE crm_records
+         SET doc = $3, version = version + 1, updated_at = now()
+         WHERE entity_type = $1 AND id = $2
+         RETURNING *`,
+        ['invoices', cur.id, nextDoc],
+      );
+      changed.push(rowToRecord(updated.rows[0]));
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    if (client) client.release();
+    overdueSweepRunning = false;
+  }
+  changed.forEach((record) => broadcast({ type: 'changed', entity: 'invoices', record }));
+  return changed;
+}
+
+function startOverdueSweep() {
+  sweepOverdueInvoices().catch((err) => console.error('[overdue-sweep]', err));
+  const timer = setInterval(() => {
+    sweepOverdueInvoices().catch((err) => console.error('[overdue-sweep]', err));
+  }, 60000);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 async function route(req, res) {
@@ -473,6 +816,7 @@ async function route(req, res) {
 
 async function main() {
   await initDb();
+  startOverdueSweep();
   const server = http.createServer((req, res) => {
     route(req, res).catch((err) => {
       console.error(err);

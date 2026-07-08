@@ -1376,8 +1376,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return clamp(idx, 0, n);
   };
 
-  const toggleFan = (side) => {
-    const open = !fanned[side];
+  const setFan = (side, open) => {
+    if (!decks[side]) return;
+    open = !!open;
     fanned[side] = open;
     if (!open) decks[side].scrollX = 0;
     // The two CORNERS are mutually exclusive, but the trash can fan out ALONGSIDE a corner (so you can
@@ -1390,6 +1391,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     DECK_SIDES.forEach(layout);   // re-lay ALL: each arrow's z + dimming depend on which deck is fanned
     trackFanEdges();               // edge shadows appear as the cards animate out (not on next scroll)
   };
+  const toggleFan = (side) => setFan(side, !fanned[side]);
 
   // ── Overscroll: Apple-style rubber-band at the ends of a fanned scroll ──────────
   const MAX_OVER = 92;                                   // furthest the fan can be pulled past an end
@@ -3011,6 +3013,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
   publicApi = {
     reload: load,
+    fan: setFan,
     create: openCreate,
     openCreate,
     isDeleted,

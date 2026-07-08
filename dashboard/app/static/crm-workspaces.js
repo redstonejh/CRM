@@ -1,12 +1,14 @@
 // crm-workspaces.js - small module switch for overlay CRM card systems.
 (() => {
   const MODULES = [
+    { key: "home", label: "Home", api: () => window.crmHome },
     { key: "tickets", label: "Tickets", api: () => window.ticketStacks },
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
     { key: "people", label: "People", api: () => window.peopleCards },
+    { key: "calendar", label: "Calendar", api: () => window.fractalCalendar },
   ];
   const STORE_KEY = "crm-active-module";
-  let active = localStorage.getItem(STORE_KEY) || "tickets";
+  let active = localStorage.getItem(STORE_KEY) || "home";
   let root = null;
 
   const ensureStyles = () => {
@@ -30,7 +32,7 @@
   };
 
   const setActive = (key) => {
-    active = MODULES.some((m) => m.key === key) ? key : "tickets";
+    active = MODULES.some((m) => m.key === key) ? key : "home";
     localStorage.setItem(STORE_KEY, active);
     MODULES.forEach((module) => {
       try { module.api()?.setActive?.(module.key === active); } catch {}
@@ -61,4 +63,9 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
+  window.crmWorkspaces = {
+    setActive,
+    active: () => active,
+    modules: () => MODULES.map((module) => ({ key: module.key, label: module.label })),
+  };
 })();

@@ -87,9 +87,18 @@ Anything else that comes up mid-build goes through §2 first, and the default an
 
 ---
 
-## 5. Repo + backend (unchanged from what you approved, stated briefly)
+## 5. Repo + backend
 
-One central repo: the merged base program (mechanical 7-file merge — base `ticketing`, add `fractal-calendar.js` + one script tag, two identity strings) + `server/` (Postgres; envelope columns + `doc JSONB`; REST + one WebSocket change stream reproducing replay-on-connect semantics; compare-and-set on `version`). The swap happens at the preload seam: `electron/tickets.js` → `electron/store.js`, same contract shape per entity (`window.deals`, `window.contacts`, …), and the proof of a clean seam is that Layer 1 needs zero changes to run on it.
+One central repo: the merged base program (mechanical 7-file merge — base `ticketing`, add `fractal-calendar.js` + one script tag, two identity strings) + `server/`.
+
+The MQTT idea is dead here, not deferred. There is no retained broker tree, no `tickets/#`, no broker settings, and no MQTT dependency in the final CRM. The backend is **Postgres behind an API**:
+
+- Postgres table with envelope columns (`entity_type`, `id`, `created_at`, `updated_at`, `version`, `deleted_at`, `assignee`) plus `doc JSONB` for entity fields.
+- REST endpoints for list/get/create/update/delete.
+- One WebSocket change stream so Electron clients refresh from shared truth.
+- Compare-and-set on `version` for updates and deletes.
+
+The swap happens at the preload seam: `electron/tickets.js` becomes a compatibility adapter over `electron/store.js`, and `electron/store.js` speaks to the Postgres API. The renderer keeps the same contract shape per entity (`window.tickets`, `window.deals`, `window.contacts`, …), and the proof of a clean seam is that Layer 1 needs zero changes to run on it.
 
 ---
 
@@ -98,7 +107,7 @@ One central repo: the merged base program (mechanical 7-file merge — base `tic
 | Phase | Work | Layer touched |
 |---|---|---|
 | **1** | Mechanical merge; both experiences in one shell; decision log opened | none (assembly) |
-| **2** | Server + `store.js`; ticketing runs on Postgres with zero canvas changes | seam only |
+| **2** | Remove MQTT fully; add Postgres API + `store.js`; ticketing runs through the API with zero canvas changes | seam only |
 | **3** | Card-system factory from `ticket-stacks.js`; tickets re-instantiated through it (proof: behavior identical); detail split (motion/content) | Layer 2 |
 | **4** | Pipeline module (deals instance + temperature palette + Won deck + drop-to-link) | Layer 3 |
 | **5** | People module (contacts instance, glow stripped, attention deck, company buckets) | Layer 3 |
@@ -114,7 +123,7 @@ Phase 3 is the crux and carries its own test: **re-instantiate ticketing through
 - **The factory refactor is the one place we touch a big Layer-2 file.** Mitigation is the Phase-3 test above: tickets themselves are the regression suite for the generalization.
 - **Judgment drift** — the "good eye" degrading into either slop (inventing freely) or fear (copying blindly). The decision log + §2 questions are the guardrail; DESIGN_SYSTEM's drift checklist remains law for anything visual.
 - **Feel changes** from localStorage → shared truth: masked by the existing optimistic-apply pattern; verify on the pipeline first, where reorder frequency is highest.
-- **WS/retained-MQTT parity** (replay, tombstones) must be exact — write the parity test before the server.
+- **API/change-stream parity** must be exact enough that the old ticket UI cannot tell whether records arrived from local cache or the Postgres API. Mitigation: keep `window.tickets` as an adapter over `store.js`, verify ticketing first, then add other entities.
 
 ---
 

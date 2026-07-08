@@ -1,6 +1,6 @@
 // ticket-feed.js — the ticketing app's data feed (the analogue of status-feed.js,
-// but for tickets instead of MQTT ping data). It reads window.tickets (the
-// tickets/# MQTT backend exposed by the preload) and pushes the chosen ticket
+// but for tickets instead of monitoring data). It reads window.tickets (the
+// API-backed compatibility bridge exposed by the preload) and pushes the chosen ticket
 // into the dashboard widget runtime, keyed to the ticket widget's data-widget-key
 // ("ticket-card"). The "ticket" widget definition (widget-registry.js) renders it.
 //

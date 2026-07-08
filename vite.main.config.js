@@ -9,10 +9,10 @@ export default defineConfig({
     conditions: ['node', 'require', 'default'],
   },
   // The Forge Vite plugin builds main process in SSR mode, which externalizes
-  // all npm packages by default. noExternal forces mqtt (and ws, its transport
-  // dep) to be inlined into the bundle so the packaged app has no node_modules.
+  // all npm packages by default. noExternal forces ws to be inlined into the
+  // bundle so the packaged app has the API change-stream client available.
   ssr: {
-    noExternal: ['mqtt', 'ws'],
+    noExternal: ['ws'],
   },
   build: {
     rollupOptions: {

@@ -1,7 +1,7 @@
 'use strict';
-// Preload for the ticketing main window. Exposes the shared shell bridges
-// (auth/SSO, per-user layout store, frameless window controls) plus the tickets
-// bridge. No MQTT monitoring channels — the only live data is tickets/#.
+// Preload for the CRM main window. Exposes the shared shell bridges
+// (auth/SSO, per-user layout store, frameless window controls) plus API-backed
+// CRM entity bridges.
 const { contextBridge, ipcRenderer } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -9,10 +9,10 @@ const os = require('node:os');
 
 // ─── Stubbed monitoring bridge ───────────────────────────────────────────────────
 // The vendored dashboard shell (app.js / status-feed.js) expects a window.dashboard
-// data bridge. This app does NO MQTT monitoring, so every data channel returns
+// data bridge. This app does no monitoring, so every data channel returns
 // empty / never fires — the shell renders its full glass chrome over an empty
-// workspace. (Real ticket data flows through window.tickets, below.) Window/settings
-// channels are wired to the real main-process handlers.
+// workspace. CRM data flows through window.tickets/window.crmStore below.
+// Window/settings channels are wired to the real main-process handlers.
 contextBridge.exposeInMainWorld('dashboard', {
   getStatus: () => Promise.resolve({ status: null, connectionState: 'live' }),
   onStatus: () => {},
@@ -61,6 +61,32 @@ contextBridge.exposeInMainWorld('tickets', {
   create: (payload) => ipcRenderer.invoke('tickets:create', payload),
   remove: (id) => ipcRenderer.invoke('tickets:delete', { id }),
 });
+
+function entityBridge(entity) {
+  return {
+    list: (options = {}) => ipcRenderer.invoke('store:list', { entity, ...options }),
+    get: (id) => ipcRenderer.invoke('store:get', { entity, id }),
+    create: (fields) => ipcRenderer.invoke('store:create', { entity, fields }),
+    update: (id, fields) => ipcRenderer.invoke('store:update', { entity, id, fields }),
+    remove: (id, options = {}) => ipcRenderer.invoke('store:delete', { entity, id, ...options }),
+    onChanged: (cb) => ipcRenderer.on(`store:${entity}:changed`, (_e, payload) => cb(payload)),
+  };
+}
+
+// Generic CRM entities. Tickets keep their legacy bridge above until the card
+// system has been generalized and re-instantiated through the factory.
+contextBridge.exposeInMainWorld('crmStore', {
+  list: (entity, options = {}) => ipcRenderer.invoke('store:list', { entity, ...options }),
+  get: (entity, id) => ipcRenderer.invoke('store:get', { entity, id }),
+  create: (entity, fields) => ipcRenderer.invoke('store:create', { entity, fields }),
+  update: (entity, id, fields) => ipcRenderer.invoke('store:update', { entity, id, fields }),
+  remove: (entity, id, options = {}) => ipcRenderer.invoke('store:delete', { entity, id, ...options }),
+  onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
+});
+contextBridge.exposeInMainWorld('deals', entityBridge('deals'));
+contextBridge.exposeInMainWorld('contacts', entityBridge('contacts'));
+contextBridge.exposeInMainWorld('companies', entityBridge('companies'));
+contextBridge.exposeInMainWorld('tasks', entityBridge('tasks'));
 
 // ─── Misc shell ──────────────────────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('electron', {

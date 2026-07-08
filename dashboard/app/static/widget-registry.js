@@ -3092,7 +3092,7 @@
   // ─── Ticket widget (ticketing app) ──────────────────────────────────────────
   // A material dashboard widget that renders ONE ticket. Data is fed via the
   // widget runtime by ticket-feed.js (keyed "ticket-card"), which reads
-  // window.tickets — the tickets/# MQTT backend. Styled on the design system:
+  // window.tickets through the CRM API-backed store. Styled on the design system:
   // the glass content well, white text, and the shared status palette
   // (#e1857c red / #d4ab63 amber / #6fc99a green) used by the HP bars and donut.
   const ensureTicketStyles = () => {

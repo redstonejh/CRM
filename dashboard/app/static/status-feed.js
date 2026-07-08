@@ -58,7 +58,7 @@ function seedChartDefaults() {
 // ─── Data feed ────────────────────────────────────────────────────────────────
 
 const state = {
-  status: null,        // latest MQTT payload { status, stage, detail, lastSuccess, checkedAt }
+  status: null,        // latest monitor payload { status, stage, detail, lastSuccess, checkedAt }
   connection: "grey",  // 'grey' | 'live' | 'black'
   history: [],         // [{ id, checkedAt, status, stage, detail, lastSuccess }]
   historyError: false, // true when the most recent REST history fetch failed

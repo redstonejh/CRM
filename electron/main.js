@@ -1,18 +1,8 @@
 // CRM client — main process.
 //
-// This is the status monitor's Electron shell with the MQTT *monitoring* layer
-// stripped out (no checks/connections/heartbeat ingestion, no ping history, no
-// dashboard data feed). What remains is the shared shell — auth/SSO, settings,
-// a system tray, a frameless main window — plus a thin tickets backend that
-// talks to ONE retained MQTT topic tree (`tickets/#`, see electron/tickets.js).
-//
-// The monitor auto-creates a ticket on a sustained outage and publishes it to
-// `tickets/<id>`; this app subscribes to the same tree and lets humans
-// claim / assign / resolve. The two apps share ~/.status-monitor/ for accounts,
-// so signing into one signs you into the other.
-//
-// ⚠ FRONT END IS A PLACEHOLDER: dashboard/index.html is a throwaway scaffold so
-//   the backend is reachable + verifiable. The real ticketing UI is not built yet.
+// This is the shared Electron shell with monitoring ingestion fully removed.
+// CRM records live behind the Postgres API in server/; the legacy ticket bridge
+// remains as a compatibility adapter while the card system is generalized.
 import { app, BrowserWindow, Tray, Menu, ipcMain, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -25,6 +15,9 @@ import {
   claimTicket, unclaimTicket, assignTicket, resolveTicket, reopenTicket,
   commentTicket, updateTicket, createTicket, deleteTicket,
 } from './tickets.js';
+import {
+  listRecords, getRecord, createRecord, updateRecord, deleteRecord, storeConnectionState,
+} from './store.js';
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
 if (squirrelStartup) app.quit();
@@ -34,21 +27,18 @@ if (squirrelStartup) app.quit();
 Menu.setApplicationMenu(null);
 
 // ─── Settings persistence ─────────────────────────────────────────────────────
-// Only the broker coordinates matter here (the ticketing app does no monitoring).
+// The API URL is the only backend coordinate the Electron client owns.
 
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
 
 const DEFAULT_SETTINGS = {
-  mqttHost: '24.121.212.206',
-  mqttPort: 1883,
+  apiUrl: process.env.CRM_API_URL || 'http://127.0.0.1:3899',
 };
 
 function loadSettings() {
   try {
     const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
-    if (!merged.mqttHost || merged.mqttHost === 'localhost' || merged.mqttHost === '127.0.0.1') {
-      merged.mqttHost = DEFAULT_SETTINGS.mqttHost;
-    }
+    if (!merged.apiUrl) merged.apiUrl = DEFAULT_SETTINGS.apiUrl;
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -65,6 +55,7 @@ function saveSettings(next) {
 let tray = null;
 let mainWindow = null;
 let settings = loadSettings();
+const CRM_ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports'];
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —
@@ -120,6 +111,7 @@ function createMainWindow() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send('tickets:changed', ticketsPayload());
     mainWindow.webContents.send('tickets:connection', ticketConnectionState());
+    broadcastStore();
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -158,6 +150,21 @@ function broadcastTickets() {
 
 function broadcastTicketConnection(state) {
   openWindows().forEach((w) => w.webContents.send('tickets:connection', state));
+}
+
+function storePayload(entity, options = {}) {
+  return { entity, records: listRecords(entity, options), connection: storeConnectionState() };
+}
+
+function broadcastStore(entity = null) {
+  const entities = entity ? [entity] : CRM_ENTITIES;
+  openWindows().forEach((w) => {
+    entities.forEach((name) => {
+      const payload = storePayload(name);
+      w.webContents.send('store:changed', payload);
+      w.webContents.send(`store:${name}:changed`, payload);
+    });
+  });
 }
 
 // ─── Tray ────────────────────────────────────────────────────────────────────
@@ -246,15 +253,14 @@ ipcMain.handle('auth:delete-user', (_e, { username } = {}) => (
 // Synchronous lookup so dashboard-preload.js can namespace the layout store.
 ipcMain.on('auth:current-username', (e) => { e.returnValue = auth.currentUser() || ''; });
 
-// ─── IPC: settings (broker) ──────────────────────────────────────────────────────
+// ─── IPC: settings (API) ────────────────────────────────────────────────────────
 
 ipcMain.handle('settings:get', () => settings);
 ipcMain.handle('settings:save', (_e, next = {}) => {
   settings = { ...settings, ...next };
-  if (!settings.mqttHost) settings.mqttHost = DEFAULT_SETTINGS.mqttHost;
-  if (!settings.mqttPort) settings.mqttPort = DEFAULT_SETTINGS.mqttPort;
+  if (!settings.apiUrl) settings.apiUrl = DEFAULT_SETTINGS.apiUrl;
   saveSettings(settings);
-  connectTickets({ host: settings.mqttHost, port: settings.mqttPort }); // reconnect with new broker
+  connectTickets({ url: settings.apiUrl });
   return { ok: true, settings };
 });
 
@@ -278,7 +284,7 @@ ipcMain.handle('dashboard:close', (e) => { if (isMainSender(e)) mainWindow.hide(
 
 // ─── IPC: tickets ────────────────────────────────────────────────────────────────
 // Reads are open; writes require a signed-in user; delegate (assign) still requires
-// an admin. All writes flow through tickets.js → the local userData store.
+// an admin. All writes flow through tickets.js -> store.js -> the CRM API.
 
 ipcMain.handle('tickets:list', () => ticketsPayload());
 ipcMain.handle('tickets:connection', () => ticketConnectionState());
@@ -326,6 +332,48 @@ ipcMain.handle('tickets:delete', (_e, { id } = {}) => {
   return deleteTicket(id);
 });
 
+// ─── IPC: generic CRM store ────────────────────────────────────────────────────
+// New CRM modules use this seam. The legacy ticket bridge above remains intact
+// until the card-system factory is proven against ticketing.
+
+function entityName(entity) {
+  const key = String(entity || '').trim();
+  return CRM_ENTITIES.includes(key) ? key : null;
+}
+
+ipcMain.handle('store:list', (_e, { entity, includeDeleted = true } = {}) => {
+  const key = entityName(entity);
+  if (!key) return { ok: false, error: 'Unknown entity' };
+  return { ok: true, ...storePayload(key, { includeDeleted: !!includeDeleted }) };
+});
+
+ipcMain.handle('store:get', (_e, { entity, id } = {}) => {
+  const key = entityName(entity);
+  if (!key) return { ok: false, error: 'Unknown entity' };
+  return { ok: true, entity: key, record: getRecord(key, id) };
+});
+
+ipcMain.handle('store:create', (_e, { entity, fields } = {}) => {
+  const key = entityName(entity);
+  if (!key) return { ok: false, error: 'Unknown entity' };
+  const g = requireUser(); if (g.error) return g.error;
+  return createRecord(key, fields || {}, g.who);
+});
+
+ipcMain.handle('store:update', (_e, { entity, id, fields } = {}) => {
+  const key = entityName(entity);
+  if (!key) return { ok: false, error: 'Unknown entity' };
+  const g = requireUser(); if (g.error) return g.error;
+  return updateRecord(key, id, fields || {}, g.who);
+});
+
+ipcMain.handle('store:delete', (_e, { entity, id, hard = false } = {}) => {
+  const key = entityName(entity);
+  if (!key) return { ok: false, error: 'Unknown entity' };
+  const g = requireUser(); if (g.error) return g.error;
+  return deleteRecord(key, id, g.who, { hard: !!hard });
+});
+
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
@@ -333,9 +381,11 @@ app.whenReady().then(() => {
 
   auth.init();
 
-  // Tickets are a local store now (no broker) — just wire the change broadcast.
+  // Tickets are an API-backed compatibility adapter; generic CRM entities share
+  // the same Postgres/API store seam.
   initTickets({
-    onChange: () => { broadcastTickets(); refreshTray(); },
+    url: settings.apiUrl,
+    onChange: () => { broadcastTickets(); broadcastStore(); refreshTray(); },
   });
 
   tray = new Tray(icons.grey);

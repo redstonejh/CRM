@@ -1,7 +1,5 @@
-// Tray icons for the ticketing client. The monitor's tray is a traffic light;
-// the ticketing companion is a single BLUE dot (per the ecosystem convention:
-// monitor = status colours, ticketing = blue), dimmed to grey when the tickets
-// MQTT link is down.
+// Tray icons for the CRM client. The monitor's tray is a traffic light; this
+// app uses a single blue dot, dimmed to grey when the API connection is down.
 //
 // Drawn procedurally into a raw premultiplied-BGRA bitmap and handed to
 // nativeImage.createFromBitmap — no PNG encoder and no headless browser needed,

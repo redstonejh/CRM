@@ -31,11 +31,23 @@
   const STAGE_KEYS = STAGES.map((s) => s.key);
   const STAGE_STORE = "tk-ticket-stage";
   let stageMap = (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })();
-  const stageOf = (id) => (id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null);
+  const ticketById = (id) => tickets.find((x) => x && x.id === id) || null;
+  const patchTicketDoc = (id, fields) => {
+    if (!id || !fields || !Object.keys(fields).length) return;
+    try { window.tickets?.update?.(id, fields); } catch {}
+  };
+  const stageOf = (id) => {
+    const docStage = ticketById(id)?.stage;
+    if (STAGE_KEYS.includes(docStage)) return docStage;
+    return id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null;
+  };
   const setStage = (id, stage) => {
     if (!id) return;
     if (stage && STAGE_KEYS.includes(stage)) stageMap[id] = stage; else delete stageMap[id];
     try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
+    const t = ticketById(id);
+    if (t) t.stage = stage && STAGE_KEYS.includes(stage) ? stage : null;
+    patchTicketDoc(id, { stage: stage && STAGE_KEYS.includes(stage) ? stage : null });
   };
 
   // Per-stage card order = the vertical stacking order within a bucket. A ticket ENTERING a bucket
@@ -51,6 +63,15 @@
     if (stage && STAGE_KEYS.includes(stage)) {
       const arr = stageOrder[stage] || (stageOrder[stage] = []);
       arr.splice(clamp(index | 0, 0, arr.length), 0, id);
+      arr.forEach((rankedId, rank) => {
+        const t = ticketById(rankedId);
+        if (t) { t.stage = stage; t.stageRank = rank; }
+        patchTicketDoc(rankedId, { stage, stageRank: rank });
+      });
+    } else {
+      const t = ticketById(id);
+      if (t) t.stageRank = null;
+      patchTicketDoc(id, { stageRank: null });
     }
     try { localStorage.setItem(STAGE_ORDER_STORE, JSON.stringify(stageOrder)); } catch {}
   };
@@ -60,11 +81,18 @@
   // these instead. Persisted like the stage map.
   const DELETED_STORE = "tk-deleted";
   let deletedSet = (() => { try { return new Set(JSON.parse(localStorage.getItem(DELETED_STORE) || "[]")); } catch { return new Set(); } })();
-  const isDeleted = (id) => !!id && deletedSet.has(id);
+  const isDeleted = (id) => {
+    const t = ticketById(id);
+    return !!(id && (deletedSet.has(id) || t?.deletedAt));
+  };
   const setDeleted = (id, on) => {
     if (!id) return;
     if (on) deletedSet.add(id); else deletedSet.delete(id);
     try { localStorage.setItem(DELETED_STORE, JSON.stringify([...deletedSet])); } catch {}
+    const t = ticketById(id);
+    const deletedAt = on ? new Date().toISOString() : null;
+    if (t) t.deletedAt = deletedAt;
+    patchTicketDoc(id, { deletedAt });
   };
   let trashMode = false;   // right stack: false → resolved/closed, true → deleted (trash)
   let trashShowEmpty = false;   // true while the user has DELIBERATELY opened the empty bin — keep it open to show its placeholder instead of auto-closing
@@ -74,7 +102,7 @@
   // these live client-side in localStorage and are applied at render.
   const META_STORE = "tk-ticket-meta";
   let metaMap = (() => { try { return JSON.parse(localStorage.getItem(META_STORE) || "{}") || {}; } catch { return {}; } })();
-  const metaOf = (id) => (id && metaMap[id]) || {};
+  const metaOf = (id) => ({ ...((id && ticketById(id)?.meta) || {}), ...((id && metaMap[id]) || {}) });
   // Effective severity/priority. A meta-stored value (persisted in localStorage, exactly like every other
   // stage field) wins over the ticket store's copy — so a chosen severity survives a refresh even if the
   // auth-gated store round-trip didn't take. This is what keeps triage's progress from resetting.
@@ -87,6 +115,9 @@
     if ("overtime" in m) m = { ...m, overtimeMin: parseDuration(m.overtime) };
     metaMap[id] = { ...metaOf(id), ...m };
     try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
+    const t = ticketById(id);
+    if (t) t.meta = { ...(t.meta || {}), ...metaMap[id] };
+    patchTicketDoc(id, { meta: metaMap[id] });
   };
   // Client-side activity trail (stage moves, trash/restore, severity…) — the store's own history
   // (created / edited / resolved / …) covers the backend events; the right-click Activity view merges both.
@@ -2499,9 +2530,13 @@
     STAGES.forEach((s) => {
       const body = zoneBody[s.key], track = zoneTrack[s.key];
       const ord = stageOrder[s.key] || [];
-      const oidx = (id) => { const i = ord.indexOf(id); return i === -1 ? 1e9 : i; };   // unordered → bottom
+      const oidx = (t) => {
+        const i = ord.indexOf(t.id);
+        if (i !== -1) return i;
+        return Number.isFinite(t.stageRank) ? t.stageRank : 1e9;
+      };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id))
-        .sort((a, b) => oidx(a.id) - oidx(b.id) || byCreated(a, b));
+        .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.

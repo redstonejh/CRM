@@ -7,12 +7,15 @@
   "private": true,
   "scripts": {
     "start": "electron-forge start",
+    "server": "node server/index.js",
+    "db:migrate": "node server/migrate.js",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
-    "mqtt": "^5.3.4"
+    "pg": "^8.22.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.0.0",

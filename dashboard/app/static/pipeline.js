@@ -127,6 +127,7 @@
     severityRgb: temperatureRgb,
     intensityValues: ["cold", "warm", "hot", "commit"],
     defaultIntensity: "warm",
+    stalenessOf: (deal) => window.crmColdFront?.staleness?.(deal, "deals") || 0,
     resolvedState: "won",
     isResolved: (deal) => !!deal && (deal.state || "open") === "won",
     onLinkDrop: linkDeals,

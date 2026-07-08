@@ -6,6 +6,7 @@
   }
 
   const MODULES = [
+    { key: "today", label: "Today", note: "The dealt hand for work due now", enabled: true },
     { key: "tickets", label: "Tickets", note: "Active queue and issue history", enabled: true },
     { key: "people", label: "People", note: "Contacts and relationship attention", enabled: true },
     { key: "pipeline", label: "Pipeline", note: "Deals, stages and wins", enabled: true },

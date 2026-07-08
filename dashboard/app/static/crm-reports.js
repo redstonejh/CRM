@@ -290,6 +290,7 @@
       overdueInvoices: [],
       invoiceAging: [],
       todayHand: [],
+      coldFrontRows: [],
       pipelineByStage: [],
       activityByDay: [],
       recentRecords: [],

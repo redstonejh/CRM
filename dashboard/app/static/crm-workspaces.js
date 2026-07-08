@@ -2,6 +2,7 @@
 (() => {
   const MODULES = [
     { key: "home", label: "Home", api: () => window.crmHome },
+    { key: "today", label: "Today", api: () => window.crmToday },
     { key: "tickets", label: "Tickets", api: () => window.ticketStacks },
     { key: "people", label: "People", api: () => window.peopleCards },
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },

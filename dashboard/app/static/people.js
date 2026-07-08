@@ -127,6 +127,8 @@
     intensityValues: ["none"],
     defaultIntensity: "none",
     intensityOf: () => "none",
+    stalenessOf: (contact) => window.crmColdFront?.staleness?.(contact, "contacts") || 0,
+    attentionDeckFilter: (contact) => window.crmColdFront?.isTripped?.(contact, "contacts"),
     cardBackground: () => neutralCardBg,
     rightDeckEnabled: false,
     showProgressBars: false,

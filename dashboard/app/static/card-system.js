@@ -32,6 +32,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
   const configuredCardBg = typeof config.cardBackground === "function" ? config.cardBackground : null;
+  const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
+  const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
   const rightDeckFilter = typeof config.rightDeckFilter === "function" ? config.rightDeckFilter : ((record) => isResolved(record));
   const deckCopy = {
@@ -338,6 +340,22 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     }
     const c = colorFor(t);
     return c ? colorBg(c) : severityBg(sevOf(t));
+  };
+  const stalenessOf = (t) => {
+    if (!configuredStaleness || !t) return 0;
+    const value = Number(configuredStaleness(t, { metaOf, stageOf, isResolved }));
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  };
+  const applyStaleness = (el, t) => {
+    if (!el) return;
+    const value = stalenessOf(t);
+    if (value > 0.005) el.style.setProperty("--crm-staleness", value.toFixed(3));
+    else el.style.removeProperty("--crm-staleness");
+  };
+  const inAttentionDeck = (t) => {
+    if (!attentionDeckFilter || !t || isDeleted(t.id)) return false;
+    try { return !!attentionDeckFilter(t, { metaOf, stageOf, isResolved, stalenessOf }); }
+    catch { return false; }
   };
 
   // ── Stage progress bars (3 segments, one per bucket) ──────────────────────────────────────
@@ -650,6 +668,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       /* On the stack/zone cards the client name is a single ellipsised line, leaving the top-right column
          (bars + date) clear so they never collide with a long name. */
       .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 1; padding-right: 56px; }
+      .tk-card .ticket-body, .tk-zcard .ticket-body, .tk-zfly .ticket-body {
+        filter: saturate(calc(1 - (var(--crm-staleness, 0) * .56))) opacity(calc(1 - (var(--crm-staleness, 0) * .22)));
+      }
+      .tk-card::after, .tk-zcard::after, .tk-zfly::after {
+        content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+        background: rgba(180,190,205, calc(var(--crm-staleness, 0) * .14));
+        mix-blend-mode: screen;
+      }
       /* Live config-menu info on the card face (replaces the old "Down <time>" line). Each entered
          field is one compact, ellipsised line: a muted label + the value. */
       .ticket-fields { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; min-height: 0; overflow: hidden; }
@@ -780,7 +806,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // card instance IN PLACE (no rebuild), the same pattern as setPriority.
   const setAppearance = (t, hex) => {
     setMeta(t.id, { color: hex || "" });
-    document.querySelectorAll(`.tk-card[data-id="${cssEsc(t.id)}"], .tk-zcard[data-id="${cssEsc(t.id)}"]`).forEach((c) => { c.style.backgroundImage = cardBg(t); });
+    document.querySelectorAll(`.tk-card[data-id="${cssEsc(t.id)}"], .tk-zcard[data-id="${cssEsc(t.id)}"]`).forEach((c) => {
+      c.style.backgroundImage = cardBg(t);
+      applyStaleness(c, t);
+    });
   };
   // The appearance submenu — same frosted .tk-menu shell: the widget palette as a swatch grid, then a
   // "match severity" check item. The current state reads back: the active swatch rings white, or the
@@ -856,6 +885,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.cssText = `left:${r.left}px; top:${r.top}px; width:${Math.round(r.width)}px; height:${Math.round(r.height)}px; transform-origin: center center; z-index: 6000; opacity: 1; transition: transform .3s cubic-bezier(.4,0,1,1), opacity .3s ease;`;
     clone.style.backgroundColor = baseColor();
     clone.style.backgroundImage = cardBg(t);
+    applyStaleness(clone, t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
     fitCardFields(clone);
@@ -874,6 +904,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.cssText = `left:${fromRect.left}px; top:${fromRect.top}px; width:${Math.round(fromRect.width)}px; height:${Math.round(fromRect.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
     clone.style.backgroundColor = baseColor();
     clone.style.backgroundImage = cardBg(t);
+    applyStaleness(clone, t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
     fitCardFields(clone);
@@ -1682,6 +1713,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.cssText = `position:fixed; left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; margin:0; z-index:9999; pointer-events:none; transition: transform .2s cubic-bezier(.4,0,.2,1), opacity .2s ease;`;
     clone.style.backgroundColor = baseColor();
     clone.style.backgroundImage = cardBg(t);
+    applyStaleness(clone, t);
     clone.innerHTML = cardInner(t);
     document.body.appendChild(clone);
     fitCardFields(clone);
@@ -1940,6 +1972,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = cardBg(t);
+    applyStaleness(card, t);
     card.innerHTML = cardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');   // viewport-edge scroll shadow (clipped to this card)
     wireCard(card, t, side);
@@ -2524,6 +2557,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         clone.style.cssText = `left:${r0.left}px; top:${r0.top}px; width:${r0.width}px; height:${r0.height}px; translate:0px 0px; scale:1; transition: scale .16s ease;`;
         clone.style.backgroundColor = baseColor();
         clone.style.backgroundImage = cardBg(t);
+        applyStaleness(clone, t);
         clone.innerHTML = zoneCardInner(t);
         document.body.appendChild(clone);
         fitCardFields(clone);
@@ -2625,6 +2659,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;   // full ticket dimensions
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = cardBg(t);
+    applyStaleness(card, t);
     card.innerHTML = zoneCardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade tk-zs-t"></div><div class="tk-edge-shade tk-zs-b"></div>');   // top/bottom scroll shadows (clipped to this card)
     wireZoneCard(card, t, stage);
@@ -2686,7 +2721,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (i !== -1) return i;
         return Number.isFinite(t.stageRank) ? t.stageRank : 1e9;
       };   // unordered → bottom
-      const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id))
+      const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id) && !inAttentionDeck(t))
         .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${esc(deckCopy.zoneEmptyText)}</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
@@ -2723,6 +2758,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; transform-origin: top left;`;
     clone.style.backgroundColor = baseColor();
     clone.style.backgroundImage = cardBg(t);
+    applyStaleness(clone, t);
     clone.innerHTML = zoneCardInner(t);
     document.body.appendChild(clone);
     fitCardFields(clone);
@@ -2742,7 +2778,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox). Deleted
     // tickets are hidden everywhere EXCEPT the right stack when it's flipped to trash mode.
-    const avail = tickets.filter((t) => !onGrid.has(t.id) && !stageOf(t.id) && !isDeleted(t.id));
+    const avail = tickets.filter((t) => !onGrid.has(t.id) && !isDeleted(t.id) && (!stageOf(t.id) || inAttentionDeck(t)));
     buildDeck("left", avail.filter(leftDeckFilter).sort(order));
     // The right stack is the recycle bin when toggled (its DELETED tickets, blue-outlined), else the
     // resolved/closed pile — same stack mechanics either way (fan, scroll, drag, reorder).
@@ -2866,6 +2902,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${Math.round(from.width)}px; height:${Math.round(from.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
       clone.style.backgroundColor = baseColor();
       clone.style.backgroundImage = cardBg(t);
+      applyStaleness(clone, t);
       clone.innerHTML = cardInner(t);
       document.body.appendChild(clone);
       fitCardFields(clone);
@@ -2921,6 +2958,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       t.priority = val;                 // keep the in-memory store copy in sync (colour + cross-app)
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         c.style.backgroundImage = cardBg(t);
+        applyStaleness(c, t);
         const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
         if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
       });

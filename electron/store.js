@@ -341,6 +341,39 @@ function nextTouchDate(record) {
   return dateOnly(firstText(record?.nextTouchAt, meta.nextTouchAt));
 }
 
+function coldFrontTouch(record, entity) {
+  const meta = metaOf(record);
+  return firstText(
+    record?.lastTouchAt,
+    meta.lastTouchAt,
+    record?.lastContactAt,
+    meta.lastContactAt,
+    entity === 'invoices' ? firstText(record?.sentAt, meta.sentAt) : '',
+    record?.createdAt,
+    record?.updatedAt,
+  );
+}
+
+function coldFrontHalfLife(record, entity, now = Date.now()) {
+  if (entity === 'contacts') return 21;
+  if (entity === 'deals') return dealStage(record) === 'proposal' ? 5 : 10;
+  if (entity === 'invoices') return ['sent', 'overdue'].includes(invoiceState(record, now)) ? 5 : 0;
+  return 0;
+}
+
+function coldFrontOf(record, entity, now = Date.now()) {
+  const halfLife = coldFrontHalfLife(record, entity, now);
+  if (!halfLife) return {};
+  const touch = timestampOf(coldFrontTouch(record, entity));
+  const days = touch ? Math.max(0, (now - touch) / 86400000) : halfLife;
+  const staleness = Math.max(0, Math.min(1, days / halfLife));
+  return {
+    staleness,
+    coldFront: staleness >= 1,
+    lastTouchAt: touch ? new Date(touch).toISOString() : '',
+  };
+}
+
 function invoiceState(record, now = Date.now()) {
   const meta = metaOf(record);
   const state = firstText(record?.state, meta.state, record?.status, meta.status, record?.stage, meta.stage).toLowerCase();
@@ -419,7 +452,7 @@ function contactDue(record, now = Date.now()) {
   return !lastTouch || now - lastTouch >= 30 * 24 * 60 * 60 * 1000;
 }
 
-function rowBase(record, entity) {
+function rowBase(record, entity, now = Date.now()) {
   const updatedAt = timestampOf(record.updatedAt || record.createdAt);
   return {
     id: record.id,
@@ -429,6 +462,7 @@ function rowBase(record, entity) {
     state: stateOf(record) || '',
     updatedAt,
     updated: updatedAt ? new Date(updatedAt).toISOString().slice(0, 10) : '',
+    ...coldFrontOf(record, entity, now),
   };
 }
 
@@ -459,7 +493,7 @@ function summarizeCachedReports() {
   const allDealRows = deals.map(dealRow);
   const openDeals = allDealRows.filter((row) => isOpenDeal(row));
   const wonDeals = allDealRows.filter((row) => row.wonRatio === 1);
-  const contactsDue = contacts.filter((record) => contactDue(record, now)).map((record) => rowBase(record, 'contacts'));
+  const contactsDue = contacts.filter((record) => contactDue(record, now)).map((record) => rowBase(record, 'contacts', now));
   const openTasks = tasks.filter(isOpenRecord).map((record) => rowBase(record, 'tasks'));
   const scheduledItems = calendarItems.map((record) => rowBase(record, 'calendarItems'));
   const allInvoiceRows = invoices.map((record) => invoiceRow(record, now));
@@ -485,19 +519,33 @@ function summarizeCachedReports() {
     };
   });
   const nextTouchRows = [
-    ...contacts.filter(isOpenRecord).map((record) => ({ ...rowBase(record, 'contacts'), dueDate: nextTouchDate(record), reason: 'next-touch' })),
+    ...contacts.filter(isOpenRecord).map((record) => ({ ...rowBase(record, 'contacts', now), dueDate: nextTouchDate(record), reason: 'next-touch' })),
     ...deals.filter(isOpenDeal).map((record) => ({ ...dealRow(record), dueDate: nextTouchDate(record), reason: 'next-touch' })),
     ...invoices
       .filter((record) => ['sent', 'overdue'].includes(invoiceState(record, now)))
       .map((record) => ({ ...invoiceRow(record, now), dueDate: nextTouchDate(record), reason: 'next-touch' })),
   ].filter((row) => row.dueDate && row.dueDate <= today);
-  const todayHand = [
+  const coldFrontRows = [
+    ...contacts.filter(isOpenRecord).map((record) => ({ ...rowBase(record, 'contacts', now), reason: 'cold-front' })),
+    ...deals.filter(isOpenDeal).map((record) => ({ ...dealRow(record), reason: 'cold-front' })),
+  ].filter((row) => row.coldFront);
+  const uniqueTodayRows = (rows) => {
+    const seen = new Set();
+    return rows.filter((row) => {
+      const key = `${row.entity || row.type}:${row.id}`;
+      if (!row.id || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const todayHand = uniqueTodayRows([
     ...nextTouchRows,
+    ...coldFrontRows,
     ...datedTaskRows.filter((row) => row.dueDate === today),
     ...datedCalendarRows.filter((row) => row.dueDate === today),
     ...outstandingInvoices.filter((row) => row.isOverdue || row.dueDate === today).map((row) => ({ ...row, reason: row.isOverdue ? 'invoice-overdue' : 'invoice-due' })),
     ...contactsDue.map((row) => ({ ...row, reason: 'contact-touch' })),
-  ].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 100);
+  ]).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 100);
   const activity = new Map();
   all.forEach(({ record }) => {
     const history = Array.isArray(record.history) ? record.history : [];
@@ -537,6 +585,7 @@ function summarizeCachedReports() {
       openTasks: openTasks.length,
       scheduledCount: scheduledItems.length,
       todayHand: todayHand.length,
+      coldFront: coldFrontRows.length,
     },
     datasets: {
       openTickets,
@@ -550,6 +599,7 @@ function summarizeCachedReports() {
       overdueInvoices,
       invoiceAging,
       todayHand,
+      coldFrontRows,
       pipelineByStage: openDeals,
       activityByDay,
       recentRecords,

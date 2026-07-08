@@ -39,6 +39,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
   const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
   const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
+  const bucketSummary = typeof config.bucketSummary === "function" ? config.bucketSummary : null;
+  const resolvedPulse = config.resolvedPulse === true;
   const autoFanOncePerDayKey = String(config.autoFanOncePerDayKey || "");
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
   const rightDeckFilter = typeof config.rightDeckFilter === "function" ? config.rightDeckFilter : ((record) => isResolved(record));
@@ -667,6 +669,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         padding: 2px 4px 11px; font-size: 0.98rem; font-weight: 700; line-height: 1.25; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
       .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
         background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
+      .tk-zone-count[hidden] { display: none; }
       .tk-zone-hd-r { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
       .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
@@ -743,6 +746,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         padding: 14px 15px; border-radius: 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 24px 52px rgba(0,0,0,0.45);
         transition: transform .3s cubic-bezier(.4,0,.2,1), opacity .3s ease; }
+      .tk-card.tk-resolved-pulse, .tk-stack-btn.tk-resolved-pulse { animation: tk-resolved-pulse .82s cubic-bezier(.22,1,.26,1) 1; }
+      @keyframes tk-resolved-pulse {
+        0% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18), 0 0 0 rgba(234,179,8,0); }
+        38% { box-shadow: inset 0 0 0 1px rgba(255,245,190,0.42), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18), 0 0 28px rgba(234,179,8,0.46); }
+        100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18), 0 0 0 rgba(234,179,8,0); }
+      }
 
       /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
       /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
@@ -935,6 +944,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     fitCardFields(clone);
     requestAnimationFrame(() => { clone.style.transform = `translate(${Math.round(to.left - fromRect.left)}px, ${Math.round(to.top - fromRect.top)}px) scale(${(to.width / fromRect.width).toFixed(4)}, ${(to.height / fromRect.height).toFixed(4)})`; });
     setTimeout(() => { clone.remove(); if (destEl.isConnected) destEl.style.opacity = ""; if (onLanded) onLanded(); }, 470);
+  };
+  const pulseResolvedPile = (id) => {
+    if (!resolvedPulse || !rightDeckEnabled) return;
+    requestAnimationFrame(() => {
+      const target = (id && decks.right?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`)) || decks.right?.box?.querySelector(".tk-card") || decks.right?.action;
+      if (!target) return;
+      target.classList.remove("tk-resolved-pulse");
+      void target.offsetWidth;
+      target.classList.add("tk-resolved-pulse");
+      setTimeout(() => target.classList.remove("tk-resolved-pulse"), 900);
+    });
   };
   // A corner stack (left/right) under the cursor — fanned OR closed — for dragging a card OUT of the bin
   // back into a stack. Uses the visible cards' bounds so a closed corner pile counts too.
@@ -1898,7 +1918,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         try { source?.resolve?.(t.id); } catch {}
         deckToTop("right", t.id);   // newest resolve → TOP of the pile (highest z)
         render();
-        flyCloneTo(t, fromRect, decks.right?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`));
+        flyCloneTo(t, fromRect, decks.right?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`), () => pulseResolvedPile(t.id));
         return;
       }
       const dDrop = decks[side];               // back into the scroll track (it was lifted to the box for the drag) —
@@ -2450,7 +2470,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const panel = document.createElement("div");
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
-      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}</span></div>` +
+      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-hd-r"><span class="tk-zone-count" hidden></span>${barsHTML(bucketBarClasses(i), false)}</span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
@@ -2763,7 +2783,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
           try { source?.resolve?.(t.id); } catch {}
           setStage(t.id, null); setStageAt(t.id, null);
           deckToTop("right", t.id);   // newest resolve → TOP of the pile (highest z)
-          render(); settleClone(t.id); return;
+          render(); settleClone(t.id); setTimeout(() => pulseResolvedPile(t.id), 240); return;
         }
         if (stageOf(t.id)) logActivity(t.id, "Moved back to the new-tickets stack");
         setStage(t.id, null); setStageAt(t.id, null);
@@ -2852,6 +2872,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id) && !inAttentionDeck(t))
         .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
+      const count = body.parentElement.querySelector(".tk-zone-count");
+      if (count) {
+        let summary = "";
+        try { summary = bucketSummary ? bucketSummary(s, list, { metaOf, stageOf, isResolved, stalenessOf }) : ""; } catch { summary = ""; }
+        count.textContent = String(summary || "");
+        count.hidden = !summary;
+      }
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${esc(deckCopy.zoneEmptyText)}</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.

@@ -47,6 +47,16 @@
   const recordFromCreate = (result) => result && (result.record || result.ticket);
   const valueOf = (record, key) => window.crmNextTouch?.valueOf?.(record, key) ?? record?.[key];
   const isClosedDeal = (deal) => ["won", "lost"].includes(String(valueOf(deal, "state") || valueOf(deal, "stage") || "open").toLowerCase());
+  const amountOf = (deal) => {
+    const raw = valueOf(deal, "amount") ?? valueOf(deal, "value") ?? valueOf(deal, "budget") ?? "";
+    const amount = Number(String(raw).replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(amount) ? amount : 0;
+  };
+  const money = (amount) => amount ? `$${Math.round(amount).toLocaleString()}` : "$0";
+  const bucketSummary = (_stage, deals) => {
+    const total = deals.reduce((sum, deal) => sum + amountOf(deal), 0);
+    return `${money(total)} / ${deals.length}`;
+  };
 
   const dealSource = {
     list: () => window.deals?.list?.({ includeDeleted: true }),
@@ -130,6 +140,8 @@
     stalenessOf: (deal) => window.crmColdFront?.staleness?.(deal, "deals") || 0,
     resolvedState: "won",
     isResolved: (deal) => !!deal && (deal.state || "open") === "won",
+    bucketSummary,
+    resolvedPulse: true,
     onLinkDrop: linkDeals,
     active: false,
   });

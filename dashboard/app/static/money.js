@@ -70,6 +70,16 @@
     if (state === "sent") return "sent";
     return "draft";
   };
+  const amountOf = (invoice) => {
+    const raw = valueOf(invoice, "amount") ?? valueOf(invoice, "value") ?? "";
+    const amount = Number(String(raw).replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(amount) ? amount : 0;
+  };
+  const money = (amount) => amount ? `$${Math.round(amount).toLocaleString()}` : "$0";
+  const bucketSummary = (_stage, invoices) => {
+    const total = invoices.reduce((sum, invoice) => sum + amountOf(invoice), 0);
+    return `${money(total)} / ${invoices.length}`;
+  };
 
   const invoiceSource = {
     list: () => window.invoices?.list?.({ includeDeleted: true }),
@@ -158,6 +168,7 @@
     resolvedState: "paid",
     isResolved: (invoice) => !!invoice && invoiceState(invoice) === "paid",
     canResolve: (invoice) => !!invoice && invoiceState(invoice) !== "paid",
+    bucketSummary,
     stageMovement: "free",
     stageUpdateFields: (_id, stage) => {
       if (!stage) return {};

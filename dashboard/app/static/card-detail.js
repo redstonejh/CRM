@@ -27,6 +27,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   const defaultIntensity = config.defaultIntensity || intensityValues[1] || "medium";
   const notFoundText = config.notFoundText || "Ticket not found.";
   const draftRequiredText = config.draftRequiredText || "A client, date of incident and description are all required to create the ticket.";
+  const nextTouch = config.nextTouch && typeof config.nextTouch === "object" ? config.nextTouch : null;
   const GAP = 10;            // gap between the card and the panel — matches GAP_FAN (the fanned-stack gap)
   const PANEL_W = 300;       // panel width (matches .ticket-detail width)
   // Tuck distance: the panel must hide FAR enough left that even its drop shadow
@@ -40,6 +41,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   const DOF_BLUR = 4, DOF_OUT_MS = 320;             // depth-of-field: peak blur of the world behind the open ticket + its detransition
   let overlay = null, panel = null, flyCard = null, wrap = null;
   let currentId = null, sourceEl = null, backTransform = "", subscribed = false, closing = false;
+  let currentRecord = null, nextTouchPromptOpen = false;
   let detailOpts = null, committed = false;   // draft-mode opts + whether this draft was saved (committed)
   let geo = null, settleTimer = null, panelSide = "right";   // which side the panel emerges from
   let cardStays = false;     // true when the card doesn't move (front/closed-pile card) → panel opens with no delay
@@ -192,6 +194,17 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
         font: inherit; font-size: 0.85rem; font-weight: 700; color: rgba(255,255,255,0.55); transition: color .14s ease; }
       .td-save:hover { color: #fff; }
       .td-msg { padding: 1px 4px; font-size: 0.76rem; color: rgba(255,160,160,0.95); }
+
+      .td-next-touch { display: flex; flex-direction: column; gap: 7px; margin-top: auto; padding: 7px 4px 0;
+        border-top: 1px solid rgba(255,255,255,0.10); }
+      .td-next-touch-title { font-size: 0.78rem; font-weight: 700; color: rgba(255,255,255,0.72); }
+      .td-next-touch-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      .td-touch-chip { appearance: none; border: 0; border-radius: 999px; padding: 0; margin: 0;
+        background: transparent; color: rgba(255,255,255,0.58); cursor: pointer;
+        font: inherit; font-size: 0.82rem; font-weight: 750; transition: color .14s ease; }
+      .td-touch-chip:hover { color: #fff; }
+      .td-touch-chip[disabled] { opacity: .42; cursor: default; }
+      .td-touch-date { width: 100%; box-sizing: border-box; }
 
       /* Claim + Resolve share one row, pinned to the bottom of the card-height panel. */
       .td-acts { display: flex; flex-direction: row; gap: 20px; margin-top: auto; padding-top: 6px; }
@@ -440,8 +453,90 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     requestAnimationFrame(() => { try { acc.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch {} });
   };
 
+  const localDate = (date) => {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+  const addDays = (days) => {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    return localDate(date);
+  };
+
+  const promptForNextTouch = (record) => {
+    if (!nextTouch || !record || !record.id || (detailOpts?.draft && !committed) || nextTouchPromptOpen) return false;
+    if (typeof nextTouch.shouldPrompt !== "function") return false;
+    try { return Promise.resolve(nextTouch.shouldPrompt(record)).then(Boolean, () => false); } catch { return false; }
+  };
+
+  const showNextTouchPrompt = (record) => {
+    if (!panel || !nextTouch || !record || nextTouchPromptOpen) return false;
+    nextTouchPromptOpen = true;
+    panel.querySelector(".td-next-touch")?.remove();
+    const row = document.createElement("div");
+    row.className = "td-next-touch";
+    row.innerHTML = `
+      <div class="td-next-touch-title">${esc(nextTouch.label || "next touch")}</div>
+      <div class="td-next-touch-chips">
+        <button type="button" class="td-touch-chip" data-next-touch-days="2">+2d</button>
+        <button type="button" class="td-touch-chip" data-next-touch-days="7">+1w</button>
+        <button type="button" class="td-touch-chip" data-next-touch-days="30">+1m</button>
+        <button type="button" class="td-touch-chip" data-next-touch-pick>pick a day</button>
+        <button type="button" class="td-touch-chip" data-next-touch-let-go>let it go</button>
+      </div>
+      <input type="date" class="td-in td-date td-touch-date" data-next-touch-date hidden />
+      <div class="td-msg" data-next-touch-msg hidden></div>
+    `;
+    const saveRow = panel.querySelector(".td-save-row");
+    if (saveRow) panel.insertBefore(row, saveRow);
+    else panel.appendChild(row);
+    const msg = row.querySelector("[data-next-touch-msg]");
+    const setBusy = (busy) => row.querySelectorAll("button, input").forEach((el) => { el.disabled = !!busy; });
+    const fail = (error) => {
+      if (msg) {
+        msg.textContent = error?.message || String(error || "Could not schedule next touch.");
+        msg.hidden = false;
+      }
+      setBusy(false);
+    };
+    const schedule = async (date, mode) => {
+      if (!date) return;
+      setBusy(true);
+      try {
+        if (typeof nextTouch.schedule === "function") await nextTouch.schedule(record, date, mode);
+        close();
+      } catch (err) {
+        fail(err);
+      }
+    };
+    row.querySelectorAll("[data-next-touch-days]").forEach((button) => {
+      button.onclick = () => schedule(addDays(Number(button.dataset.nextTouchDays) || 0), button.textContent.trim());
+    });
+    const dateInput = row.querySelector("[data-next-touch-date]");
+    row.querySelector("[data-next-touch-pick]")?.addEventListener("click", () => {
+      if (!dateInput) return;
+      dateInput.hidden = false;
+      dateInput.value = dateInput.value || addDays(2);
+      dateInput.focus();
+    });
+    if (dateInput) dateInput.onchange = () => schedule(dateInput.value, "pick");
+    row.querySelector("[data-next-touch-let-go]")?.addEventListener("click", async () => {
+      setBusy(true);
+      try {
+        if (typeof nextTouch.letGo === "function") await nextTouch.letGo(record);
+        close();
+      } catch (err) {
+        fail(err);
+      }
+    });
+    setTimeout(() => row.querySelector("[data-next-touch-days]")?.focus(), 0);
+    return true;
+  };
+
   const render = (t) => {
     if (!panel) return;
+    currentRecord = t || null;
+    nextTouchPromptOpen = false;
     if (!t) { panel.innerHTML = `<div class="td-empty">${esc(notFoundText)}</div>`; wire(null); return; }
     // Lean config: ONLY the current bucket's fields, flat (no dropdowns) — each with its label + a *
     // (all are required to complete the stage), the question as the prompt, and "n/a" satisfies it.
@@ -543,7 +638,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
         blank.focus(); return;
       }
       if (draft) { committed = true; if (detailOpts.onCommit) detailOpts.onCommit(); }   // the draft is now a real ticket
-      close();
+      requestClose();
     };
   };
 
@@ -601,9 +696,13 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
 
   // The close entry point for the × / Escape / click-off: a still-uncommitted DRAFT is ABANDONED (the
   // card flies back into the "+" and the ticket is discarded); anything else closes normally.
-  const requestClose = () => {
+  const requestClose = async () => {
     if (detailOpts && detailOpts.draft && !committed) {
       return close({ abandon: true, home: detailOpts.homeRect ? detailOpts.homeRect() : null });
+    }
+    if (await promptForNextTouch(currentRecord)) {
+      showNextTouchPrompt(currentRecord);
+      return;
     }
     close();
   };
@@ -658,7 +757,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       // On abandon the ticket is being discarded → keep its source card hidden (the abandon callback
       // re-renders the stacks without it). On a normal close, reveal the card again.
       if (sourceEl) { if (!abandoning) sourceEl.style.visibility = ""; sourceEl = null; }
-      flyCard = wrap = panel = scrim = null; currentId = null; closing = false; geo = null;
+      flyCard = wrap = panel = scrim = null; currentId = null; currentRecord = null; nextTouchPromptOpen = false; closing = false; geo = null;
       detailOpts = null; committed = false;
       try { getStacks()?.onDetailClosed?.(); } catch {}   // flush any render deferred while open
       if (onAbandon) { try { onAbandon(); } catch {} }            // remove the draft ticket + re-render

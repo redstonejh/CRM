@@ -17,6 +17,7 @@
     { key: "company", label: "Company", q: "Company or account" },
     { key: "role", label: "Role", q: "Role or buying influence" },
     { key: "lastContactAt", label: "Last touch", date: true, req: false },
+    { key: "nextTouchAt", label: "Next touch", date: true, req: false },
     { key: "nextStep", label: "Next step", q: "What should happen next?", area: true, req: false },
   ];
 
@@ -30,6 +31,8 @@
 
   const recordsFromList = (result) => (result && (result.records || result.tickets)) || [];
   const recordFromCreate = (result) => result && (result.record || result.ticket);
+  const valueOf = (record, key) => window.crmNextTouch?.valueOf?.(record, key) ?? record?.[key];
+  const isClosedContact = (contact) => ["archived", "deleted"].includes(String(valueOf(contact, "state") || valueOf(contact, "status") || "open").toLowerCase());
 
   const contactSource = {
     list: () => window.contacts?.list?.({ includeDeleted: true }),
@@ -42,7 +45,7 @@
 
   const touchDate = (contact) => {
     const meta = contact?.meta || {};
-    const value = meta.lastContactAt || contact?.lastContactAt || contact?.updatedAt || contact?.createdAt;
+    const value = meta.lastTouchAt || contact?.lastTouchAt || meta.lastContactAt || contact?.lastContactAt || contact?.updatedAt || contact?.createdAt;
     const ms = typeof value === "number" ? value : Date.parse(value || "");
     return Number.isFinite(ms) ? ms : 0;
   };
@@ -83,6 +86,12 @@
     severityRgb: neutralRgb,
     notFoundText: "Contact not found.",
     draftRequiredText: "A name, added date and context are required to create the contact.",
+    nextTouch: {
+      label: "next touch",
+      shouldPrompt: (contact) => window.crmNextTouch?.shouldPrompt?.(contact, { entity: "contacts", isClosed: isClosedContact }),
+      schedule: (contact, date, mode) => window.crmNextTouch?.schedule?.({ entity: "contacts", bridge: window.contacts, record: contact, date, mode }),
+      letGo: (contact) => window.crmNextTouch?.letGo?.({ entity: "contacts", bridge: window.contacts, record: contact }),
+    },
   });
 
   window.createCrmCardSystem({

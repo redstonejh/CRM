@@ -20,6 +20,7 @@
       { key: "priority", label: "Temperature", q: "How warm is this opportunity?", prio: true },
       { key: "amount", label: "Value", q: "Estimated deal value" },
       { key: "owner", label: "Owner", q: "Who's driving it?" },
+      { key: "nextTouchAt", label: "Next touch", date: true, req: false },
     ],
     qualified: [
       { key: "decisionMaker", label: "Decision maker", q: "Who can say yes?" },
@@ -44,6 +45,8 @@
 
   const recordsFromList = (result) => (result && (result.records || result.tickets)) || [];
   const recordFromCreate = (result) => result && (result.record || result.ticket);
+  const valueOf = (record, key) => window.crmNextTouch?.valueOf?.(record, key) ?? record?.[key];
+  const isClosedDeal = (deal) => ["won", "lost"].includes(String(valueOf(deal, "state") || valueOf(deal, "stage") || "open").toLowerCase());
 
   const dealSource = {
     list: () => window.deals?.list?.({ includeDeleted: true }),
@@ -84,6 +87,12 @@
     severityRgb: temperatureRgb,
     notFoundText: "Deal not found.",
     draftRequiredText: "An account, opened date and opportunity are required to create the deal.",
+    nextTouch: {
+      label: "next touch",
+      shouldPrompt: (deal) => window.crmNextTouch?.shouldPrompt?.(deal, { entity: "deals", isClosed: isClosedDeal }),
+      schedule: (deal, date, mode) => window.crmNextTouch?.schedule?.({ entity: "deals", bridge: window.deals, record: deal, date, mode }),
+      letGo: (deal) => window.crmNextTouch?.letGo?.({ entity: "deals", bridge: window.deals, record: deal }),
+    },
   });
 
   window.createCrmCardSystem({

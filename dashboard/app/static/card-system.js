@@ -386,7 +386,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (key === "description") return m.description != null ? m.description : (t.description ?? "");
     if (key === "assignee") return m.assignee != null ? m.assignee : (t.assignee ?? "");
     if (key === "priority") return priorityOf(t);
-    return m[key] != null ? m[key] : "";   // investigation / fix / resolution (client-side meta)
+    return m[key] != null ? m[key] : (t[key] ?? "");   // stage fields can come from local meta or the shared record doc
   };
   const fieldSatisfied = (t, key) => key === "priority" ? hasPriority(t) : String(fieldRaw(t, key) ?? "").trim() !== "";
   const stageComplete = (t, i) => (STAGE_FIELDS[STAGE_KEYS[i]] || []).every((f) => fieldSatisfied(t, f.key));

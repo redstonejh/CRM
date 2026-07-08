@@ -336,6 +336,11 @@ function invoiceDueDate(record) {
   return firstText(record?.dueDate, meta.dueDate);
 }
 
+function nextTouchDate(record) {
+  const meta = metaOf(record);
+  return dateOnly(firstText(record?.nextTouchAt, meta.nextTouchAt));
+}
+
 function invoiceState(record, now = Date.now()) {
   const meta = metaOf(record);
   const state = firstText(record?.state, meta.state, record?.status, meta.status, record?.stage, meta.stage).toLowerCase();
@@ -479,7 +484,15 @@ function summarizeCachedReports() {
       reason: 'calendar',
     };
   });
+  const nextTouchRows = [
+    ...contacts.filter(isOpenRecord).map((record) => ({ ...rowBase(record, 'contacts'), dueDate: nextTouchDate(record), reason: 'next-touch' })),
+    ...deals.filter(isOpenDeal).map((record) => ({ ...dealRow(record), dueDate: nextTouchDate(record), reason: 'next-touch' })),
+    ...invoices
+      .filter((record) => ['sent', 'overdue'].includes(invoiceState(record, now)))
+      .map((record) => ({ ...invoiceRow(record, now), dueDate: nextTouchDate(record), reason: 'next-touch' })),
+  ].filter((row) => row.dueDate && row.dueDate <= today);
   const todayHand = [
+    ...nextTouchRows,
     ...datedTaskRows.filter((row) => row.dueDate === today),
     ...datedCalendarRows.filter((row) => row.dueDate === today),
     ...outstandingInvoices.filter((row) => row.isOverdue || row.dueDate === today).map((row) => ({ ...row, reason: row.isOverdue ? 'invoice-overdue' : 'invoice-due' })),

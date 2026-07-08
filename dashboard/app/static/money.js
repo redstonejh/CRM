@@ -24,6 +24,7 @@
     sent: [
       { key: "dueDate", label: "Due date", date: true },
       { key: "sentAt", label: "Sent", date: true, req: false },
+      { key: "nextTouchAt", label: "Next touch", date: true, req: false },
       { key: "deliveryNote", label: "Delivery", q: "How was it sent?", area: true, req: false },
     ],
     overdue: [
@@ -56,6 +57,11 @@
     return due < new Date().toISOString().slice(0, 10);
   };
   const invoiceState = (invoice) => String(valueOf(invoice, "state") || valueOf(invoice, "stage") || "draft").toLowerCase();
+  const shouldPromptInvoice = async (invoice) => ["sent", "overdue"].includes(invoiceState(invoice))
+    && !!(await window.crmNextTouch?.shouldPrompt?.(invoice, {
+      entity: "invoices",
+      isClosed: (record) => ["paid", "void", "cancelled", "canceled"].includes(invoiceState(record)),
+    }));
   const invoiceIntensity = (invoice) => {
     if (!invoice) return "none";
     const state = invoiceState(invoice);
@@ -108,6 +114,12 @@
     severityRgb: moneyRgb,
     notFoundText: "Invoice not found.",
     draftRequiredText: "An invoice label, due date and memo are required to create the invoice.",
+    nextTouch: {
+      label: "next touch",
+      shouldPrompt: shouldPromptInvoice,
+      schedule: (invoice, date, mode) => window.crmNextTouch?.schedule?.({ entity: "invoices", bridge: window.invoices, record: invoice, date, mode }),
+      letGo: (invoice) => window.crmNextTouch?.letGo?.({ entity: "invoices", bridge: window.invoices, record: invoice }),
+    },
   });
 
   window.createCrmCardSystem({

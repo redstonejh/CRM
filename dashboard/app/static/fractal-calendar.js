@@ -51,6 +51,7 @@
     { type: "deal", label: "Deal", bridge: () => window.deals },
     { type: "contact", label: "Contact", bridge: () => window.contacts },
     { type: "task", label: "Task", bridge: () => window.tasks },
+    { type: "invoice", label: "Invoice", bridge: () => window.invoices },
   ];
 
   const ensureStyles = () => {
@@ -112,6 +113,7 @@
       .fc-chip[data-type="deal"] { background: rgba(249,115,22,0.18); }
       .fc-chip[data-type="contact"] { background: rgba(148,163,184,0.22); }
       .fc-chip[data-type="task"] { background: rgba(111,201,154,0.18); }
+      .fc-chip[data-type="invoice"] { background: rgba(239,68,68,0.18); }
       .fc-empty, .fc-day-detail { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center;
         color: rgba(255,255,255,0.42); font-size: 0.8rem; line-height: 1.4; }
       .fc-day-detail { margin: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; text-align: left; }

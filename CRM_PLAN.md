@@ -104,7 +104,7 @@ The swap happens at the preload seam: `electron/tickets.js` becomes a compatibil
 
 ## 6. Roadmap
 
-`CRM_VISION.md` in the parent CRM workspace extends this original roadmap beyond Phase 7. The active continuation is Phase 8: invoices/interactions, the Money pipeline, invoice aging reports, interaction fan-out, and server-side overdue nudges on the Postgres/API backend.
+`CRM_VISION.md` in the parent CRM workspace extends this original roadmap beyond Phase 7. The active continuation is Phase 9: Next-Touch Law for Contacts, Deals, and sent/overdue Invoices on the Postgres/API backend.
 
 | Phase | Work | Layer touched |
 |---|---|---|
@@ -115,6 +115,8 @@ The swap happens at the preload seam: `electron/tickets.js` becomes a compatibil
 | **5** | People module (contacts instance, glow stripped, attention deck, company buckets) | Layer 3 |
 | **6** | Camera split; Calendar gets card drops + year paging; Home menu instance | Layers 2–3 |
 | **7** | Reports (aggregates → builder widgets), quick-add, team polish | Layer 3 |
+| **8** | Money module, invoices/interactions, invoice aging, interaction fan-out, overdue nudges | Layer 3 + API |
+| **9** | Next-Touch Law interceptor, `nextTouchAt` card faces, calendar/report surfacing | Layers 2–3 + API |
 
 Phase 3 is the crux and carries its own test: **re-instantiate ticketing through the factory first**. If tickets don't behave byte-for-byte identically through the generalized engine, the abstraction is wrong — fix it before any CRM entity touches it.
 

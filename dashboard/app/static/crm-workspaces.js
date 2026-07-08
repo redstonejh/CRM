@@ -3,6 +3,7 @@
   const MODULES = [
     { key: "tickets", label: "Tickets", api: () => window.ticketStacks },
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
+    { key: "people", label: "People", api: () => window.peopleCards },
   ];
   const STORE_KEY = "crm-active-module";
   let active = localStorage.getItem(STORE_KEY) || "tickets";

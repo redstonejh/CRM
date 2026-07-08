@@ -24,6 +24,28 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const intensityValues = config.intensityValues || ["low", "medium", "high", "critical"];
   const defaultIntensity = config.defaultIntensity || intensityValues[1] || "medium";
   const onLinkDrop = typeof config.onLinkDrop === "function" ? config.onLinkDrop : null;
+  const rightDeckEnabled = config.rightDeckEnabled !== false;
+  const createEnabled = config.createEnabled !== false;
+  const showProgressBars = config.showProgressBars !== false;
+  const showDateUnder = config.showDateUnder !== false;
+  const showFlow = config.showFlow !== false;
+  const stageMovement = config.stageMovement || "gated";
+  const configuredCardBg = typeof config.cardBackground === "function" ? config.cardBackground : null;
+  const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
+  const rightDeckFilter = typeof config.rightDeckFilter === "function" ? config.rightDeckFilter : ((record) => isResolved(record));
+  const deckCopy = {
+    leftFanAria: `Fan out active ${widgetTitle.toLowerCase()}s`,
+    rightFanAria: `Fan out resolved ${widgetTitle.toLowerCase()}s`,
+    trashFanAria: `Fan out deleted ${widgetTitle.toLowerCase()}s`,
+    createAria: `Create a ${widgetTitle.toLowerCase()}`,
+    trashAria: `Recycle bin (deleted ${widgetTitle.toLowerCase()}s)`,
+    trashTitle: "Recycle bin",
+    leftEmptyHtml: `New ${widgetTitle.toLowerCase()}s<br>get added here`,
+    rightEmptyHtml: `Resolved ${widgetTitle.toLowerCase()}s<br>get added here`,
+    trashEmptyHtml: `Deleted ${widgetTitle.toLowerCase()}s<br>get added here`,
+    zoneEmptyText: `Drag ${widgetTitle.toLowerCase()}s here`,
+    ...(config.deckCopy || {}),
+  };
   const intensityOf = config.intensityOf || ((record) => {
     const p = priorityOf(record);
     return intensityValues.includes(p) ? p : (record ? "medium" : "none");
@@ -175,6 +197,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const decks = { left: null, right: null, trash: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false, trash: false };
   const DECK_SIDES = ["left", "right", "trash"];   // trash = the recycle bin, a right-hand stack lifted above the icon
+  const CORNER_SIDES = rightDeckEnabled ? ["left", "right"] : ["left"];
   let tickets = [], subscribed = false;
   let linkHighlightEl = null;
 
@@ -300,7 +323,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return layers.length ? (colorBgCache[hex] = layers.join(", ")) : fallback;
   };
   // The card fill: a random widget colour for a blank ticket, else its severity colour.
-  const cardBg = (t) => { const c = colorFor(t); return c ? colorBg(c) : severityBg(sevOf(t)); };
+  const cardBg = (t) => {
+    if (configuredCardBg) {
+      const custom = configuredCardBg(t, { metaOf, colorBg, severityBg, sevOf, priorityOf });
+      if (custom) return custom;
+    }
+    const c = colorFor(t);
+    return c ? colorBg(c) : severityBg(sevOf(t));
+  };
 
   // ── Stage progress bars (3 segments, one per bucket) ──────────────────────────────────────
   // Each bucket "owns" one segment (its identity). A ticket fills segments as it advances: passed
@@ -377,7 +407,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // A bucket's bars fill green CUMULATIVELY up to (and including) its own stage — Triage = [g,·,·],
   // Investigation = [g,g,·], Resolution = [g,g,g] — so the bucket reads as "progress up to here".
   const bucketBarClasses = (j) => STAGE_KEYS.map((_, i) => (i <= j ? "g" : ""));
-  const barsHTML = (classes, onCard) => `<div class="tk-bars${onCard ? " tk-bars-card" : ""}">${classes.map((c) => `<span class="tk-seg${c ? " " + c : ""}"></span>`).join("")}</div>`;
+  const barsHTML = (classes, onCard) => showProgressBars
+    ? `<div class="tk-bars${onCard ? " tk-bars-card" : ""}">${classes.map((c) => `<span class="tk-seg${c ? " " + c : ""}"></span>`).join("")}</div>`
+    : "";
 
   const ensureStyles = () => {
     if (document.getElementById("ticket-stacks-styles")) return;
@@ -837,7 +869,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   // A corner stack (left/right) under the cursor — fanned OR closed — for dragging a card OUT of the bin
   // back into a stack. Uses the visible cards' bounds so a closed corner pile counts too.
-  const overCornerStack = (x, y) => ["left", "right"].find((s) => {
+  const overCornerStack = (x, y) => CORNER_SIDES.find((s) => {
     const r = deckCardsRect(s) || emptyStackRect(s);   // empty stacks have no cards → use their placeholder region
     return !!r && x >= r.left - 16 && x <= r.right + 16 && y >= r.top - 16 && y <= r.bottom + 16;
   }) || null;
@@ -845,7 +877,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // ticket may enter the LEFT (active) stack; only a resolved one may enter the RIGHT (resolved) stack.
   const stackEligible = (side, t) => {
     const resolved = isResolved(t);
-    return side === "left" ? !resolved : side === "right" ? resolved : false;
+    return side === "left" ? !resolved || !rightDeckEnabled : side === "right" ? rightDeckEnabled && resolved : false;
   };
   // The corner stack under the cursor that this ticket is ALLOWED to restore into (eligibility-gated);
   // hovering/dropping over an ineligible stack returns null → the drag springs back to the bin.
@@ -941,7 +973,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       box.appendChild(track);
       const arrow = document.createElement("button");
       arrow.className = "tk-arrow"; arrow.type = "button";
-      arrow.setAttribute("aria-label", side === "left" ? "Fan out active tickets" : "Fan out resolved tickets");
+      arrow.setAttribute("aria-label", side === "left" ? deckCopy.leftFanAria : deckCopy.rightFanAria);
       arrow.addEventListener("click", () => toggleFan(side));
       const bar = document.createElement("div"); bar.className = "tk-bar";
       const thumb = document.createElement("div"); thumb.className = "tk-thumb";
@@ -954,12 +986,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const action = document.createElement("button");
       action.className = "tk-stack-btn"; action.type = "button";
       if (side === "left") {
-        action.setAttribute("aria-label", "Create a ticket");
+        action.setAttribute("aria-label", deckCopy.createAria);
         action.innerHTML = PLUS_SVG;
-        action.addEventListener("click", openCreate);
+        action.hidden = !createEnabled;
+        if (createEnabled) action.addEventListener("click", openCreate);
       } else {
-        action.setAttribute("aria-label", "Recycle bin (deleted tickets)");
-        action.title = "Recycle bin";
+        action.setAttribute("aria-label", deckCopy.trashAria);
+        action.title = deckCopy.trashTitle;
         action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20"/></svg>';
         action.addEventListener("click", () => setTrashMode(!trashMode, true));
       }
@@ -967,7 +1000,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // hidden (.is-empty). Sized + toggled in layout(); tells the user what this corner collects.
       const empty = document.createElement("div");
       empty.className = `tk-empty tk-empty-${side}`;
-      empty.innerHTML = `<span>${side === "left" ? "New tickets<br>get added here" : "Resolved tickets<br>get added here"}</span>`;
+      empty.innerHTML = `<span>${side === "left" ? deckCopy.leftEmptyHtml : deckCopy.rightEmptyHtml}</span>`;
       empty.style.display = "none";
       root.appendChild(box); root.appendChild(action); root.appendChild(empty);
       decks[side] = { box, track, arrow, bar, thumb, action, empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
@@ -979,7 +1012,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       box.className = "tk-deck tk-deck-trash";
       const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
       const arrow = document.createElement("button"); arrow.className = "tk-arrow"; arrow.type = "button";
-      arrow.setAttribute("aria-label", "Fan out deleted tickets");
+      arrow.setAttribute("aria-label", deckCopy.trashFanAria);
       arrow.addEventListener("click", () => toggleFan("trash"));
       const bar = document.createElement("div"); bar.className = "tk-bar";
       const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
@@ -989,7 +1022,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // lifted open-bin spot when the user opens an empty recycle bin. Sized + positioned in render().
       const empty = document.createElement("div");
       empty.className = "tk-empty tk-empty-trash";
-      empty.innerHTML = `<span>Deleted tickets<br>get added here</span>`;
+      empty.innerHTML = `<span>${deckCopy.trashEmptyHtml}</span>`;
       empty.style.display = "none";
       root.appendChild(box); root.appendChild(empty);
       decks.trash = { box, track, arrow, bar, thumb, action: null, emptyPh: empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
@@ -1098,7 +1131,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let stackDropSide = null;
   const setStackDrop = (side) => {
     if (side === stackDropSide) return;
-    ["left", "right"].forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); decks[s]?.empty?.classList.remove("tk-drop-ok"); });
+    CORNER_SIDES.forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); decks[s]?.empty?.classList.remove("tk-drop-ok"); });
     stackDropSide = side || null;
     if (side) { decks[side]?.box?.classList.add("tk-drop-ok"); decks[side]?.empty?.classList.add("tk-drop-ok"); }
   };
@@ -1161,7 +1194,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // one hides only while the bin is FANNED OUT along the bottom (which would overlap it); a closed bin
     // pile is lifted above this spot, so a resolved card can still be dragged back down here. Sized to card.
     if (deck.empty) {
-      const showPh = n === 0 && (side === "left" || (side === "right" && !fanned.trash));
+      const showPh = n === 0 && (side === "left" || (side === "right" && rightDeckEnabled && !fanned.trash));
       deck.empty.style.display = showPh ? "" : "none";
       if (showPh) { deck.empty.style.width = `${CARD_W}px`; deck.empty.style.height = `${CARD_H}px`; }
     }
@@ -1180,7 +1213,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // Only the two CORNERS are mutually exclusive; the trash fans independently and can be open alongside
     // one of them. So hide a corner's fan arrow only while the OTHER corner is fanned (and this one isn't);
     // the trash arrow shows whenever the bin holds ≥2 cards, regardless of a fanned corner.
-    const otherCornerFanned = side !== "trash" && ["left", "right"].some((o) => o !== side && decks[o] && fanned[o]);
+    const otherCornerFanned = side !== "trash" && CORNER_SIDES.some((o) => o !== side && decks[o] && fanned[o]);
     deck.arrow.classList.toggle("is-hidden", n <= 1 || (otherCornerFanned && !fanned[side]));
     deck.arrow.style.zIndex = "5000";
     // Focus (which deck rides above the depth-of-field scrim, which are behind it) is set globally.
@@ -1189,6 +1222,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (deck.action) {
       deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
       deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
+      if (side === "left") deck.action.hidden = !createEnabled;
     }
     // Full-width scrollbar across the bottom, only when the fan overflows.
     const overflow = open && contentW > viewW + 1;
@@ -1277,7 +1311,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // The two CORNERS are mutually exclusive, but the trash can fan out ALONGSIDE a corner (so you can
     // drag cards between them). Opening a corner collapses the other corner; opening the trash collapses
     // nothing; and opening a corner leaves a fanned trash open.
-    if (open && side !== "trash") ["left", "right"].forEach((o) => { if (o !== side && decks[o] && fanned[o]) { fanned[o] = false; decks[o].scrollX = 0; } });
+    if (open && side !== "trash") CORNER_SIDES.forEach((o) => { if (o !== side && decks[o] && fanned[o]) { fanned[o] = false; decks[o].scrollX = 0; } });
     // Collapsing a CORNER closes the bin too (they came into focus together); collapsing the trash leaves
     // the corner alone.
     if (!open && side !== "trash" && trashMode) { setTrashMode(false); return; }   // setTrashMode() re-renders
@@ -1555,7 +1589,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const id = w.dataset.ticketId || (k.startsWith(PIN) ? k.slice(PIN.length) : "");
     return id ? (tickets.find((x) => x.id === id) || null) : null;
   };
-  const deckSideFor = (t) => (isResolved(t) ? "right" : "left");
+  const deckSideFor = (t) => (rightDeckEnabled && isResolved(t) ? "right" : "left");
   const overStack = (e) => e.clientY >= stackTopY();
   const nativePlaceholder = () => gridLayout()?.querySelector(":scope > .widget-placeholder") || null;
   // Publish the stack cards' TOP EDGE so the grid drag clamps its placeholder to sit
@@ -1566,7 +1600,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   let dragPinW = null, dragPinT = null;
   // Which deck the cursor is over (by viewport half) while in the stack band, else null.
-  const hotSideAt = (e) => (overStack(e) ? (e.clientX < window.innerWidth / 2 ? "left" : "right") : null);
+  const hotSideAt = (e) => {
+    if (!overStack(e)) return null;
+    if (!rightDeckEnabled) return "left";
+    return e.clientX < window.innerWidth / 2 ? "left" : "right";
+  };
   // Landing pads live on the ROOT (not the deck boxes): an empty deck box is display:none,
   // which would hide a pad nested inside it — but we still want to show (and red-flag) an
   // empty deck as a drop target. Positioned at the deck's top-card slot via a side class.
@@ -1577,7 +1615,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return deck.landing;
   };
   const clearLandings = () => {
-    for (const s of ["left", "right"]) decks[s]?.landing?.classList.remove("tk-faint", "tk-hot", "tk-bad");
+    for (const s of CORNER_SIDES) decks[s]?.landing?.classList.remove("tk-faint", "tk-hot", "tk-bad");
     const ph = nativePlaceholder(); if (ph) ph.style.visibility = "";
   };
   const resetDragWatch = () => { clearLandings(); dragPinW = null; dragPinT = null; };
@@ -1593,7 +1631,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // placeholder gives way (it would "enter the stack"); otherwise it stays visible.
     const validSide = deckSideFor(dragPinT);
     const hot = hotSideAt(e);
-    for (const s of ["left", "right"]) {
+    for (const s of CORNER_SIDES) {
       const pad = landingPad(s);
       pad.classList.add("tk-faint");
       pad.classList.toggle("tk-bad", s !== validSide);
@@ -1738,7 +1776,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // don't reorder the bin. Over an ineligible stack, no highlight → it'll spring back on release.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(es); if (es) { clearZoneHighlight(); clearGap(); return; } }
       // A fully-completed LEFT-stack card over the RIGHT (resolved) pile → light the pile it would resolve into.
-      if (side === "left") setStackDrop(e.clientY >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(e.clientX, e.clientY) === "right" ? "right" : null);
+      if (rightDeckEnabled && side === "left") setStackDrop(e.clientY >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(e.clientX, e.clientY) === "right" ? "right" : null);
       // Dragged UP onto the dashboard → target a pipeline zone (highlight the one under the
       // cursor). A horizontal reorder keeps the cursor ON the cards (below stackTopY), so it
       // never reaches here — the two gestures don't collide.
@@ -1772,7 +1810,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // ineligible one it falls through and springs back into the bin.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(null); if (es) { restoreToDeck(t, e.clientX, card.getBoundingClientRect(), es); return; } }
       // A fully-completed (3-green) LEFT-stack card dropped on the RIGHT (resolved) pile → resolve it there.
-      if (side === "left" && overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
+      if (rightDeckEnabled && side === "left" && overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
         const fromRect = card.getBoundingClientRect();
         t.state = resolvedState; const live = tickets.find((x) => x.id === t.id); if (live) live.state = resolvedState;
         try { source?.resolve?.(t.id); } catch {}
@@ -1811,15 +1849,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // The config-menu info entered for this ticket's CURRENT stage, shown on the card face and kept in
   // sync as you type (see ticketStacks.setMeta). Severity is the card colour, so its field is skipped;
   // blank / "n/a" fields show nothing.
-  const cardFieldsHTML = (t) =>
+  const cardFieldsHTML = (t) => {
     // Show EVERY filled-in field across ALL stages (not just the current bucket's), so a ticket that has
     // triage + investigation done shows both stages' work — mirroring its green progress bars.
-    STAGE_KEYS.flatMap((k) => STAGE_FIELDS[k] || []).filter((f) => !f.prio).map((f) => {
+    const seen = new Set();
+    return STAGE_KEYS.flatMap((k) => STAGE_FIELDS[k] || []).filter((f) => {
+      if (f.prio || seen.has(f.key)) return false;
+      seen.add(f.key);
+      return true;
+    }).map((f) => {
       const raw = fieldRaw(t, f.key);
       if (!raw || isNA(raw) || !String(raw).trim()) return "";
       const v = f.date ? fmtDate(raw) : raw;
       return `<div class="ticket-field"><span class="ticket-field-l">${esc(f.label)}</span><span class="ticket-field-v">${esc(v)}</span></div>`;
     }).join("");
+  };
 
   // The card's inner markup — shared by the stack cards and the fly-home clone so they render
   // identically. Header = CLIENT (title) + " | date of incident" (the date in a secondary colour); the
@@ -1828,6 +1872,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // entered — a second line: resolved SAME day → the time it took ("15 minutes"); a LATER day → the
   // resolution date. (Both stay in the card's detail rows too; this is just the at-a-glance header.)
   const dateUnderHTML = (t) => {
+    if (!showDateUnder) return "";
     const m = metaOf(t.id);
     const dateS = fmtDate(m.incidentDate);
     if (!dateS) return "";
@@ -1877,7 +1922,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // is what overwrote these with "Willits Scaling"). .tk-card replicates the frame; the
     // global .ticket-body/.ticket-company/etc. classes give identical fonts/colour; and the
     // fill is an opaque copy of the grid card so the colour matches exactly.
-    card.className = "tk-card";
+    card.className = `tk-card tk-card-${widgetType}`;
     card.dataset.id = t.id || "";
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
     card.style.backgroundColor = baseColor();
@@ -2166,6 +2211,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // each arrow a glowing glass body with a bright core + a glassy arrowhead.
   let flowSvgs = [], flowShafts = [], flowHeads = [];
   const ensureFlow = () => {
+    if (!showFlow) return;
     if (flowSvgs.length) return;
     ensureStyles();
     const arrows = STAGES.length + 1;
@@ -2196,6 +2242,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds. Each stack connector is a
   // straight run + ONE rounded corner so the line reaches the head dead-straight and centred.
   const drawFlow = (lefts, bw, topY, botY) => {
+    if (!showFlow) return;
     ensureFlow();
     const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
     const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
@@ -2336,7 +2383,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // always fine), or forward up to ONE past its furthest COMPLETED stage. That reach comes from the
   // ticket's data (progressOf), NOT its location — so a ticket that finished triage + investigation keeps
   // the right to drop straight into resolution even after it's thrown back into the left stack.
-  const canAdvance = (from, to, t) => to < from || to <= progressOf(t) + 1;
+  const canAdvance = (from, to, t) => {
+    if (stageMovement === "free") return to !== from;
+    return to < from || to <= progressOf(t) + 1;
+  };
   const distToRect = (x, y, r) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
   const HL_RANGE = 260;
   const baseZoneShadow = "inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28)";
@@ -2431,7 +2481,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const wireZoneCard = (card, t, stage) => {
     let down = false, dragging = false, sx = 0, sy = 0, clone = null, fanGap = null, r0 = null;
     // The fanned deck this ticket would re-join (its own side, when that side is the open fan), else null.
-    const fanTarget = () => { const fs = fanned.left ? "left" : (fanned.right ? "right" : null); return fs && fs === deckSideFor(t) ? fs : null; };
+    const fanTarget = () => { const fs = fanned.left ? "left" : (rightDeckEnabled && fanned.right ? "right" : null); return fs && fs === deckSideFor(t) ? fs : null; };
     // Pick the right preview for the cursor: over the matching fanned stack → part its cards at the
     // insert slot (the deck's own .42s collision); otherwise the bucket "sandwich" gap + zone glow.
     const preview = (x, y) => {
@@ -2439,7 +2489,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (ft) { clearZoneHighlight(); clearGap(); fanGap = ft; previewFanGap(ft, fanInsertIndex(ft, x)); return; }
       if (fanGap) { layout(fanGap); fanGap = null; }   // moved off the stack → close the fan gap
       // A fully-completed ticket hovering the RIGHT (resolved) pile → light it as the eligible drop target.
-      setStackDrop(y >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(x, y) === "right" ? "right" : null);
+      setStackDrop(rightDeckEnabled && y >= stackTopY() && progressOf(t) >= STAGE_KEYS.length - 1 && overCornerStack(x, y) === "right" ? "right" : null);
       flowHighlight(posOfStage(stage), x, y, t);
       const dt = dropTarget(posOfStage(stage), x, y, t);
       if (dt) previewGap(dt.stage, dt.index); else clearGap();
@@ -2534,7 +2584,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         // Dropped on the RIGHT (resolved) pile with EVERY stage complete (3 green bars) → RESOLVE it:
         // flip the state (locally for the instant render + in the store) so the render routes it into
         // the resolved pile — without this, the state-gated left/right split sent it to the inbox.
-        if (overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
+        if (rightDeckEnabled && overCornerStack(e.clientX, e.clientY) === "right" && progressOf(t) >= STAGE_KEYS.length - 1) {
           t.state = resolvedState; const live = tickets.find((x) => x.id === t.id); if (live) live.state = resolvedState;
           try { source?.resolve?.(t.id); } catch {}
           setStage(t.id, null); setStageAt(t.id, null);
@@ -2557,7 +2607,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   const zoneCardEl = (t, stage) => {
     const card = document.createElement("div");
-    card.className = "tk-zcard";
+    card.className = `tk-zcard tk-zcard-${widgetType}`;
     card.dataset.id = t.id || "";
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;   // full ticket dimensions
     card.style.backgroundColor = baseColor();
@@ -2625,7 +2675,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id))
         .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
-      track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
+      track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${esc(deckCopy.zoneEmptyText)}</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
@@ -2680,10 +2730,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox). Deleted
     // tickets are hidden everywhere EXCEPT the right stack when it's flipped to trash mode.
     const avail = tickets.filter((t) => !onGrid.has(t.id) && !stageOf(t.id) && !isDeleted(t.id));
-    buildDeck("left", avail.filter((t) => !isResolved(t)).sort(order));
+    buildDeck("left", avail.filter(leftDeckFilter).sort(order));
     // The right stack is the recycle bin when toggled (its DELETED tickets, blue-outlined), else the
     // resolved/closed pile — same stack mechanics either way (fan, scroll, drag, reorder).
-    buildDeck("right", avail.filter((t) => isResolved(t)).sort(order));   // resolved pile ALWAYS stays
+    buildDeck("right", rightDeckEnabled ? avail.filter(rightDeckFilter).sort(order) : []);   // resolved pile ALWAYS stays when enabled
     // The recycle bin is its OWN stack, lifted above the icon and shown only when toggled — the resolved
     // pile below it never disappears. It fans/scrolls/drags exactly like the corner stacks.
     const deleted = tickets.filter((t) => isDeleted(t.id)).sort(order);
@@ -2737,6 +2787,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // the centre and expand its config — where the client, incident date and description are filled in (the
   // "new ticket" stage of the config; see stageFields). No pre-baked modal.
   const openCreate = async () => {
+    if (!createEnabled) return;
     if (draftId) return;   // one draft at a time
     let tk = null;
     try { const res = await source?.create?.(createDraftFields()); tk = recordFromCreate(res); } catch {}

@@ -6,6 +6,7 @@
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
     { key: "people", label: "People", api: () => window.peopleCards },
     { key: "calendar", label: "Calendar", api: () => window.fractalCalendar },
+    { key: "reports", label: "Reports", api: () => window.crmReports },
   ];
   const STORE_KEY = "crm-active-module";
   let active = localStorage.getItem(STORE_KEY) || "home";

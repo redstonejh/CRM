@@ -2822,6 +2822,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
   publicApi = {
     reload: load,
+    create: openCreate,
+    openCreate,
     isDeleted,
     delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
     // Send the ticket back to exactly where it was deleted from: its bucket (as the visual-TOP card, i.e.

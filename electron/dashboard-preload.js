@@ -83,6 +83,9 @@ contextBridge.exposeInMainWorld('crmStore', {
   remove: (entity, id, options = {}) => ipcRenderer.invoke('store:delete', { entity, id, ...options }),
   onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
 });
+contextBridge.exposeInMainWorld('crmReportsApi', {
+  summary: () => ipcRenderer.invoke('reports:summary'),
+});
 contextBridge.exposeInMainWorld('deals', entityBridge('deals'));
 contextBridge.exposeInMainWorld('contacts', entityBridge('contacts'));
 contextBridge.exposeInMainWorld('companies', entityBridge('companies'));

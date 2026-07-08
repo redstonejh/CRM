@@ -16,7 +16,7 @@ import {
   commentTicket, updateTicket, createTicket, deleteTicket,
 } from './tickets.js';
 import {
-  listRecords, getRecord, createRecord, updateRecord, deleteRecord, storeConnectionState,
+  listRecords, getRecord, createRecord, updateRecord, deleteRecord, storeConnectionState, reportSummary,
 } from './store.js';
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
@@ -373,6 +373,8 @@ ipcMain.handle('store:delete', (_e, { entity, id, hard = false } = {}) => {
   const g = requireUser(); if (g.error) return g.error;
   return deleteRecord(key, id, g.who, { hard: !!hard });
 });
+
+ipcMain.handle('reports:summary', () => reportSummary());
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 

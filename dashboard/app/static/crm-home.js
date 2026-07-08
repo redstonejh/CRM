@@ -11,7 +11,7 @@
     { key: "people", label: "People", note: "Contacts and relationship attention", enabled: true },
     { key: "calendar", label: "Calendar", note: "Scheduled work by day", enabled: true },
     { key: "tasks", label: "Tasks", note: "Work items from the same card system", status: "Planned" },
-    { key: "reports", label: "Reports", note: "Aggregates and builder widgets", status: "Phase 7" },
+    { key: "reports", label: "Reports", note: "Aggregates and builder widgets", enabled: true },
   ];
   let camera = null;
 

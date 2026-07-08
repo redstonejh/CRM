@@ -59,8 +59,8 @@ Recoverable delete is more important in a CRM than in ticketing. The existing fl
 ### Stage/order in `localStorage` → **MOVE to the doc** (a simplification, not a feature)
 `tk-ticket-stage`, `tk-stage-order`, deck orders, trash flags — per-machine state, correct for a solo operator, wrong for a team CRM where the pipeline is shared truth. Stage and rank move onto the doc through the store; the optimistic apply-then-persist choreography already in the code stays, so the feel is unchanged. Per-user cosmetics (which deck is fanned open) stay local.
 
-### Stubbed `window.dashboard` → **REPLACE the stub's emptiness, keep its shape**
-Ticketing neutralized the monitor's data feeds with a stub so the shell renders empty. The CRM finally has data worthy of those channels: feed `builder-chart` / `builder-table` real aggregates (pipeline value by stage, win rate, activity volume) through the same channel shape the stub preserved. The stub was a placeholder that waited three repos for this.
+### Stubbed `window.dashboard` → **KEEP monitor bridge stubbed, REPLACE the empty workspace**
+Ticketing neutralized the monitor's data feeds with a stub so the shell renders empty. The monitor bridge itself stays empty because `status-feed.js` is circuit-specific. The CRM replaces the empty builder workspace by feeding `builder`, `builder-chart`, and `builder-table` real aggregates (pipeline value by stage, win rate, activity volume, recent records) through the existing widget data runtime and a CRM-specific API bridge.
 
 ### Monitoring semantics (`recoveredAt`, episode keys, red rising edge) → **STRIP the words, KEEP the ideas**
 The outage vocabulary goes. The *patterns* transfer: deterministic id from an episode → deterministic dedupe of imported records; rising-edge detection → staleness detection on relationships; `recoveredAt`-without-close → "re-engaged" marker on a cold contact.

@@ -9,6 +9,17 @@ const PORT = Number(process.env.PORT || process.env.CRM_API_PORT || 3899);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/crm';
 const VALID_ENTITIES = new Set(['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports']);
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'updatedAt', 'version']);
+const REPORT_ENTITIES = [...VALID_ENTITIES];
+const CLOSED_STATES = new Set(['resolved', 'done', 'closed', 'complete', 'completed', 'cancelled', 'archived']);
+const DEAL_OUTCOME_STATES = new Set(['won', 'lost']);
+const DEAL_STAGE_LABELS = {
+  lead: 'Lead',
+  qualified: 'Qualified',
+  proposal: 'Proposal',
+  negotiation: 'Negotiation',
+  won: 'Won',
+  lost: 'Lost',
+};
 
 const pool = new Pool({ connectionString: DATABASE_URL });
 const clients = new Set();
@@ -239,10 +250,212 @@ async function deleteRecord(res, entity, id, url, body) {
   }, { headers: {} });
 }
 
+function metaOf(record) {
+  return record && record.meta && typeof record.meta === 'object' ? record.meta : {};
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function numberValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function timestampOf(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value ?? '').trim();
+  if (/^\d{10,}$/.test(text)) {
+    const numeric = Number(text);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function dayKey(value) {
+  const ms = timestampOf(value);
+  return ms ? new Date(ms).toISOString().slice(0, 10) : '';
+}
+
+function stateOf(record) {
+  const meta = metaOf(record);
+  return firstText(record?.state, meta.state, record?.status, meta.status).toLowerCase();
+}
+
+function titleOf(record) {
+  const meta = metaOf(record);
+  return firstText(
+    record?.title,
+    record?.name,
+    record?.client,
+    record?.company,
+    record?.companyLabel,
+    meta.title,
+    meta.name,
+    meta.client,
+    meta.company,
+    meta.companyLabel,
+    record?.id,
+    'Untitled',
+  );
+}
+
+function dealStage(record) {
+  const meta = metaOf(record);
+  const state = stateOf(record);
+  const raw = firstText(record?.stage, meta.stage, record?.pipelineStage, meta.pipelineStage, state);
+  const stage = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return stage || 'lead';
+}
+
+function amountOf(record) {
+  const meta = metaOf(record);
+  return numberValue(firstText(record?.amount, record?.value, record?.dealValue, meta.amount, meta.value, meta.dealValue));
+}
+
+function isWonDeal(record) {
+  return stateOf(record) === 'won' || dealStage(record) === 'won';
+}
+
+function isOpenDeal(record) {
+  const state = stateOf(record);
+  const stage = dealStage(record);
+  return !DEAL_OUTCOME_STATES.has(state) && !DEAL_OUTCOME_STATES.has(stage) && !CLOSED_STATES.has(state);
+}
+
+function isOpenRecord(record) {
+  return !CLOSED_STATES.has(stateOf(record));
+}
+
+function contactDue(record, now = Date.now()) {
+  const meta = metaOf(record);
+  const lastTouch = timestampOf(firstText(record?.lastContactAt, meta.lastContactAt, record?.updatedAt, record?.createdAt));
+  if (!lastTouch) return true;
+  return now - lastTouch >= 30 * 24 * 60 * 60 * 1000;
+}
+
+function rowBase(record, entity) {
+  const updatedAt = timestampOf(record.updatedAt || record.createdAt);
+  return {
+    id: record.id,
+    entity,
+    type: entity,
+    title: titleOf(record),
+    state: stateOf(record) || '',
+    updatedAt,
+    updated: updatedAt ? new Date(updatedAt).toISOString().slice(0, 10) : '',
+  };
+}
+
+function dealRow(record) {
+  const stage = dealStage(record);
+  return {
+    ...rowBase(record, 'deals'),
+    stage,
+    stageLabel: DEAL_STAGE_LABELS[stage] || firstText(stage.replace(/-/g, ' '), 'Unbucketed'),
+    amountValue: amountOf(record),
+    amount: amountOf(record),
+    wonRatio: isWonDeal(record) ? 1 : 0,
+  };
+}
+
+function summarizeRecords(recordsByEntity, connection = 'live') {
+  const records = (entity) => (recordsByEntity[entity] || []).filter((record) => !record.deletedAt);
+  const tickets = records('tickets');
+  const deals = records('deals');
+  const contacts = records('contacts');
+  const tasks = records('tasks');
+  const calendarItems = records('calendarItems');
+  const all = REPORT_ENTITIES.flatMap((entity) => records(entity).map((record) => ({ entity, record })));
+  const now = Date.now();
+
+  const openTickets = tickets.filter(isOpenRecord).map((record) => rowBase(record, 'tickets'));
+  const allDealRows = deals.map(dealRow);
+  const openDeals = allDealRows.filter((row) => isOpenDeal(row));
+  const wonDeals = allDealRows.filter((row) => row.wonRatio === 1);
+  const contactsDue = contacts.filter((record) => contactDue(record, now)).map((record) => rowBase(record, 'contacts'));
+  const openTasks = tasks.filter(isOpenRecord).map((record) => rowBase(record, 'tasks'));
+  const scheduledItems = calendarItems.map((record) => rowBase(record, 'calendarItems'));
+
+  const activity = new Map();
+  const bumpActivity = (date) => {
+    const key = dayKey(date);
+    if (key) activity.set(key, (activity.get(key) || 0) + 1);
+  };
+  all.forEach(({ record }) => {
+    const history = Array.isArray(record.history) ? record.history : [];
+    if (history.length) history.forEach((event) => bumpActivity(event.at || event.date || record.updatedAt));
+    else bumpActivity(record.updatedAt || record.createdAt);
+  });
+
+  const activityByDay = [...activity.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-30)
+    .map(([day, activityCount]) => ({ day, activityCount, value: activityCount }));
+
+  const recentRecords = all
+    .map(({ entity, record }) => ({
+      ...rowBase(record, entity),
+      stageLabel: entity === 'deals' ? dealRow(record).stageLabel : '',
+      amount: entity === 'deals' ? amountOf(record) : '',
+    }))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 50);
+
+  const pipelineValue = openDeals.reduce((sum, row) => sum + numberValue(row.amountValue), 0);
+  return {
+    generatedAt: new Date().toISOString(),
+    connection,
+    totals: {
+      openTickets: openTickets.length,
+      openDeals: openDeals.length,
+      wonDeals: wonDeals.length,
+      pipelineValue,
+      contactsDue: contactsDue.length,
+      openTasks: openTasks.length,
+      scheduledCount: scheduledItems.length,
+    },
+    datasets: {
+      openTickets,
+      openDeals,
+      pipelineValueRows: openDeals,
+      winRateRows: allDealRows,
+      contactsDue,
+      openTasks,
+      scheduledItems,
+      pipelineByStage: openDeals,
+      activityByDay,
+      recentRecords,
+    },
+  };
+}
+
+async function reportSummary(res) {
+  const rows = await pool.query(
+    `SELECT * FROM crm_records
+     WHERE entity_type = ANY($1::text[]) AND deleted_at IS NULL
+     ORDER BY updated_at DESC`,
+    [REPORT_ENTITIES],
+  );
+  const recordsByEntity = Object.fromEntries(REPORT_ENTITIES.map((entity) => [entity, []]));
+  rows.rows.map(rowToRecord).forEach((record) => {
+    if (recordsByEntity[record.entityType]) recordsByEntity[record.entityType].push(record);
+  });
+  ok(res, { summary: summarizeRecords(recordsByEntity, 'live') });
+}
+
 async function route(req, res) {
   if (req.method === 'OPTIONS') return json(res, 204, {});
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname === '/health' || url.pathname === '/api/health') return ok(res, { status: 'live' });
+  if (url.pathname === '/api/reports/summary' && req.method === 'GET') return reportSummary(res);
 
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts[0] !== 'api' || parts[1] !== 'entities') return fail(res, 404, 'Not found');

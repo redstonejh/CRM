@@ -24,7 +24,7 @@ npm run make
 
 The dashboard shell remains the vendored canvas: auth, layout persistence, widget grid, visual tokens, glass styling, window controls, and the existing runtime modules are kept intact.
 
-Phase 2 is active. The old ticket bridge still exists as `window.tickets`, but it is now a compatibility adapter over `electron/store.js` and the Postgres API. Generic entity bridges are exposed for `window.deals`, `window.contacts`, `window.companies`, `window.tasks`, and `window.crmStore`; later phases re-instantiate ticketing through the card-system factory before those entities get full CRM surfaces.
+Phase 3 is active. The old ticket bridge still exists as `window.tickets`, but it is now a compatibility adapter over `electron/store.js` and the Postgres API. The ticket card UI is re-instantiated through `card-system.js` and `card-detail.js`, with `ticket-stacks.js` and `ticket-detail.js` reduced to ticket-specific config wrappers. Generic entity bridges are exposed for `window.deals`, `window.contacts`, `window.companies`, `window.tasks`, and `window.crmStore`; later phases can add full CRM surfaces on the same factories.
 
 MQTT is fully removed from the final CRM direction. Shared truth lives in Postgres through the API in `server/`; Electron talks to it through `electron/store.js`, with `window.tickets` kept as a compatibility bridge while the card engine is generalized.
 

@@ -18,11 +18,15 @@
 // search-input fields). Portals to <body> so backdrop-filter isn't flattened.
 ((global) => {
 global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
-  const getSource = () => config.source || global.tickets;
-  const getStacks = () => config.stacks || global.ticketStacks;
+  const getSource = () => (typeof config.source === "function" ? config.source() : config.source) || global.tickets;
+  const getStacks = () => (typeof config.stacks === "function" ? config.stacks() : config.stacks) || global.ticketStacks;
   const apiName = config.apiName || "ticketDetail";
   const recordsFromList = config.recordsFromList || ((result) => (result && (result.tickets || result.records)) || []);
   const PRIORITIES = config.priorities || ["low", "medium", "high", "critical"];
+  const intensityValues = config.intensityValues || PRIORITIES;
+  const defaultIntensity = config.defaultIntensity || intensityValues[1] || "medium";
+  const notFoundText = config.notFoundText || "Ticket not found.";
+  const draftRequiredText = config.draftRequiredText || "A client, date of incident and description are all required to create the ticket.";
   const GAP = 10;            // gap between the card and the panel — matches GAP_FAN (the fanned-stack gap)
   const PANEL_W = 300;       // panel width (matches .ticket-detail width)
   // Tuck distance: the panel must hide FAR enough left that even its drop shadow
@@ -285,7 +289,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     if (!flyCard || !sourceEl) return;
     flyCard.innerHTML = flyerInner();
     const active = panel && panel.querySelector(".td-prio-opt.is-active");
-    paintFlyer(SEV_RGB[active ? active.dataset.prio : "medium"] || SEV_RGB.medium);
+    paintFlyer(SEV_RGB[active ? active.dataset.prio : defaultIntensity] || SEV_RGB[defaultIntensity]);
   };
 
   // For a FANNED-stack card: does the config panel fit beside it at its CURRENT height — clear of the
@@ -365,7 +369,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     // backdrop-filter, which is what washed it brighter-than-hover mid-flight. A plain
     // opaque div with only the visual styles can't be highlighted by anything.
     const pv = ticket ? (getStacks()?.fieldValue?.(ticket.id, "priority") || "") : "";   // meta-aware saved severity
-    const prio = ["low", "medium", "high", "critical"].includes(pv) ? pv : (ticket ? "medium" : "none");
+    const prio = intensityValues.includes(pv) ? pv : (ticket ? defaultIntensity : "none");
     flyCard = document.createElement("div");
     flyCard.className = "td-card td-flyer";
     flyCard.innerHTML = flyerInner();   // body + progress bars
@@ -438,7 +442,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
 
   const render = (t) => {
     if (!panel) return;
-    if (!t) { panel.innerHTML = `<div class="td-empty">Ticket not found.</div>`; wire(null); return; }
+    if (!t) { panel.innerHTML = `<div class="td-empty">${esc(notFoundText)}</div>`; wire(null); return; }
     // Lean config: ONLY the current bucket's fields, flat (no dropdowns) — each with its label + a *
     // (all are required to complete the stage), the question as the prompt, and "n/a" satisfies it.
     // No title/subtitle (set at creation, already on the card), no metadata / claim-resolve-delete.
@@ -532,7 +536,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       if (blank) {
         if (msg) {
           msg.textContent = draft
-            ? "A client, date of incident and description are all required to create the ticket."
+            ? draftRequiredText
             : "Some fields are blank — for anything not applicable, type “n/a”.";
           msg.hidden = false;
         }

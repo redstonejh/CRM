@@ -19,6 +19,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const isResolved = config.isResolved || ((record) => !!record && (record.state || "open") === resolvedState);
   const recordsFromList = config.recordsFromList || ((result) => (result && (result.tickets || result.records)) || []);
   const recordFromCreate = config.recordFromCreate || ((result) => result && (result.ticket || result.record));
+  const createDraftFields = config.createDraftFields || (() => ({ companyLabel: "Untitled", host: "", severity: "medium" }));
+  const createStageLabel = config.createStageLabel || "New ticket";
+  const intensityValues = config.intensityValues || ["low", "medium", "high", "critical"];
+  const defaultIntensity = config.defaultIntensity || intensityValues[1] || "medium";
+  const onLinkDrop = typeof config.onLinkDrop === "function" ? config.onLinkDrop : null;
+  const intensityOf = config.intensityOf || ((record) => {
+    const p = priorityOf(record);
+    return intensityValues.includes(p) ? p : (record ? "medium" : "none");
+  });
   const storageKeys = {
     order: (side) => `tk-stack-order-${side}`,
     stage: "tk-ticket-stage",
@@ -30,13 +39,18 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     ...(config.storageKeys || {}),
   };
   const instanceGlobal = apiName ? String(apiName) : "";
+  let active = config.active !== false;
+  let started = false;
   let publicApi = null;
   let CARD_W = 185, CARD_H = 279;          // matched to the grid ticket card at render time
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
   const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
   const SEV_RGB = config.severityRgb || { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
-  const sevOf = (t) => { const p = priorityOf(t); return ["low", "medium", "high", "critical"].includes(p) ? p : (t ? "medium" : "none"); };
+  const sevOf = (t) => {
+    const key = intensityOf(t);
+    return Object.prototype.hasOwnProperty.call(SEV_RGB, key) ? key : (t ? defaultIntensity : "none");
+  };
 
   // Persist the per-deck custom card order (from drag-to-reorder) across reloads.
   const ORDER_KEY = (side) => typeof storageKeys.order === "function" ? storageKeys.order(side) : `${storageKeys.order}-${side}`;
@@ -162,6 +176,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const fanned = { left: false, right: false, trash: false };
   const DECK_SIDES = ["left", "right", "trash"];   // trash = the recycle bin, a right-hand stack lifted above the icon
   let tickets = [], subscribed = false;
+  let linkHighlightEl = null;
+
+  const applyActiveVisibility = () => {
+    [root, zonesRoot, stackScrim].forEach((el) => { if (el) el.hidden = !active; });
+  };
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -212,7 +231,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       || document.body;
     const probe = document.createElement("div");
     probe.className = `widget-card ${widgetCardClass} db-panel-custom-color`;
-    probe.setAttribute("data-widget-runtime-type", "ticket");
+    probe.setAttribute("data-widget-runtime-type", widgetType);
     probe.dataset.severity = sev;
     probe.style.cssText = "position:absolute; left:-9999px; top:0; width:160px; height:200px;";
     host.appendChild(probe);
@@ -243,7 +262,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); localStorage.setItem(COLOR_LAST, c); } catch {}
     return c;
   };
-  const hasPriority = (t) => ["low", "medium", "high", "critical"].includes(priorityOf(t));
+  const hasPriority = (t) => intensityValues.includes(priorityOf(t));
   const isBlank = (t) => {
     const m = metaOf(t.id);
     const title = (m.title && m.title.trim()) || (t.companyLabel && !["", "Untitled", "(manual)"].includes(t.companyLabel) ? t.companyLabel : "");
@@ -270,7 +289,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const host = (gridCard() && gridCard().parentElement) || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]') || document.querySelector(".dashboard-layout-grid") || document.body;
     const probe = document.createElement("div");
     probe.className = `widget-card ${widgetCardClass} db-panel-custom-color`;
-    probe.setAttribute("data-widget-runtime-type", "ticket");
+    probe.setAttribute("data-widget-runtime-type", widgetType);
     probe.style.cssText = `position:absolute; left:-9999px; top:0; width:160px; height:200px; --panel-accent:${hex}; --panel-accent-rgb:${r}, ${g}, ${b};`;
     host.appendChild(probe);
     const cs = getComputedStyle(probe);
@@ -421,6 +440,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
       .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card, .tk-deck-trash .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
+      .tk-card.tk-link-target, .tk-zcard.tk-link-target { box-shadow: inset 0 0 0 2px rgba(125,180,255,0.95), 0 0 24px rgba(90,150,255,0.48), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.2) !important; }
       .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
       .tk-card.tk-flying { transition: transform .4s ${EASE}, opacity .4s ease; pointer-events: none; }
@@ -1713,6 +1733,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
+      if (previewLinkTarget(e.clientX, e.clientY, t, card)) { clearZoneHighlight(); clearGap(); return; }
       // Dragging a TRASH card over an ELIGIBLE corner stack → it'll restore there; highlight it and
       // don't reorder the bin. Over an ineligible stack, no highlight → it'll spring back on release.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(es); if (es) { clearZoneHighlight(); clearGap(); return; } }
@@ -1738,12 +1759,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // Evaluate the trash target BEFORE dragActive resets — the generous drag-time catch pad (and the
       // open placeholder) must still count at the moment of release.
       const overTrash = dragging && overTrashTarget(e.clientX, e.clientY);
-      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus(); setStackDrop(null);   // always clear
+      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus(); setStackDrop(null); clearLinkHighlight();   // always clear
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       // A plain click opens its config — EXCEPT trash cards, which have no config (their restore button does the work).
       if (!wasDrag) { if (side !== "trash") detail?.open(t, card); return; }
+      if (tryLinkDrop(e.clientX, e.clientY, t, card)) return;
       // Dropped on the recycle bin (icon, open stack, or empty placeholder) → delete it into the bin (except trash cards).
       if (side !== "trash" && overTrash) { dropTicketToTrash(t, card.getBoundingClientRect()); return; }
       // A trash card dropped on an ELIGIBLE corner stack → restore it into THAT stack; over an
@@ -2337,6 +2359,46 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const clearZoneHighlight = () => STAGES.forEach((s) => { const p = zoneBody[s.key]?.parentElement; if (p) { p.classList.remove("is-target"); clearGlow(p); } });
 
+  const clearLinkHighlight = () => {
+    if (linkHighlightEl) linkHighlightEl.classList.remove("tk-link-target");
+    linkHighlightEl = null;
+  };
+  const cardAtPoint = (x, y, ignoreEl = null) => {
+    if (!onLinkDrop) return null;
+    const oldPointer = ignoreEl ? ignoreEl.style.pointerEvents : "";
+    if (ignoreEl) ignoreEl.style.pointerEvents = "none";
+    const el = document.elementFromPoint(x, y)?.closest?.(".tk-card, .tk-zcard") || null;
+    if (ignoreEl) ignoreEl.style.pointerEvents = oldPointer;
+    return el;
+  };
+  const linkTargetAt = (x, y, record, ignoreEl = null) => {
+    const el = cardAtPoint(x, y, ignoreEl);
+    const id = el?.dataset?.id || "";
+    if (!id || !record || id === record.id) return null;
+    const target = tickets.find((x) => x.id === id);
+    return target ? { el, target } : null;
+  };
+  const previewLinkTarget = (x, y, record, ignoreEl = null) => {
+    const hit = linkTargetAt(x, y, record, ignoreEl);
+    if (hit?.el !== linkHighlightEl) {
+      clearLinkHighlight();
+      if (hit?.el) {
+        linkHighlightEl = hit.el;
+        linkHighlightEl.classList.add("tk-link-target");
+      }
+    }
+    return hit;
+  };
+  const tryLinkDrop = (x, y, record, ignoreEl = null) => {
+    const hit = previewLinkTarget(x, y, record, ignoreEl);
+    clearLinkHighlight();
+    if (!hit) return false;
+    onLinkDrop(record, hit.target);
+    logActivity(record.id, `Linked to ${titleOf(hit.target)}`);
+    render();
+    return true;
+  };
+
   // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally land
   // in (per canAdvance) into focus — they lift ABOVE the scrim (sharp); the rest rest below it and the
   // scrim blurs them cleanly. Each on-path arrow lifts above the scrim (sharp) too, the off-path ones
@@ -2411,6 +2473,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin → ring it open / target it, and skip the bucket/fan preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); if (fanGap) { layout(fanGap); fanGap = null; } return; }
+      if (previewLinkTarget(e.clientX, e.clientY, t, clone || card)) { clearZoneHighlight(); clearGap(); if (fanGap) { layout(fanGap); fanGap = null; } return; }
       preview(e.clientX, e.clientY);
     };
     // Settle the dragged clone smoothly into the ticket's resting card (its new slot after a drop, or
@@ -2438,7 +2501,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
       // Trash target BEFORE dragActive resets (keeps the drag-time catch pad live at release).
       const overTrash = dragging && overTrashTarget(e.clientX, e.clientY);
-      const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null; stopTrashRing(); setStackDrop(null);
+      const wasDrag = dragging; dragging = false; down = false; dragActive = false; stopAutoScroll(); dragPreviewFn = null; stopTrashRing(); setStackDrop(null); clearLinkHighlight();
       if (wasDrag) { clearDropFocus(); updateStackFocus(); }   // drop the drag DoF: focus back to normal, scrim back to fan/bin state
       clearZoneHighlight(); clearGap();
       if (fanGap) { layout(fanGap); fanGap = null; }
@@ -2450,6 +2513,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       }
       // Dropped on the recycle bin (icon, open stack, or empty placeholder) → delete it into the bin.
       if (overTrash) { const r = clone ? clone.getBoundingClientRect() : card.getBoundingClientRect(); if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); dropTicketToTrash(t, r); return; }
+      if (tryLinkDrop(e.clientX, e.clientY, t, clone || card)) { if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); return; }
       // A real drag → apply the drop, render, then SETTLE the clone into the ticket's resting card.
       // Released over the matching fanned stack → splice into its row at the cursor slot, un-assigning
       // the stage so the ticket re-joins the inbox deck exactly there.
@@ -2607,7 +2671,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
 
   const render = () => {
+    if (!active) { applyActiveVisibility(); return; }
     ensureRoot(); ensureZones();
+    applyActiveVisibility();
     matchCardSize(); sizeRoot(); layoutZones(); syncDropFloor();
     const onGrid = onGridIds();
     const order = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
@@ -2673,7 +2739,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const openCreate = async () => {
     if (draftId) return;   // one draft at a time
     let tk = null;
-    try { const res = await source?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = recordFromCreate(res); } catch {}
+    try { const res = await source?.create?.(createDraftFields()); tk = recordFromCreate(res); } catch {}
     if (tk && tk.id) { pendingOpenId = tk.id; draftId = tk.id; deckToTop("left", tk.id); }   // new ticket → TOP of the inbox pile
     load();   // re-fetch + render; render() flies the new card out and opens its config as a draft
   };
@@ -2752,7 +2818,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // The current bucket's fields (config shows only these) — default to triage for an inbox ticket.
     stageFields: (id) => {
       const key = stageOf(id);
-      if (!key) return { key: "new", label: "New ticket", fields: CREATE_FIELDS };   // inbox / not yet staged → the creation details
+      if (!key) return { key: "new", label: createStageLabel, fields: CREATE_FIELDS };   // inbox / not yet staged → the creation details
       const st = STAGES.find((s) => s.key === key);
       return { key, label: st ? st.label : key, fields: STAGE_FIELDS[key] || [] };
     },
@@ -2797,9 +2863,33 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // The detail panel closed → run any render that was deferred while it was open.
     onDetailClosed: () => { if (pendingRender) { pendingRender = false; render(); } },
   };
+  publicApi.setActive = (on) => {
+    active = !!on;
+    if (active) {
+      if (!started) {
+        started = true;
+        load();
+      } else {
+        render();
+      }
+    } else {
+      applyActiveVisibility();
+      hideTicketMenu();
+      clearDropFocus();
+      clearGap();
+      if (detail?.isOpen?.()) detail.close?.();
+    }
+    return publicApi;
+  };
+  publicApi.isActive = () => active;
   if (instanceGlobal) global[instanceGlobal] = publicApi;
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load);
-  else load();
+  const start = () => {
+    if (started || !active) return;
+    started = true;
+    load();
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
   return publicApi;
 };
 })(window);

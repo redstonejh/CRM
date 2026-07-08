@@ -1,0 +1,63 @@
+// crm-workspaces.js - small module switch for overlay CRM card systems.
+(() => {
+  const MODULES = [
+    { key: "tickets", label: "Tickets", api: () => window.ticketStacks },
+    { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
+  ];
+  const STORE_KEY = "crm-active-module";
+  let active = localStorage.getItem(STORE_KEY) || "tickets";
+  let root = null;
+
+  const ensureStyles = () => {
+    if (document.getElementById("crm-workspace-switch-styles")) return;
+    const style = document.createElement("style");
+    style.id = "crm-workspace-switch-styles";
+    style.textContent = `
+      .crm-module-switch { position: fixed; left: 50%; top: 14px; z-index: 4600; transform: translateX(-50%);
+        display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px;
+        background: rgba(12,16,24,0.42); border: 1px solid rgba(255,255,255,0.16);
+        -webkit-backdrop-filter: blur(18px) saturate(135%); backdrop-filter: blur(18px) saturate(135%);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), 0 10px 28px rgba(0,0,0,0.2);
+        -webkit-app-region: no-drag; }
+      .crm-module-switch button { appearance: none; border: 0; border-radius: 999px; padding: 5px 12px;
+        background: transparent; color: rgba(255,255,255,0.58); font: inherit; font-size: 12px; font-weight: 700;
+        line-height: 1; cursor: pointer; transition: color .15s ease, background .15s ease; }
+      .crm-module-switch button:hover { color: rgba(255,255,255,0.86); }
+      .crm-module-switch button.is-active { color: #fff; background: rgba(255,255,255,0.12); }
+    `;
+    document.head.appendChild(style);
+  };
+
+  const setActive = (key) => {
+    active = MODULES.some((m) => m.key === key) ? key : "tickets";
+    localStorage.setItem(STORE_KEY, active);
+    MODULES.forEach((module) => {
+      try { module.api()?.setActive?.(module.key === active); } catch {}
+    });
+    root?.querySelectorAll("button[data-crm-module]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.crmModule === active);
+      button.setAttribute("aria-pressed", button.dataset.crmModule === active ? "true" : "false");
+    });
+    document.body.dataset.crmModule = active;
+  };
+
+  const mount = () => {
+    ensureStyles();
+    root = document.createElement("div");
+    root.className = "crm-module-switch";
+    root.setAttribute("role", "group");
+    root.setAttribute("aria-label", "CRM module");
+    root.innerHTML = MODULES.map((module) => (
+      `<button type="button" data-crm-module="${module.key}" aria-pressed="false">${module.label}</button>`
+    )).join("");
+    root.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-crm-module]");
+      if (button) setActive(button.dataset.crmModule);
+    });
+    document.body.appendChild(root);
+    setActive(active);
+  };
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
+  else mount();
+})();

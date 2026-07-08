@@ -3103,7 +3103,7 @@
       /* The ticket widget IS the card. The grid item (.widget-card) itself is
          styled as the single portrait glass card — there is NO inner card and NO
          separate shell to hide. Content lays out directly inside it. */
-      .widget-card.ticket-widget-card, .widget-card[data-widget-runtime-type="ticket"] {
+      .widget-card.ticket-widget-card, .widget-card[data-widget-runtime-type="ticket"], .widget-card[data-widget-runtime-type="deal"] {
         display: flex !important; flex-direction: column; cursor: pointer;
         user-select: none; -webkit-user-select: none;   /* drag/double-click must not highlight the card text */
         padding: 14px 15px !important; border-radius: 15px !important; color: #fff;
@@ -3118,14 +3118,17 @@
       /* Hover = the reference stat-widget brighten (12% wash + brighter top edge), but
          WITHOUT the rise: the drop shadow stays at its resting size (0 8px 22px .18) so
          the card does NOT lift/pop. Brighten only, no movement. */
-      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="ticket"]:not(.td-card):hover {
+      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="ticket"]:not(.td-card):hover,
+      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="deal"]:not(.td-card):hover {
         box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18) !important;
       }
       /* Borderless at rest AND hover (high specificity, both states) — the themed card
          has no border, like the stat cards. A border-width flip is exactly what caused
          the hover "movement"; forcing 0 at both states makes a shift impossible. */
       body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="ticket"],
-      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="ticket"]:hover {
+      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="ticket"]:hover,
+      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="deal"],
+      body:not(.panel-interaction-active):not(.panel-resize-active) .widget-card[data-widget-runtime-type="deal"]:hover {
         border: 0 !important;
       }
       /* Severity → accent colour (drives the db-panel-custom-color fill). !important
@@ -3135,6 +3138,11 @@
       .widget-card[data-widget-runtime-type="ticket"][data-severity="high"]     { --panel-accent-rgb: 249, 115, 22 !important;  --panel-accent: rgb(249,115,22) !important; }
       .widget-card[data-widget-runtime-type="ticket"][data-severity="critical"] { --panel-accent-rgb: 239, 68, 68 !important;   --panel-accent: rgb(239,68,68) !important; }
       .widget-card[data-widget-runtime-type="ticket"][data-severity="none"]     { --panel-accent-rgb: 120, 130, 140 !important; --panel-accent: rgb(120,130,140) !important; }
+      .widget-card[data-widget-runtime-type="deal"][data-severity="cold"]   { --panel-accent-rgb: 34, 211, 238 !important;  --panel-accent: rgb(34,211,238) !important; }
+      .widget-card[data-widget-runtime-type="deal"][data-severity="warm"]   { --panel-accent-rgb: 250, 204, 21 !important;  --panel-accent: rgb(250,204,21) !important; }
+      .widget-card[data-widget-runtime-type="deal"][data-severity="hot"]    { --panel-accent-rgb: 249, 115, 22 !important;  --panel-accent: rgb(249,115,22) !important; }
+      .widget-card[data-widget-runtime-type="deal"][data-severity="commit"] { --panel-accent-rgb: 239, 68, 68 !important;   --panel-accent: rgb(239,68,68) !important; }
+      .widget-card[data-widget-runtime-type="deal"][data-severity="none"]   { --panel-accent-rgb: 120, 130, 140 !important; --panel-accent: rgb(120,130,140) !important; }
       .ticket-body { display: flex; flex-direction: column; gap: 4px; height: 100%; }
       .ticket-company { font-size: 0.98rem; font-weight: 700; line-height: 1.25;
         display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -3228,6 +3236,62 @@
   // severity→accent palette), and the dashboard may carry NO ticket widget at all — in
   // which case mountBodyRenderer never runs and the stacks would lose their styling.
   ensureTicketStyles();
+
+  const lastDealByInstance = new Map();
+  const renderDealInto = (mount, deal) => {
+    if (!deal) {
+      mount.innerHTML = "";
+      return;
+    }
+    const meta = deal.meta || {};
+    const title = meta.client || meta.title || deal.companyLabel || "Unknown";
+    const sub = meta.description || deal.description || deal.host || "";
+    const amount = meta.amount || deal.amount || "";
+    const next = meta.nextStep || deal.nextStep || "";
+    mount.innerHTML = `
+      <div class="ticket-company">${escapeHtml(title)}</div>
+      ${sub ? `<div class="ticket-host">${escapeHtml(sub)}</div>` : ""}
+      ${amount ? `<div class="ticket-down">${escapeHtml(amount)}</div>` : ""}
+      ${next ? `<div class="ticket-host">${escapeHtml(next)}</div>` : ""}`;
+  };
+
+  registerWidgetDefinition({
+    type: "deal",
+    displayName: "Deal",
+    category: "data",
+    widgetType: "deal",
+    dashboardObjectKind: "deal",
+    regionRole: "content",
+    htmlTag: "div",
+    className: "widget-card ticket-widget-card",
+    defaultSize: { cols: 1, rows: 3 },
+    minSize: { cols: 1, rows: 2 },
+    capabilities: { readsContext: true, supportsResize: true },
+    supportedSettings: ["color", "pin", "delete"],
+    getDefaultConfig: () => ({ title: "Deal" }),
+    mountBodyRenderer: ({ contentRoot, instance }) => {
+      ensureTicketStyles();
+      const mount = contentRoot?.querySelector?.("[data-deal-mount]");
+      if (!mount) return null;
+      const key = instance?.id || instance?.instanceId || "deal-card";
+      const deal = widgetDataRows(instance?.data)[0] || null;
+      if (deal) lastDealByInstance.set(key, deal);
+      const effective = deal || lastDealByInstance.get(key) || null;
+      renderDealInto(mount, effective);
+      const card = mount.closest(".widget-card");
+      if (card) {
+        card.onclick = null;
+        card.ondblclick = effective
+          ? (event) => { if (!wasDragGesture(event)) window.dealDetail?.open(effective, card); }
+          : null;
+        card.classList.add("db-panel-custom-color");
+        card.dataset.severity = effective ? (["cold", "warm", "hot", "commit"].includes(effective.priority) ? effective.priority : "warm") : "none";
+        card.dataset.ticketId = effective ? (effective.id || "") : "";
+      }
+      return null;
+    },
+    render: () => `<div class="ticket-body" data-deal-mount></div>`,
+  });
 
   registerWidgetDefinition({
     type: "chart",

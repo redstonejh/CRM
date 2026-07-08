@@ -38,8 +38,10 @@
     try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
   };
 
-  // Per-stage card order = the vertical stacking order within a bucket. A drop appends to the
-  // bottom by default, or inserts at the layer the cursor is over. Persisted like the stage map.
+  // Per-stage card order = the vertical stacking order within a bucket. A ticket ENTERING a bucket
+  // always APPENDS to the bottom — the visually-lowest card, which (cards fan downward) is the
+  // z-TOPMOST, fully-visible one. Only a reorder within the same bucket inserts at the layer the
+  // cursor is over. Persisted like the stage map.
   const STAGE_ORDER_STORE = "tk-stage-order";
   let stageOrder = (() => { try { return JSON.parse(localStorage.getItem(STAGE_ORDER_STORE) || "{}") || {}; } catch { return {}; } })();
   // Place id into stage's order at index (clamped); a null stage just removes it from every order.
@@ -773,6 +775,15 @@
   // The corner stack under the cursor that this ticket is ALLOWED to restore into (eligibility-gated);
   // hovering/dropping over an ineligible stack returns null → the drag springs back to the bin.
   const eligibleCornerStack = (x, y, t) => { const s = overCornerStack(x, y); return s && stackEligible(s, t) ? s : null; };
+  // A ticket ENTERING a corner pile (created via "+", dropped back from a bucket, resolved, tunneled
+  // home from the grid, deleted into the bin) always lands as the pile's TOP card: front of the order
+  // = the z-topmost card of the closed stack. (A drop into a FANNED row still picks the cursor slot.)
+  const deckToTop = (side, id) => {
+    const deck = decks[side]; if (!deck || !id) return;
+    const base = (deck.order && deck.order.length) ? deck.order : deck.cards.map((c) => c.dataset.id);
+    deck.order = [id, ...base.filter((x) => x && x !== id)];
+    saveOrder(side);
+  };
   // Restore a deleted ticket by dragging it onto a corner stack: un-delete and send it into the stack it
   // was dropped on (already eligibility-checked), inserted at the cursor slot if that stack is fanned,
   // else at the TOP (front card). Then slide the clone home.
@@ -793,7 +804,7 @@
     logActivity(t.id, "Moved to trash");
     setDeleted(t.id, true);
     // Newest deletion goes to the TOP of the pile (front card, index 0) — not sorted to the bottom by age.
-    if (decks.trash) { decks.trash.order = [t.id, ...(decks.trash.order || []).filter((id) => id !== t.id)]; saveOrder("trash"); }
+    if (decks.trash) deckToTop("trash", t.id);
   };
   // Delete animation: the trash pile appears with the ticket as its NEW top card, a clone slides from the
   // drag point and settles into that card (it "incorporates" as a real member) while the bin's blue ring
@@ -1536,6 +1547,7 @@
 
   const tunnelToStack = (w, t, side, from) => {
     w.remove();              // leave the grid → render() hands the ticket back to its deck
+    deckToTop(side, t.id);   // re-enters the pile as its TOP card (highest z)
     render();
     const target = decks[side]?.cards.find((c) => c.dataset.id === t.id);
     const clone = document.createElement("div");
@@ -1687,7 +1699,7 @@
         const fromRect = card.getBoundingClientRect();
         t.state = "resolved"; const live = tickets.find((x) => x.id === t.id); if (live) live.state = "resolved";
         try { window.tickets?.resolve?.(t.id); } catch {}
-        if (decks.right) { decks.right.order = [t.id, ...(decks.right.order || []).filter((x) => x !== t.id)]; saveOrder("right"); }
+        deckToTop("right", t.id);   // newest resolve → TOP of the pile (highest z)
         render();
         flyCloneTo(t, fromRect, decks.right?.box?.querySelector(`.tk-card[data-id="${cssEsc(t.id)}"]`));
         return;
@@ -1915,19 +1927,28 @@
     };
     st.raf = requestAnimationFrame(tick);
   };
-  // Smoothly scroll bucket `s` until `card` is fully inside the clip viewport, then run cb(). If the
-  // card is already fully visible (or can't be revealed any further), cb() runs straight away. Used so
-  // a click on a partly/entirely scrolled-off ticket brings it into view BEFORE its open animation.
-  const revealZoneCard = (s, card, cb) => {
+  // Kick a smooth scroll that brings `card` fully inside bucket `s`'s clip viewport (e.g. a card just
+  // APPENDED below the fold of an overflowing bucket). Returns the y-distance the card will travel —
+  // so an in-flight clone can aim at the card's POST-scroll resting rect — or 0 if no scroll is needed.
+  const revealZoneShift = (s, card) => {
     const clip = zoneTrack[s]?.parentElement, st = zoneScroll[s];   // .tk-zone-clip
-    if (!clip || !st) return cb();
+    if (!clip || !st) return 0;
     const cr = card.getBoundingClientRect(), vr = clip.getBoundingClientRect(), PAD = 6;
     let delta = 0;
     if (cr.top < vr.top + PAD) delta = (vr.top + PAD) - cr.top;              // above view → scroll content down
     else if (cr.bottom > vr.bottom - PAD) delta = (vr.bottom - PAD) - cr.bottom;   // below view → scroll up
     const target = clamp(st.sy + delta, zMin(s), 0);
-    if (Math.abs(target - st.sy) < 1) return cb();                          // already visible / nowhere to scroll
+    if (Math.abs(target - st.sy) < 1) return 0;                             // already visible / nowhere to scroll
     st.ty = target; st.wheeling = false; runZoneScroll(s);
+    return target - st.sy;
+  };
+  // Smoothly scroll bucket `s` until `card` is fully inside the clip viewport, then run cb(). If the
+  // card is already fully visible (or can't be revealed any further), cb() runs straight away. Used so
+  // a click on a partly/entirely scrolled-off ticket brings it into view BEFORE its open animation.
+  const revealZoneCard = (s, card, cb) => {
+    const st = zoneScroll[s];
+    if (!st || !revealZoneShift(s, card)) return cb();
+    const target = st.ty;   // revealZoneShift just set the scroll goal
     const waitFor = () => { if (!st.raf || Math.abs(st.sy - target) < 0.8) cb(); else requestAnimationFrame(waitFor); };
     requestAnimationFrame(waitFor);
   };
@@ -2345,14 +2366,18 @@
       const dest = document.querySelector(`.tk-zcard[data-id="${cssEsc(id)}"], .tk-card[data-id="${cssEsc(id)}"]`);
       const to = (dest && dest.isConnected) ? dest.getBoundingClientRect() : null;
       if (!to || to.width < 4 || !r0) { cl.remove(); return; }
+      // Landed in a bucket (appended below the fold?) → smooth-scroll it fully into view, and aim
+      // the settle at the card's POST-scroll rect so clone and card meet where the scroll ends.
+      const zs = dest.classList.contains("tk-zcard") ? STAGE_KEYS.find((k) => zoneTrack[k]?.contains(dest)) : null;
+      const shift = zs ? revealZoneShift(zs, dest) : 0;
       dest.style.opacity = "0";   // hide the real card until the clone lands on it
       cl.style.transition = "translate .2s cubic-bezier(.4,0,.2,1), scale .2s cubic-bezier(.4,0,.2,1), opacity .2s ease";
       requestAnimationFrame(() => {
-        cl.style.translate = `${Math.round(to.left - r0.left)}px ${Math.round(to.top - r0.top)}px`;
+        cl.style.translate = `${Math.round(to.left - r0.left)}px ${Math.round(to.top + shift - r0.top)}px`;
         cl.style.scale = `${(to.width / r0.width).toFixed(4)} ${(to.height / r0.height).toFixed(4)}`;
         cl.style.opacity = "1";
       });
-      setTimeout(() => { cl.remove(); if (dest.isConnected) dest.style.opacity = ""; }, 220);
+      setTimeout(() => { cl.remove(); if (dest.isConnected) dest.style.opacity = ""; }, shift ? 440 : 220);   // shifted → wait for the scroll to settle under the clone
     };
     const onUp = (e) => {
       window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
@@ -2394,11 +2419,13 @@
           t.state = "resolved"; const live = tickets.find((x) => x.id === t.id); if (live) live.state = "resolved";
           try { window.tickets?.resolve?.(t.id); } catch {}
           setStage(t.id, null); setStageAt(t.id, null);
-          if (decks.right) { decks.right.order = [t.id, ...(decks.right.order || []).filter((x) => x !== t.id)]; saveOrder("right"); }   // newest → front card
+          deckToTop("right", t.id);   // newest resolve → TOP of the pile (highest z)
           render(); settleClone(t.id); return;
         }
         if (stageOf(t.id)) logActivity(t.id, "Moved back to the new-tickets stack");
-        setStage(t.id, null); setStageAt(t.id, null); render(); settleClone(t.id); return;   // onto a stack → inbox (append)
+        setStage(t.id, null); setStageAt(t.id, null);
+        deckToTop(deckSideFor(t), t.id);   // re-enters the pile as its TOP card (highest z)
+        render(); settleClone(t.id); return;
       }
       render(); settleClone(t.id);   // a blocked (red) zone / nowhere → rebuild in place + settle home
     };
@@ -2451,12 +2478,19 @@
     positionZone(stage);   // sandwich gap shifted cards → shadows track the reorder live
   };
   // The droppable bucket + insert index under (x,y) for a drag from chain position `from` — or null.
+  // A ticket ENTERING a bucket (from a stack or another bucket) always APPENDS: it becomes the
+  // visually-bottom card, which is the z-TOPMOST, fully-shown one. Only a same-bucket reorder
+  // inserts at the layer under the cursor.
   const dropTarget = (from, x, y, tk) => {
     const z = zoneAt(x, y);
     if (!z) return null;
     const to = posOfStage(z);
     if (from !== to && !canAdvance(from, to, tk)) return null;   // same stage = reorder; else a legal (gated) step
-    return { stage: z, index: zoneInsertIndex(z, y) };
+    // 1e9 = "after everything": setStageAt clamps to the PERSISTED order's length, which can hold
+    // stale ids (trashed / off-board tickets keep their slot) beyond the rendered cards — a rendered
+    // count would splice in front of those and the entering card wouldn't render last.
+    const index = from === to ? zoneInsertIndex(z, y) : 1e9;
+    return { stage: z, index };
   };
 
   const renderZones = () => {
@@ -2490,10 +2524,13 @@
     setDeleted(t.id, false);   // entering the pipeline un-deletes (a ticket can't be both staged and trashed)
     if (stageOf(t.id) !== stage) logActivity(t.id, `Moved to ${STAGES.find((s) => s.key === stage)?.label || stage}`);
     setStage(t.id, stage);
-    setStageAt(t.id, stage, index);   // bottom by default, or the layer the cursor was over
+    setStageAt(t.id, stage, index);   // entering → appended to the bottom (z-topmost, fully-shown card)
     render();
     const dest = zoneTrack[stage]?.querySelector(`.tk-zcard[data-id="${cssEsc(t.id)}"]`);
     if (!dest) return;
+    // The appended card may land below the bucket's fold — smooth-scroll it into view while the clone
+    // flies, and aim the flight at the card's POST-scroll resting rect so the two meet exactly.
+    const shift = revealZoneShift(stage, dest);
     const to = dest.getBoundingClientRect();
     const clone = document.createElement("div");
     clone.className = "tk-zfly";
@@ -2505,9 +2542,9 @@
     fitCardFields(clone);
     dest.style.opacity = "0";
     requestAnimationFrame(() => {
-      clone.style.transform = `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`;
+      clone.style.transform = `translate(${to.left - from.left}px, ${to.top + shift - from.top}px) scale(${to.width / from.width}, ${to.height / from.height})`;
     });
-    setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; }, 300);
+    setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; }, shift ? 460 : 300);   // shifted → wait for the scroll to settle under the clone
   };
 
   const render = () => {
@@ -2578,7 +2615,7 @@
     if (draftId) return;   // one draft at a time
     let tk = null;
     try { const res = await window.tickets?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
-    if (tk && tk.id) { pendingOpenId = tk.id; draftId = tk.id; }
+    if (tk && tk.id) { pendingOpenId = tk.id; draftId = tk.id; deckToTop("left", tk.id); }   // new ticket → TOP of the inbox pile
     load();   // re-fetch + render; render() flies the new card out and opens its config as a draft
   };
   // Abandon a never-completed draft: hard-remove the backend ticket and forget every client-side trace,

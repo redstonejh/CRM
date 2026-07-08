@@ -30,6 +30,11 @@ const entityStores = new Map();
 const loadedEntities = new Set();
 const pendingRefresh = new Set();
 
+function normalizeApiUrl(url) {
+  const raw = String(url || '').trim();
+  return raw ? raw.replace(/\/+$/, '') : apiUrl;
+}
+
 function safeEntity(entity) {
   const key = String(entity || '').trim();
   if (!ENTITIES.includes(key)) throw new Error(`Invalid entity: ${entity}`);
@@ -137,6 +142,16 @@ function wsUrl() {
   return `${apiUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')}/api/changes`;
 }
 
+function disconnectSocket() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  if (!ws) return;
+  const old = ws;
+  ws = null;
+  try { old.removeAllListeners(); } catch {}
+  try { old.close(); } catch {}
+}
+
 function connectSocket() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   clearTimeout(reconnectTimer);
@@ -169,7 +184,17 @@ function connectSocket() {
 }
 
 export function configureStore({ url } = {}) {
-  if (url) apiUrl = String(url).replace(/\/+$/, '');
+  const nextUrl = normalizeApiUrl(url);
+  const changed = nextUrl !== apiUrl;
+  if (changed) {
+    apiUrl = nextUrl;
+    pendingRefresh.clear();
+    loadedEntities.clear();
+    entityStores.forEach((map) => map.clear());
+    disconnectSocket();
+    setConnection('offline');
+    emitChange();
+  }
   connectSocket();
   scheduleRefreshAll();
 }
@@ -187,6 +212,26 @@ export function emitStoreChange() {
 
 export function storeConnectionState() {
   return connectionState;
+}
+
+export function storeConnectionInfo() {
+  return {
+    apiUrl,
+    connection: connectionState,
+    loadedEntities: [...loadedEntities],
+    pendingEntities: [...pendingRefresh],
+  };
+}
+
+export async function storeHealth() {
+  const res = await request('/api/health');
+  return {
+    ok: !!res.ok,
+    apiUrl,
+    connection: connectionState,
+    status: res.status || (res.ok ? 'live' : 'offline'),
+    error: res.error || null,
+  };
 }
 
 export function listRecords(entity, { includeDeleted = true } = {}) {

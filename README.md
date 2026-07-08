@@ -32,6 +32,8 @@ The calendar now runs on the shared `fractal-camera.js` engine, has year paging,
 
 Reports are grid-resident builder widgets fed by `/api/reports/summary` through `window.crmReportsApi`; they summarize open deals, pipeline value, win rate, contacts due, tasks, scheduled items, activity, and recent records without reviving the removed monitoring feed. Quick-add is a global `+` launcher that delegates to the existing Ticket, Deal, and Contact card-system draft create flows.
 
+Team backend polish now lives in the account menu's Backend panel. It shows the active API endpoint, probes `/api/health`, and lets the user switch API URLs; changing the endpoint reconnects the shared store, clears stale entity caches, and reloads records from the new Postgres/API backend.
+
 ## Verification
 
 The current client smoke test is the Electron Forge package build:

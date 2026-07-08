@@ -16,7 +16,8 @@ import {
   commentTicket, updateTicket, createTicket, deleteTicket,
 } from './tickets.js';
 import {
-  listRecords, getRecord, createRecord, updateRecord, deleteRecord, storeConnectionState, reportSummary,
+  listRecords, getRecord, createRecord, updateRecord, deleteRecord,
+  storeConnectionState, storeConnectionInfo, storeHealth, reportSummary,
 } from './store.js';
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
@@ -38,7 +39,7 @@ const DEFAULT_SETTINGS = {
 function loadSettings() {
   try {
     const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
-    if (!merged.apiUrl) merged.apiUrl = DEFAULT_SETTINGS.apiUrl;
+    merged.apiUrl = normalizeApiUrl(merged.apiUrl) || DEFAULT_SETTINGS.apiUrl;
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -48,6 +49,18 @@ function loadSettings() {
 function saveSettings(next) {
   fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2));
+}
+
+function normalizeApiUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return DEFAULT_SETTINGS.apiUrl;
+  try {
+    const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.href.replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -257,11 +270,24 @@ ipcMain.on('auth:current-username', (e) => { e.returnValue = auth.currentUser() 
 
 ipcMain.handle('settings:get', () => settings);
 ipcMain.handle('settings:save', (_e, next = {}) => {
-  settings = { ...settings, ...next };
-  if (!settings.apiUrl) settings.apiUrl = DEFAULT_SETTINGS.apiUrl;
+  const apiUrl = normalizeApiUrl(next.apiUrl ?? settings.apiUrl);
+  if (!apiUrl) return { ok: false, error: 'API URL must be an http(s) URL' };
+  settings = { ...settings, ...next, apiUrl };
   saveSettings(settings);
   connectTickets({ url: settings.apiUrl });
-  return { ok: true, settings };
+  broadcastStore();
+  return { ok: true, settings, connection: storeConnectionInfo() };
+});
+ipcMain.handle('backend:connection', () => ({ ok: true, settings, connection: storeConnectionInfo() }));
+ipcMain.handle('backend:status', async () => {
+  const health = await storeHealth();
+  return {
+    ok: health.ok,
+    settings,
+    connection: storeConnectionInfo(),
+    health,
+    error: health.error || null,
+  };
 });
 
 // ─── IPC: window controls ────────────────────────────────────────────────────────

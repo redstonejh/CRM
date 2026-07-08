@@ -86,6 +86,13 @@ contextBridge.exposeInMainWorld('crmStore', {
 contextBridge.exposeInMainWorld('crmReportsApi', {
   summary: () => ipcRenderer.invoke('reports:summary'),
 });
+contextBridge.exposeInMainWorld('crmBackend', {
+  connection: () => ipcRenderer.invoke('backend:connection'),
+  status: () => ipcRenderer.invoke('backend:status'),
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
+});
 contextBridge.exposeInMainWorld('deals', entityBridge('deals'));
 contextBridge.exposeInMainWorld('contacts', entityBridge('contacts'));
 contextBridge.exposeInMainWorld('companies', entityBridge('companies'));

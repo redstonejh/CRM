@@ -105,6 +105,7 @@
         <strong class="auth-profile-name"></strong>
       </div>
       <button class="auth-menu-item auth-manage" type="button" hidden>Manage accounts</button>
+      <button class="auth-menu-item auth-backend" type="button">Backend</button>
       <div class="auth-submenu-wrap">
         <button class="auth-menu-item auth-layout" type="button" aria-haspopup="true" aria-expanded="false">
           Layout<span class="auth-submenu-caret" aria-hidden="true">›</span>
@@ -120,6 +121,7 @@
   document.body.appendChild(profile);
   const nameEl = profile.querySelector(".auth-profile-name");
   const manageBtn = profile.querySelector(".auth-manage");
+  const backendBtn = profile.querySelector(".auth-backend");
   // ┌─ READ THIS BEFORE TOUCHING ANY SUBMENU/FLYOUT GLASS ───────────────────────┐
   // │ A `backdrop-filter` element NESTED inside another `backdrop-filter` element │
   // │ is IGNORED by Chromium. So a flyout left as a child of .auth-profile-menu   │
@@ -153,6 +155,7 @@
     await bridge.logout();
     window.location.reload();
   });
+  backendBtn.addEventListener("click", () => { closeProfile(); openBackendSettings(); });
   manageBtn.addEventListener("click", () => { closeProfile(); openManageUsers(); });
   document.addEventListener("click", (e) => {
     if (!profile.contains(e.target) && !layoutMenu.contains(e.target)) closeProfile();
@@ -296,6 +299,92 @@
   }
   bridge.session().then(applySession).catch(() => applySession(null));
   bridge.onChanged(applySession);
+
+  // ─── Backend connection (team API) ──────────────────────────────────────────
+  let backendEl = null;
+  const backendBridge = () => window.crmBackend || {
+    getSettings: () => window.electron?.getSettings?.(),
+    saveSettings: (settings) => window.electron?.saveSettings?.(settings),
+    status: async () => {
+      const settings = await window.electron?.getSettings?.();
+      return { ok: true, settings, connection: { apiUrl: settings?.apiUrl || "", connection: "unknown" } };
+    },
+  };
+
+  const backendStatusText = (payload) => {
+    const health = payload?.health || {};
+    const connection = payload?.connection || {};
+    const apiUrl = health.apiUrl || connection.apiUrl || payload?.settings?.apiUrl || "";
+    const state = health.connection || connection.connection || "unknown";
+    const label = payload?.ok ? "Live" : state === "live" ? "Live" : state === "unknown" ? "Unknown" : "Offline";
+    const detail = payload?.ok ? apiUrl : (health.error || payload?.error || apiUrl || "API not reachable");
+    return { label, detail, live: label === "Live" };
+  };
+
+  async function refreshBackendStatus() {
+    if (!backendEl) return null;
+    const statusEl = backendEl.querySelector("[data-backend-status]");
+    const apiInput = backendEl.querySelector('input[name="apiUrl"]');
+    statusEl.innerHTML = `<span class="auth-backend-dot"></span><span>Checking...</span>`;
+    let payload = null;
+    try { payload = await backendBridge().status?.(); } catch (err) { payload = { ok: false, error: err?.message || "Status check failed" }; }
+    const status = backendStatusText(payload);
+    statusEl.classList.toggle("is-live", status.live);
+    statusEl.classList.toggle("is-offline", !status.live);
+    statusEl.innerHTML = `<span class="auth-backend-dot"></span><span>${escapeHtml(status.label)}</span><small>${escapeHtml(status.detail)}</small>`;
+    if (apiInput && !apiInput.matches(":focus")) apiInput.value = payload?.settings?.apiUrl || payload?.connection?.apiUrl || payload?.health?.apiUrl || apiInput.value;
+    return payload;
+  }
+
+  async function openBackendSettings() {
+    const backend = backendBridge();
+    const current = await backend.connection?.().catch(() => null);
+    const settings = current?.settings || await backend.getSettings?.().catch(() => ({})) || {};
+    if (backendEl) backendEl.remove();
+    backendEl = document.createElement("div");
+    backendEl.className = "auth-modal-backdrop";
+    backendEl.innerHTML = `
+      <div class="auth-modal auth-backend-modal">
+        <div class="auth-modal-head">
+          <strong>Backend</strong>
+          <button class="auth-modal-close" type="button" aria-label="Close">✕</button>
+        </div>
+        <form class="auth-backend-form">
+          <label class="auth-field"><span>API URL</span>
+            <input class="auth-input" name="apiUrl" value="${escapeHtml(settings.apiUrl || "")}" placeholder="http://127.0.0.1:3899"></label>
+          <div class="auth-backend-status" data-backend-status>
+            <span class="auth-backend-dot"></span><span>Checking...</span>
+          </div>
+          <div class="auth-backend-actions">
+            <button class="auth-submit auth-backend-save" type="submit">Save</button>
+            <button class="auth-secondary auth-backend-test" type="button">Test</button>
+          </div>
+          <div class="auth-modal-hint">This endpoint is the shared Postgres/API backend used by tickets, deals, contacts, calendar, and reports.</div>
+          <div class="auth-error auth-backend-error" hidden></div>
+        </form>
+      </div>`;
+    document.body.appendChild(backendEl);
+    const form = backendEl.querySelector(".auth-backend-form");
+    const errorEl = backendEl.querySelector(".auth-backend-error");
+    const close = () => { backendEl?.remove(); backendEl = null; };
+    backendEl.querySelector(".auth-modal-close").addEventListener("click", close);
+    backendEl.addEventListener("click", (e) => { if (e.target === backendEl) close(); });
+    form.querySelector(".auth-backend-test").addEventListener("click", () => { refreshBackendStatus(); });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      const apiInput = form.querySelector('input[name="apiUrl"]');
+      const result = await backend.saveSettings?.({ apiUrl: apiInput.value.trim() }).catch((err) => ({ ok: false, error: err?.message }));
+      if (!result?.ok) {
+        errorEl.textContent = result?.error || "Could not save backend settings";
+        errorEl.hidden = false;
+        return;
+      }
+      await refreshBackendStatus();
+      flashLabel(form.querySelector(".auth-backend-save"), "Saved");
+    });
+    refreshBackendStatus();
+  }
 
   // ─── Manage accounts (admin) ─────────────────────────────────────────────────
   // Every monitored IP, fetched from the live company list. The signed-in admin
@@ -598,6 +687,30 @@
       .auth-modal-close:hover { color: #ffffff; }
       .auth-modal-divider { height: 1px; background: rgba(255, 255, 255, 0.14); }
       .auth-modal-hint { font-size: 11.5px; color: rgba(255, 255, 255, 0.55); }
+      .auth-backend-form { display: flex; flex-direction: column; gap: 12px; }
+      .auth-backend-status {
+        display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; align-items: center;
+        padding: 9px 10px; border-radius: 10px;
+        background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.14);
+        color: rgba(255, 255, 255, 0.86); font-size: 12.5px; font-weight: 700;
+      }
+      .auth-backend-status small {
+        grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        color: rgba(255, 255, 255, 0.54); font-size: 11px; font-weight: 500;
+      }
+      .auth-backend-dot {
+        width: 8px; height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.44);
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+      }
+      .auth-backend-status.is-live .auth-backend-dot { background: #6fc99a; box-shadow: 0 0 0 3px rgba(111, 201, 154, 0.16); }
+      .auth-backend-status.is-offline .auth-backend-dot { background: #e1857c; box-shadow: 0 0 0 3px rgba(225, 133, 124, 0.16); }
+      .auth-backend-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .auth-secondary {
+        height: 40px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 10px; cursor: pointer;
+        background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.82);
+        font: inherit; font-size: 13.5px; font-weight: 600;
+      }
+      .auth-secondary:hover { color: #ffffff; background: rgba(255, 255, 255, 0.13); }
       .auth-user-list { display: flex; flex-direction: column; gap: 4px; }
       .auth-user-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
       .auth-user-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: #ffffff; }

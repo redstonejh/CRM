@@ -104,7 +104,7 @@ The swap happens at the preload seam: `electron/tickets.js` becomes a compatibil
 
 ## 6. Roadmap
 
-`CRM_VISION.md` in the parent CRM workspace extends this original roadmap beyond Phase 7. The active continuation is Phase 10: Today hand plus Cold Front derivation on the Postgres/API backend.
+`CRM_VISION.md` in the parent CRM workspace extends this original roadmap beyond Phase 7. The active continuation is Phase 10: a deck-only Today hand on `card-system.js` plus Cold Front derivation on the Postgres/API backend.
 
 | Phase | Work | Layer touched |
 |---|---|---|
@@ -117,7 +117,7 @@ The swap happens at the preload seam: `electron/tickets.js` becomes a compatibil
 | **7** | Reports (aggregates → builder widgets), quick-add, team polish | Layer 3 |
 | **8** | Money module, invoices/interactions, invoice aging, interaction fan-out, overdue nudges | Layer 3 + API |
 | **9** | Next-Touch Law interceptor, `nextTouchAt` card faces, calendar/report surfacing | Layers 2–3 + API |
-| **10** | Today surface, morning deal, Cold Front derivation and attention detector | Layers 2–3 + API |
+| **10** | Deck-only Today hand, morning deal, Cold Front derivation and attention detector | Layers 2–3 + API |
 
 Phase 3 is the crux and carries its own test: **re-instantiate ticketing through the factory first**. If tickets don't behave byte-for-byte identically through the generalized engine, the abstraction is wrong — fix it before any CRM entity touches it.
 

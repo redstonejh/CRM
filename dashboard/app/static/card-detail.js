@@ -34,7 +34,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   // (blur 42px ⇒ ~60px reach) clears the clip-path's left edge — otherwise the
   // shadow peeks past the clip and sits frozen mid-screen while the card flies.
   const TUCK = PANEL_W + GAP + 96;          // 412px — panel + gap + shadow reach
-  const SEV_RGB = config.severityRgb || { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
+  const SEV_RGB = config.severityRgb || { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "234,88,12", none: "120,130,140" };
   const EASE = "cubic-bezier(.4, 0, .2, 1)"; // balanced glide (no front-loaded snap)
   const FLY_MS = 420, SLIDE_MS = 360, SLIDE_DELAY = 270, SETTLE_MS = 700;
   const CLOSE_SLIDE_MS = 190, CLOSE_FLY_MS = 280;   // close is snappier than open; panel fully retracts THEN card returns

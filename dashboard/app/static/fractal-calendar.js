@@ -113,7 +113,7 @@
       .fc-chip[data-type="deal"] { background: rgba(249,115,22,0.18); }
       .fc-chip[data-type="contact"] { background: rgba(148,163,184,0.22); }
       .fc-chip[data-type="task"] { background: rgba(111,201,154,0.18); }
-      .fc-chip[data-type="invoice"] { background: rgba(239,68,68,0.18); }
+      .fc-chip[data-type="invoice"] { background: rgba(234,88,12,0.18); }
       .fc-empty, .fc-day-detail { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center;
         color: rgba(255,255,255,0.42); font-size: 0.8rem; line-height: 1.4; }
       .fc-day-detail { margin: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; text-align: left; }
@@ -126,7 +126,9 @@
       .fc-surface[data-level="0"] .fc-month { cursor: pointer; }
       .fc-surface[data-level="0"] .fc-month:hover,
       .fc-expander[data-kind="month"] .fc-day:hover,
-      .fc-day.is-drop-target {
+      .fc-day.is-drop-target,
+      .fc-day-detail.is-drop-target,
+      .fc-empty.is-drop-target {
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
       .fc-expander[data-kind="month"] .fc-day { cursor: pointer; pointer-events: auto; }

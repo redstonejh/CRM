@@ -38,7 +38,8 @@
     active = MODULES.some((m) => m.key === key) ? key : "home";
     localStorage.setItem(STORE_KEY, active);
     MODULES.forEach((module) => {
-      try { module.api()?.setActive?.(module.key === active); } catch {}
+      const on = module.key === active || (module.key === "today" && active === "calendar");
+      try { module.api()?.setActive?.(on); } catch {}
     });
     root?.querySelectorAll("button[data-crm-module]").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.crmModule === active);

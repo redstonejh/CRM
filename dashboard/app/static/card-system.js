@@ -24,7 +24,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const intensityValues = config.intensityValues || ["low", "medium", "high", "critical"];
   const defaultIntensity = config.defaultIntensity || intensityValues[1] || "medium";
   const onLinkDrop = typeof config.onLinkDrop === "function" ? config.onLinkDrop : null;
-  const rightDeckEnabled = config.rightDeckEnabled !== false;
+  const onCalendarDrop = typeof config.onCalendarDrop === "function" ? config.onCalendarDrop : null;
+  const onHomeStageDrop = typeof config.onHomeStageDrop === "function" ? config.onHomeStageDrop : null;
+  const deckOnly = config.deckOnly === true;
+  const rightDeckEnabled = !deckOnly && config.rightDeckEnabled !== false;
+  const trashEnabled = !deckOnly && config.trashEnabled !== false;
   const createEnabled = config.createEnabled !== false;
   const showProgressBars = config.showProgressBars !== false;
   const showDateUnder = config.showDateUnder !== false;
@@ -34,6 +38,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const configuredCardBg = typeof config.cardBackground === "function" ? config.cardBackground : null;
   const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
   const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
+  const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
+  const autoFanOncePerDayKey = String(config.autoFanOncePerDayKey || "");
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
   const rightDeckFilter = typeof config.rightDeckFilter === "function" ? config.rightDeckFilter : ((record) => isResolved(record));
   const deckCopy = {
@@ -71,7 +77,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
   const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
-  const SEV_RGB = config.severityRgb || { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
+  const SEV_RGB = config.severityRgb || { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "234,88,12", none: "120,130,140" };
   const sevOf = (t) => {
     const key = intensityOf(t);
     return Object.prototype.hasOwnProperty.call(SEV_RGB, key) ? key : (t ? defaultIntensity : "none");
@@ -86,12 +92,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // zone is assigned that stage (persisted by id); unassigned tickets live in the corner
   // stacks (the inbox). cssEsc guards attribute selectors built from ticket ids.
   const cssEsc = (window.CSS && CSS.escape) ? (s) => CSS.escape(s) : (s) => String(s).replace(/["\\\]]/g, "\\$&");
-  const STAGES = config.stages || [
+  const STAGES = Array.isArray(config.stages) ? config.stages : [
     { key: "triage", label: "Triage" },
     { key: "investigation", label: "Investigation" },
     { key: "resolution", label: "Resolution" },
   ];
   const STAGE_KEYS = STAGES.map((s) => s.key);
+  const zonesEnabled = !deckOnly && config.zonesEnabled !== false && STAGE_KEYS.length > 0;
   const STAGE_STORE = storageKeys.stage;
   let stageMap = (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })();
   const ticketById = (id) => tickets.find((x) => x && x.id === id) || null;
@@ -100,11 +107,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     try { source?.update?.(id, fields); } catch {}
   };
   const stageOf = (id) => {
+    if (!zonesEnabled) return null;
     const docStage = ticketById(id)?.stage;
     if (STAGE_KEYS.includes(docStage)) return docStage;
     return id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null;
   };
   const setStage = (id, stage) => {
+    if (!zonesEnabled) return;
     if (!id) return;
     const nextStage = stage && STAGE_KEYS.includes(stage) ? stage : null;
     if (nextStage) stageMap[id] = nextStage; else delete stageMap[id];
@@ -126,6 +135,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let stageOrder = (() => { try { return JSON.parse(localStorage.getItem(STAGE_ORDER_STORE) || "{}") || {}; } catch { return {}; } })();
   // Place id into stage's order at index (clamped); a null stage just removes it from every order.
   const setStageAt = (id, stage, index) => {
+    if (!zonesEnabled) return;
     if (!id) return;
     for (const k of Object.keys(stageOrder)) stageOrder[k] = (stageOrder[k] || []).filter((x) => x !== id);
     if (stage && STAGE_KEYS.includes(stage)) {
@@ -206,7 +216,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let root = null, stackScrim = null;
   const decks = { left: null, right: null, trash: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false, trash: false };
-  const DECK_SIDES = ["left", "right", "trash"];   // trash = the recycle bin, a right-hand stack lifted above the icon
+  const CONTROL_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : [])];
+  const DECK_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : []), ...(trashEnabled ? ["trash"] : [])];   // trash = the recycle bin, a right-hand stack lifted above the icon
   const CORNER_SIDES = rightDeckEnabled ? ["left", "right"] : ["left"];
   let tickets = [], subscribed = false;
   let linkHighlightEl = null;
@@ -225,6 +236,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (h) return `${h}h ${m % 60}m`;
     if (m) return `${m}m`;
     return `${s}s`;
+  };
+  const localDate = (date = new Date()) => {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   };
 
   // The REAL grid ticket card — scoped to the dashboard layout so it never matches one of
@@ -685,6 +700,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         flex: 0 0 auto;   /* keep the natural height — rows must OVERFLOW (measurably), not silently squash */
         white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
       .ticket-field-l { color: rgba(255,255,255,0.42); font-weight: 600; margin-right: 5px; }
+      .ticket-face-badges { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; }
+      .ticket-face-chip { display: inline-flex; align-items: center; max-width: 100%; min-width: 0; border-radius: 999px;
+        padding: 3px 8px; font-size: 0.68rem; line-height: 1.15; font-weight: 800; color: rgba(255,255,255,0.72);
+        background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.10);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .ticket-face-chip[data-tone="warn"] { color: rgba(255,230,180,0.88); background: rgba(234,88,12,0.18); border-color: rgba(234,88,12,0.22); }
+      .ticket-face-chip[data-tone="overdue"] { color: rgba(255,210,210,0.9); background: rgba(239,68,68,0.20); border-color: rgba(239,68,68,0.24); }
       /* The description line joins the smart-fit too (scoped to OUR cards — the grid widget keeps its own look). */
       .tk-card .ticket-host, .tk-zcard .ticket-host, .tk-zfly .ticket-host, .td-flyer .ticket-host {
         display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -762,6 +784,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // Open/close the recycle bin. Closing it ALSO un-fans the bin's stack — otherwise fanned.trash stays
   // true and the "only one fanned at a time" rule keeps the other stacks' fan buttons hidden.
   const setTrashMode = (on, showEmpty = false) => {
+    if (!trashEnabled) return;
     trashMode = on;
     if (on) trashShowEmpty = showEmpty;   // opened deliberately? let an empty bin stay open to show its placeholder
     else { trashShowEmpty = false; if (decks.trash) { fanned.trash = false; decks.trash.scrollX = 0; } }
@@ -783,10 +806,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
       `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
       `<button class="tk-menu-item" data-act="activity">activity</button>` +
-      (trashed
+      (trashEnabled && trashed
         ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
           `<button class="tk-menu-item tk-menu-danger" data-act="purge">delete permanently</button>`
-        : `<button class="tk-menu-item" data-act="trash">move to trash</button>`);
+        : trashEnabled
+          ? `<button class="tk-menu-item" data-act="trash">move to trash</button>`
+          : "");
     document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
@@ -1009,7 +1034,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // Depth-of-field scrim — a BODY-level layer (z 3900), NOT a child of .tk-stacks, so it sits below
     // the stacks (which stay sharp) yet above the resting buckets/dashboard (which it blurs).
     stackScrim = document.createElement("div"); stackScrim.className = "tk-scrim"; document.body.appendChild(stackScrim);
-    for (const side of ["left", "right"]) {
+    for (const side of CONTROL_SIDES) {
       const box = document.createElement("div");
       box.className = `tk-deck tk-deck-${side}`;
       const track = document.createElement("div");   // holds the cards; scroll = ONE rigid transform on this
@@ -1038,7 +1063,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         action.setAttribute("aria-label", deckCopy.trashAria);
         action.title = deckCopy.trashTitle;
         action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20"/></svg>';
-        action.addEventListener("click", () => setTrashMode(!trashMode, true));
+        action.hidden = !trashEnabled;
+        if (trashEnabled) action.addEventListener("click", () => setTrashMode(!trashMode, true));
       }
       // Empty-stack placeholder: lives on root (like the action button) so it shows when the deck box is
       // hidden (.is-empty). Sized + toggled in layout(); tells the user what this corner collects.
@@ -1051,7 +1077,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     }
     // The recycle bin: a THIRD stack on the right, lifted above the trash icon (positioned in render),
     // shown only in trash mode. Same machinery as the right deck (fans left) — no action button of its own.
-    {
+    if (trashEnabled) {
       const box = document.createElement("div");
       box.className = "tk-deck tk-deck-trash";
       const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
@@ -1153,6 +1179,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const setBucketSharp = (fn) => STAGES.forEach((s, i) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-sharp", fn(i)));
   const setArrowSharp = (fn) => flowSvgs.forEach((svg, i) => svg.classList.toggle("tk-cofocus", fn(i)));   // per-arrow lift across the scrim
   const applyBucketFocus = () => {
+    if (!zonesEnabled) return;
     if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
     // Co-focus: lift ALL buckets/arrows above the scrim (sharp) ONLY while the cursor is drifting up to
     // co-focus them; otherwise leave them below it so the SCRIM blurs them — the crisp un-fanned-bin look.
@@ -1210,6 +1237,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const clearHoverPreview = () => { if (!hoverPrev) return; hoverPrev = null; clearDropFocus(); clearZoneHighlight(); };
   const onFanHover = (e) => {
+    if (!zonesEnabled) return;
     if (dragActive) return;                        // drags do their own targeting
     const side = DECK_SIDES.find((s) => fanned[s]);
     const sr = side ? deckCardsRect(side) : null;
@@ -1799,21 +1827,28 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (!dragging && Math.hypot(dx, dy) > 6) {
         dragging = true; dragActive = true; draggingSide = side; ranksClosed = false; card.classList.add("tk-dragging"); card.style.zIndex = "9999";
-        focusDropTargets(stackPos(side), t);   // show ONLY the eligible bucket(s) for the WHOLE drag — from the
-                                               // moment it's lifted, even while the cursor is still on the stack
+        if (zonesEnabled) {
+          focusDropTargets(stackPos(side), t);   // show ONLY the eligible bucket(s) for the WHOLE drag — from the
+                                                 // moment it's lifted, even while the cursor is still on the stack
+        }
         // Lift the card OUT of the scroll track into the box, so it stays screen-fixed while the track
         // autoscrolls underneath. Fold the current scroll into baseTx (the track no longer moves it).
         const d0 = decks[side]; d0.box.appendChild(card);
         baseTx = card._tx + (side === "left" ? d0.scrollX : -d0.scrollX); baseTy = card._ty;
-        dragPreviewFn = (x, y) => {              // re-run while autoscrolling so the gap follows the cursor
-          if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
-          else { clearZoneHighlight(); clearGap(); }
-        };
+        dragPreviewFn = zonesEnabled
+          ? ((x, y) => {              // re-run while autoscrolling so the gap follows the cursor
+              if (y < stackTopY()) { flowHighlight(stackPos(side), x, y, t); const dt = dropTarget(stackPos(side), x, y, t); if (dt) previewGap(dt.stage, dt.index); else clearGap(); }
+              else { clearZoneHighlight(); clearGap(); }
+            })
+          : null;
         deckReorderFn = () => reorderTo(lastAlong);   // autoscroll re-runs the reorder at the held cursor
       }
       if (!dragging) return;
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
+      if (previewCalendarTarget(e.clientX, e.clientY, card)) { clearHomeStageHighlight(); clearZoneHighlight(); clearGap(); return; }
+      if (previewHomeStageTarget(e.clientX, e.clientY, t, card)) { clearCalendarHighlight(); clearZoneHighlight(); clearGap(); return; }
+      clearCalendarHighlight(); clearHomeStageHighlight();
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
       if (previewLinkTarget(e.clientX, e.clientY, t, card)) { clearZoneHighlight(); clearGap(); return; }
@@ -1842,7 +1877,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // Evaluate the trash target BEFORE dragActive resets — the generous drag-time catch pad (and the
       // open placeholder) must still count at the moment of release.
       const overTrash = dragging && overTrashTarget(e.clientX, e.clientY);
-      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus(); setStackDrop(null); clearLinkHighlight();   // always clear
+      dragActive = false; draggingSide = null; stopAutoScroll(); dragPreviewFn = null; deckReorderFn = null; stopTrashRing(); clearDropFocus(); setStackDrop(null); clearLinkHighlight(); clearCalendarHighlight(); clearHomeStageHighlight();   // always clear
       if (handedOff) return;                                                // native runtime owns the drop
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
@@ -1871,6 +1906,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         dDrop.track.appendChild(card);
       }
       clearZoneHighlight();
+      if (tryCalendarDrop(e.clientX, e.clientY, t, card)) { layout(side); return; }
+      if (tryHomeStageDrop(e.clientX, e.clientY, t, card)) { layout(side); return; }
       // Released up on the dashboard → drop into the pipeline zone under the cursor, if any.
       if (e.clientY < stackTopY()) {
         const dt = dropTarget(stackPos(side), e.clientX, e.clientY, t);
@@ -1909,6 +1946,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       return `<div class="ticket-field"><span class="ticket-field-l">${esc(f.label)}</span><span class="ticket-field-v">${esc(v)}</span></div>`;
     }).join("");
   };
+  const faceBadgesHTML = (t) => {
+    if (!faceBadges) return "";
+    let badges = [];
+    try { badges = faceBadges(t, { metaOf, stageOf, isResolved, stalenessOf }) || []; } catch { badges = []; }
+    if (!Array.isArray(badges) || !badges.length) return "";
+    const html = badges.map((badge) => {
+      const item = typeof badge === "string" ? { label: badge } : badge;
+      const label = String(item?.label || "").trim();
+      if (!label) return "";
+      const tone = String(item?.tone || "neutral").replace(/[^a-z0-9_-]/gi, "");
+      return `<span class="ticket-face-chip" data-tone="${esc(tone)}">${esc(label)}</span>`;
+    }).filter(Boolean).join("");
+    return html ? `<div class="ticket-face-badges">${html}</div>` : "";
+  };
 
   // The card's inner markup — shared by the stack cards and the fly-home clone so they render
   // identically. Header = CLIENT (title) + " | date of incident" (the date in a secondary colour); the
@@ -1934,6 +1985,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       `<div class="ticket-company">${esc(titleOf(t))}</div>` +      // client (ellipsised); date now lives pinned under the bars
       (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // short description (else host); n/a/empty → no line
       `<div class="ticket-fields">${cardFieldsHTML(t)}</div>` +     // live config-menu info (replaces the down-time)
+      faceBadgesHTML(t) +
       `</div>` +
       barsHTML(ticketBarClasses(t), true) +
       dateUnderHTML(t);   // incident date (+ resolution info), fixed snugly under the top-right bars
@@ -1989,6 +2041,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   const buildDeck = (side, list) => {
     const deck = decks[side];
+    if (!deck) return;
     // NEVER rebuild the deck that owns the card currently in hand: a render fired mid-drag (e.g. the bin
     // opening as you hover its icon) would c.remove() the dragged element out from under the pointer —
     // the card "snaps" away and a fresh duplicate is rebuilt in the stack. Leave it be; the drop's own
@@ -2327,6 +2380,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // dashboard grid's extent with EQUAL empty space between them (and at both ends). Vertically
   // they fill from just under the nav buttons down to a MARGIN above the corner stacks.
   const layoutZones = () => {
+    if (!zonesEnabled) return;
     if (!zonesRoot) return;
     const zTop = ZONE_TOP, zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
     const n = STAGES.length, g = gridGeom();
@@ -2385,6 +2439,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     positionZone(s);
   };
   const ensureZones = () => {
+    if (!zonesEnabled) return;
     if (zonesRoot) return;
     ensureStyles();
     zonesRoot = document.createElement("div");
@@ -2440,6 +2495,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // Subtle glow on every bucket that intensifies as the cursor nears it: blue where a drop is
   // allowed from `from`, red where it would skip a stage (and so is rejected on release).
   const flowHighlight = (from, x, y, tk) => {
+    if (!zonesEnabled) return;
     STAGES.forEach((s, i) => {
       const p = zoneBody[s.key]?.parentElement; if (!p) return;
       if (i === from) { clearGlow(p); return; }                  // the ticket's own bucket → neutral
@@ -2453,7 +2509,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       }
     });
   };
-  const clearZoneHighlight = () => STAGES.forEach((s) => { const p = zoneBody[s.key]?.parentElement; if (p) { p.classList.remove("is-target"); clearGlow(p); } });
+  const clearZoneHighlight = () => { if (!zonesEnabled) return; STAGES.forEach((s) => { const p = zoneBody[s.key]?.parentElement; if (p) { p.classList.remove("is-target"); clearGlow(p); } }); };
 
   const clearLinkHighlight = () => {
     if (linkHighlightEl) linkHighlightEl.classList.remove("tk-link-target");
@@ -2494,6 +2550,73 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     render();
     return true;
   };
+  let calendarHighlightEl = null;
+  let homeStageHighlightEl = null;
+  const pointElement = (x, y, ignoreEl = null) => {
+    const oldPointer = ignoreEl ? ignoreEl.style.pointerEvents : "";
+    if (ignoreEl) ignoreEl.style.pointerEvents = "none";
+    const el = document.elementFromPoint(x, y);
+    if (ignoreEl) ignoreEl.style.pointerEvents = oldPointer;
+    return el;
+  };
+  const clearCalendarHighlight = () => {
+    if (calendarHighlightEl) calendarHighlightEl.classList.remove("is-drop-target");
+    calendarHighlightEl = null;
+  };
+  const calendarTargetAt = (x, y, ignoreEl = null) => {
+    if (!onCalendarDrop) return null;
+    const el = pointElement(x, y, ignoreEl)?.closest?.(".fc-day[data-date], .fc-day-detail[data-date], .fc-empty[data-date]") || null;
+    const date = el?.dataset?.date || "";
+    return date ? { el, date } : null;
+  };
+  const previewCalendarTarget = (x, y, ignoreEl = null) => {
+    const hit = calendarTargetAt(x, y, ignoreEl);
+    const mark = hit?.el?.closest?.(".fc-day") || hit?.el || null;
+    if (mark !== calendarHighlightEl) {
+      clearCalendarHighlight();
+      calendarHighlightEl = mark;
+      if (calendarHighlightEl) calendarHighlightEl.classList.add("is-drop-target");
+    }
+    return !!hit;
+  };
+  const tryCalendarDrop = (x, y, record, ignoreEl = null) => {
+    const hit = calendarTargetAt(x, y, ignoreEl);
+    clearCalendarHighlight();
+    if (!hit) return false;
+    Promise.resolve(onCalendarDrop(record, hit.date, hit.el)).then((result) => {
+      if (result !== false) load();
+    }).catch(() => {});
+    return true;
+  };
+  const clearHomeStageHighlight = () => {
+    if (homeStageHighlightEl) homeStageHighlightEl.classList.remove("is-target");
+    homeStageHighlightEl = null;
+  };
+  const homeStageTargetAt = (x, y, ignoreEl = null) => {
+    if (!onHomeStageDrop) return null;
+    const el = pointElement(x, y, ignoreEl)?.closest?.(".tk-zone[data-stage]") || null;
+    const stage = el?.dataset?.stage || "";
+    return stage ? { el, stage } : null;
+  };
+  const previewHomeStageTarget = (x, y, record, ignoreEl = null) => {
+    if (!record) return false;
+    const hit = homeStageTargetAt(x, y, ignoreEl);
+    if (hit?.el !== homeStageHighlightEl) {
+      clearHomeStageHighlight();
+      homeStageHighlightEl = hit?.el || null;
+      if (homeStageHighlightEl) homeStageHighlightEl.classList.add("is-target");
+    }
+    return !!hit;
+  };
+  const tryHomeStageDrop = (x, y, record, ignoreEl = null) => {
+    const hit = homeStageTargetAt(x, y, ignoreEl);
+    clearHomeStageHighlight();
+    if (!hit) return false;
+    Promise.resolve(onHomeStageDrop(record, hit.stage, hit.el)).then((result) => {
+      if (result !== false) load();
+    }).catch(() => {});
+    return true;
+  };
 
   // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally land
   // in (per canAdvance) into focus — they lift ABOVE the scrim (sharp); the rest rest below it and the
@@ -2502,6 +2625,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // Chain nodes are [inbox, …buckets…, resolved]; arrow k joins node k→k+1, so the on-path segments are
   // the run [min,max) between the stack's node and a reachable bucket's node.
   const focusDropTargets = (from, t) => {
+    if (!zonesEnabled) return;
     ensureFlow();
     const fromNode = from < 0 ? 0 : from + 1;
     const liveArrows = new Set();
@@ -2513,6 +2637,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     setArrowSharp((i) => liveArrows.has(i));   // on-path arrows lift sharp; the rest stay scrim-blurred
   };
   const clearDropFocus = () => {
+    if (!zonesEnabled) return;
     hoverPrev = null;     // a drag just ended → let the next hover re-preview from scratch
     setBucketSharp(() => false);
     setArrowSharp(() => false);
@@ -2699,6 +2824,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // visually-bottom card, which is the z-TOPMOST, fully-shown one. Only a same-bucket reorder
   // inserts at the layer under the cursor.
   const dropTarget = (from, x, y, tk) => {
+    if (!zonesEnabled) return null;
     const z = zoneAt(x, y);
     if (!z) return null;
     const to = posOfStage(z);
@@ -2711,6 +2837,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
 
   const renderZones = () => {
+    if (!zonesEnabled) return;
     ensureZones();
     const byCreated = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     STAGES.forEach((s) => {
@@ -2768,6 +2895,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
     setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; }, shift ? 460 : 300);   // shifted → wait for the scroll to settle under the clone
   };
+  const autoFanDue = (count) => {
+    if (!autoFanOncePerDayKey || !count) return false;
+    const today = localDate();
+    try {
+      if (localStorage.getItem(autoFanOncePerDayKey) === today) return false;
+      localStorage.setItem(autoFanOncePerDayKey, today);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   const render = () => {
     if (!active) { applyActiveVisibility(); return; }
@@ -2779,14 +2917,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // Staged tickets live in their zone; the rest sit in the corner stacks (the inbox). Deleted
     // tickets are hidden everywhere EXCEPT the right stack when it's flipped to trash mode.
     const avail = tickets.filter((t) => !onGrid.has(t.id) && !isDeleted(t.id) && (!stageOf(t.id) || inAttentionDeck(t)));
-    buildDeck("left", avail.filter(leftDeckFilter).sort(order));
+    const leftList = avail.filter(leftDeckFilter).sort(order);
+    if (autoFanDue(leftList.length)) fanned.left = true;
+    buildDeck("left", leftList);
     // The right stack is the recycle bin when toggled (its DELETED tickets, blue-outlined), else the
     // resolved/closed pile — same stack mechanics either way (fan, scroll, drag, reorder).
-    buildDeck("right", rightDeckEnabled ? avail.filter(rightDeckFilter).sort(order) : []);   // resolved pile ALWAYS stays when enabled
+    if (decks.right) buildDeck("right", rightDeckEnabled ? avail.filter(rightDeckFilter).sort(order) : []);   // resolved pile ALWAYS stays when enabled
     // The recycle bin is its OWN stack, lifted above the icon and shown only when toggled — the resolved
     // pile below it never disappears. It fans/scrolls/drags exactly like the corner stacks.
-    const deleted = tickets.filter((t) => isDeleted(t.id)).sort(order);
-    buildDeck("trash", trashMode ? deleted : []);
+    const deleted = trashEnabled ? tickets.filter((t) => isDeleted(t.id)).sort(order) : [];
+    if (decks.trash) buildDeck("trash", trashMode ? deleted : []);
     if (decks.trash?.box) decks.trash.box.style.transform = `translateY(-${Math.round(CARD_H + 62)}px)`;
     // Once the bin actually holds cards, the deliberate-empty intent is spent — so emptying it later
     // (restoring the last card) falls back to the normal auto-close below.
@@ -2943,6 +3083,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         else if (ho) ho.remove();   // n/a / empty → drop the line entirely (no placeholder)
         let ff = c.querySelector(".ticket-fields"); const fh = cardFieldsHTML(t);   // live config-menu info on the card face
         if (ff) ff.innerHTML = fh; else if (body) body.insertAdjacentHTML("beforeend", `<div class="ticket-fields">${fh}</div>`);
+        const oldBadges = c.querySelector(".ticket-face-badges");
+        const newBadges = faceBadgesHTML(t);
+        if (oldBadges) oldBadges.outerHTML = newBadges;
+        else if (newBadges && body) body.insertAdjacentHTML("beforeend", newBadges);
         const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
         if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
         fitCardFields(c);   // re-fit: the text just changed (expand what fits, clamp the longest if not)

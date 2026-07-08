@@ -3139,12 +3139,12 @@
       .widget-card[data-widget-runtime-type="ticket"][data-severity="low"]      { --panel-accent-rgb: 34, 211, 238 !important;  --panel-accent: rgb(34,211,238) !important; }
       .widget-card[data-widget-runtime-type="ticket"][data-severity="medium"]   { --panel-accent-rgb: 250, 204, 21 !important;  --panel-accent: rgb(250,204,21) !important; }
       .widget-card[data-widget-runtime-type="ticket"][data-severity="high"]     { --panel-accent-rgb: 249, 115, 22 !important;  --panel-accent: rgb(249,115,22) !important; }
-      .widget-card[data-widget-runtime-type="ticket"][data-severity="critical"] { --panel-accent-rgb: 239, 68, 68 !important;   --panel-accent: rgb(239,68,68) !important; }
+      .widget-card[data-widget-runtime-type="ticket"][data-severity="critical"] { --panel-accent-rgb: 234, 88, 12 !important;   --panel-accent: rgb(234,88,12) !important; }
       .widget-card[data-widget-runtime-type="ticket"][data-severity="none"]     { --panel-accent-rgb: 120, 130, 140 !important; --panel-accent: rgb(120,130,140) !important; }
       .widget-card[data-widget-runtime-type="deal"][data-severity="cold"]   { --panel-accent-rgb: 34, 211, 238 !important;  --panel-accent: rgb(34,211,238) !important; }
       .widget-card[data-widget-runtime-type="deal"][data-severity="warm"]   { --panel-accent-rgb: 250, 204, 21 !important;  --panel-accent: rgb(250,204,21) !important; }
       .widget-card[data-widget-runtime-type="deal"][data-severity="hot"]    { --panel-accent-rgb: 249, 115, 22 !important;  --panel-accent: rgb(249,115,22) !important; }
-      .widget-card[data-widget-runtime-type="deal"][data-severity="commit"] { --panel-accent-rgb: 239, 68, 68 !important;   --panel-accent: rgb(239,68,68) !important; }
+      .widget-card[data-widget-runtime-type="deal"][data-severity="commit"] { --panel-accent-rgb: 234, 88, 12 !important;   --panel-accent: rgb(234,88,12) !important; }
       .widget-card[data-widget-runtime-type="deal"][data-severity="none"]   { --panel-accent-rgb: 120, 130, 140 !important; --panel-accent: rgb(120,130,140) !important; }
       .widget-card[data-widget-runtime-type="contact"] { --panel-accent-rgb: 100, 116, 139 !important; --panel-accent: rgb(100,116,139) !important; }
       .contact-status { display: inline-flex; align-items: center; gap: 6px; margin-top: auto;

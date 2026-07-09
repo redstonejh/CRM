@@ -5,14 +5,15 @@
     return;
   }
 
+  // The six live module buckets (REMEDIATION_PLAN R5). Tasks' "Planned"
+  // placeholder tile is gone until the module exists; Tickets stays reachable
+  // from the top workspace switch and quick-add.
   const MODULES = [
     { key: "today", label: "Today", note: "The dealt hand for work due now", enabled: true },
-    { key: "tickets", label: "Tickets", note: "Active queue and issue history", enabled: true },
     { key: "people", label: "People", note: "Contacts and relationship attention", enabled: true },
     { key: "pipeline", label: "Pipeline", note: "Deals, stages and wins", enabled: true },
     { key: "money", label: "Money", note: "Invoices, cash aging and paid work", enabled: true },
     { key: "calendar", label: "Calendar", note: "Scheduled work by day", enabled: true },
-    { key: "tasks", label: "Tasks", note: "Work items from the same card system", status: "Planned" },
     { key: "reports", label: "Reports", note: "Aggregates and builder widgets", enabled: true },
   ];
   let camera = null;
@@ -132,10 +133,13 @@
       .crm-home-surface[hidden] { display: none; }
       .crm-home-level { position: absolute; inset: 0; transform-origin: 0 0; }
       .crm-home-grid { position: absolute; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
-        grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 14px; }
+        grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      /* The fc-bucket glass recipe (fractal-calendar.js is the source): gradient
+         body, inset ring + top highlight, k-scaled radius from the bucket's own
+         measured size (--home-r, set in layout()). */
       .crm-home-bucket { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
-        overflow: hidden; color: #fff; cursor: pointer;
-        border-radius: 16px; padding: 14px 16px;
+        overflow: hidden; color: #fff; cursor: pointer; border: 0;
+        border-radius: var(--home-r, 16px); padding: 14px 16px;
         background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14), inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
@@ -144,16 +148,8 @@
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42);
       }
-      .crm-home-bucket[aria-disabled="true"] { cursor: default; opacity: .54; }
-      .crm-home-bucket[aria-disabled="true"]:hover {
-        background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14), inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
-      }
       .crm-home-title { font-size: clamp(1rem, 2.4vw, 1.35rem); font-weight: 800; line-height: 1.1; }
       .crm-home-note { margin-top: 8px; font-size: 0.8rem; line-height: 1.35; color: rgba(255,255,255,0.58); max-width: 24ch; }
-      .crm-home-status { margin-top: 10px; width: fit-content; border-radius: 999px; padding: 3px 7px;
-        font-size: 0.68rem; font-weight: 800; color: rgba(255,255,255,0.62); background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.10); }
       .crm-home-preview { margin-top: auto; min-height: 52px; opacity: .82; color: rgba(255,255,255,0.62); }
       .crm-home-count { font-size: .68rem; font-weight: 800; line-height: 1; color: rgba(255,255,255,0.68); }
       .crm-home-stack-preview { position: relative; height: 52px; }
@@ -168,7 +164,7 @@
         background: rgba(255,255,255,0.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); overflow: hidden; }
       .crm-home-mini-stage::after { content: ""; position: absolute; left: 4px; right: 4px; bottom: 4px; height: 4px; border-radius: 999px; background: rgba(125,180,255,0.36); }
       .crm-home-mini-stage[data-hot="true"]::after { background: rgba(234,88,12,0.44); }
-      .crm-home-calendar-preview { display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(2, 1fr); gap: 4px; height: 50px; }
+      .crm-home-calendar-preview { display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(5, 1fr); gap: 3px; height: 52px; }
       .crm-home-mini-day { border-radius: 5px; background: rgba(255,255,255,0.10); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
       .crm-home-mini-day.is-on { background: rgba(125,180,255,0.24); }
       .crm-home-report-preview { height: 50px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; align-items: end; }
@@ -197,20 +193,29 @@
       }).join("") +
       `</div><div class="crm-home-count">${esc(compact(stages.reduce((sum, stage) => sum + (stage.value || 0), 0)))} / ${esc(compact(stages.reduce((sum, stage) => sum + (stage.count || 0), 0)))}</div>`;
   };
-  const calendarPreview = (count) => `<div class="crm-home-calendar-preview">${Array.from({ length: 14 }, (_v, idx) => (
-    `<span class="crm-home-mini-day${idx < Math.min(14, count) ? " is-on" : ""}"></span>`
-  )).join("")}</div><div class="crm-home-count">${esc(compact(count))}</div>`;
+  // A real miniature month: the current month's day grid, weekday-aligned,
+  // with today lit — the calendar's own shape at k-scale, not an abstract row.
+  const calendarPreview = (count) => {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
+    const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const today = now.getDate();
+    const cells = Array.from({ length: 35 }, (_v, idx) => {
+      const day = idx - first + 1;
+      if (day < 1 || day > days) return '<span></span>';
+      return `<span class="crm-home-mini-day${day === today ? " is-on" : ""}"></span>`;
+    }).join("");
+    return `<div class="crm-home-calendar-preview">${cells}</div><div class="crm-home-count">${esc(compact(count))}</div>`;
+  };
   const reportPreview = (active, total) => `<div class="crm-home-report-preview">${Array.from({ length: total || 5 }, (_v, idx) => (
     `<span class="crm-home-mini-widget${idx < active ? " is-on" : ""}" style="height:${16 + (idx % 3) * 9}px"></span>`
   )).join("")}</div><div class="crm-home-count">${esc(compact(active))} / ${esc(compact(total || 5))}</div>`;
   const previewHTML = (key) => {
     if (key === "today") return stackPreview(homeStats.today.count, 0);
-    if (key === "tickets") return stackPreview(homeStats.tickets.count, 0);
     if (key === "people") return stackPreview(homeStats.people.count, homeStats.people.attention);
     if (key === "pipeline") return stagePreview(homeStats.pipeline.stages, "negotiation");
     if (key === "money") return stagePreview(homeStats.money.stages, "overdue");
     if (key === "calendar") return calendarPreview(homeStats.calendar.count);
-    if (key === "tasks") return stackPreview(homeStats.tasks.count, 0);
     if (key === "reports") return reportPreview(homeStats.reports.active, homeStats.reports.widgets);
     return "";
   };
@@ -218,7 +223,6 @@
   const bucketHTML = (module) => `
     <div class="crm-home-title">${esc(module.label)}</div>
     <div class="crm-home-note">${esc(module.note)}</div>
-    ${module.status ? `<div class="crm-home-status">${esc(module.status)}</div>` : ""}
     <div class="crm-home-preview" aria-hidden="true">${previewHTML(module.key)}</div>`;
 
   const buildRoot = () => {
@@ -240,20 +244,33 @@
     return root;
   };
 
+  // Fill the working viewport the way the calendar's year view does: cells
+  // aspect-locked to the viewport, the 3x2 grid centred inside expRect(), the
+  // bucket radius k-scaled from the measured cell (fc's RADIUS_F discipline).
+  const RADIUS_F = 16 / 245;
   const layout = ({ expRect }) => {
-    const grid = camera?.surface?.()?.querySelector(".crm-home-grid");
+    const surface = camera?.surface?.();
+    const grid = surface?.querySelector(".crm-home-grid");
     if (!grid) return;
+    const GAP = 14, COLS = 3, ROWS = 2;
     const E = expRect();
-    const maxW = Math.min(E.w, 980);
-    const maxH = Math.min(E.h, 640);
-    const width = Math.max(320, maxW);
-    const height = Math.max(360, maxH);
+    const aspect = E.w / E.h;
+    let cellW = (E.w - (COLS - 1) * GAP) / COLS;
+    let cellH = cellW / aspect;
+    if (ROWS * cellH + (ROWS - 1) * GAP > E.h) {
+      cellH = (E.h - (ROWS - 1) * GAP) / ROWS;
+      cellW = cellH * aspect;
+    }
+    const gridW = COLS * cellW + (COLS - 1) * GAP;
+    const gridH = ROWS * cellH + (ROWS - 1) * GAP;
     Object.assign(grid.style, {
-      left: `${Math.round(E.x + (E.w - width) / 2)}px`,
-      top: `${Math.round(E.y + (E.h - height) / 2)}px`,
-      width: `${Math.round(width)}px`,
-      height: `${Math.round(height)}px`,
+      left: `${(E.x + (E.w - gridW) / 2).toFixed(2)}px`,
+      top: `${(E.y + (E.h - gridH) / 2).toFixed(2)}px`,
+      width: `${gridW.toFixed(2)}px`,
+      height: `${gridH.toFixed(2)}px`,
     });
+    const radius = Math.min(64, Math.max(2, RADIUS_F * Math.min(cellW, cellH) * 2));
+    surface.style.setProperty("--home-r", `${radius.toFixed(1)}px`);
   };
 
   const targetAtPoint = (x, y, context) => {

@@ -34,7 +34,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const showDateUnder = config.showDateUnder !== false;
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
-  const configuredCardBg = typeof config.cardBackground === "function" ? config.cardBackground : null;
   const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
   const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
   const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
@@ -319,110 +318,39 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (g) { const r = g.getBoundingClientRect(); if (r.width > 40 && r.height > 40) { CARD_W = Math.round(r.width); CARD_H = Math.round(r.height); } }
   };
 
-  // The opaque colour the (translucent) ticket fill sits over. A ticket's final colour = fill ⊕ this
-  // backdrop, so if this tracked the LIVE dashboard background, a dark background would show through
-  // and darken the ticket. Pin it to the "Dark grey" tone (#1f2937 — the default background), so every
-  // ticket renders EXACTLY as it does on the grey background (the source of truth), regardless of the
-  // active background. Change GRAY_BACKDROP if a different grey is the reference.
-  const GRAY_BACKDROP = "rgb(107, 114, 128)";   // tone-grey #6b7280 (the "Grey" background)
+  // ── The ONE card recipe (FIX_PASS_2 F1) ───────────────────────────────────────
+  // Every card is the same glass body — the neutral slate gradient the People
+  // card proved out — over an opaque backdrop so stacked cards never compound.
+  // Entity heat is expressed ONLY as an edge accent (left bar + soft glow)
+  // driven by --tk-accent-rgb; no body washes, no random blank-card colours.
+  const GRAY_BACKDROP = "rgb(107, 114, 128)";   // tone-grey #6b7280 — the reference backdrop
   const baseColor = () => GRAY_BACKDROP;
-  // Per-severity OPAQUE fill matching the grid card exactly. Probe a hidden ticket card IN
-  // THE GRID'S CONTEXT (so the db-panel white-mix var resolves identically — a probe on
-  // <body> inherits a different mix and renders faded) and copy its resolved background.
-  // Opaque (vs glass) so stacked cards never blur/brighten each other.
-  const sevBgCache = {};
-  const severityBg = (sev) => {
-    if (sevBgCache[sev]) return sevBgCache[sev];
-    const fallback = `linear-gradient(180deg, rgba(${SEV_RGB[sev]},0.4), rgba(${SEV_RGB[sev]},0.2))`;
-    // The probe needs the ticket widget's severity→accent palette (#ticket-widget-styles,
-    // injected by widget-registry at load). If it isn't present yet, use the gradient
-    // fallback WITHOUT caching so a later render probes the exact db-panel fill instead of
-    // poisoning the cache with the default (blue) accent.
-    if (!document.getElementById("ticket-widget-styles")) return fallback;
-    // Probe in the grid's own context so the db-panel white-mix var resolves identically.
-    // With no ticket on the grid, fall back to the builder-chart layout (NOT <body>, which
-    // inherits a different mix and renders faded).
-    const host = (gridCard() && gridCard().parentElement)
-      || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]')
-      || document.querySelector('.dashboard-layout-grid')
-      || document.body;
-    const probe = document.createElement("div");
-    probe.className = `widget-card ${widgetCardClass} db-panel-custom-color`;
-    probe.setAttribute("data-widget-runtime-type", widgetType);
-    probe.dataset.severity = sev;
-    probe.style.cssText = "position:absolute; left:-9999px; top:0; width:160px; height:200px;";
-    host.appendChild(probe);
-    const cs = getComputedStyle(probe);
-    const layers = [];
-    if (cs.backgroundImage && cs.backgroundImage !== "none") layers.push(cs.backgroundImage);
-    if (cs.backgroundColor && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(cs.backgroundColor)) layers.push(`linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`);
-    probe.remove();
-    if (layers.length) return (sevBgCache[sev] = layers.join(", "));
-    return fallback;
-  };
-
-  // ── Blank-ticket colours ──────────────────────────────────────────────────────
-  // A ticket with no information yet (no title/subtitle/priority) is painted a random colour
-  // from the EXISTING widget palette (panelThemePresets in modules/panel-appearance-runtime.js),
-  // minus white/"clear" — never the same colour twice in a row. The colour sticks (persisted)
-  // until a priority is set, when the severity colour takes over. Applies to new AND existing
-  // blank tickets (assigned lazily on render).
+  const GLASS_CARD_BG = "linear-gradient(180deg, rgba(83, 95, 117, 0.42), rgba(33, 41, 56, 0.34))";
   const TICKET_COLORS = config.cardColors || ["#2563eb", "#0ea5e9", "#0891b2", "#14b8a6", "#16a34a", "#65a30d", "#ca8a04", "#d97706", "#dc2626", "#e11d48", "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#64748b", "#111827"];
-  const COLOR_STORE = storageKeys.color, COLOR_LAST = storageKeys.colorLast;
-  let colorMap = (() => { try { return JSON.parse(localStorage.getItem(COLOR_STORE) || "{}") || {}; } catch { return {}; } })();
-  let lastColor = (() => { try { return localStorage.getItem(COLOR_LAST) || null; } catch { return null; } })();
   const hexToRgb = (hex) => { const h = String(hex).replace("#", ""); return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }; };
-  const assignColor = (id) => {
-    const pool = TICKET_COLORS.filter((c) => c !== lastColor);          // never the same colour twice in a row
-    const c = (pool.length ? pool : TICKET_COLORS)[Math.floor(Math.random() * (pool.length || TICKET_COLORS.length))];
-    colorMap[id] = c; lastColor = c;
-    try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); localStorage.setItem(COLOR_LAST, c); } catch {}
-    return c;
-  };
   const hasPriority = (t) => intensityValues.includes(priorityOf(t));
-  // "Blank" mirrors the face contract: a card whose face shows a placeholder
-  // title, no subtitle, and no priority gets a random palette colour until it
-  // earns an identity.
-  const PLACEHOLDER_TITLES = new Set(["", "Unknown", "Untitled", "(manual)", "Untitled deal", "New contact", "New invoice"]);
-  const isBlank = (t) => PLACEHOLDER_TITLES.has(titleOf(t)) && !subOf(t) && !hasPriority(t);
-  const colorFor = (t) => {
+  // The edge accent colour: an explicit appearance-menu override wins, else the
+  // severity/temperature/state palette. "none" heat (contacts, calendar rows)
+  // means NO accent — the status dot carries their state instead.
+  const accentRgbOf = (t) => {
     if (!t || !t.id) return null;
-    const oc = metaOf(t.id).color;              // appearance-menu override: an explicit colour wins over EVERYTHING
-    if (oc) return oc;                          // (absent/"" → "match severity", the default: fall through)
-    if (hasPriority(t)) return null;            // explicit priority → use the severity colour
-    if (colorMap[t.id]) return colorMap[t.id];  // already coloured → keep it (sticky)
-    if (isBlank(t)) return assignColor(t.id);   // blank & unassigned (new OR retroactive) → assign one
-    return null;
+    const oc = metaOf(t.id).color;   // appearance-menu override drives the ACCENT now, never the body
+    if (oc) { const { r, g, b } = hexToRgb(oc); return `${r}, ${g}, ${b}`; }
+    const sev = sevOf(t);
+    if (sev === "none" || sev === "current") return null;
+    return SEV_RGB[sev] || null;
   };
-  // Render a palette colour through the SAME db-panel fill as the severity colours, so it gets the
-  // same muted/mature look (the accent mixed into the dark surface) rather than the raw bright hex.
-  const colorBgCache = {};
-  const colorBg = (hex) => {
-    if (colorBgCache[hex]) return colorBgCache[hex];
-    const { r, g, b } = hexToRgb(hex);
-    const fallback = `linear-gradient(180deg, rgba(${r},${g},${b},0.4), rgba(${r},${g},${b},0.2))`;
-    if (!document.getElementById("ticket-widget-styles")) return fallback;
-    const host = (gridCard() && gridCard().parentElement) || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]') || document.querySelector(".dashboard-layout-grid") || document.body;
-    const probe = document.createElement("div");
-    probe.className = `widget-card ${widgetCardClass} db-panel-custom-color`;
-    probe.setAttribute("data-widget-runtime-type", widgetType);
-    probe.style.cssText = `position:absolute; left:-9999px; top:0; width:160px; height:200px; --panel-accent:${hex}; --panel-accent-rgb:${r}, ${g}, ${b};`;
-    host.appendChild(probe);
-    const cs = getComputedStyle(probe);
-    const layers = [];
-    if (cs.backgroundImage && cs.backgroundImage !== "none") layers.push(cs.backgroundImage);
-    if (cs.backgroundColor && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(cs.backgroundColor)) layers.push(`linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`);
-    probe.remove();
-    return layers.length ? (colorBgCache[hex] = layers.join(", ")) : fallback;
-  };
-  // The card fill: a random widget colour for a blank ticket, else its severity colour.
-  const cardBg = (t) => {
-    if (configuredCardBg) {
-      const custom = configuredCardBg(t, { metaOf, colorBg, severityBg, sevOf, priorityOf });
-      if (custom) return custom;
-    }
-    const c = colorFor(t);
-    return c ? colorBg(c) : severityBg(sevOf(t));
+  // Every card body is the same glass; heat lives on the edge.
+  const cardBg = () => GLASS_CARD_BG;
+  // One paint call for every card / clone / flyer: glass body + edge accent + staleness.
+  const applyCardPaint = (el, t) => {
+    if (!el) return;
+    el.style.backgroundColor = baseColor();
+    el.style.backgroundImage = GLASS_CARD_BG;
+    const accent = accentRgbOf(t);
+    if (accent) { el.style.setProperty("--tk-accent-rgb", accent); el.style.setProperty("--tk-accent-on", "1"); }
+    else { el.style.removeProperty("--tk-accent-rgb"); el.style.setProperty("--tk-accent-on", "0"); }
+    applyStaleness(el, t);
   };
   const stalenessOf = (t) => {
     if (!configuredStaleness || !t) return 0;
@@ -751,6 +679,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         background: rgba(180,190,205, calc(var(--crm-staleness, 0) * .14));
         mix-blend-mode: screen;
       }
+      /* FIX_PASS_2 F1: entity heat is an EDGE accent, never a body wash — a
+         left bar with a soft inward glow, driven by --tk-accent-rgb (set per
+         card in applyCardPaint; --tk-accent-on 0 = no accent, e.g. contacts). */
+      .tk-card::before, .tk-zcard::before, .tk-zfly::before {
+        content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; pointer-events: none; z-index: 8;
+        border-radius: ${RADIUS}px 0 0 ${RADIUS}px;
+        background: linear-gradient(180deg, rgba(var(--tk-accent-rgb, 120,130,140), 0.95), rgba(var(--tk-accent-rgb, 120,130,140), 0.55));
+        box-shadow: 6px 0 14px -6px rgba(var(--tk-accent-rgb, 120,130,140), 0.55);
+        opacity: var(--tk-accent-on, 0);
+      }
       /* Live config-menu info on the card face (replaces the old "Down <time>" line). Each entered
          field is one compact, ellipsised line: a muted label + the value. */
       .ticket-fields { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; min-height: 0; overflow: hidden; }
@@ -887,8 +825,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const setAppearance = (t, hex) => {
     setMeta(t.id, { color: hex || "" });
     document.querySelectorAll(`.tk-card[data-id="${cssEsc(t.id)}"], .tk-zcard[data-id="${cssEsc(t.id)}"]`).forEach((c) => {
-      c.style.backgroundImage = cardBg(t);
-      applyStaleness(c, t);
+      applyCardPaint(c, t);
     });
   };
   // The appearance submenu — same frosted .tk-menu shell: the widget palette as a swatch grid, then a
@@ -945,7 +882,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const forgetClientState = (id) => {
     setDeleted(id, false); setStage(id, null); setStageAt(id, null);
     if (metaMap[id]) { delete metaMap[id]; try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {} }
-    if (colorMap[id]) { delete colorMap[id]; try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); } catch {} }
     DECK_SIDES.forEach((s) => { const d = decks[s]; if (d && Array.isArray(d.order)) { d.order = d.order.filter((x) => x !== id); saveOrder(s); } });
   };
   // Permanently delete a trashed ticket: implode the card into nothing, then hard-remove it from the
@@ -963,9 +899,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const clone = document.createElement("div");
     clone.className = "tk-zfly";
     clone.style.cssText = `left:${r.left}px; top:${r.top}px; width:${Math.round(r.width)}px; height:${Math.round(r.height)}px; transform-origin: center center; z-index: 6000; opacity: 1; transition: transform .3s cubic-bezier(.4,0,1,1), opacity .3s ease;`;
-    clone.style.backgroundColor = baseColor();
-    clone.style.backgroundImage = cardBg(t);
-    applyStaleness(clone, t);
+    applyCardPaint(clone, t);
     clone.innerHTML = cardInner(t);
     ensureTheater().appendChild(clone);
     fitCardFields(clone);
@@ -982,9 +916,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const clone = document.createElement("div");
     clone.className = "tk-zfly";
     clone.style.cssText = `left:${fromRect.left}px; top:${fromRect.top}px; width:${Math.round(fromRect.width)}px; height:${Math.round(fromRect.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
-    clone.style.backgroundColor = baseColor();
-    clone.style.backgroundImage = cardBg(t);
-    applyStaleness(clone, t);
+    applyCardPaint(clone, t);
     clone.innerHTML = cardInner(t);
     ensureTheater().appendChild(clone);
     fitCardFields(clone);
@@ -1778,9 +1710,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.className = "tk-card tk-flying";
     // Snappier flight than the shared .tk-flying default so the wiggle lands quickly.
     clone.style.cssText = `position:fixed; left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; margin:0; z-index:9999; pointer-events:none; transition: transform .2s cubic-bezier(.4,0,.2,1), opacity .2s ease;`;
-    clone.style.backgroundColor = baseColor();
-    clone.style.backgroundImage = cardBg(t);
-    applyStaleness(clone, t);
+    applyCardPaint(clone, t);
     clone.innerHTML = cardInner(t);
     ensureTheater().appendChild(clone);
     fitCardFields(clone);
@@ -2080,9 +2010,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     card.className = `tk-card tk-card-${widgetType}`;
     card.dataset.id = t.id || "";
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
-    card.style.backgroundColor = baseColor();
-    card.style.backgroundImage = cardBg(t);
-    applyStaleness(card, t);
+    applyCardPaint(card, t);
     card.innerHTML = cardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');   // viewport-edge scroll shadow (clipped to this card)
     wireCard(card, t, side);
@@ -2682,9 +2610,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         // `translate` follows the cursor instantly; `scale` is the ONLY transitioned property → a smooth
         // lift-off (and, on drop, a smooth settle). Using the individual props keeps the two independent.
         clone.style.cssText = `left:${r0.left}px; top:${r0.top}px; width:${r0.width}px; height:${r0.height}px; translate:0px 0px; scale:1; transition: scale .16s ease;`;
-        clone.style.backgroundColor = baseColor();
-        clone.style.backgroundImage = cardBg(t);
-        applyStaleness(clone, t);
+        applyCardPaint(clone, t);
         clone.innerHTML = zoneCardInner(t);
         ensureTheater().appendChild(clone);
         fitCardFields(clone);
@@ -2784,9 +2710,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     card.className = `tk-zcard tk-zcard-${widgetType}`;
     card.dataset.id = t.id || "";
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;   // full ticket dimensions
-    card.style.backgroundColor = baseColor();
-    card.style.backgroundImage = cardBg(t);
-    applyStaleness(card, t);
+    applyCardPaint(card, t);
     card.innerHTML = zoneCardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade tk-zs-t"></div><div class="tk-edge-shade tk-zs-b"></div>');   // top/bottom scroll shadows (clipped to this card)
     wireZoneCard(card, t, stage);
@@ -2892,9 +2816,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const clone = document.createElement("div");
     clone.className = "tk-zfly";
     clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${from.width}px; height:${from.height}px; transform-origin: top left;`;
-    clone.style.backgroundColor = baseColor();
-    clone.style.backgroundImage = cardBg(t);
-    applyStaleness(clone, t);
+    applyCardPaint(clone, t);
     clone.innerHTML = zoneCardInner(t);
     ensureTheater().appendChild(clone);
     fitCardFields(clone);
@@ -3041,9 +2963,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const clone = document.createElement("div");
       clone.className = "tk-zfly";
       clone.style.cssText = `left:${from.left}px; top:${from.top}px; width:${Math.round(from.width)}px; height:${Math.round(from.height)}px; transform-origin: top left; z-index: 6000; opacity: 1; transition: transform .46s cubic-bezier(.4,0,.2,1);`;
-      clone.style.backgroundColor = baseColor();
-      clone.style.backgroundImage = cardBg(t);
-      applyStaleness(clone, t);
+      applyCardPaint(clone, t);
       clone.innerHTML = cardInner(t);
       ensureTheater().appendChild(clone);
       fitCardFields(clone);
@@ -3102,8 +3022,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       setMeta(id, { priority: val });   // persist in localStorage meta (survives refresh, like every other stage field)
       t.priority = val;                 // keep the in-memory store copy in sync (colour + cross-app)
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
-        c.style.backgroundImage = cardBg(t);
-        applyStaleness(c, t);
+        applyCardPaint(c, t);
         const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
         if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
       });

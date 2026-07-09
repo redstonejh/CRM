@@ -1,6 +1,5 @@
 // people.js - contacts instance of the CRM card system.
 (() => {
-  const neutralCardBg = "linear-gradient(180deg, rgba(83, 95, 117, 0.42), rgba(33, 41, 56, 0.34))";
   const neutralRgb = {
     none: "120,130,140",
     current: "120,130,140",
@@ -159,7 +158,6 @@
     intensityOf: () => "none",
     stalenessOf: (contact) => window.crmColdFront?.staleness?.(contact, "contacts") || 0,
     attentionDeckFilter: (contact) => window.crmColdFront?.isTripped?.(contact, "contacts"),
-    cardBackground: () => neutralCardBg,
     rightDeckEnabled: false,
     showProgressBars: false,
     showDateUnder: false,

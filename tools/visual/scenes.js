@@ -115,6 +115,81 @@ const SCENES = [
     ],
   },
   {
+    name: 'scene-3-gravity-and-won',
+    // Blueprint A2/Scene III proof: stacks seat at the bucket floor; a deal is
+    // lift-carried between buckets; a stage-complete deal dropped on Won plays
+    // the flight + single pulse.
+    steps: [
+      steps.driveTo('pipeline'),
+      steps.settle(900),
+      steps.frames('seated', 2, 200),
+      steps.assert(() => {
+        const card = document.querySelector('[data-crm-theater="pipeline"] .tk-zcard[data-id="dl_bluepeak_onboarding"]');
+        const zone = card?.closest('.tk-zone');
+        if (!card || !zone) return false;
+        return Math.abs(zone.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom) < 48;
+      }, 'the Lead card rests on the bucket floor'),
+      // Lift-carry-drop Bluepeak from Lead into Qualified.
+      async ({ page, shoot }) => {
+        const drag = await page.evaluate(() => {
+          const card = document.querySelector('[data-crm-theater="pipeline"] .tk-zcard[data-id="dl_bluepeak_onboarding"]');
+          const zones = [...document.querySelectorAll('[data-crm-theater="pipeline"] .tk-zone')];
+          const dest = zones[1];
+          if (!card || !dest) return null;
+          const a = card.getBoundingClientRect(); const b = dest.getBoundingClientRect();
+          return { fx: a.left + a.width / 2, fy: a.top + a.height / 2, tx: b.left + b.width / 2, ty: b.top + b.height / 2 };
+        });
+        if (!drag) throw new Error('bucket drag endpoints missing');
+        await page.mouse.move(drag.fx, drag.fy);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) {
+          await page.mouse.move(drag.fx + (drag.tx - drag.fx) * (i / 8), drag.fy + (drag.ty - drag.fy) * (i / 8));
+          await sleep(30);
+        }
+        await shoot('lift-carry', 2, 120);
+        await page.mouse.up();
+        await shoot('drop-settle', 3, 140);
+      },
+      steps.settle(600),
+      steps.assert(() => window.dealPipeline.stageOf('dl_bluepeak_onboarding') === 'qualified', 'the deal moved buckets'),
+      // The Won ritual: the stage-complete Proposal deal onto the Won pile.
+      async ({ page, shoot }) => {
+        const drag = await page.evaluate(() => {
+          const card = document.querySelector('[data-crm-theater="pipeline"] .tk-zcard[data-id="dl_harborlane_retainer"]');
+          const pile = document.querySelector('[data-crm-theater="pipeline"] .tk-deck-right .tk-card');
+          if (!card || !pile) return null;
+          const a = card.getBoundingClientRect(); const b = pile.getBoundingClientRect();
+          return { fx: a.left + a.width / 2, fy: a.top + a.height / 2, tx: b.left + b.width / 2, ty: b.top + b.height / 2 };
+        });
+        if (!drag) throw new Error('won drag endpoints missing');
+        await page.mouse.move(drag.fx, drag.fy);
+        await page.mouse.down();
+        for (let i = 1; i <= 10; i++) {
+          await page.mouse.move(drag.fx + (drag.tx - drag.fx) * (i / 10), drag.fy + (drag.ty - drag.fy) * (i / 10));
+          await sleep(30);
+        }
+        await page.mouse.up();
+        await shoot('won-pulse', 6, 140);
+      },
+      steps.settle(600),
+      steps.assert(async () => {
+        const payload = await window.deals.list({ includeDeleted: false });
+        return (payload.records || []).some((deal) => deal.id === 'dl_harborlane_retainer' && String(deal.state).toLowerCase() === 'won');
+      }, 'the deal resolved into the Won pile'),
+    ],
+  },
+  {
+    name: 'scene-8-reports',
+    // Blueprint Scene VIII: the ledger drawer — dive in from anywhere like any
+    // bucket; inside, the widget grid does the arithmetic.
+    steps: [
+      steps.driveTo('reports'),
+      steps.settle(1000),
+      steps.frames('reports', 3, 200),
+      steps.assert(() => document.querySelectorAll('.crm-report-widget:not([hidden])').length >= 5, 'the report widgets are on the grid'),
+    ],
+  },
+  {
     name: 'scene-2-dealt-hand',
     // Blueprint A3 proof: first entry deals the hand into an arc (65ms
     // stagger); dragging a card out re-closes the gap; acting on a card via
@@ -189,9 +264,13 @@ const SCENES = [
       steps.frames('pipeline', 1, 200),
       async ({ page, shoot }) => {
         const drag = await page.evaluate(() => {
-          const card = document.querySelector('[data-crm-theater="pipeline"] .tk-deck-right .tk-card[data-id="dl_foxglove_rebrand"]');
+          // The pile's TOP card (highest z) is what a real grab picks up.
+          const cards = [...document.querySelectorAll('[data-crm-theater="pipeline"] .tk-deck-right .tk-card')];
+          if (!cards.length) return null;
+          const card = cards.reduce((a, b) => (Number(getComputedStyle(b).zIndex || 0) > Number(getComputedStyle(a).zIndex || 0) ? b : a));
+          window.__FLIP_DEAL__ = card.dataset.id;
           const pill = document.querySelector('.crm-module-switch button[data-crm-module="money"]');
-          if (!card || !pill) return null;
+          if (!pill) return null;
           const a = card.getBoundingClientRect(); const b = pill.getBoundingClientRect();
           return { fx: a.left + a.width / 2, fy: a.top + a.height / 2, tx: b.left + b.width / 2, ty: b.top + b.height / 2 };
         });
@@ -210,15 +289,15 @@ const SCENES = [
       steps.assert(() => document.body.dataset.crmModule === 'money', 'the desk glided to Money'),
       steps.assert(async () => {
         const payload = await window.invoices.list({ includeDeleted: false });
-        return (payload.records || []).some((inv) => inv.dealId === 'dl_foxglove_rebrand' && String(inv.state).toLowerCase() === 'draft');
+        return (payload.records || []).some((inv) => inv.dealId === window.__FLIP_DEAL__ && String(inv.state).toLowerCase() === 'draft');
       }, 'a Draft invoice pre-filled from the won deal exists'),
       steps.frames('landed', 2, 200),
       // Open the landed invoice — the detail shows the pre-filled face.
       async ({ page }) => {
         const at = await page.evaluate(async () => {
           const payload = await window.invoices.list({ includeDeleted: false });
-          const inv = (payload.records || []).find((r) => r.dealId === 'dl_foxglove_rebrand');
-          const card = document.querySelector(`[data-crm-theater="money"] .tk-zcard[data-id="${inv.id}"]`);
+          const inv = (payload.records || []).find((r) => r.dealId === window.__FLIP_DEAL__);
+          const card = inv && document.querySelector(`[data-crm-theater="money"] .tk-zcard[data-id="${inv.id}"]`);
           if (!card) return null;
           const r = card.getBoundingClientRect();
           return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -354,6 +433,20 @@ const SCENES = [
   },
 ];
 
+// One pg-mem world serves the whole run, so scenes that MUTATE state run
+// after the scenes that depend on it: scene-3 wins the Harbor deal, scene-6
+// schedules/waives the overdue invoice, scene-4 drafts the flip invoice,
+// scene-5 needs Devon still cold, and scene-2 finally empties the hand.
+const RUN_ORDER = [
+  'scene-1-camera-spine',
+  'scene-3-gravity-and-won',
+  'scene-8-reports',
+  'scene-6-calendar',
+  'scene-4-the-flip',
+  'scene-5-cold-front',
+  'scene-2-dealt-hand',
+];
+
 // ── runner ────────────────────────────────────────────────────────────────────
 
 async function runScene(page, scene, baseDir) {
@@ -396,7 +489,8 @@ async function main() {
   await sleep(2500);
 
   let failed = 0;
-  for (const scene of SCENES) {
+  const ordered = RUN_ORDER.map((name) => SCENES.find((scene) => scene.name === name)).filter(Boolean);
+  for (const scene of ordered) {
     if (only.length && !only.some((name) => scene.name.includes(name))) continue;
     try {
       await runScene(page, scene, baseDir);

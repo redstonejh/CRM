@@ -453,7 +453,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return m[key] != null ? m[key] : (t[key] ?? "");   // stage fields can come from local meta or the shared record doc
   };
   const fieldSatisfied = (t, key) => key === "priority" ? hasPriority(t) : String(fieldRaw(t, key) ?? "").trim() !== "";
-  const stageComplete = (t, i) => (STAGE_FIELDS[STAGE_KEYS[i]] || []).every((f) => fieldSatisfied(t, f.key));
+  // A field declared { req: false } is informational — it never gates the
+  // stage (pipeline's lead.nextTouchAt declares this; the factory previously
+  // ignored the flag, so a lead without a next touch could never advance).
+  const stageComplete = (t, i) => (STAGE_FIELDS[STAGE_KEYS[i]] || []).every((f) => f.req === false || fieldSatisfied(t, f.key));
   // The FURTHEST stage a ticket has actually completed (that stage's fields all filled), or the last stage
   // if it's already resolved. This is a property of the ticket's DATA — not which bucket/stack it sits in
   // — so progress survives being thrown back into a stack, and it's what earns the ticket permission to

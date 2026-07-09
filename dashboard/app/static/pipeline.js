@@ -105,9 +105,37 @@
     },
   });
 
+  const dateOnly = (value) => {
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ""));
+    if (match) return match[1];
+    const parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
+  };
+  const daysSince = (value) => {
+    const ms = typeof value === "number" ? value : Date.parse(String(value || ""));
+    if (!Number.isFinite(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+  };
+  // Deal face: $value / company / next-touch · touch-age.
+  const dealFace = {
+    title: (r) => r.title ?? r.name ?? r.client,
+    subtitle: (r) => r.description,
+    rows: [
+      (r) => ({ label: "Value", value: money(amountOf(r)) }),
+      (r) => ({ label: "Account", value: valueOf(r, "client") || valueOf(r, "company") || "" }),
+      (r) => {
+        const next = dateOnly(valueOf(r, "nextTouchAt"));
+        const age = daysSince(valueOf(r, "lastTouchAt") || r.updatedAt);
+        const parts = [next ? `Next touch ${next}` : "", age != null ? `${age}d since touch` : ""].filter(Boolean);
+        return parts.join(" · ");
+      },
+    ],
+  };
+
   window.createCrmCardSystem({
     apiName: "dealPipeline",
     theater: "pipeline",
+    face: dealFace,
     source: dealSource,
     detail: window.dealDetail,
     widgetType: "deal",

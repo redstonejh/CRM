@@ -95,15 +95,11 @@
     if (amount == null || amount === "") return "";
     return typeof amount === "number" ? `$${amount.toLocaleString()}` : String(amount);
   };
-  const summaryLine = (record, row) => firstText(
+  // Subtitle is the record's own words only — the due/stage/amount facts live
+  // in the face body rows now, so they never double up on the card.
+  const summaryLine = (record) => firstText(
     valueOf(record, "description"),
     valueOf(record, "host"),
-    [
-      row?.dueDate ? `Due ${row.dueDate}` : "",
-      row?.stageLabel || row?.stage || "",
-      amountText(row),
-      row?.state || "",
-    ].filter(Boolean).join(" · "),
   );
   const todayPriority = (record, row, entity) => {
     const priority = firstText(valueOf(record, "priority"), row?.priority);
@@ -226,9 +222,24 @@
     return;
   }
 
+  // Today face: what it is / when it's due / stage · amount / who owns it.
+  const todayFace = {
+    title: (r) => r.title,
+    subtitle: (r) => r.description,
+    rows: [
+      (r) => (r.todayRow?.dueDate ? { label: "Due", value: r.todayRow.dueDate } : ""),
+      (r) => [firstText(r.todayRow?.stageLabel, r.todayRow?.stage), amountText(r.todayRow)].filter(Boolean).join(" · "),
+      (r) => {
+        const who = firstText(r.targetRecord?.assignee, r.targetRecord?.owner);
+        return who ? { label: "Who", value: who } : "";
+      },
+    ],
+  };
+
   window.createCrmCardSystem({
     apiName: "crmToday",
     theater: "today",
+    face: todayFace,
     source: todaySource,
     detail: todayDetail,
     widgetType: "today",

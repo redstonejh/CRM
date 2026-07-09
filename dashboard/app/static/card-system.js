@@ -190,6 +190,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // stage field) wins over the ticket store's copy — so a chosen severity survives a refresh even if the
   // auth-gated store round-trip didn't take. This is what keeps triage's progress from resetting.
   const priorityOf = (t) => { if (!t) return ""; const mp = metaOf(t.id).priority; return (mp != null && mp !== "") ? mp : (t.priority || ""); };
+  // Keys that are genuinely client-local bookkeeping and never belong on the
+  // record itself; everything else a config edit writes is promoted to a
+  // top-level record field too, so the face (which reads ONLY the record)
+  // always shows the edit. This is the write-through half of the face contract.
+  const LOCAL_META_KEYS = new Set(["activity", "delStage", "color", "durationMin", "overtimeMin"]);
   const setMeta = (id, m) => {
     if (!id) return;
     // The effort fields keep their natural-language text AND a parsed minutes value ("the data
@@ -200,7 +205,33 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     try { localStorage.setItem(META_STORE, JSON.stringify(metaMap)); } catch {}
     const t = ticketById(id);
     if (t) t.meta = { ...(t.meta || {}), ...metaMap[id] };
-    patchTicketDoc(id, { meta: metaMap[id] });
+    const promoted = {};
+    for (const [key, value] of Object.entries(m)) if (!LOCAL_META_KEYS.has(key)) promoted[key] = value;
+    if (t) Object.assign(t, promoted);
+    patchTicketDoc(id, { ...promoted, meta: metaMap[id] });
+  };
+  // One-time write-through migration: a record whose face would be empty but
+  // whose legacy meta override holds a title/description gets those PATCHed
+  // onto the record — after which the meta store is never read for a face.
+  let facesMigrated = false;
+  const migrateLegacyFaces = () => {
+    if (facesMigrated) return;
+    facesMigrated = true;
+    tickets.forEach((t) => {
+      const m = (t && metaMap[t.id]) || null;
+      if (!m) return;
+      const fields = {};
+      if (!firstFaceText(t.title, t.name, t.client, t.companyLabel) && firstFaceText(m.client, m.title)) {
+        fields.title = firstFaceText(m.client, m.title);
+      }
+      if (!firstFaceText(t.description, t.host) && firstFaceText(m.description, m.subtitle)) {
+        fields.description = firstFaceText(m.description, m.subtitle);
+      }
+      if (Object.keys(fields).length) {
+        Object.assign(t, fields);
+        patchTicketDoc(t.id, fields);
+      }
+    });
   };
   // Client-side activity trail (stage moves, trash/restore, severity…) — the store's own history
   // (created / edited / resolved / …) covers the backend events; the right-click Activity view merges both.
@@ -209,8 +240,32 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const a = [...(metaOf(id).activity || []), { at: Date.now(), text }].slice(-100);   // keep the last 100
     setMeta(id, { activity: a });
   };
-  const titleOf = (t) => { const m = metaOf(t.id); const ok = (v) => v && v.trim() && !isNA(v) ? v : null; return ok(m.client) || ok(m.title) || (t.companyLabel || "Unknown"); };
-  const subOf = (t) => { const m = metaOf(t.id); const v = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host || ""); return isNA(v) ? "" : v; };  // n/a → no trace on the card
+  // ── The face contract ─────────────────────────────────────────────────────────
+  // A card's title/subtitle/body rows derive EXCLUSIVELY from the record through
+  // the per-config contract below (config.face) — never from the legacy
+  // localStorage meta-override store. That store double-booked identity per
+  // surface, which is how the same deal read "Unknown" here and "Harbor & Lane
+  // retainer" there. Records that only had a title in legacy meta get it
+  // PATCHed onto the record once at load (see migrateLegacyFaces), then meta is
+  // never consulted for a face again.
+  const face = config.face || null;
+  const firstFaceText = (...values) => {
+    for (const value of values) {
+      const text = String(value ?? "").trim();
+      if (text && !isNA(text)) return text;
+    }
+    return "";
+  };
+  const titleOf = (t) => {
+    if (!t) return "Unknown";
+    const custom = face?.title ? firstFaceText(face.title(t)) : "";
+    return custom || firstFaceText(t.title, t.name, t.client, t.companyLabel) || "Unknown";
+  };
+  const subOf = (t) => {
+    if (!t) return "";
+    if (face?.subtitle) return firstFaceText(face.subtitle(t));
+    return firstFaceText(t.description, t.host);
+  };
   let pendingOpenId = null;   // a just-created ticket to fly into its config once it spawns in
   let draftId = null;         // a just-created ticket that isn't "real" yet — it only commits once its
                               // create fields (client/date/description) are saved; cancelling discards it
@@ -330,12 +385,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return c;
   };
   const hasPriority = (t) => intensityValues.includes(priorityOf(t));
-  const isBlank = (t) => {
-    const m = metaOf(t.id);
-    const title = (m.title && m.title.trim()) || (t.companyLabel && !["", "Untitled", "(manual)"].includes(t.companyLabel) ? t.companyLabel : "");
-    const sub = (m.subtitle != null && m.subtitle !== "") ? m.subtitle : (t.host && t.host !== "—" ? t.host : "");
-    return !title && !sub && !hasPriority(t);
-  };
+  // "Blank" mirrors the face contract: a card whose face shows a placeholder
+  // title, no subtitle, and no priority gets a random palette colour until it
+  // earns an identity.
+  const PLACEHOLDER_TITLES = new Set(["", "Unknown", "Untitled", "(manual)", "Untitled deal", "New contact", "New invoice"]);
+  const isBlank = (t) => PLACEHOLDER_TITLES.has(titleOf(t)) && !subOf(t) && !hasPriority(t);
   const colorFor = (t) => {
     if (!t || !t.id) return null;
     const oc = metaOf(t.id).color;              // appearance-menu override: an explicit colour wins over EVERYTHING
@@ -2024,13 +2078,32 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return `<div class="tk-date-under">${esc(dateS)}${second ? `<br>${esc(second)}` : ""}</div>`;
   };
 
+  // Entity-specific body rows from the face contract. Each row fn returns a
+  // string (one line), a {label, value} pair, or nothing (row skipped). With no
+  // contract the body falls back to the original stage-field rows (tickets).
+  const faceRowsHTML = (t) => {
+    if (!face?.rows || !Array.isArray(face.rows)) return cardFieldsHTML(t);
+    return face.rows.map((fn) => {
+      let row = null;
+      try { row = fn(t); } catch { row = null; }
+      if (!row) return "";
+      if (typeof row === "string") {
+        const v = firstFaceText(row);
+        return v ? `<div class="ticket-field"><span class="ticket-field-v">${esc(v)}</span></div>` : "";
+      }
+      const value = firstFaceText(row.value);
+      if (!value) return "";
+      const label = firstFaceText(row.label);
+      return `<div class="ticket-field">${label ? `<span class="ticket-field-l">${esc(label)}</span>` : ""}<span class="ticket-field-v">${esc(value)}</span></div>`;
+    }).join("");
+  };
+
   const cardInner = (t) => {
-    const desc = fieldRaw(t, "description");
-    const sub = (desc && !isNA(desc) && String(desc).trim()) ? desc : subOf(t);
+    const sub = subOf(t);
     return `<div class="ticket-body">` +
-      `<div class="ticket-company">${esc(titleOf(t))}</div>` +      // client (ellipsised); date now lives pinned under the bars
-      (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // short description (else host); n/a/empty → no line
-      `<div class="ticket-fields">${cardFieldsHTML(t)}</div>` +     // live config-menu info (replaces the down-time)
+      `<div class="ticket-company">${esc(titleOf(t))}</div>` +      // face title (ellipsised); date lives pinned under the bars
+      (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // face subtitle; empty → no line
+      `<div class="ticket-fields">${faceRowsHTML(t)}</div>` +       // entity field rows from the face contract
       faceBadgesHTML(t) +
       `</div>` +
       barsHTML(ticketBarClasses(t), true) +
@@ -3048,6 +3121,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const load = async () => {
     try { const r = await source?.list?.(); tickets = recordsFromList(r); }
     catch { tickets = []; }
+    migrateLegacyFaces();
     render();
     if (!subscribed) {
       subscribed = true;
@@ -3132,10 +3206,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (du) du.remove();
         if (duh) c.insertAdjacentHTML("beforeend", duh);
         const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
-        const descRaw = fieldRaw(t, "description"); const sub = (descRaw && !isNA(descRaw) && String(descRaw).trim()) ? descRaw : subOf(t);
+        const sub = subOf(t);
         if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }
         else if (ho) ho.remove();   // n/a / empty → drop the line entirely (no placeholder)
-        let ff = c.querySelector(".ticket-fields"); const fh = cardFieldsHTML(t);   // live config-menu info on the card face
+        let ff = c.querySelector(".ticket-fields"); const fh = faceRowsHTML(t);   // entity field rows from the face contract
         if (ff) ff.innerHTML = fh; else if (body) body.insertAdjacentHTML("beforeend", `<div class="ticket-fields">${fh}</div>`);
         const oldBadges = c.querySelector(".ticket-face-badges");
         const newBadges = faceBadgesHTML(t);

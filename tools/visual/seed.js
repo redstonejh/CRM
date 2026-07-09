@@ -86,13 +86,13 @@ function rosaDataset() {
     {
       id: 'inv_1042', number: 'INV-1042', title: 'INV-1042 — Bluepeak pilot deposit', client: 'INV-1042',
       companyId: 'co_bluepeak', dealId: 'dl_bluepeak_onboarding',
-      state: 'draft', priority: 'draft', amount: 3800,
+      state: 'draft', stage: 'draft', priority: 'draft', amount: 3800,
       dueDate: day(14), description: 'Deposit for the onboarding pilot.',
     },
     {
       id: 'inv_1038', number: 'INV-1038', title: 'INV-1038 — Harbor & Lane audit', client: 'INV-1038',
       companyId: 'co_harborlane',
-      state: 'sent', priority: 'sent', amount: 9200,
+      state: 'sent', stage: 'sent', priority: 'sent', amount: 9200,
       sentAt: iso(-16), dueDate: day(-9), lastTouchAt: iso(-16),
       description: 'Network audit engagement. Sent, now past due.',
     },

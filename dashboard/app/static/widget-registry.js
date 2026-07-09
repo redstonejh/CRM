@@ -3255,8 +3255,9 @@
       return;
     }
     const meta = deal.meta || {};
-    const title = meta.client || meta.title || deal.companyLabel || "Unknown";
-    const sub = meta.description || deal.description || deal.host || "";
+    // Face contract: the record's own identity fields first — never meta overrides.
+    const title = deal.title || deal.name || deal.client || deal.companyLabel || "Unknown";
+    const sub = deal.description || deal.host || meta.description || "";
     const amount = meta.amount || deal.amount || "";
     const next = meta.nextStep || deal.nextStep || "";
     mount.innerHTML = `
@@ -3327,8 +3328,9 @@
       return;
     }
     const meta = contact.meta || {};
-    const title = meta.client || meta.title || contact.companyLabel || contact.name || "Unknown";
-    const sub = meta.description || contact.description || contact.host || contact.email || "";
+    // Face contract: the record's own identity fields first — never meta overrides.
+    const title = contact.name || contact.title || contact.client || contact.companyLabel || "Unknown";
+    const sub = contact.description || contact.host || contact.email || meta.description || "";
     const company = meta.company || contact.company || "";
     const role = meta.role || contact.role || "";
     const touch = contactTouchMs(contact);

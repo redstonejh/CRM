@@ -94,9 +94,38 @@
     },
   });
 
+  const dateOnly = (value) => {
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(value || ""));
+    if (match) return match[1];
+    const parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
+  };
+  const daysSince = (value) => {
+    const ms = typeof value === "number" ? value : Date.parse(String(value || ""));
+    if (!Number.isFinite(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+  };
+  // Contact face: company · role / last touch / next touch.
+  const contactFace = {
+    title: (r) => r.name ?? r.title ?? r.client,
+    subtitle: (r) => r.description,
+    rows: [
+      (r) => [valueOf(r, "company"), valueOf(r, "role")].filter(Boolean).join(" · "),
+      (r) => {
+        const age = daysSince(valueOf(r, "lastTouchAt") || valueOf(r, "lastContactAt"));
+        return age == null ? "" : { label: "Last touch", value: `${age}d ago` };
+      },
+      (r) => {
+        const next = dateOnly(valueOf(r, "nextTouchAt"));
+        return next ? { label: "Next touch", value: next } : "";
+      },
+    ],
+  };
+
   window.createCrmCardSystem({
     apiName: "peopleCards",
     theater: "people",
+    face: contactFace,
     source: contactSource,
     detail: window.contactDetail,
     widgetType: "contact",

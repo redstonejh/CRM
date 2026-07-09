@@ -132,9 +132,32 @@
     },
   });
 
+  // Invoice face: amount (dominant) / due line / state.
+  const invoiceFace = {
+    title: (r) => r.number ?? r.title ?? r.client,
+    subtitle: (r) => r.description,
+    rows: [
+      (r) => money(amountOf(r)),
+      (r) => {
+        const due = dateOnly(valueOf(r, "dueDate"));
+        if (!due) return "";
+        if (invoiceIntensity(r) === "overdue") {
+          const days = Math.max(1, Math.floor((Date.now() - Date.parse(`${due}T00:00:00`)) / 86400000));
+          return { label: "Due", value: `${due} · ${days}d overdue` };
+        }
+        return { label: "Due", value: due };
+      },
+      (r) => {
+        const state = invoiceState(r);
+        return state ? state.charAt(0).toUpperCase() + state.slice(1) : "";
+      },
+    ],
+  };
+
   window.createCrmCardSystem({
     apiName: "moneyPipeline",
     theater: "money",
+    face: invoiceFace,
     source: invoiceSource,
     detail: window.invoiceDetail,
     widgetType: "invoice",

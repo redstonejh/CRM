@@ -303,9 +303,32 @@
     return { stage };
   };
 
+  // Search face: the decorated title/description plus one facts row —
+  // state/stage and amount, whatever the entity actually has.
+  const searchFace = {
+    title: (r) => r.title,
+    subtitle: (r) => r.description,
+    rows: [
+      (r) => {
+        const state = firstText(r.targetRecord?.stage, r.targetRecord?.state, r.stage, r.state);
+        const amountRaw = r.targetRecord?.amount ?? r.amount;
+        const amount = Number(String(amountRaw ?? "").replace(/[^0-9.-]/g, ""));
+        return [
+          state ? state.charAt(0).toUpperCase() + state.slice(1) : "",
+          Number.isFinite(amount) && amount ? `$${Math.round(amount).toLocaleString()}` : "",
+        ].filter(Boolean).join(" · ");
+      },
+      (r) => {
+        const due = firstText(r.targetRecord?.dueDate, r.dueDate);
+        return due ? { label: "Due", value: due.slice(0, 10) } : "";
+      },
+    ],
+  };
+
   cardApi = window.createCrmCardSystem({
     apiName: "crmSearchDeckCards",
     theater: "search",
+    face: searchFace,
     source: searchSource,
     detail: searchDetail,
     widgetType: "search-result",

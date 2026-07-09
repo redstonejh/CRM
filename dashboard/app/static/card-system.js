@@ -32,7 +32,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const createEnabled = config.createEnabled !== false;
   const showProgressBars = config.showProgressBars !== false;
   const showDateUnder = config.showDateUnder !== false;
-  const showFlow = config.showFlow !== false;
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
   const configuredCardBg = typeof config.cardBackground === "function" ? config.cardBackground : null;
@@ -51,10 +50,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     createAria: `Create a ${widgetTitle.toLowerCase()}`,
     trashAria: `Recycle bin (deleted ${widgetTitle.toLowerCase()}s)`,
     trashTitle: "Recycle bin",
-    leftEmptyHtml: `New ${widgetTitle.toLowerCase()}s<br>get added here`,
-    rightEmptyHtml: `Resolved ${widgetTitle.toLowerCase()}s<br>get added here`,
-    trashEmptyHtml: `Deleted ${widgetTitle.toLowerCase()}s<br>get added here`,
-    zoneEmptyText: `Drag ${widgetTitle.toLowerCase()}s here`,
     ...(config.deckCopy || {}),
   };
   const intensityOf = config.intensityOf || ((record) => {
@@ -560,23 +555,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
-      /* Empty-stack placeholder: a subtle dashed bounding box in the closed pile's resting spot that says
-         what lands where. JS (layout()) shows it only when that corner stack has no cards; sized to the card. */
-      /* Styled to READ like the .tk-flow pipeline arrows: the same light-blue body (#d2e3ff) and soft
-         blue glow, instead of the old near-invisible faint white. */
-      .tk-empty { position: absolute; bottom: ${MARGIN}px; box-sizing: border-box; pointer-events: none;
-        border: 2px dashed rgba(210, 227, 255, 0.6); border-radius: ${RADIUS}px;
-        display: flex; align-items: center; justify-content: center; text-align: center;
-        color: rgba(210, 227, 255, 0.92); font-size: 0.92rem; font-weight: 600; line-height: 1.42; padding: 14px;
-        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55));
-        transition: border-color .2s ease, color .2s ease, box-shadow .2s ease; }
-      .tk-empty-left { left: ${MARGIN}px; } .tk-empty-right { right: ${MARGIN}px; }
-      /* The empty recycle bin's placeholder, lifted to the open-bin spot (its bottom offset is set in render). */
-      .tk-empty-trash { right: ${MARGIN}px; z-index: 3; }
-      /* Eligible drop target while dragging a trashed card out: light up the placeholder (empty stack) or
-         the pile's cards (non-empty stack). */
-      .tk-empty.tk-drop-ok { border-color: rgba(125,180,255,0.85); border-style: solid; color: rgba(190,215,255,0.85);
-        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.4), 0 0 26px rgba(90,150,255,0.35); }
+      /* FIX_PASS_2 F2: the dashed empty-stack placeholders are gone. An empty
+         deck is the "+" button alone; an empty bucket is an empty glass bucket. */
       .tk-deck.tk-drop-ok .tk-card { box-shadow: 0 0 0 2px rgba(125,180,255,0.7), 0 10px 26px rgba(0,0,0,0.42) !important; }
       /* The cards live in this track; horizontal scroll is ONE rigid transform on the track, decoupled
          from each card's own transform (slot/collision, which keeps its .42s transition). pointer-events
@@ -803,7 +783,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zth { position: absolute; left: 0; width: 8px; border-radius: 999px; background: rgba(255,255,255,0.66);
         box-shadow: 0 1px 4px rgba(0,0,0,0.4); cursor: grab; transition: background .15s ease; }
       .tk-zth:hover { background: rgba(255,255,255,0.88); } .tk-zth:active { cursor: grabbing; background: #fff; }
-      .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
       /* Scroll-edge shadow lives INSIDE each clipped ticket (a child div). The ticket's own overflow:hidden
          + border-radius clip it, so it's a square 90° band through the ticket body but follows the REAL
          rounded corners exactly where the viewport edge nears a corner — and it can never land in the gaps
@@ -830,18 +809,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18), 0 0 0 rgba(234,179,8,0); }
       }
 
-      /* ── Glass flow arrows: stack → triage → … → resolution → resolved stack. ─────────── */
-      /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
-         then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
-      .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
-        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
-      /* Each arrow's own SVG lifts above the scrim (3945, still below the stacks) when it's in focus —
-         sharp — and rests at 790 (below the scrim) when out, where the scrim blurs it, matching the
-         bucket it points at. So on-path arrows go sharp with the target, off-path ones stay blurred. */
-      .tk-flow.tk-cofocus { z-index: 3945; }
-      .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
-        stroke-linecap: round; stroke-linejoin: round; }
-      .tk-flow-head { fill: #d2e3ff; stroke: none; }
+      /* FIX_PASS_2 F2: the guide/flow arrows are gone — the pipeline reads
+         through the buckets themselves. */
       /* The round window/page controls at the top — AND their dropdowns (background/effects picker, the
          search popover) and the account button + its menu — stay in PERMANENT focus and take z-precedence
          over EVERYTHING: lifted above the DoF scrim (3900) and the whole ticket UI so nothing ever blurs
@@ -1036,7 +1005,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // A corner stack (left/right) under the cursor — fanned OR closed — for dragging a card OUT of the bin
   // back into a stack. Uses the visible cards' bounds so a closed corner pile counts too.
   const overCornerStack = (x, y) => CORNER_SIDES.find((s) => {
-    const r = deckCardsRect(s) || emptyStackRect(s);   // empty stacks have no cards → use their placeholder region
+    const r = deckCardsRect(s) || actionRect(s);   // empty stacks have no cards → the action button marks the corner
     return !!r && x >= r.left - 16 && x <= r.right + 16 && y >= r.top - 16 && y <= r.bottom + 16;
   }) || null;
   // Which corner stack may a trashed ticket be dragged back INTO: everything EXCEPT a literally-resolved
@@ -1102,15 +1071,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const pad = dragActive ? 24 : 7;   // generous catch area while dragging — esp. for an EMPTY bin, whose only drop target is this icon
     return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad; };
   const overOpenTrash = (x, y) => trashMode && !!decks.trash?.cards.some((c) => { const r = c.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
-  // The OPEN-but-EMPTY bin's "Deleted tickets get added here" placeholder is a full-size drop target too —
-  // without it an empty bin's only target is the 34px icon.
-  const overEmptyTrashPh = (x, y) => {
-    if (!trashMode || decks.trash?.cards.length) return false;
-    const el = decks.trash?.emptyPh; if (!el || el.style.display === "none") return false;
-    const r = el.getBoundingClientRect();
-    return x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
-  };
-  const overTrashTarget = (x, y) => overTrashBtn(x, y) || overOpenTrash(x, y) || overEmptyTrashPh(x, y);
+  const overTrashTarget = (x, y) => overTrashBtn(x, y) || overOpenTrash(x, y);
   // Resting the cursor on the CLOSED bin icon while dragging draws a blue ring around it; when the ring
   // completes its trip the bin opens automatically so you can drop into it.
   let ringTimer = 0;
@@ -1164,14 +1125,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         action.hidden = !trashEnabled;
         if (trashEnabled) action.addEventListener("click", () => setTrashMode(!trashMode, true));
       }
-      // Empty-stack placeholder: lives on root (like the action button) so it shows when the deck box is
-      // hidden (.is-empty). Sized + toggled in layout(); tells the user what this corner collects.
-      const empty = document.createElement("div");
-      empty.className = `tk-empty tk-empty-${side}`;
-      empty.innerHTML = `<span>${side === "left" ? deckCopy.leftEmptyHtml : deckCopy.rightEmptyHtml}</span>`;
-      empty.style.display = "none";
-      root.appendChild(box); root.appendChild(action); root.appendChild(empty);
-      decks[side] = { box, track, arrow, bar, thumb, action, empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
+      // FIX_PASS_2 F2: no empty-stack placeholder — an empty deck is the action button alone.
+      root.appendChild(box); root.appendChild(action);
+      decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
     // The recycle bin: a THIRD stack on the right, lifted above the trash icon (positioned in render),
     // shown only in trash mode. Same machinery as the right deck (fans left) — no action button of its own.
@@ -1186,14 +1142,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
       box.appendChild(arrow); box.appendChild(bar);
       wireThumb("trash", thumb);
-      // Empty-bin placeholder: lives on root (the deck box is display:none while empty) and is shown in the
-      // lifted open-bin spot when the user opens an empty recycle bin. Sized + positioned in render().
-      const empty = document.createElement("div");
-      empty.className = "tk-empty tk-empty-trash";
-      empty.innerHTML = `<span>${deckCopy.trashEmptyHtml}</span>`;
-      empty.style.display = "none";
-      root.appendChild(box); root.appendChild(empty);
-      decks.trash = { box, track, arrow, bar, thumb, action: null, emptyPh: empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
+      // FIX_PASS_2 F2: no empty-bin placeholder — the bin icon is the drop target.
+      root.appendChild(box);
+      decks.trash = { box, track, arrow, bar, thumb, action: null, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
     }
     theater.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); DECK_SIDES.forEach(layout); });
@@ -1252,10 +1203,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const dim = any && !focus[s];
       d.box.style.zIndex = focus[s] ? "3" : "1";
       d.box.style.filter = dim ? "blur(4px)" : "";   // idle decks go soft while another is focused
-      // The empty-stack placeholder blurs WITH its (out-of-focus) deck; "" reverts to the CSS glow filter.
-      // A placeholder that's an active drag drop-target (.tk-drop-ok) stays sharp so it reads as eligible.
-      const ph = d.empty || d.emptyPh;
-      if (ph) ph.style.filter = (dim && !ph.classList.contains("tk-drop-ok")) ? "blur(4px)" : "";
     });
     if (stackScrim) {
       stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = any ? "blur(4px)" : "blur(0px)";
@@ -1294,15 +1241,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   // The drop region of an EMPTY corner stack = its "add here" placeholder box (shown only when the stack
   // has no cards). Lets a trashed card be dragged back into a stack that's currently empty.
-  const emptyStackRect = (side) => { const el = decks[side]?.empty; return el && el.isConnected && el.offsetParent !== null ? el.getBoundingClientRect() : null; };
+  const actionRect = (side) => { const el = decks[side]?.action; return el && el.isConnected && !el.hidden ? el.getBoundingClientRect() : null; };
   // Highlight the corner stack (its cards' box AND its empty placeholder) a trashed card would restore
   // into, so the eligible drop target reads clearly while dragging out of the bin.
   let stackDropSide = null;
   const setStackDrop = (side) => {
     if (side === stackDropSide) return;
-    CORNER_SIDES.forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); decks[s]?.empty?.classList.remove("tk-drop-ok"); });
+    CORNER_SIDES.forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); });
     stackDropSide = side || null;
-    if (side) { decks[side]?.box?.classList.add("tk-drop-ok"); decks[side]?.empty?.classList.add("tk-drop-ok"); }
+    if (side) { decks[side]?.box?.classList.add("tk-drop-ok"); }
   };
   const nearRect = (x, y, r, pad) => !!r && x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
   const inFocusDeadzone = (x, y) => {
@@ -1360,14 +1307,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const cards = deck.cards, n = cards.length;
     deck.box.classList.toggle("is-empty", n === 0);
     deck.box.classList.toggle("is-fanned", fanned[side] && n > 0);
-    // Empty-stack placeholder: shown in the closed pile's spot when this corner has no cards. The RIGHT
-    // one hides only while the bin is FANNED OUT along the bottom (which would overlap it); a closed bin
-    // pile is lifted above this spot, so a resolved card can still be dragged back down here. Sized to card.
-    if (deck.empty) {
-      const showPh = n === 0 && (side === "left" || (side === "right" && rightDeckEnabled && !fanned.trash));
-      deck.empty.style.display = showPh ? "" : "none";
-      if (showPh) { deck.empty.style.width = `${CARD_W}px`; deck.empty.style.height = `${CARD_H}px`; }
-    }
     const open = fanned[side];
     const step = CARD_W + GAP_FAN;
     const viewW = fanViewW();
@@ -2423,64 +2362,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
   };
 
-  // ── Glass flow arrows ─────────────────────────────────────────────────────────
-  // A stylized translucent line through the pipeline: left (inbox) stack → triage, an arrow
-  // between each bucket, then resolution → right (resolved) stack. Drawn as one SVG overlay,
-  // each arrow a glowing glass body with a bright core + a glassy arrowhead.
-  let flowSvgs = [], flowShafts = [], flowHeads = [];
-  const ensureFlow = () => {
-    if (!showFlow) return;
-    if (flowSvgs.length) return;
-    ensureStyles();
-    const arrows = STAGES.length + 1;
-    // ONE full-viewport SVG per arrow (a stroked shaft + a SOLID triangle head), so every segment can
-    // cross the DoF scrim on its OWN — an on-path arrow lifts above it (sharp), an off-path one rests
-    // below it (scrim-blurred) — exactly how the buckets behave. They never overlap, so their z-order
-    // among themselves is irrelevant.
-    for (let i = 0; i < arrows; i++) {
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><path class="tk-flow-shaft"></path><path class="tk-flow-head"></path></svg>`;
-      const svg = wrap.firstElementChild;
-      ensureTheater().appendChild(svg);
-      flowSvgs.push(svg);
-      flowShafts.push(svg.querySelector(".tk-flow-shaft"));
-      flowHeads.push(svg.querySelector(".tk-flow-head"));
-    }
-  };
-  const HEAD_LEN = 20, HEAD_HALF = 9, CORNER = 46;
-  // A solid arrowhead whose BASE CENTRE is where the shaft stops; the shaft's round cap just
-  // reaches the base, so the line enters the head's centre and nothing crosses into/past it.
-  // dx,dy = unit travel direction at the tip; r = rounder.
-  const arrowHead = (ex, ey, dx, dy, r) => {
-    const bx = ex - HEAD_LEN * dx, by = ey - HEAD_LEN * dy;             // base centre
-    const sx = ex - (HEAD_LEN - 5) * dx, sy = ey - (HEAD_LEN - 5) * dy; // shaft overlaps 5px INTO the head (no gap)
-    const px = -dy * HEAD_HALF, py = dx * HEAD_HALF;                    // half-width perpendicular
-    return { sx, sy, d: `M${r(bx + px)},${r(by + py)} L${r(ex)},${r(ey)} L${r(bx - px)},${r(by - py)} Z` };
-  };
-  // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds. Each stack connector is a
-  // straight run + ONE rounded corner so the line reaches the head dead-straight and centred.
-  const drawFlow = (lefts, bw, topY, botY) => {
-    if (!showFlow) return;
-    ensureFlow();
-    const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
-    const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
-    const leftX = MARGIN + 26, rightX = window.innerWidth - (MARGIN + 26);   // mirror of leftX
-    const shafts = [], heads = [];
-    // 1 — rise from the inbox, early rounded corner, long HORIZONTAL run dead-centre into triage.
-    { const ex = lefts[0] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
-      shafts.push(`M${leftX},${offStack} L${leftX},${midY + CORNER} Q${leftX},${midY} ${leftX + CORNER},${midY} L${r(h.sx)},${midY}`);
-      heads.push(h.d); }
-    // 2 — straight trail across each gap into the next bucket (head points right).
-    for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
-      shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${midY}`); heads.push(h.d); }
-    // 3 — MIRROR of the left: leave resolution, early rounded corner, long VERTICAL run dead-centre
-    //     down into the resolved stack (head points down).
-    { const h = arrowHead(rightX, offStack, 0, 1, r);
-      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} L${r(rightX - CORNER)},${midY} Q${r(rightX)},${midY} ${r(rightX)},${midY + CORNER} L${r(rightX)},${r(h.sy)}`);
-      heads.push(h.d); }
-    shafts.forEach((d, i) => flowShafts[i]?.setAttribute("d", d));
-    heads.forEach((d, i) => flowHeads[i]?.setAttribute("d", d));
-  };
+  // ── Flow arrows: DELETED (FIX_PASS_2 F2). ────────────────────────────────────
+  // The stack→bucket→…→resolved guide arrows are tutorial furniture the vision
+  // rejects; the empty arrays keep the co-focus plumbing inert.
+  let flowSvgs = [];
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {
     const grid = document.querySelector(".dashboard-layout-grid");
@@ -2544,7 +2429,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                    // 8px bar centred there, kept inside the bucket
       }
     });
-    drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
     // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does
     // the same via updateDeckEdges() at the end of layout(). Without the re-clamp a bucket scrolled to
     // the bottom stays pinned there after the window grows past being scrollable (no way back up).
@@ -2745,7 +2629,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // the run [min,max) between the stack's node and a reachable bucket's node.
   const focusDropTargets = (from, t) => {
     if (!zonesEnabled) return;
-    ensureFlow();
     const fromNode = from < 0 ? 0 : from + 1;
     const liveArrows = new Set();
     setBucketSharp((i) => {
@@ -2976,7 +2859,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         count.textContent = String(summary || "");
         count.hidden = !summary;
       }
-      track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${esc(deckCopy.zoneEmptyText)}</div>`;
+      track.innerHTML = "";   // FIX_PASS_2 F2: an empty bucket is an empty glass bucket — no watermark
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
@@ -3057,20 +2940,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // Once the bin actually holds cards, the deliberate-empty intent is spent — so emptying it later
     // (restoring the last card) falls back to the normal auto-close below.
     if (deleted.length) trashShowEmpty = false;
-    // An empty bin closes itself (e.g. after restoring the last deleted ticket) — UNLESS the user just
-    // opened it empty on purpose (trashShowEmpty), in which case it stays open to show the placeholder.
+    // An empty bin closes itself (e.g. after restoring the last deleted ticket).
+    // FIX_PASS_2 F2: the "get added here" placeholder is gone — the bin icon
+    // (with its blue active ring) is all the empty-bin state there is.
     if (trashMode && !deleted.length && !trashShowEmpty) { trashMode = false; fanned.trash = false; decks.right?.action?.classList.remove("is-active"); }
-    // Deliberately-opened empty bin: show the "Deleted tickets get added here" placeholder in the lifted
-    // open-bin spot (the deck box itself is display:none while empty), matching where the cards would fan up.
-    if (decks.trash?.emptyPh) {
-      const showTrashPh = trashMode && !deleted.length;
-      decks.trash.emptyPh.style.display = showTrashPh ? "" : "none";
-      if (showTrashPh) {
-        decks.trash.emptyPh.style.width = `${CARD_W}px`;
-        decks.trash.emptyPh.style.height = `${CARD_H}px`;
-        decks.trash.emptyPh.style.bottom = `${MARGIN + CARD_H + 62}px`;
-      }
-    }
     updateStackFocus();
     renderZones();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then

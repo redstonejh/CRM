@@ -358,11 +358,9 @@
     zonesEnabled: false,
     showProgressBars: false,
     showDateUnder: false,
-    showFlow: false,
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out CRM search results",
-      leftEmptyHtml: "No cards.",
     },
     faceBadges: (record) => {
       const entity = normalizeEntity(record?.targetEntity || record?.entity || record?.type);

@@ -163,7 +163,6 @@
     rightDeckEnabled: false,
     showProgressBars: false,
     showDateUnder: false,
-    showFlow: false,
     stageMovement: "free",
     leftDeckFilter: () => true,
     deckCopy: {
@@ -171,9 +170,6 @@
       createAria: "Create a contact",
       trashAria: "Recycle bin (deleted contacts)",
       trashTitle: "Recycle bin",
-      leftEmptyHtml: "Contacts needing<br>attention show here",
-      trashEmptyHtml: "Deleted contacts<br>get added here",
-      zoneEmptyText: "Drag contacts here",
     },
     onLinkDrop: linkContacts,
     active: false,

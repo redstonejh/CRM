@@ -269,11 +269,9 @@
     zonesEnabled: false,
     showProgressBars: false,
     showDateUnder: false,
-    showFlow: false,
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out today's hand",
-      leftEmptyHtml: "Desk clear.",
     },
     faceBadges: (record) => {
       const reason = record?.todayReason || "";

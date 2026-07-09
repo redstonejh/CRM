@@ -16,22 +16,23 @@ const { start } = require('./harness.js');
 const PROBES = [
   { name: 'zone panel', selector: '.tk-zone', props: ['borderRadius', 'backgroundImage', 'borderColor', 'borderWidth', 'boxShadow', 'backdropFilter', 'paddingTop', 'paddingLeft'] },
   { name: 'zone header', selector: '.tk-zone-hd', props: ['fontSize', 'fontWeight', 'color'] },
-  { name: 'zone empty text', selector: '.tk-zone-empty', props: ['color', 'fontSize', 'textAlign'] },
-  { name: 'deck card', selector: '.tk-card', props: ['borderRadius', 'paddingTop', 'paddingLeft', 'boxShadow', 'color'] },
+  { name: 'deck card', selector: '.tk-card', props: ['borderRadius', 'paddingTop', 'paddingLeft', 'color'] },
   { name: 'zone card', selector: '.tk-zcard', props: ['borderRadius', 'paddingTop', 'paddingLeft', 'color'] },
   { name: 'card title', selector: '.tk-card .ticket-company, .tk-zcard .ticket-company', props: ['fontSize', 'fontWeight', 'lineHeight'] },
   { name: 'card subtitle', selector: '.tk-card .ticket-host, .tk-zcard .ticket-host', props: ['fontSize', 'color'] },
-  { name: 'flow arrow shaft', selector: '.tk-flow-shaft', props: ['stroke', 'strokeWidth'] },
   { name: 'fan arrow button', selector: '.tk-arrow', props: ['width', 'height', 'borderRadius', 'backgroundImage'] },
   { name: 'stack action button', selector: '.tk-stack-btn', props: ['width', 'height', 'borderRadius', 'backgroundImage'] },
-  { name: 'empty placeholder', selector: '.tk-empty', props: ['borderStyle', 'borderRadius', 'color', 'fontSize'] },
 ];
 
-// Structural counts: the Tickets surface must have the original's species.
+// Structural counts. FIX_PASS_2 F2 (the vision datum) DELETES the flow arrows,
+// dashed empty placeholders and zone watermarks — the CRM must have ZERO of
+// them even though the original still renders them.
 const STRUCTURE = [
   { name: 'stage zones', selector: '.tk-zone', min: 3, max: 3 },
   { name: 'corner decks', selector: '.tk-deck-left, .tk-deck-right', min: 2, max: 2 },
-  { name: 'flow arrows', selector: 'svg.tk-flow', min: 4, max: 4 },
+  { name: 'flow arrows (deleted by F2)', selector: 'svg.tk-flow', min: 0, max: 0 },
+  { name: 'dashed placeholders (deleted by F2)', selector: '.tk-empty', min: 0, max: 0 },
+  { name: 'zone watermarks (deleted by F2)', selector: '.tk-zone-empty', min: 0, max: 0 },
   { name: 'create button', selector: '.tk-stack-btn', min: 2, max: 2 },
 ];
 

@@ -45,7 +45,11 @@
     return 0;
   };
 
-  const staleness = (record, entity, now = Date.now()) => {
+  // Test seam (BLUEPRINT A4/A6): a pinned clock (`window.__CRM_NOW__`) freezes
+  // the cold front for golden pinning; the real clock rules when unset.
+  const nowMs = () => (window.__CRM_NOW__ ? Date.parse(window.__CRM_NOW__) || Number(window.__CRM_NOW__) || Date.now() : Date.now());
+
+  const staleness = (record, entity, now = nowMs()) => {
     const halfLife = halfLifeDays(record, entity);
     if (!record || !halfLife) return 0;
     const touch = touchTime(record, entity);
@@ -54,7 +58,7 @@
     return Math.max(0, Math.min(1, days / halfLife));
   };
 
-  const isTripped = (record, entity, now = Date.now()) => staleness(record, entity, now) >= 1;
+  const isTripped = (record, entity, now = nowMs()) => staleness(record, entity, now) >= 1;
 
   window.crmColdFront = {
     valueOf,

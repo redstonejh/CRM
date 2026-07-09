@@ -720,12 +720,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       /* On the stack/zone cards the client name is a single ellipsised line, leaving the top-right column
          (bars + date) clear so they never collide with a long name. */
       .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 1; padding-right: 56px; }
+      /* BLUEPRINT A6: the cold front is VISIBLE — if a screenshot can't show a
+         24-day contact pale next to a 3-day one, the curve is too timid. The
+         body drains saturation and dims; the frost sheet thickens with the
+         cold. Warmth floods back the moment lastTouchAt is stamped. */
       .tk-card .ticket-body, .tk-zcard .ticket-body, .tk-zfly .ticket-body {
-        filter: saturate(calc(1 - (var(--crm-staleness, 0) * .56))) opacity(calc(1 - (var(--crm-staleness, 0) * .22)));
+        filter: saturate(calc(1 - (var(--crm-staleness, 0) * .82))) brightness(calc(1 - (var(--crm-staleness, 0) * .16)));
+        opacity: calc(1 - (var(--crm-staleness, 0) * .34));
       }
       .tk-card::after, .tk-zcard::after, .tk-zfly::after {
         content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
-        background: rgba(180,190,205, calc(var(--crm-staleness, 0) * .14));
+        background: rgba(196,206,220, calc(var(--crm-staleness, 0) * .26));
         mix-blend-mode: screen;
       }
       /* FIX_PASS_2 F1: entity heat is an EDGE accent, never a body wash — a

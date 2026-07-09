@@ -233,6 +233,45 @@ const SCENES = [
     ],
   },
   {
+    name: 'scene-5-cold-front',
+    // Blueprint A6 proof: the 24-day contact is UNMISTAKABLY pale next to the
+    // fresh ones; the company dive is a little world (faces + merged thread)
+    // whose interior carries the cold front too; B backs out to People.
+    steps: [
+      steps.driveTo('people'),
+      steps.settle(900),
+      steps.frames('cold-pair', 2, 250),
+      steps.assert(() => {
+        const devon = document.querySelector('[data-crm-theater="people"] .tk-card[data-id="ct_devon"], [data-crm-theater="people"] .tk-zcard[data-id="ct_devon"]');
+        const style = devon?.style.getPropertyValue('--crm-staleness');
+        return Number(style) >= 0.9;
+      }, 'Devon Park carries full staleness'),
+      steps.assert(() => {
+        const marta = document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]');
+        const value = Number(marta?.style.getPropertyValue('--crm-staleness') || 0);
+        return !!marta && value < 0.15;   // fresh — the pale/warm CONTRAST is the acceptance
+      }, 'Marta Reyes reads warm'),
+      // The company dive: buckets → dive into Bluepeak → the world.
+      steps.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); }),
+      steps.settle(700),
+      steps.frames('company-buckets', 2, 200),
+      steps.click('.crm-company-bucket[data-company-key="id:co_bluepeak"]'),
+      steps.frames('company-dive', 5, 140),
+      steps.settle(500),
+      steps.assert(() => document.querySelectorAll('.crm-company-world .crm-company-thread-row').length > 0, 'merged thread renders'),
+      steps.assert(() => {
+        const face = document.querySelector('.crm-company-world .crm-company-face[data-company-record="contacts:ct_devon"]');
+        return Number(face?.style.getPropertyValue('--crm-staleness')) >= 0.9;
+      }, 'the dive interior carries the cold front'),
+      steps.key('b'),
+      steps.frames('b-out', 3, 150),
+      steps.settle(500),
+      steps.key('Escape'),
+      steps.settle(400),
+      steps.assert(() => !window.crmCompanyDive.isActive() && document.body.dataset.crmModule === 'people', 'B/Esc chained back to People'),
+    ],
+  },
+  {
     name: 'scene-6-calendar',
     // Blueprint A4 proof: month cells hold title-peek bands + the today glow;
     // a hand card dragged onto a day FLIES in and seats; the day dive is a

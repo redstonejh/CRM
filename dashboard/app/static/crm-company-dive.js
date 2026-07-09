@@ -132,9 +132,16 @@
     const priority = firstText(valueOf(record, "priority"), "medium");
     return palette[priority] ? priority : "medium";
   };
-  const cardBackground = (entity, record) => {
-    const rgb = palette[intensityOf(entity, record)] || palette.none;
-    return `linear-gradient(180deg, rgba(${rgb},0.42), rgba(20,25,34,0.34))`;
+  // FIX_PASS_2 F1 (applied here in BLUEPRINT A6): every card is the ONE glass
+  // recipe; entity heat is an edge accent (--tk-accent-rgb), never a body
+  // wash. Contacts stay accent-free — people never glow.
+  const GLASS_CARD_BG = "linear-gradient(180deg, rgba(83, 95, 117, 0.42), rgba(33, 41, 56, 0.34))";
+  const cardBackground = () => GLASS_CARD_BG;
+  const accentStyle = (entity, record) => {
+    const intensity = intensityOf(entity, record);
+    if (entity === "contacts" || intensity === "none") return " --tk-accent-on: 0;";
+    const rgb = palette[intensity];
+    return rgb ? ` --tk-accent-rgb: ${rgb}; --tk-accent-on: 1;` : " --tk-accent-on: 0;";
   };
   const isOpenInvoice = (invoice) => !["paid", "void", "cancelled", "canceled"].includes(invoiceState(invoice));
   const isOpenDeal = (deal) => !["won", "lost"].includes(String(valueOf(deal, "state") || valueOf(deal, "stage") || "").toLowerCase());
@@ -414,9 +421,15 @@
     }) || null;
   };
 
+  // BLUEPRINT A6: interior faces carry the cold front too — the desaturation
+  // variable rides the same .tk-card recipe the surfaces use.
+  const stalenessStyle = (entity, record) => {
+    const value = Number(window.crmColdFront?.staleness?.(record, entity));
+    return Number.isFinite(value) && value > 0.005 ? ` --crm-staleness: ${Math.min(1, value).toFixed(3)};` : "";
+  };
   const cardFaceHTML = (entity, record) => `
     <button class="tk-card crm-company-face" type="button" data-company-record="${esc(entity)}:${esc(record.id)}"
-      style="background-color: rgb(107, 114, 128); background-image: ${cardBackground(entity, record)};">
+      style="background-color: rgb(107, 114, 128); background-image: ${cardBackground(entity, record)};${accentStyle(entity, record)}${stalenessStyle(entity, record)}">
       <div class="ticket-body">
         <div class="ticket-company">${esc(titleOf(entity, record))}</div>
         ${subtitleOf(entity, record) ? `<div class="ticket-host">${esc(subtitleOf(entity, record))}</div>` : ""}

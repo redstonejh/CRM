@@ -7,7 +7,7 @@
 
   // The six live module buckets (REMEDIATION_PLAN R5). Tasks' "Planned"
   // placeholder tile is gone until the module exists; Tickets stays reachable
-  // from the top workspace switch and quick-add.
+  // from the top workspace switch.
   const MODULES = [
     { key: "today", label: "Today", enabled: true },
     { key: "people", label: "People", enabled: true },
@@ -19,6 +19,10 @@
   let camera = null;
   let subscribed = false;
   let refreshTimer = 0;
+  let previewTimer = 0;
+  let previewGeneration = 0;
+  let previewAttempt = 0;
+  const PREVIEW_RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   let homeStats = {
     today: { count: 0 },
     tickets: { count: 0 },
@@ -119,7 +123,7 @@
       if (camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) { scheduleStatsRefresh(); return; }
       if (camera?.isActive?.() && camera.level() === 0) {
         camera.refresh();
-        refreshLivePreviews();
+        scheduleLivePreviews(true);
       }
     }, 120);
   };
@@ -157,6 +161,14 @@
       .crm-home-title { font-size: clamp(1rem, 2.4vw, 1.35rem); font-weight: 800; line-height: 1.1; }
       .crm-home-preview { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 10px;
         overflow: hidden; opacity: .88; color: rgba(255,255,255,0.62); }
+      .crm-home-preview-state { position: absolute; inset: 0; display: grid; place-items: center;
+        font-size: .68rem; font-weight: 760; letter-spacing: .08em; text-transform: uppercase;
+        color: rgba(255,255,255,.38); }
+      .crm-home-preview-state::after { content: ""; position: absolute; width: 42px; height: 2px; margin-top: 26px;
+        border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(125,180,255,.72), transparent);
+        animation: crm-home-preview-wait 1.15s ease-in-out infinite; }
+      .crm-home-preview[data-preview-state="error"] .crm-home-preview-state { color: rgba(255,190,150,.64); }
+      @keyframes crm-home-preview-wait { 0%,100% { opacity:.2; transform:scaleX(.45) } 50% { opacity:1; transform:scaleX(1) } }
       /* Factory-produced real DOM, viewed at k-scale. The miniature contains
          the same tk-zone/tk-card markup and paint as its full module. */
       .crm-factory-mini-scene { position: absolute; left: 50%; top: 50%; width: 1080px; height: 650px;
@@ -175,25 +187,6 @@
         grid-template-rows: repeat(2, minmax(0,1fr)); gap: 6px; pointer-events: none; }
       .crm-report-mini-scene .crm-report-widget { position: relative !important; inset: auto !important; grid-area: auto !important;
         min-width: 0 !important; min-height: 0 !important; width: auto !important; height: auto !important; margin: 0 !important; }
-      .crm-home-count { font-size: .68rem; font-weight: 800; line-height: 1; color: rgba(255,255,255,0.68); }
-      .crm-home-stack-preview { position: relative; height: 52px; }
-      .crm-home-mini-card { position: absolute; left: 0; bottom: 0; width: 44px; height: 34px; border-radius: 6px;
-        background: rgba(255,255,255,0.13); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10); }
-      .crm-home-mini-card:nth-child(2) { left: 16px; bottom: 6px; }
-      .crm-home-mini-card:nth-child(3) { left: 32px; bottom: 12px; }
-      .crm-home-mini-card.is-on { background: rgba(125,180,255,0.26); }
-      .crm-home-mini-card.is-warn { background: rgba(234,88,12,0.22); }
-      .crm-home-stage-preview { height: 52px; display: grid; grid-template-columns: repeat(var(--stage-count, 4), minmax(0,1fr)); gap: 6px; align-items: end; }
-      .crm-home-mini-stage { position: relative; min-height: 12px; border-radius: 7px 7px 4px 4px;
-        background: rgba(255,255,255,0.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); overflow: hidden; }
-      .crm-home-mini-stage::after { content: ""; position: absolute; left: 4px; right: 4px; bottom: 4px; height: 4px; border-radius: 999px; background: rgba(125,180,255,0.36); }
-      .crm-home-mini-stage[data-hot="true"]::after { background: rgba(234,88,12,0.44); }
-      .crm-home-calendar-preview { display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(5, 1fr); gap: 3px; height: 52px; }
-      .crm-home-mini-day { border-radius: 5px; background: rgba(255,255,255,0.10); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
-      .crm-home-mini-day.is-on { background: rgba(125,180,255,0.24); }
-      .crm-home-report-preview { height: 50px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; align-items: end; }
-      .crm-home-mini-widget { border-radius: 6px; min-height: 16px; background: rgba(255,255,255,0.12); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
-      .crm-home-mini-widget.is-on { background: rgba(125,180,255,0.24); }
       .crm-home-expander { position: absolute; z-index: 5; pointer-events: auto; -webkit-app-region: no-drag;
         transform-origin: 0 0; }
       .crm-home-warm, .crm-home-warm * { pointer-events: none !important; }
@@ -201,52 +194,11 @@
     document.head.appendChild(style);
   };
 
-  const maxValue = (items) => Math.max(1, ...items.map((item) => item.value || item.count || 0));
-  const stackPreview = (count, warn = 0) => {
-    const cards = Math.min(3, Math.max(0, count));
-    return `<div class="crm-home-stack-preview">${[0, 1, 2].map((idx) => (
-      `<span class="crm-home-mini-card${idx < cards ? " is-on" : ""}${idx < warn ? " is-warn" : ""}"></span>`
-    )).join("")}<div class="crm-home-count">${esc(compact(count))}</div></div>`;
-  };
-  const stagePreview = (stages, hotKey = "") => {
-    const scale = maxValue(stages);
-    return `<div class="crm-home-stage-preview" style="--stage-count:${Math.max(1, stages.length)}">` +
-      stages.map((stage) => {
-        const fill = Math.max(0.06, (stage.value || stage.count || 0) / scale);
-        return `<span class="crm-home-mini-stage" data-hot="${stage.key === hotKey ? "true" : "false"}" style="height:${Math.round(12 + fill * 34)}px"></span>`;
-      }).join("") +
-      `</div><div class="crm-home-count">${esc(compact(stages.reduce((sum, stage) => sum + (stage.value || 0), 0)))} / ${esc(compact(stages.reduce((sum, stage) => sum + (stage.count || 0), 0)))}</div>`;
-  };
-  // A real miniature month: the current month's day grid, weekday-aligned,
-  // with today lit — the calendar's own shape at k-scale, not an abstract row.
-  const calendarPreview = (count) => {
-    const now = new Date();
-    const first = new Date(now.getFullYear(), now.getMonth(), 1).getDay();
-    const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const today = now.getDate();
-    const cells = Array.from({ length: 35 }, (_v, idx) => {
-      const day = idx - first + 1;
-      if (day < 1 || day > days) return '<span></span>';
-      return `<span class="crm-home-mini-day${day === today ? " is-on" : ""}"></span>`;
-    }).join("");
-    return `<div class="crm-home-calendar-preview">${cells}</div><div class="crm-home-count">${esc(compact(count))}</div>`;
-  };
-  const reportPreview = (active, total) => `<div class="crm-home-report-preview">${Array.from({ length: total || 5 }, (_v, idx) => (
-    `<span class="crm-home-mini-widget${idx < active ? " is-on" : ""}" style="height:${16 + (idx % 3) * 9}px"></span>`
-  )).join("")}</div><div class="crm-home-count">${esc(compact(active))} / ${esc(compact(total || 5))}</div>`;
-  const previewHTML = (key) => {
-    if (key === "today") return stackPreview(homeStats.today.count, 0);
-    if (key === "people") return stackPreview(homeStats.people.count, homeStats.people.attention);
-    if (key === "pipeline") return stagePreview(homeStats.pipeline.stages, "negotiation");
-    if (key === "money") return stagePreview(homeStats.money.stages, "overdue");
-    if (key === "calendar") return calendarPreview(homeStats.calendar.count);
-    if (key === "reports") return reportPreview(homeStats.reports.active, homeStats.reports.widgets);
-    return "";
-  };
-
   const bucketHTML = (module) => `
     <div class="crm-home-title">${esc(module.label)}</div>
-    <div class="crm-home-preview" aria-hidden="true">${previewHTML(module.key)}</div>`;
+    <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-hidden="true">
+      <div class="crm-home-preview-state">Live view</div>
+    </div>`;
 
   const liveFactories = () => ({
     today: window.crmToday,
@@ -256,20 +208,50 @@
     calendar: window.fractalCalendar,
     reports: window.crmReports,
   });
-  const refreshLivePreviews = async () => {
-    if (!camera?.isActive?.() || camera.level() !== 0) return;
+  const refreshLivePreviews = async (generation = previewGeneration) => {
+    if (!camera?.isActive?.() || camera.level() !== 0) return { ready: 0, missing: MODULES.map(({ key }) => key) };
     const level = camera.layers?.()[0];
-    if (!level) return;
+    if (!level) return { ready: 0, missing: MODULES.map(({ key }) => key) };
+    const missing = [];
+    let ready = 0;
     await Promise.all(Object.entries(liveFactories()).map(async ([key, factory]) => {
-      if (typeof factory?.miniature !== "function") return;
       const preview = level.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);
       if (!preview) return;
+      if (typeof factory?.miniature !== "function") {
+        missing.push(key);
+        return;
+      }
       try {
         const miniature = await factory.miniature();
-        if (!preview.isConnected || !miniature) return;
+        if (generation !== previewGeneration || !preview.isConnected || !miniature) return;
         preview.replaceChildren(miniature);
-      } catch {}
+        preview.dataset.previewState = "ready";
+        ready += 1;
+      } catch {
+        if (generation !== previewGeneration || !preview.isConnected) return;
+        preview.dataset.previewState = "error";
+        preview.innerHTML = '<div class="crm-home-preview-state">Retrying live view</div>';
+        missing.push(key);
+      }
     }));
+    return { ready, missing };
+  };
+
+  const scheduleLivePreviews = (reset = false) => {
+    clearTimeout(previewTimer);
+    if (reset) {
+      previewGeneration += 1;
+      previewAttempt = 0;
+    }
+    const generation = previewGeneration;
+    const delay = PREVIEW_RETRY_MS[Math.min(previewAttempt, PREVIEW_RETRY_MS.length - 1)];
+    previewTimer = setTimeout(async () => {
+      if (generation !== previewGeneration || !camera?.isActive?.() || camera.level() !== 0) return;
+      const result = await refreshLivePreviews(generation);
+      if (generation !== previewGeneration || !result?.missing?.length) return;
+      previewAttempt += 1;
+      scheduleLivePreviews(false);
+    }, delay);
   };
 
   const buildRoot = () => {
@@ -384,7 +366,13 @@
   const setActive = (on) => {
     subscribe();
     camera.setActive(on);
-    if (on) scheduleStatsRefresh();
+    if (on) {
+      scheduleStatsRefresh();
+      scheduleLivePreviews(true);
+    } else {
+      clearTimeout(previewTimer);
+      previewGeneration += 1;
+    }
     return window.crmHome;
   };
 
@@ -394,6 +382,11 @@
     refresh: () => {
       scheduleStatsRefresh();
       camera.refresh();
+      scheduleLivePreviews(true);
     },
+    previewStatus: () => MODULES.map(({ key }) => ({
+      key,
+      state: camera.layers?.()[0]?.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`)?.dataset?.previewState || "missing",
+    })),
   };
 })();

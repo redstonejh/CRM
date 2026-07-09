@@ -153,6 +153,7 @@
 
   window.createCrmCardSystem({
     apiName: "dealPipeline",
+    workflowKind: "progressive",
     theater: "pipeline",
     stageOf: dealBucket,
     face: dealFace,
@@ -208,6 +209,7 @@
     isResolved: (deal) => !!deal && (deal.state || "open") === "won",
     bucketSummary,
     resolvedPulse: true,
+    deckCopy: { leftTitle: "Open deals", rightTitle: "Won" },
     onLinkDrop: linkDeals,
     active: false,
   });

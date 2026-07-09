@@ -50,6 +50,7 @@
 
   window.createCrmCardSystem({
     apiName: "ticketStacks",
+    workflowKind: "progressive",
     theater: "tickets",
     source: window.tickets,
     detail: window.ticketDetail,

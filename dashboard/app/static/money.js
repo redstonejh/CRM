@@ -171,6 +171,7 @@
 
   window.createCrmCardSystem({
     apiName: "moneyPipeline",
+    workflowKind: "lifecycle",
     theater: "money",
     stageOf: invoiceBucket,
     face: invoiceFace,
@@ -218,6 +219,8 @@
     deckCopy: {
       leftFanAria: "Fan out active invoices",
       rightFanAria: "Fan out paid invoices",
+      leftTitle: "Active invoices",
+      rightTitle: "Paid",
       createAria: "Create an invoice",
       trashAria: "Recycle bin (deleted invoices)",
     },

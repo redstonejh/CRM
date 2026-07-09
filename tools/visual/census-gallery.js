@@ -72,24 +72,23 @@ async function main() {
   await shot('05-next-touch-chips', 450);
   await page.keyboard.press('Escape');
 
-  // E10: quick-add and search-as-deck.
-  await page.evaluate(() => window.crmQuickAdd?.open?.());
-  await shot('06-quick-add');
-  await page.evaluate(() => { window.crmQuickAdd?.close?.(); window.crmSearchDeck?.setQuery?.('Bluepeak'); });
-  await shot('07-search-deck', 900);
+  // E10: search-as-deck. Creation remains where the original put it: the
+  // module's own stack + control, never invented global chrome.
+  await page.evaluate(() => window.crmSearchDeck?.setQuery?.('Bluepeak'));
+  await shot('06-search-deck', 900);
   await page.evaluate(() => window.crmSearchDeck?.close?.());
 
   // E10: company camera interior.
   await page.evaluate(() => window.crmCompanyDive?.openCompany?.('id:co_bluepeak'));
-  await shot('08-company-dive', 1100);
+  await shot('07-company-dive', 1100);
   await page.evaluate(() => window.crmCompanyDive?.setActive?.(false));
 
   // E4/E5: designed load and offline surfaces (the normal API is left intact).
   await workspace('pipeline');
   await page.evaluate(() => window.dealPipeline?.previewState?.('loading'));
-  await shot('09-loading-skeleton');
+  await shot('08-loading-skeleton');
   await page.evaluate(() => window.dealPipeline?.previewState?.('error'));
-  await shot('10-offline-state');
+  await shot('09-offline-state');
   await page.evaluate(() => window.dealPipeline?.previewState?.(null));
 
   // E9: 200-card LOD stress on Pipeline, using real API records.
@@ -111,7 +110,7 @@ async function main() {
     }
     await window.dealPipeline?.reload?.();
   });
-  await shot('11-pipeline-200-card-stress', 1400);
+  await shot('10-pipeline-200-card-stress', 1400);
 
   // E10: the two-faced flip in motion. State is created first by crmFlip.
   await page.evaluate(() => {
@@ -135,7 +134,7 @@ async function main() {
       });
     });
   });
-  await shot('12-flip-in-flight', 1250);
+  await shot('11-flip-in-flight', 1250);
 
   await browser.close();
   process.exit(0);

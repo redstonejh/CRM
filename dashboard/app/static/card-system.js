@@ -27,10 +27,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const onCalendarDrop = typeof config.onCalendarDrop === "function" ? config.onCalendarDrop : null;
   const onHomeStageDrop = typeof config.onHomeStageDrop === "function" ? config.onHomeStageDrop : null;
   const deckOnly = config.deckOnly === true;
+  // The mechanics carry meaning. Progressive workflows earn forward travel
+  // from completed fields; lifecycle workflows move through ordered states;
+  // grouped surfaces are independent containers; collections are deck-only.
+  const workflowKind = config.workflowKind || (deckOnly ? "collection" : "progressive");
   const rightDeckEnabled = !deckOnly && config.rightDeckEnabled !== false;
   const trashEnabled = !deckOnly && config.trashEnabled !== false;
   const createEnabled = config.createEnabled !== false;
-  const showProgressBars = config.showProgressBars !== false;
+  const showProgressBars = config.showProgressBars != null
+    ? config.showProgressBars !== false
+    : (workflowKind === "progressive" || workflowKind === "lifecycle");
+  const showFlow = config.showFlow != null
+    ? config.showFlow !== false
+    : (workflowKind === "progressive" || workflowKind === "lifecycle");
   const showDateUnder = config.showDateUnder !== false;
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
@@ -49,6 +58,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     createAria: `Create a ${widgetTitle.toLowerCase()}`,
     trashAria: `Recycle bin (deleted ${widgetTitle.toLowerCase()}s)`,
     trashTitle: "Recycle bin",
+    leftTitle: `New ${widgetTitle.toLowerCase()}s`,
+    rightTitle: `Resolved ${widgetTitle.toLowerCase()}s`,
     // The dashed empty-stack placeholders + zone watermark (original species; labels are the
     // ONLY per-entity difference — FIDELITY_ORDER §1).
     emptyLeft: `New ${widgetTitle.toLowerCase()}s<br>get added here`,
@@ -551,6 +562,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const progressOf = (t) => {
     if (!t) return -1;
     if (isResolved(t)) return STAGE_KEYS.length - 1;
+    if (workflowKind === "lifecycle") return Math.max(-1, STAGE_KEYS.indexOf(stageForRecord(t)));
+    if (workflowKind === "grouped" || workflowKind === "collection") return -1;
     let p = -1;
     for (let i = 0; i < STAGE_KEYS.length; i++) if (stageComplete(t, i)) p = i;
     return p;
@@ -605,6 +618,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         transition: backdrop-filter .42s cubic-bezier(.4,0,.2,1), -webkit-backdrop-filter .42s cubic-bezier(.4,0,.2,1); }
       .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.2,.9,.3,1); }
       .tk-deck-left { left: 0; } .tk-deck-right, .tk-deck-trash { right: 0; }
+      .tk-deck-label { position: absolute; bottom: ${CARD_H + MARGIN + 8}px; z-index: 6; opacity: 0;
+        padding: 5px 9px; border-radius: 9px; pointer-events: none; white-space: nowrap;
+        color: rgba(255,255,255,.78); font-size: .72rem; font-weight: 800; letter-spacing: .02em;
+        background: linear-gradient(180deg, rgba(22,26,36,.66), rgba(12,16,24,.58));
+        border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(18px) saturate(135%);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 8px 20px rgba(0,0,0,.25);
+        transform: translateY(4px); transition: opacity .16s ease, transform .16s ease; }
+      .tk-deck-left .tk-deck-label { left: ${MARGIN}px; }
+      .tk-deck-right .tk-deck-label, .tk-deck-trash .tk-deck-label { right: ${MARGIN}px; }
+      .tk-deck:hover .tk-deck-label, .tk-deck:focus-within .tk-deck-label, .tk-deck.is-fanned .tk-deck-label {
+        opacity: 1; transform: translateY(0); }
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
       /* BLUEPRINT A3: the day's win condition — a quiet centred line once the
@@ -1199,6 +1223,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const track = document.createElement("div");   // holds the cards; scroll = ONE rigid transform on this
       track.className = "tk-track";
       box.appendChild(track);
+      const label = document.createElement("div");
+      label.className = "tk-deck-label";
+      label.textContent = side === "left" ? deckCopy.leftTitle : deckCopy.rightTitle;
+      box.appendChild(label);
       const arrow = document.createElement("button");
       arrow.className = "tk-arrow"; arrow.type = "button";
       arrow.setAttribute("aria-label", side === "left" ? deckCopy.leftFanAria : deckCopy.rightFanAria);
@@ -1240,6 +1268,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const box = document.createElement("div");
       box.className = "tk-deck tk-deck-trash";
       const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
+      const label = document.createElement("div"); label.className = "tk-deck-label"; label.textContent = deckCopy.trashTitle; box.appendChild(label);
       const arrow = document.createElement("button"); arrow.className = "tk-arrow"; arrow.type = "button";
       arrow.setAttribute("aria-label", deckCopy.trashFanAria);
       arrow.addEventListener("click", () => toggleFan("trash"));
@@ -2586,7 +2615,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // each arrow a glowing glass body with a bright core + a glassy arrowhead.
   let flowSvgs = [], flowShafts = [], flowHeads = [];
   const ensureFlow = () => {
-    if (flowSvgs.length) return;
+    if (!showFlow || flowSvgs.length) return;
     ensureStyles();
     const arrows = STAGES.length + 1;
     // ONE full-viewport SVG per arrow (a stroked shaft + a SOLID triangle head), so every segment can
@@ -2616,6 +2645,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds. Each stack connector is a
   // straight run + ONE rounded corner so the line reaches the head dead-straight and centred.
   const drawFlow = (lefts, bw, topY, botY) => {
+    if (!showFlow) return;
     ensureFlow();
     const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
     const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
@@ -2759,7 +2789,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // ticket's data (progressOf), NOT its location — so a ticket that finished triage + investigation keeps
   // the right to drop straight into resolution even after it's thrown back into the left stack.
   const canAdvance = (from, to, t) => {
-    if (stageMovement === "free") return to !== from;
+    if (workflowKind === "grouped" || stageMovement === "free") return to !== from;
     return to < from || to <= progressOf(t) + 1;
   };
   const distToRect = (x, y, r) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
@@ -3394,6 +3424,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   publicApi = {
     reload: load,
     fan: setFan,
+    // Product-level contract used by the interaction audit. These semantics
+    // are deliberately explicit: a company grouping is not a pipeline, and a
+    // hand/search collection must not acquire lifecycle chrome by accident.
+    contract: () => ({
+      workflowKind,
+      showFlow,
+      showProgressBars,
+      stageMovement,
+      stages: STAGES.map(({ key, label }) => ({ key, label })),
+      piles: { left: deckCopy.leftTitle, right: deckCopy.rightTitle, trash: deckCopy.trashTitle },
+    }),
     create: openCreate,
     openCreate,
     previewState: (kind) => showSystemState(kind === "loading" ? "loading" : kind === "error" ? "error" : null),

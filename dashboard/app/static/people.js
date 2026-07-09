@@ -170,6 +170,8 @@
 
   window.createCrmCardSystem({
     apiName: "peopleCards",
+    workflowKind: "grouped",
+    showFlow: false,
     theater: "people",
     stageOf: companyStage,
     face: contactFace,
@@ -221,6 +223,8 @@
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out contacts needing attention",
+      leftTitle: "Needs attention",
+      emptyLeft: "Relationships needing attention<br>appear here",
       createAria: "Create a contact",
       trashAria: "Recycle bin (deleted contacts)",
       trashTitle: "Recycle bin",

@@ -338,6 +338,7 @@
 
   cardApi = window.createCrmCardSystem({
     apiName: "crmSearchDeckCards",
+    workflowKind: "collection",
     theater: "search",
     face: searchFace,
     source: searchSource,
@@ -372,6 +373,7 @@
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out CRM search results",
+      leftTitle: "Search results",
     },
     faceBadges: (record) => {
       const entity = normalizeEntity(record?.targetEntity || record?.entity || record?.type);

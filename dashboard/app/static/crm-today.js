@@ -249,6 +249,7 @@
 
   window.createCrmCardSystem({
     apiName: "crmToday",
+    workflowKind: "collection",
     theater: "today",
     face: todayFace,
     source: todaySource,
@@ -283,6 +284,7 @@
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out today's hand",
+      leftTitle: "Today's hand",
     },
     faceBadges: (record) => {
       const reason = record?.todayReason || "";

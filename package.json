@@ -19,8 +19,9 @@
     "visual:census": "node tools/visual/census-gallery.js",
     "test:visual": "node tools/visual/visual-diff.js",
     "test:factory": "node tools/visual/factory-check.js",
+    "test:interaction": "node tools/visual/interaction-contract.js",
     "test:ws": "node tools/visual/ws-parity-test.js",
-    "test": "npm run test:ws && npm run test:factory && npm run test:visual"
+    "test": "npm run test:ws && npm run test:factory && npm run test:interaction && npm run test:visual"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",

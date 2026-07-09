@@ -145,12 +145,12 @@
 
   // B / Esc backs out to Home from any camera-less module. Camera surfaces
   // (calendar) chain through their own onRootBack; overlays that own the key
-  // (detail panel, menus, quick-add, search deck, company dive, an open trash
+  // (detail panel, menus, search deck, company dive, an open trash
   // bin) always win — the desk never navigates out from under an open hand.
   const overlayOwnsKeys = (key) => {
     if (window.crmCompanyDive?.isActive?.()) return true;
     if (window.crmSearchDeck?.isOpen?.()) return true;
-    if (document.querySelector(".ticket-detail-overlay:not([hidden]), .tk-menu, .crm-quick-add-menu:not([hidden])")) return true;
+    if (document.querySelector(".ticket-detail-overlay:not([hidden]), .tk-menu")) return true;
     if (key === "Escape" && document.querySelector("section[data-crm-theater]:not([hidden]) .tk-stack-btn.is-active")) return true;
     return false;
   };

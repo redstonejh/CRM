@@ -1,0 +1,35 @@
+name: immune-system
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # The factory check renders the ORIGINAL ticketing repo side by side with
+      # the CRM; provide it via CRM_ORIGINAL_REPO if the sibling checkout is
+      # not present, else the step is skipped.
+      - name: WS parity (backend contract)
+        run: npm run test:ws
+      - name: Visual regression (golden pixel-diff)
+        run: npm run test:visual
+        env:
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+      - name: Factory regression (original vs CRM anatomy)
+        if: hashFiles('../_src_ticketing/dashboard/index.html') != ''
+        run: npm run test:factory
+        env:
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+      - name: Upload visual diffs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: tools/visual/candidate/

@@ -12,7 +12,12 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "visual": "node tools/visual/shoot.js",
-    "visual:serve": "node tools/visual/harness.js"
+    "visual:serve": "node tools/visual/harness.js",
+    "visual:update": "node tools/visual/visual-diff.js --update",
+    "test:visual": "node tools/visual/visual-diff.js",
+    "test:factory": "node tools/visual/factory-check.js",
+    "test:ws": "node tools/visual/ws-parity-test.js",
+    "test": "npm run test:ws && npm run test:factory && npm run test:visual"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",

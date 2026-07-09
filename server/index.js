@@ -383,7 +383,9 @@ async function patchRecord(res, entity, id, body, req) {
 
 async function deleteRecord(res, entity, id, url, body) {
   const hard = url.searchParams.get('hard') === '1' || url.searchParams.get('hard') === 'true';
-  const expectedVersion = Number(url.searchParams.get('version'));
+  // Number(null) is 0 — a finite value — so an absent version param must be
+  // detected explicitly or every version-less delete 409s against "expected 0".
+  const expectedVersion = url.searchParams.has('version') ? Number(url.searchParams.get('version')) : NaN;
   const actor = body.actor || 'unknown';
   if (hard) {
     const rows = Number.isFinite(expectedVersion)

@@ -9,3 +9,6 @@ out/
 
 # playwright MCP test output
 .playwright-mcp/
+
+# visual harness working output (goldens ARE committed)
+tools/visual/candidate/

@@ -259,6 +259,30 @@
     const backToRoot = () => {
       while (level > 0 && !transitioning) contract();
     };
+    // Seat a target's expander at FULL size with no animation — the end state
+    // expand() would have reached. contract() then plays the reverse dive from
+    // here, which is how the desk transit (BLUEPRINT A1) re-enters Home: the
+    // module's own bucket lid appears over the stage and flies back to its slot.
+    const jumpTo = (target) => {
+      if (!target || !active || transitioning || level >= maxLevel) return false;
+      ensure();
+      dropWarm();
+      const expander = buildExpander(target);
+      srcSel[level] = config.sourceSelector?.(target, ctx()) || "";
+      Object.assign(expander.style, { zIndex: "5", pointerEvents: "auto", transition: "none", opacity: "1", transform: "none" });
+      surface.appendChild(expander);
+      const below = layers[level];
+      below.style.zIndex = "0";
+      below.style.pointerEvents = "none";
+      below.style.visibility = "hidden";
+      below.style.transform = "none";
+      below.style.opacity = "1";
+      level += 1;
+      layers[level] = expander;
+      surface.dataset.level = String(level);
+      config.onLevelChange?.(ctx());
+      return true;
+    };
     const rebuildRoot = () => {
       ensure();
       dropWarm();
@@ -300,7 +324,12 @@
     const onKeyDown = (event) => {
       if (!active || !surface || surface.hidden) return;
       if (event.target && /INPUT|TEXTAREA/.test(event.target.tagName)) return;
-      if (event.key === "b" || event.key === "B" || event.key === "Escape") contract();
+      if (event.key === "b" || event.key === "B" || event.key === "Escape") {
+        // At root the surface has nowhere further to contract — hand the key to
+        // the owner (the desk transit chains module → Home; BLUEPRINT A1).
+        if (level === 0) { config.onRootBack?.(ctx()); return; }
+        contract();
+      }
     };
     const onResize = () => {
       if (!surface) return;
@@ -319,6 +348,8 @@
       expand,
       back: contract,
       backToRoot,
+      jumpTo,
+      isTransitioning: () => transitioning,
       refresh,
       rebuildRoot,
       dropWarm,

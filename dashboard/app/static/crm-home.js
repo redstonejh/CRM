@@ -114,7 +114,10 @@
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(async () => {
       homeStats = await loadHomeStats();
-      if (camera?.isActive?.()) camera.refresh();
+      // Never rebuild the root mid-dive: refresh() would replace the layer the
+      // camera (or the desk transit's lid) is animating. Try again shortly.
+      if (camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) { scheduleStatsRefresh(); return; }
+      if (camera?.isActive?.() && camera.level() === 0) camera.refresh();
     }, 120);
   };
   const subscribe = () => {
@@ -300,7 +303,11 @@
   const openModule = (target) => {
     const module = target?.dataset?.module || "";
     if (!module || target?.dataset?.enabled !== "true") return;
-    window.setTimeout(() => window.crmWorkspaces?.setActive?.(module), 180);
+    // The camera's own onClick already started the dive for this click; the
+    // desk transit adopts its ending so the theater commit happens at dive
+    // completion behind the lid — never the old 180ms mid-flight cut (A1).
+    if (window.crmDeskTransit?.adoptDive) window.crmDeskTransit.adoptDive(module);
+    else window.setTimeout(() => window.crmWorkspaces?.setActive?.(module), 180);
   };
 
   camera = window.createFractalCamera({

@@ -97,7 +97,12 @@
     )).join("");
     root.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-crm-module]");
-      if (button) setActive(button.dataset.crmModule);
+      if (!button) return;
+      // The pill bar is a shortcut that DRIVES THE CAMERA (BLUEPRINT A1):
+      // clicking "Pipeline" plays the same dive the Home bucket would, every
+      // time. setActive stays the instant commit primitive underneath.
+      if (window.crmDeskTransit?.driveTo) window.crmDeskTransit.driveTo(button.dataset.crmModule);
+      else setActive(button.dataset.crmModule);
     });
     document.body.appendChild(root);
     setActive(active);

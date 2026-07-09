@@ -412,6 +412,9 @@
     targetAtPoint: targetFromPoint,
     sourceSelector,
     keyOf,
+    // B/Esc at the year root backs out to Home — the module→Home leg of the
+    // one continuous B chain (BLUEPRINT A1): day→month→year→Home.
+    onRootBack: () => window.crmDeskTransit?.driveTo?.("home"),
     onReady: () => {
       wireYearControls();
       wireDrops();

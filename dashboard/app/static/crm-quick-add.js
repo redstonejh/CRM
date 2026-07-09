@@ -42,11 +42,14 @@
     if (menu) menu.hidden = !open;
   };
 
-  const createItem = (key) => {
+  const createItem = async (key) => {
     const item = ITEMS.find((candidate) => candidate.key === key);
     if (!item) return;
     setOpen(false);
-    window.crmWorkspaces?.setActive?.(item.module);
+    // Navigation is always a camera move (BLUEPRINT A1): ride the desk transit
+    // to the module, then draft the card once the dive has landed.
+    if (window.crmDeskTransit?.driveTo) await window.crmDeskTransit.driveTo(item.module);
+    else window.crmWorkspaces?.setActive?.(item.module);
     window.setTimeout(() => {
       const api = item.api();
       if (typeof api?.create === "function") api.create();

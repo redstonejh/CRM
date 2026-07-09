@@ -505,6 +505,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
       .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card, .tk-deck-trash .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
+      /* FIX_PASS_2 F3: a one-card closed pile paints two under-edges behind
+         itself (offset like the askew stack: +3,-4 per layer) so the corner
+         always reads as a pile, exactly as it does at two-plus cards. */
+      .tk-card.tk-pile-solo { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18),
+        4px -5px 0 -1px rgb(74, 84, 101), 8px -10px 0 -2px rgb(57, 65, 80); }
+      .tk-card.tk-pile-solo.tk-pile-right { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18),
+        -4px -5px 0 -1px rgb(74, 84, 101), -8px -10px 0 -2px rgb(57, 65, 80); }
       .tk-card.tk-link-target, .tk-zcard.tk-link-target { box-shadow: inset 0 0 0 2px rgba(125,180,255,0.95), 0 0 24px rgba(90,150,255,0.48), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.2) !important; }
       .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
@@ -1246,7 +1253,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     deck.viewW = viewW; deck.contentW = contentW;
     const scrollMin = Math.min(0, viewW - contentW);
     deck.scrollX = clamp(deck.scrollX, scrollMin, 0);
-    cards.forEach((c, i) => place(c, side, i, open, step));
+    cards.forEach((c, i) => place(c, side, i, open, step, n));
     setTrack(side);     // apply scroll to the track (cards hold only their slot transform)
     placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
     deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
@@ -1287,10 +1294,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // The track carries scroll; each card's transform is its SLOT only (so a reorder's .42s collision
   // animates independently of the rigid scroll). For left the track shifts by scrollX, for right by -scrollX.
   const setTrack = (side) => { const deck = decks[side]; if (deck && deck.track) deck.track.style.transform = `translateX(${side === "left" ? deck.scrollX : -deck.scrollX}px)`; };
-  const place = (card, side, i, open, step) => {
+  const place = (card, side, i, open, step, deckSize = 2) => {
     let tx, ty, rot;
     if (open) { tx = i * step; ty = 0; rot = 0; }   // slot position only — scroll is applied to the track
     else { const d = Math.min(i, 6); tx = d * 3; ty = -d * 4; rot = (i % 2 ? 1 : -1) * Math.min(i, 3) * 1.6; }
+    // FIX_PASS_2 F3: a pile of ONE still reads as a pile — the lone card sits
+    // at the pile's angle and carries painted under-edges (.tk-pile-solo).
+    const solo = !open && deckSize === 1 && i === 0;
+    if (solo) rot = -1.8;
+    card.classList.toggle("tk-pile-solo", solo);
+    card.classList.toggle("tk-pile-right", side !== "left");
     if (side !== "left") { tx = -tx; rot = -rot; }   // right + trash decks fan LEFT
     card._tx = tx; card._ty = ty; card._rot = rot;
     // Leave the dragged card alone — keep its on-top z-index (9999, set at drag start) and

@@ -16,7 +16,7 @@ const { installPgMem } = require('./pg-mem-adapter.js');
 const { seed } = require('./seed.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const DASHBOARD_ROOT = path.join(REPO_ROOT, 'dashboard');
+const DEFAULT_DASHBOARD_ROOT = path.join(REPO_ROOT, 'dashboard');
 const API_PORT = Number(process.env.CRM_API_PORT || 3899);
 const STATIC_PORT = Number(process.env.CRM_STATIC_PORT || 3898);
 
@@ -53,7 +53,7 @@ function rewriteIndexHtml(html, apiUrl) {
   return rewritten;
 }
 
-function startStaticServer({ apiUrl, port = STATIC_PORT } = {}) {
+function startStaticServer({ apiUrl, port = STATIC_PORT, dashboardRoot = DEFAULT_DASHBOARD_ROOT } = {}) {
   const server = http.createServer((req, res) => {
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -66,8 +66,8 @@ function startStaticServer({ apiUrl, port = STATIC_PORT } = {}) {
         return;
       }
 
-      const filePath = path.join(DASHBOARD_ROOT, pathname);
-      if (!filePath.startsWith(DASHBOARD_ROOT) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      const filePath = path.join(dashboardRoot, pathname);
+      if (!filePath.startsWith(dashboardRoot) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
         res.writeHead(404, { 'content-type': 'text/plain' });
         res.end('Not found');
         return;
@@ -100,19 +100,30 @@ async function waitForApi(apiUrl, timeoutMs = 10000) {
 }
 
 // Starts everything in-process. Returns URLs + a stop() the caller may ignore
-// in CLI mode (Ctrl+C kills the process).
-async function start({ seedData = process.env.CRM_SEED !== '0' } = {}) {
-  installPgMem();
-  process.env.PORT = String(API_PORT);
-  const apiUrl = `http://127.0.0.1:${API_PORT}`;
-  require(path.join(REPO_ROOT, 'server', 'index.js'));
-  await waitForApi(apiUrl);
-  if (seedData) {
-    const counts = await seed(apiUrl);
-    console.log('[harness] seeded', counts);
+// in CLI mode (Ctrl+C kills the process). `dashboardRoot` may point at any
+// repo's dashboard/ (the original ticketing repo renders through the same
+// harness to produce the reference shots); `seedFn` overrides the dataset.
+async function start({
+  seedData = process.env.CRM_SEED !== '0',
+  dashboardRoot = DEFAULT_DASHBOARD_ROOT,
+  apiPort = API_PORT,
+  staticPort = STATIC_PORT,
+  seedFn = seed,
+  apiUrl = null,   // reuse an already-running harness API (server/index.js can only boot once per process)
+} = {}) {
+  if (!apiUrl) {
+    installPgMem();
+    process.env.PORT = String(apiPort);
+    apiUrl = `http://127.0.0.1:${apiPort}`;
+    require(path.join(REPO_ROOT, 'server', 'index.js'));
+    await waitForApi(apiUrl);
+    if (seedData) {
+      const counts = await seedFn(apiUrl);
+      console.log('[harness] seeded', counts);
+    }
   }
-  const staticServer = await startStaticServer({ apiUrl });
-  const staticUrl = `http://127.0.0.1:${STATIC_PORT}/`;
+  const staticServer = await startStaticServer({ apiUrl, port: staticPort, dashboardRoot });
+  const staticUrl = `http://127.0.0.1:${staticPort}/`;
   console.log(`[harness] dashboard at ${staticUrl} (API ${apiUrl})`);
   return { apiUrl, staticUrl, stop: () => staticServer.close() };
 }

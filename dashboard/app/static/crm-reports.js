@@ -305,8 +305,8 @@
     return blankSummary();
   };
 
-  const publish = async () => {
-    if (!active) return;
+  const publish = async (force = false) => {
+    if (!active && !force) return;
     const missingWidget = REPORT_WIDGETS.some((spec) => !document.querySelector(`.crm-report-widget[data-widget-key="${spec.key}"]`));
     if ((!widgetsReady || missingWidget) && !(await ensureWidgets())) return;
     const summary = await summaryPayload();
@@ -353,6 +353,24 @@
     setActive,
     isActive: () => active,
     refresh: () => publish(),
+    // Census A1: clone the initialized report widget DOM into Home. The
+    // miniature is static, while each refresh rebuilds it from the live
+    // widgets/data runtime rather than a hand-drawn chart substitute.
+    miniature: async () => {
+      await ensureWidgets();
+      await publish(true);
+      await delay(80);
+      const scene = document.createElement("div");
+      scene.className = "crm-report-mini-scene";
+      document.querySelectorAll(".crm-report-widget").forEach((widget, index) => {
+        if (index >= 6) return;
+        const clone = widget.cloneNode(true);
+        clone.hidden = false;
+        clone.removeAttribute("id");
+        scene.appendChild(clone);
+      });
+      return scene;
+    },
   };
 
   window.crmReports = api;

@@ -82,7 +82,7 @@ const SCENES = [
     // every move a camera dive, the B chain unbroken, no cut anywhere.
     steps: [
       steps.frames('home-rest', 1, 200),
-      steps.click('.crm-module-switch button[data-crm-module="pipeline"]'),
+      steps.driveTo('pipeline'),
       steps.frames('dive-pipeline', 6, 150),
       steps.settle(500),
       steps.assert(() => document.body.dataset.crmModule === 'pipeline', 'landed on pipeline'),
@@ -90,7 +90,7 @@ const SCENES = [
       steps.frames('back-home', 6, 150),
       steps.settle(500),
       steps.assert(() => document.body.dataset.crmModule === 'home', 'B backed out to home'),
-      steps.click('.crm-module-switch button[data-crm-module="calendar"]'),
+      steps.driveTo('calendar'),
       steps.frames('dive-calendar', 6, 150),
       steps.settle(500),
       steps.assert(() => document.body.dataset.crmModule === 'calendar', 'landed on calendar'),
@@ -256,7 +256,7 @@ const SCENES = [
   {
     name: 'scene-4-the-flip',
     // Blueprint A5 proof: a won deal dragged from Pipeline's Won pile onto the
-    // Money pill glides to Money, turns over mid-flight, and lands in Draft as
+    // Home control glides through the desk root to Money, turns over mid-flight, and lands in Draft as
     // an invoice pre-filled from the deal.
     steps: [
       steps.driveTo('pipeline'),
@@ -269,7 +269,7 @@ const SCENES = [
           if (!cards.length) return null;
           const card = cards.reduce((a, b) => (Number(getComputedStyle(b).zIndex || 0) > Number(getComputedStyle(a).zIndex || 0) ? b : a));
           window.__FLIP_DEAL__ = card.dataset.id;
-          const pill = document.querySelector('.crm-module-switch button[data-crm-module="money"]');
+          const pill = document.querySelector('.crm-home-control');
           if (!pill) return null;
           const a = card.getBoundingClientRect(); const b = pill.getBoundingClientRect();
           return { fx: a.left + a.width / 2, fy: a.top + a.height / 2, tx: b.left + b.width / 2, ty: b.top + b.height / 2 };

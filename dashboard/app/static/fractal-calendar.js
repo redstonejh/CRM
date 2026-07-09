@@ -559,6 +559,15 @@
     level: () => camera.level(),
     back: () => camera.back(),
     refresh: () => loadScheduled({ refresh: true }),
+    // Census A1: the Home bucket receives the calendar's own year DOM and
+    // scales it as a static, non-interactive view.
+    miniature: () => {
+      ensureStyles();
+      const year = buildYear();
+      year.classList.add("crm-calendar-mini-scene");
+      year.querySelector(".fc-year-strip")?.remove();
+      return year;
+    },
     dayEl: (date) => camera.surface()?.querySelector(`.fc-day[data-date="${date}"], .fc-empty[data-date="${date}"], .fc-day-detail[data-date="${date}"]`) || null,
     monthEl: (month) => camera.surface()?.querySelector(`.fc-expander[data-month="${month}"], .fc-month[data-month="${month}"]`) || null,
     scheduleWidget,

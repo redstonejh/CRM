@@ -55,7 +55,7 @@
   const money = (amount) => amount ? `$${Math.round(amount).toLocaleString()}` : "$0";
   const bucketSummary = (_stage, deals) => {
     const total = deals.reduce((sum, deal) => sum + amountOf(deal), 0);
-    return `${money(total)} / ${deals.length}`;
+    return `${money(total)} · ${deals.length} ${deals.length === 1 ? "deal" : "deals"}`;
   };
 
   const dealSource = {
@@ -111,6 +111,17 @@
     const parsed = Date.parse(String(value || ""));
     return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
   };
+  const humanDate = (value) => {
+    const iso = dateOnly(value);
+    if (!iso) return "";
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const date = new Date(`${iso}T00:00:00`);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
   const daysSince = (value) => {
     const ms = typeof value === "number" ? value : Date.parse(String(value || ""));
     if (!Number.isFinite(ms)) return null;
@@ -124,7 +135,7 @@
       (r) => ({ label: "Value", value: money(amountOf(r)) }),
       (r) => ({ label: "Account", value: valueOf(r, "client") || valueOf(r, "company") || "" }),
       (r) => {
-        const next = dateOnly(valueOf(r, "nextTouchAt"));
+        const next = humanDate(valueOf(r, "nextTouchAt"));
         const age = daysSince(valueOf(r, "lastTouchAt") || r.updatedAt);
         const parts = [next ? `Next touch ${next}` : "", age != null ? `${age}d since touch` : ""].filter(Boolean);
         return parts.join(" · ");

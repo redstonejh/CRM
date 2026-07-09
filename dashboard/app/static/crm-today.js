@@ -223,11 +223,22 @@
   }
 
   // Today face: what it is / when it's due / stage · amount / who owns it.
+  const humanDate = (value) => {
+    const ms = Date.parse(String(value || ""));
+    if (!Number.isFinite(ms)) return String(value || "");
+    const date = new Date(ms); date.setHours(0, 0, 0, 0);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
   const todayFace = {
     title: (r) => r.title,
     subtitle: (r) => r.description,
     rows: [
-      (r) => (r.todayRow?.dueDate ? { label: "Due", value: r.todayRow.dueDate } : ""),
+      (r) => (r.todayRow?.dueDate ? { label: "Due", value: humanDate(r.todayRow.dueDate) } : ""),
       (r) => [firstText(r.todayRow?.stageLabel, r.todayRow?.stage), amountText(r.todayRow)].filter(Boolean).join(" · "),
       (r) => {
         const who = firstText(r.targetRecord?.assignee, r.targetRecord?.owner);

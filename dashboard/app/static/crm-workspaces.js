@@ -19,23 +19,27 @@
     const style = document.createElement("style");
     style.id = "crm-workspace-switch-styles";
     style.textContent = `
-      .crm-module-switch { position: fixed; left: 50%; top: 14px; z-index: 4600; transform: translateX(-50%);
-        display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px;
-        background: rgba(12,16,24,0.42); border: 1px solid rgba(255,255,255,0.16);
-        -webkit-backdrop-filter: blur(18px) saturate(135%); backdrop-filter: blur(18px) saturate(135%);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), 0 10px 28px rgba(0,0,0,0.2);
-        -webkit-app-region: no-drag; }
-      .crm-module-switch button { appearance: none; border: 0; border-radius: 999px; padding: 5px 12px;
-        background: transparent; color: rgba(255,255,255,0.58); font: inherit; font-size: 12px; font-weight: 700;
-        line-height: 1; cursor: pointer; transition: color .15s ease, background .15s ease; }
-      .crm-module-switch button:hover { color: rgba(255,255,255,0.86); }
-      .crm-module-switch button.is-active { color: #fff; background: rgba(255,255,255,0.12); }
+      /* FIDELITY_ORDER §2: the original's circular glass control, scaled to
+         54px and docked at bottom-centre, is the one navigation control. */
+      .crm-module-switch { position: fixed; left: 50%; bottom: 18px; z-index: 4600; transform: translateX(-50%);
+        width: 54px; height: 54px; -webkit-app-region: no-drag; }
+      .crm-home-control { appearance: none; width: 54px; height: 54px; padding: 0; border-radius: 50%;
+        border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
+        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
+        -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 10px 26px rgba(0,0,0,0.34);
+        color: #fff; display: flex; align-items: center; justify-content: center;
+        transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, opacity .25s ease; }
+      .crm-home-control:hover { transform: scale(1.08); }
+      .crm-home-control svg { width: 22px; height: 22px; fill: none; stroke: currentColor;
+        stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .crm-home-control.is-active { color: rgba(255,255,255,.64); cursor: default; }
       /* BLUEPRINT A4 / Scene VII: when a next-touch chip lands a card on a day
          the calendar can't show, its shortcut pulses once — the card still
          visibly has somewhere to be. */
-      .crm-module-switch button.crm-pill-pulse { animation: crmPillPulse .7s cubic-bezier(.22, 1, .26, 1); }
+      .crm-home-control.crm-pill-pulse { animation: crmPillPulse .7s cubic-bezier(.22, 1, .26, 1); }
       /* BLUEPRINT A5: the flip target lights while an eligible card hovers it. */
-      .crm-module-switch button.crm-pill-drop { color: #fff;
+      .crm-home-control.crm-pill-drop { color: #fff;
         box-shadow: 0 0 0 2px rgba(125,180,255,0.75), 0 0 18px rgba(90,150,255,0.5); }
       @keyframes crmPillPulse {
         0% { box-shadow: 0 0 0 0 rgba(125,180,255,0.75); color: #fff; }
@@ -90,10 +94,13 @@
     // Portaled chrome (card-detail panels, drag flyers) listens for this and
     // closes/cancels — a theater switch never carries another module's UI along.
     document.dispatchEvent(new CustomEvent("crm:theater-switch", { detail: { key: active } }));
-    root?.querySelectorAll("button[data-crm-module]").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.crmModule === active);
-      button.setAttribute("aria-pressed", button.dataset.crmModule === active ? "true" : "false");
-    });
+    const homeControl = root?.querySelector(".crm-home-control");
+    if (homeControl) {
+      const isHome = active === "home";
+      homeControl.classList.toggle("is-active", isHome);
+      homeControl.setAttribute("aria-current", isHome ? "page" : "false");
+      homeControl.setAttribute("aria-label", isHome ? "Home — current surface" : "Return Home");
+    }
     document.body.dataset.crmModule = active;
   };
 
@@ -101,19 +108,16 @@
     ensureStyles();
     root = document.createElement("div");
     root.className = "crm-module-switch";
-    root.setAttribute("role", "group");
-    root.setAttribute("aria-label", "CRM module");
-    root.innerHTML = MODULES.map((module) => (
-      `<button type="button" data-crm-module="${module.key}" aria-pressed="false">${module.label}</button>`
-    )).join("");
+    root.setAttribute("aria-label", "Desk navigation");
+    root.innerHTML = `<button type="button" class="crm-home-control" data-crm-home-control aria-label="Return Home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5 12 3.8l8.5 6.7"></path><path d="M5.8 9.3v10.2h12.4V9.3"></path><path d="M9.4 19.5v-5.7h5.2v5.7"></path></svg>
+    </button>`;
     root.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-crm-module]");
+      const button = event.target.closest("button[data-crm-home-control]");
       if (!button) return;
-      // The pill bar is a shortcut that DRIVES THE CAMERA (BLUEPRINT A1):
-      // clicking "Pipeline" plays the same dive the Home bucket would, every
-      // time. setActive stays the instant commit primitive underneath.
-      if (window.crmDeskTransit?.driveTo) window.crmDeskTransit.driveTo(button.dataset.crmModule);
-      else setActive(button.dataset.crmModule);
+      if (active === "home") return;
+      if (window.crmDeskTransit?.driveTo) window.crmDeskTransit.driveTo("home");
+      else setActive("home");
     });
     document.body.appendChild(root);
     setActive(active);

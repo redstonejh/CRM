@@ -89,6 +89,10 @@ async function main() {
   page.on('pageerror', (err) => console.error('[page error]', err.message));
   await page.evaluateOnNewDocument((stageMap) => {
     localStorage.setItem('tk-ticket-stage', JSON.stringify(stageMap));
+    // FIDELITY_ORDER §0/§1: the binding look is the original at FULL fidelity — wallpaper
+    // applied, glass live. Same wallpaper the CRM boots on (photo-water), so the
+    // indistinguishability diff compares like with like.
+    localStorage.setItem('dashboard-background', 'photo-water');
   }, STAGE_MAP);
   await page.goto(staticUrl, { waitUntil: 'load' });
   await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting'), { timeout: 30000 });
@@ -97,8 +101,9 @@ async function main() {
   await page.screenshot({ path: path.join(outDir, 'tickets.png') });
   console.log('[reference]', path.join('tools', 'visual', 'reference', 'tickets.png'));
 
-  // A fanned deck too — the deck anatomy golden.
-  await page.evaluate(() => window.ticketStacks?.fan?.('left', true));
+  // A fanned deck too — the deck anatomy golden. The original exposes no fan() API;
+  // click its left deck's fan arrow like a user would.
+  await page.evaluate(() => document.querySelector('.tk-deck-left .tk-arrow')?.click());
   await new Promise((r) => setTimeout(r, 900));
   await page.screenshot({ path: path.join(outDir, 'tickets-fanned.png') });
   console.log('[reference]', path.join('tools', 'visual', 'reference', 'tickets-fanned.png'));
@@ -107,4 +112,8 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+module.exports = { TICKETS, STAGE_MAP, seedTickets, chromePath };
+
+if (require.main === module) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}

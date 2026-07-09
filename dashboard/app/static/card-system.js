@@ -49,6 +49,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     createAria: `Create a ${widgetTitle.toLowerCase()}`,
     trashAria: `Recycle bin (deleted ${widgetTitle.toLowerCase()}s)`,
     trashTitle: "Recycle bin",
+    // The dashed empty-stack placeholders + zone watermark (original species; labels are the
+    // ONLY per-entity difference — FIDELITY_ORDER §1).
+    emptyLeft: `New ${widgetTitle.toLowerCase()}s<br>get added here`,
+    emptyRight: `Resolved ${widgetTitle.toLowerCase()}s<br>get added here`,
+    emptyTrash: `Deleted ${widgetTitle.toLowerCase()}s<br>get added here`,
+    zoneEmpty: `Drag ${widgetTitle.toLowerCase()}s here`,
     ...(config.deckCopy || {}),
   };
   const intensityOf = config.intensityOf || ((record) => {
@@ -104,11 +110,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const emptyStateText = typeof config.emptyStateText === "string" ? config.emptyStateText : "";
   // BLUEPRINT A5 — the flip: a config seam naming the sibling module a card
   // can transform INTO (pipeline: a won deal dropped on Money becomes a Draft
-  // invoice). The drop target is the destination's pill-bar shortcut — the
-  // one piece of the destination visible from every surface.
+  // invoice). The global Home control is the drop target; release then drives
+  // through Home to the configured destination surface.
   const flipTarget = config.flipTarget || null;
   const flipEligible = (record) => { try { return !!flipTarget && (!flipTarget.accepts || !!flipTarget.accepts(record)); } catch { return false; } };
-  const flipPillEl = () => flipTarget ? document.querySelector(`.crm-module-switch button[data-crm-module="${flipTarget.module}"]`) : null;
+  const flipPillEl = () => flipTarget ? document.querySelector(".crm-home-control") : null;
   const overFlipPill = (x, y) => {
     const el = flipPillEl(); if (!el) return false;
     const r = el.getBoundingClientRect(); const PAD = 16;   // generous catch pad
@@ -132,17 +138,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // sent past its due date reads as Overdue even while its stored stage says
   // "sent"); the stored doc stage and the local stage map are the fallbacks.
   const configuredStageOf = typeof config.stageOf === "function" ? config.stageOf : null;
+  const stageForRecord = (record) => {
+    if (!record) return null;
+    if (configuredStageOf) {
+      const derived = configuredStageOf(record);
+      if (STAGE_KEYS.includes(derived)) return derived;
+      if (derived === false) return null;
+    }
+    if (STAGE_KEYS.includes(record.stage)) return record.stage;
+    return record.id && STAGE_KEYS.includes(stageMap[record.id]) ? stageMap[record.id] : null;
+  };
   const stageOf = (id) => {
     if (!zonesEnabled) return null;
-    const t = ticketById(id);
-    if (configuredStageOf && t) {
-      const derived = configuredStageOf(t);
-      if (STAGE_KEYS.includes(derived)) return derived;
-      if (derived === false) return null;   // explicit "not bucketed" (e.g. paid → the pile)
-    }
-    const docStage = t?.stage;
-    if (STAGE_KEYS.includes(docStage)) return docStage;
-    return id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null;
+    return stageForRecord(ticketById(id));
   };
   const setStage = (id, stage) => {
     if (!zonesEnabled) return;
@@ -353,38 +361,106 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (g) { const r = g.getBoundingClientRect(); if (r.width > 40 && r.height > 40) { CARD_W = Math.round(r.width); CARD_H = Math.round(r.height); } }
   };
 
-  // ── The ONE card recipe (FIX_PASS_2 F1) ───────────────────────────────────────
-  // Every card is the same glass body — the neutral slate gradient the People
-  // card proved out — over an opaque backdrop so stacked cards never compound.
-  // Entity heat is expressed ONLY as an edge accent (left bar + soft glow)
-  // driven by --tk-accent-rgb; no body washes, no random blank-card colours.
-  const GRAY_BACKDROP = "rgb(107, 114, 128)";   // tone-grey #6b7280 — the reference backdrop
+  // ── The card fill (FIDELITY_ORDER §1: the original's recipe, verbatim) ─────────
+  // The opaque colour the (translucent) card fill sits over. A card's final colour = fill ⊕ this
+  // backdrop, so if this tracked the LIVE dashboard background, a dark background would show through
+  // and darken the card. Pin it to the "Dark grey" tone (#1f2937 — the default background), so every
+  // card renders EXACTLY as it does on the grey background (the source of truth), regardless of the
+  // active background. Change GRAY_BACKDROP if a different grey is the reference.
+  const GRAY_BACKDROP = "rgb(107, 114, 128)";   // tone-grey #6b7280 (the "Grey" background)
   const baseColor = () => GRAY_BACKDROP;
-  const GLASS_CARD_BG = "linear-gradient(180deg, rgba(83, 95, 117, 0.42), rgba(33, 41, 56, 0.34))";
-  const TICKET_COLORS = config.cardColors || ["#2563eb", "#0ea5e9", "#0891b2", "#14b8a6", "#16a34a", "#65a30d", "#ca8a04", "#d97706", "#dc2626", "#e11d48", "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#64748b", "#111827"];
-  const hexToRgb = (hex) => { const h = String(hex).replace("#", ""); return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }; };
-  const hasPriority = (t) => intensityValues.includes(priorityOf(t));
-  // The edge accent colour: an explicit appearance-menu override wins, else the
-  // severity/temperature/state palette. "none" heat (contacts, calendar rows)
-  // means NO accent — the status dot carries their state instead.
-  const accentRgbOf = (t) => {
-    if (!t || !t.id) return null;
-    const oc = metaOf(t.id).color;   // appearance-menu override drives the ACCENT now, never the body
-    if (oc) { const { r, g, b } = hexToRgb(oc); return `${r}, ${g}, ${b}`; }
-    const sev = sevOf(t);
-    if (sev === "none" || sev === "current") return null;
-    return SEV_RGB[sev] || null;
+  // Per-severity OPAQUE fill matching the grid card exactly. Probe a hidden card IN
+  // THE GRID'S CONTEXT (so the db-panel white-mix var resolves identically — a probe on
+  // <body> inherits a different mix and renders faded) and copy its resolved background.
+  // Opaque (vs glass) so stacked cards never blur/brighten each other.
+  const sevBgCache = {};
+  const severityBg = (sev) => {
+    if (sevBgCache[sev]) return sevBgCache[sev];
+    const fallback = `linear-gradient(180deg, rgba(${SEV_RGB[sev]},0.4), rgba(${SEV_RGB[sev]},0.2))`;
+    // The probe needs the widget's severity→accent palette (#<type>-widget-styles,
+    // injected by widget-registry at load). If it isn't present yet, use the gradient
+    // fallback WITHOUT caching so a later render probes the exact db-panel fill instead of
+    // poisoning the cache with the default (blue) accent.
+    if (!document.getElementById(`${widgetType}-widget-styles`)) return fallback;
+    // Probe in the grid's own context so the db-panel white-mix var resolves identically.
+    // With no card on the grid, fall back to the builder-chart layout (NOT <body>, which
+    // inherits a different mix and renders faded).
+    const host = (gridCard() && gridCard().parentElement)
+      || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]')
+      || document.querySelector('.dashboard-layout-grid')
+      || document.body;
+    const probe = document.createElement("div");
+    probe.className = `widget-card ${widgetCardClass} db-panel-custom-color`;
+    probe.setAttribute("data-widget-runtime-type", widgetType);
+    probe.dataset.severity = sev;
+    probe.style.cssText = "position:absolute; left:-9999px; top:0; width:160px; height:200px;";
+    host.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const layers = [];
+    if (cs.backgroundImage && cs.backgroundImage !== "none") layers.push(cs.backgroundImage);
+    if (cs.backgroundColor && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(cs.backgroundColor)) layers.push(`linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`);
+    probe.remove();
+    if (layers.length) return (sevBgCache[sev] = layers.join(", "));
+    return fallback;
   };
-  // Every card body is the same glass; heat lives on the edge.
-  const cardBg = () => GLASS_CARD_BG;
-  // One paint call for every card / clone / flyer: glass body + edge accent + staleness.
+
+  // ── Blank-card colours ──────────────────────────────────────────────────────
+  // A card with no information yet (no title/subtitle/priority) is painted a random colour
+  // from the EXISTING widget palette (panelThemePresets in modules/panel-appearance-runtime.js),
+  // minus white/"clear" — never the same colour twice in a row. The colour sticks (persisted)
+  // until a priority is set, when the severity colour takes over. Applies to new AND existing
+  // blank cards (assigned lazily on render).
+  const TICKET_COLORS = config.cardColors || ["#2563eb", "#0ea5e9", "#0891b2", "#14b8a6", "#16a34a", "#65a30d", "#ca8a04", "#d97706", "#dc2626", "#e11d48", "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#64748b", "#111827"];
+  const COLOR_STORE = storageKeys.color, COLOR_LAST = storageKeys.colorLast;
+  let colorMap = (() => { try { return JSON.parse(localStorage.getItem(COLOR_STORE) || "{}") || {}; } catch { return {}; } })();
+  let lastColor = (() => { try { return localStorage.getItem(COLOR_LAST) || null; } catch { return null; } })();
+  const hexToRgb = (hex) => { const h = String(hex).replace("#", ""); return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }; };
+  const assignColor = (id) => {
+    const pool = TICKET_COLORS.filter((c) => c !== lastColor);          // never the same colour twice in a row
+    const c = (pool.length ? pool : TICKET_COLORS)[Math.floor(Math.random() * (pool.length || TICKET_COLORS.length))];
+    colorMap[id] = c; lastColor = c;
+    try { localStorage.setItem(COLOR_STORE, JSON.stringify(colorMap)); localStorage.setItem(COLOR_LAST, c); } catch {}
+    return c;
+  };
+  const hasPriority = (t) => intensityValues.includes(priorityOf(t));
+  const isBlank = (t) => { const title = titleOf(t); return (!title || title === "Unknown") && !subOf(t) && !hasPriority(t); };
+  const colorFor = (t) => {
+    if (!t || !t.id) return null;
+    const oc = metaOf(t.id).color;              // appearance-menu override: an explicit colour wins over EVERYTHING
+    if (oc) return oc;                          // (absent/"" → "match severity", the default: fall through)
+    if (hasPriority(t)) return null;            // explicit priority → use the severity colour
+    if (colorMap[t.id]) return colorMap[t.id];  // already coloured → keep it (sticky)
+    if (isBlank(t)) return assignColor(t.id);   // blank & unassigned (new OR retroactive) → assign one
+    return null;
+  };
+  // Render a palette colour through the SAME db-panel fill as the severity colours, so it gets the
+  // same muted/mature look (the accent mixed into the dark surface) rather than the raw bright hex.
+  const colorBgCache = {};
+  const colorBg = (hex) => {
+    if (colorBgCache[hex]) return colorBgCache[hex];
+    const { r, g, b } = hexToRgb(hex);
+    const fallback = `linear-gradient(180deg, rgba(${r},${g},${b},0.4), rgba(${r},${g},${b},0.2))`;
+    if (!document.getElementById(`${widgetType}-widget-styles`)) return fallback;
+    const host = (gridCard() && gridCard().parentElement) || document.querySelector('.widget-layout[data-widget-layout-key="builder-chart"]') || document.querySelector(".dashboard-layout-grid") || document.body;
+    const probe = document.createElement("div");
+    probe.className = `widget-card ${widgetCardClass} db-panel-custom-color`;
+    probe.setAttribute("data-widget-runtime-type", widgetType);
+    probe.style.cssText = `position:absolute; left:-9999px; top:0; width:160px; height:200px; --panel-accent:${hex}; --panel-accent-rgb:${r}, ${g}, ${b};`;
+    host.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    const layers = [];
+    if (cs.backgroundImage && cs.backgroundImage !== "none") layers.push(cs.backgroundImage);
+    if (cs.backgroundColor && !/^rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)$/.test(cs.backgroundColor)) layers.push(`linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`);
+    probe.remove();
+    return layers.length ? (colorBgCache[hex] = layers.join(", ")) : fallback;
+  };
+  // The card fill: a random widget colour for a blank card, else its severity colour.
+  const cardBg = (t) => { const c = colorFor(t); return c ? colorBg(c) : severityBg(sevOf(t)); };
+  // One paint call for every card / clone / flyer: the original full-body wash + staleness.
   const applyCardPaint = (el, t) => {
     if (!el) return;
     el.style.backgroundColor = baseColor();
-    el.style.backgroundImage = GLASS_CARD_BG;
-    const accent = accentRgbOf(t);
-    if (accent) { el.style.setProperty("--tk-accent-rgb", accent); el.style.setProperty("--tk-accent-on", "1"); }
-    else { el.style.removeProperty("--tk-accent-rgb"); el.style.setProperty("--tk-accent-on", "0"); }
+    el.style.backgroundImage = cardBg(t);
     applyStaleness(el, t);
   };
   const stalenessOf = (t) => {
@@ -429,8 +505,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     { key: "incidentDate", label: "Date of incident", date: true },
     { key: "description",  label: "Description",       q: "What's the issue?", area: true },
   ];
-  // ISO date (yyyy-mm-dd, from <input type=date>) → mm-dd-yy (month-day-year) for the compact header/card display.
-  const fmtDate = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || "")); return m ? `${m[2]}-${m[3]}-${m[1].slice(2)}` : String(v || ""); };
+  // Census D1: compact human dates on every face; the full ISO value remains
+  // in the detail field where precision belongs.
+  const fmtDate = (v) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ""));
+    if (!m) return String(v || "");
+    const date = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
   // Natural-language work-effort → MINUTES. A "day" is 8 working hours and a "week" is 5 of those days,
   // so "1 week" = 40h; overtime beyond that is captured separately. Sums every "<n> <unit>" it finds
   // ("1 hour 30 min", "2d 4h"…); returns null if nothing parseable (e.g. "none").
@@ -528,8 +615,23 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         animation: tkDeskClear .46s ${EASE} .28s forwards; }
       @keyframes tkDeskClear { to { opacity: 1; } }
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
-      /* FIX_PASS_2 F2: the dashed empty-stack placeholders are gone. An empty
-         deck is the "+" button alone; an empty bucket is an empty glass bucket. */
+      /* Empty-stack placeholder: a subtle dashed bounding box in the closed pile's resting spot that says
+         what lands where. JS (layout()) shows it only when that corner stack has no cards; sized to the card. */
+      /* Styled to READ like the .tk-flow pipeline arrows: the same light-blue body (#d2e3ff) and soft
+         blue glow, instead of the old near-invisible faint white. */
+      .tk-empty { position: absolute; bottom: ${MARGIN}px; box-sizing: border-box; pointer-events: none;
+        border: 2px dashed rgba(210, 227, 255, 0.6); border-radius: ${RADIUS}px;
+        display: flex; align-items: center; justify-content: center; text-align: center;
+        color: rgba(210, 227, 255, 0.92); font-size: 0.92rem; font-weight: 600; line-height: 1.42; padding: 14px;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55));
+        transition: border-color .2s ease, color .2s ease, box-shadow .2s ease; }
+      .tk-empty-left { left: ${MARGIN}px; } .tk-empty-right { right: ${MARGIN}px; }
+      /* The empty recycle bin's placeholder, lifted to the open-bin spot (its bottom offset is set in render). */
+      .tk-empty-trash { right: ${MARGIN}px; z-index: 3; }
+      /* Eligible drop target while dragging a trashed card out: light up the placeholder (empty stack) or
+         the pile's cards (non-empty stack). */
+      .tk-empty.tk-drop-ok { border-color: rgba(125,180,255,0.85); border-style: solid; color: rgba(190,215,255,0.85);
+        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.4), 0 0 26px rgba(90,150,255,0.35); }
       .tk-deck.tk-drop-ok .tk-card { box-shadow: 0 0 0 2px rgba(125,180,255,0.7), 0 10px 26px rgba(0,0,0,0.42) !important; }
       /* The cards live in this track; horizontal scroll is ONE rigid transform on the track, decoupled
          from each card's own transform (slot/collision, which keeps its .42s transition). pointer-events
@@ -550,13 +652,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         transform-origin: bottom center; transition: transform .42s ${EASE}, box-shadow .2s ease; }
       .tk-deck-left .tk-card { left: ${MARGIN}px; } .tk-deck-right .tk-card, .tk-deck-trash .tk-card { right: ${MARGIN}px; }
       .tk-card:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.18); }
-      /* FIX_PASS_2 F3: a one-card closed pile paints two under-edges behind
-         itself (offset like the askew stack: +3,-4 per layer) so the corner
-         always reads as a pile, exactly as it does at two-plus cards. */
-      .tk-card.tk-pile-solo { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18),
-        4px -5px 0 -1px rgb(74, 84, 101), 8px -10px 0 -2px rgb(57, 65, 80); }
-      .tk-card.tk-pile-solo.tk-pile-right { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18),
-        -4px -5px 0 -1px rgb(74, 84, 101), -8px -10px 0 -2px rgb(57, 65, 80); }
+      .tk-card:focus-visible, .tk-zcard:focus-visible { outline: 2px solid rgba(190,220,255,.96); outline-offset: 3px;
+        box-shadow: 0 0 0 5px rgba(90,150,255,.28), inset 0 1px 0 rgba(255,255,255,.34), 0 8px 22px rgba(0,0,0,.24); }
+      .tk-system-state { position: fixed; left: 50%; top: 50%; z-index: 4100; transform: translate(-50%,-50%);
+        width: min(420px, calc(100vw - 48px)); padding: 22px; border-radius: 16px; text-align: center;
+        color: rgba(255,255,255,.82); background: linear-gradient(180deg, rgba(22,26,36,.72), rgba(12,16,24,.66));
+        border: 1px solid rgba(255,255,255,.2); backdrop-filter: blur(26px) saturate(140%);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 18px 42px rgba(0,0,0,.34); }
+      .tk-system-state[hidden] { display: none; }
+      .tk-state-title { font-weight: 800; font-size: 1rem; }
+      .tk-state-copy { margin-top: 6px; font-size: .8rem; color: rgba(255,255,255,.58); }
+      .tk-state-skeleton { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+      .tk-state-skeleton span { width: 54px; height: 72px; border-radius: 9px; background: rgba(255,255,255,.1);
+        animation: tkSkeleton 1.1s ease-in-out infinite alternate; }
+      .tk-state-skeleton span:nth-child(2) { animation-delay: .16s; } .tk-state-skeleton span:nth-child(3) { animation-delay: .32s; }
+      @keyframes tkSkeleton { to { background: rgba(255,255,255,.22); transform: translateY(-3px); } }
       .tk-card.tk-link-target, .tk-zcard.tk-link-target { box-shadow: inset 0 0 0 2px rgba(125,180,255,0.95), 0 0 24px rgba(90,150,255,0.48), inset 0 1px 0 rgba(255,255,255,0.34), 0 8px 22px rgba(0,0,0,0.2) !important; }
       .tk-card.tk-dragging { cursor: grabbing; transition: none; opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 24px 52px rgba(0,0,0,0.45); }
@@ -720,9 +830,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-date-under { position: absolute; top: 16px; right: 13px; z-index: 7; pointer-events: none;
         font-size: 0.6rem; font-weight: 600; line-height: 1.3; letter-spacing: .02em; white-space: nowrap;
         text-align: right; color: rgba(255,255,255,0.6); }
-      /* On the stack/zone cards the client name is a single ellipsised line, leaving the top-right column
-         (bars + date) clear so they never collide with a long name. */
-      .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 1; padding-right: 56px; }
+      /* Census D3: seeded names get two readable lines before ellipsis while
+         retaining the original's clear top-right progress/date column. */
+      .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 2; padding-right: 56px; }
       /* BLUEPRINT A6: the cold front is VISIBLE — if a screenshot can't show a
          24-day contact pale next to a 3-day one, the curve is too timid. The
          body drains saturation and dims; the frost sheet thickens with the
@@ -735,16 +845,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
         background: rgba(196,206,220, calc(var(--crm-staleness, 0) * .26));
         mix-blend-mode: screen;
-      }
-      /* FIX_PASS_2 F1: entity heat is an EDGE accent, never a body wash — a
-         left bar with a soft inward glow, driven by --tk-accent-rgb (set per
-         card in applyCardPaint; --tk-accent-on 0 = no accent, e.g. contacts). */
-      .tk-card::before, .tk-zcard::before, .tk-zfly::before {
-        content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; pointer-events: none; z-index: 8;
-        border-radius: ${RADIUS}px 0 0 ${RADIUS}px;
-        background: linear-gradient(180deg, rgba(var(--tk-accent-rgb, 120,130,140), 0.95), rgba(var(--tk-accent-rgb, 120,130,140), 0.55));
-        box-shadow: 6px 0 14px -6px rgba(var(--tk-accent-rgb, 120,130,140), 0.55);
-        opacity: var(--tk-accent-on, 0);
       }
       /* Live config-menu info on the card face (replaces the old "Down <time>" line). Each entered
          field is one compact, ellipsised line: a muted label + the value. */
@@ -778,6 +878,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zth { position: absolute; left: 0; width: 8px; border-radius: 999px; background: rgba(255,255,255,0.66);
         box-shadow: 0 1px 4px rgba(0,0,0,0.4); cursor: grab; transition: background .15s ease; }
       .tk-zth:hover { background: rgba(255,255,255,0.88); } .tk-zth:active { cursor: grabbing; background: #fff; }
+      .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
       /* Scroll-edge shadow lives INSIDE each clipped ticket (a child div). The ticket's own overflow:hidden
          + border-radius clip it, so it's a square 90° band through the ticket body but follows the REAL
          rounded corners exactly where the viewport edge nears a corner — and it can never land in the gaps
@@ -804,8 +905,18 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18), 0 0 0 rgba(234,179,8,0); }
       }
 
-      /* FIX_PASS_2 F2: the guide/flow arrows are gone — the pipeline reads
-         through the buckets themselves. */
+      /* ── Glass flow arrows: stack → first bucket → … → last bucket → resolved stack. ─────────── */
+      /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
+         then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
+      .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
+        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
+      /* Each arrow's own SVG lifts above the scrim (3945, still below the stacks) when it's in focus —
+         sharp — and rests at 790 (below the scrim) when out, where the scrim blurs it, matching the
+         bucket it points at. So on-path arrows go sharp with the target, off-path ones stay blurred. */
+      .tk-flow.tk-cofocus { z-index: 3945; }
+      .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
+        stroke-linecap: round; stroke-linejoin: round; }
+      .tk-flow-head { fill: #d2e3ff; stroke: none; }
       /* The round window/page controls at the top — AND their dropdowns (background/effects picker, the
          search popover) and the account button + its menu — stay in PERMANENT focus and take z-precedence
          over EVERYTHING: lifted above the DoF scrim (3900) and the whole ticket UI so nothing ever blurs
@@ -994,7 +1105,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // A corner stack (left/right) under the cursor — fanned OR closed — for dragging a card OUT of the bin
   // back into a stack. Uses the visible cards' bounds so a closed corner pile counts too.
   const overCornerStack = (x, y) => CORNER_SIDES.find((s) => {
-    const r = deckCardsRect(s) || actionRect(s);   // empty stacks have no cards → the action button marks the corner
+    const r = deckCardsRect(s) || emptyStackRect(s) || actionRect(s);   // empty stacks have no cards → use their placeholder region (else the action button)
     return !!r && x >= r.left - 16 && x <= r.right + 16 && y >= r.top - 16 && y <= r.bottom + 16;
   }) || null;
   // Which corner stack may a trashed ticket be dragged back INTO: everything EXCEPT a literally-resolved
@@ -1114,9 +1225,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         action.hidden = !trashEnabled;
         if (trashEnabled) action.addEventListener("click", () => setTrashMode(!trashMode, true));
       }
-      // FIX_PASS_2 F2: no empty-stack placeholder — an empty deck is the action button alone.
-      root.appendChild(box); root.appendChild(action);
-      decks[side] = { box, track, arrow, bar, thumb, action, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
+      // Empty-stack placeholder: lives on root (like the action button) so it shows when the deck box is
+      // hidden (.is-empty). Sized + toggled in layout(); tells the user what this corner collects.
+      const empty = document.createElement("div");
+      empty.className = `tk-empty tk-empty-${side}`;
+      empty.innerHTML = `<span>${side === "left" ? deckCopy.emptyLeft : deckCopy.emptyRight}</span>`;
+      empty.style.display = "none";
+      root.appendChild(box); root.appendChild(action); root.appendChild(empty);
+      decks[side] = { box, track, arrow, bar, thumb, action, empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder(side) };
     }
     // The recycle bin: a THIRD stack on the right, lifted above the trash icon (positioned in render),
     // shown only in trash mode. Same machinery as the right deck (fans left) — no action button of its own.
@@ -1131,9 +1247,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
       box.appendChild(arrow); box.appendChild(bar);
       wireThumb("trash", thumb);
-      // FIX_PASS_2 F2: no empty-bin placeholder — the bin icon is the drop target.
-      root.appendChild(box);
-      decks.trash = { box, track, arrow, bar, thumb, action: null, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
+      // Empty-bin placeholder: lives on root (the deck box is display:none while empty) and is shown in the
+      // lifted open-bin spot when the user opens an empty recycle bin. Sized + positioned in render().
+      const empty = document.createElement("div");
+      empty.className = "tk-empty tk-empty-trash";
+      empty.innerHTML = `<span>${deckCopy.emptyTrash}</span>`;
+      empty.style.display = "none";
+      root.appendChild(box); root.appendChild(empty);
+      decks.trash = { box, track, arrow, bar, thumb, action: null, emptyPh: empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
     }
     theater.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); DECK_SIDES.forEach(layout); });
@@ -1192,6 +1313,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const dim = any && !focus[s];
       d.box.style.zIndex = focus[s] ? "3" : "1";
       d.box.style.filter = dim ? "blur(4px)" : "";   // idle decks go soft while another is focused
+      // The empty-stack placeholder blurs WITH its (out-of-focus) deck; "" reverts to the CSS glow filter.
+      // A placeholder that's an active drag drop-target (.tk-drop-ok) stays sharp so it reads as eligible.
+      const ph = d.empty || d.emptyPh;
+      if (ph) ph.style.filter = (dim && !ph.classList.contains("tk-drop-ok")) ? "blur(4px)" : "";
     });
     if (stackScrim) {
       stackScrim.style.backdropFilter = stackScrim.style.webkitBackdropFilter = any ? "blur(4px)" : "blur(0px)";
@@ -1230,15 +1355,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   // The drop region of an EMPTY corner stack = its "add here" placeholder box (shown only when the stack
   // has no cards). Lets a trashed card be dragged back into a stack that's currently empty.
+  const emptyStackRect = (side) => { const el = decks[side]?.empty; return el && el.isConnected && el.offsetParent !== null ? el.getBoundingClientRect() : null; };
   const actionRect = (side) => { const el = decks[side]?.action; return el && el.isConnected && !el.hidden ? el.getBoundingClientRect() : null; };
   // Highlight the corner stack (its cards' box AND its empty placeholder) a trashed card would restore
   // into, so the eligible drop target reads clearly while dragging out of the bin.
   let stackDropSide = null;
   const setStackDrop = (side) => {
     if (side === stackDropSide) return;
-    CORNER_SIDES.forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); });
+    CORNER_SIDES.forEach((s) => { decks[s]?.box?.classList.remove("tk-drop-ok"); decks[s]?.empty?.classList.remove("tk-drop-ok"); });
     stackDropSide = side || null;
-    if (side) { decks[side]?.box?.classList.add("tk-drop-ok"); }
+    if (side) { decks[side]?.box?.classList.add("tk-drop-ok"); decks[side]?.empty?.classList.add("tk-drop-ok"); }
   };
   const nearRect = (x, y, r, pad) => !!r && x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
   const inFocusDeadzone = (x, y) => {
@@ -1296,6 +1422,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const cards = deck.cards, n = cards.length;
     deck.box.classList.toggle("is-empty", n === 0);
     deck.box.classList.toggle("is-fanned", fanned[side] && n > 0);
+    // Empty-stack placeholder: shown in the closed pile's spot when this corner has no cards. The RIGHT
+    // one hides only while the bin is FANNED OUT along the bottom (which would overlap it); a closed bin
+    // pile is lifted above this spot, so a resolved card can still be dragged back down here. Sized to card.
+    // (Deck-only instances own their empty state — e.g. Today's "Desk clear." — so no placeholder there;
+    // a disabled right deck never advertises a pile that can't exist.)
+    if (deck.empty) {
+      const enabled = !deckOnly && (side === "left" || rightDeckEnabled);
+      const showPh = enabled && n === 0 && (side === "left" || (side === "right" && !fanned.trash));
+      deck.empty.style.display = showPh ? "" : "none";
+      if (showPh) { deck.empty.style.width = `${CARD_W}px`; deck.empty.style.height = `${CARD_H}px`; }
+    }
     const open = fanned[side];
     const step = CARD_W + GAP_FAN;
     const viewW = fanViewW();
@@ -1379,12 +1516,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     }
     else if (open) { tx = i * step; ty = 0; rot = 0; }   // slot position only — scroll is applied to the track
     else { const d = Math.min(i, 6); tx = d * 3; ty = -d * 4; rot = (i % 2 ? 1 : -1) * Math.min(i, 3) * 1.6; }
-    // FIX_PASS_2 F3: a pile of ONE still reads as a pile — the lone card sits
-    // at the pile's angle and carries painted under-edges (.tk-pile-solo).
-    const solo = !open && deckSize === 1 && i === 0;
-    if (solo) rot = -1.8;
-    card.classList.toggle("tk-pile-solo", solo);
-    card.classList.toggle("tk-pile-right", side !== "left");
     if (side !== "left") { tx = -tx; rot = -rot; }   // right + trash decks fan LEFT
     card._tx = tx; card._ty = ty; card._rot = rot;
     // Leave the dragged card alone — keep its on-top z-index (9999, set at drag start) and
@@ -2151,6 +2282,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     card.innerHTML = cardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');   // viewport-edge scroll shadow (clipped to this card)
     wireCard(card, t, side);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `${titleOf(t)} — open ${widgetTitle.toLowerCase()}`);
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (side !== "trash") detail?.open?.(t, card);
+    });
     wireContextMenu(card, t);   // right-click menu (state-aware: trash cards get restore + delete-permanently)
     // Trash cards carry their own "restore" action bottom-right (no config menu for deleted tickets).
     if (side === "trash") {
@@ -2441,10 +2580,62 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
   };
 
-  // ── Flow arrows: DELETED (FIX_PASS_2 F2). ────────────────────────────────────
-  // The stack→bucket→…→resolved guide arrows are tutorial furniture the vision
-  // rejects; the empty arrays keep the co-focus plumbing inert.
-  let flowSvgs = [];
+  // ── Glass flow arrows ─────────────────────────────────────────────────────────
+  // A stylized translucent line through the pipeline: left (inbox) stack → first bucket, an arrow
+  // between each bucket, then last bucket → right (resolved) stack. Drawn as one SVG overlay,
+  // each arrow a glowing glass body with a bright core + a glassy arrowhead.
+  let flowSvgs = [], flowShafts = [], flowHeads = [];
+  const ensureFlow = () => {
+    if (flowSvgs.length) return;
+    ensureStyles();
+    const arrows = STAGES.length + 1;
+    // ONE full-viewport SVG per arrow (a stroked shaft + a SOLID triangle head), so every segment can
+    // cross the DoF scrim on its OWN — an on-path arrow lifts above it (sharp), an off-path one rests
+    // below it (scrim-blurred) — exactly how the buckets behave. They never overlap, so their z-order
+    // among themselves is irrelevant. They live in the THEATER so they hide with the surface.
+    for (let i = 0; i < arrows; i++) {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><path class="tk-flow-shaft"></path><path class="tk-flow-head"></path></svg>`;
+      const svg = wrap.firstElementChild;
+      theater.appendChild(svg);
+      flowSvgs.push(svg);
+      flowShafts.push(svg.querySelector(".tk-flow-shaft"));
+      flowHeads.push(svg.querySelector(".tk-flow-head"));
+    }
+  };
+  const HEAD_LEN = 20, HEAD_HALF = 9, CORNER = 46;
+  // A solid arrowhead whose BASE CENTRE is where the shaft stops; the shaft's round cap just
+  // reaches the base, so the line enters the head's centre and nothing crosses into/past it.
+  // dx,dy = unit travel direction at the tip; r = rounder.
+  const arrowHead = (ex, ey, dx, dy, r) => {
+    const bx = ex - HEAD_LEN * dx, by = ey - HEAD_LEN * dy;             // base centre
+    const sx = ex - (HEAD_LEN - 5) * dx, sy = ey - (HEAD_LEN - 5) * dy; // shaft overlaps 5px INTO the head (no gap)
+    const px = -dy * HEAD_HALF, py = dx * HEAD_HALF;                    // half-width perpendicular
+    return { sx, sy, d: `M${r(bx + px)},${r(by + py)} L${r(ex)},${r(ey)} L${r(bx - px)},${r(by - py)} Z` };
+  };
+  // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds. Each stack connector is a
+  // straight run + ONE rounded corner so the line reaches the head dead-straight and centred.
+  const drawFlow = (lefts, bw, topY, botY) => {
+    ensureFlow();
+    const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
+    const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
+    const leftX = MARGIN + 26, rightX = window.innerWidth - (MARGIN + 26);   // mirror of leftX
+    const shafts = [], heads = [];
+    // 1 — rise from the inbox, early rounded corner, long HORIZONTAL run dead-centre into the first bucket.
+    { const ex = lefts[0] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
+      shafts.push(`M${leftX},${offStack} L${leftX},${midY + CORNER} Q${leftX},${midY} ${leftX + CORNER},${midY} L${r(h.sx)},${midY}`);
+      heads.push(h.d); }
+    // 2 — straight trail across each gap into the next bucket (head points right).
+    for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
+      shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${midY}`); heads.push(h.d); }
+    // 3 — MIRROR of the left: leave the last bucket, early rounded corner, long VERTICAL run dead-centre
+    //     down into the resolved stack (head points down).
+    { const h = arrowHead(rightX, offStack, 0, 1, r);
+      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} L${r(rightX - CORNER)},${midY} Q${r(rightX)},${midY} ${r(rightX)},${midY + CORNER} L${r(rightX)},${r(h.sy)}`);
+      heads.push(h.d); }
+    shafts.forEach((d, i) => flowShafts[i]?.setAttribute("d", d));
+    heads.forEach((d, i) => flowHeads[i]?.setAttribute("d", d));
+  };
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {
     const grid = document.querySelector(".dashboard-layout-grid");
@@ -2508,6 +2699,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                    // 8px bar centred there, kept inside the bucket
       }
     });
+    drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
     // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does
     // the same via updateDeckEdges() at the end of layout(). Without the re-clamp a bucket scrolled to
     // the bottom stays pinned there after the window grows past being scrollable (no way back up).
@@ -2884,6 +3076,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     card.innerHTML = zoneCardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade tk-zs-t"></div><div class="tk-edge-shade tk-zs-b"></div>');   // top/bottom scroll shadows (clipped to this card)
     wireZoneCard(card, t, stage);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `${titleOf(t)} — open ${widgetTitle.toLowerCase()}`);
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      revealZoneCard(stage, card, () => detail?.open?.(t, card));
+    });
     wireContextMenu(card, t);   // right-click menu (edit / appearance / delete)
     return card;
   };
@@ -2959,7 +3159,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         count.textContent = String(summary || "");
         count.hidden = !summary;
       }
-      track.innerHTML = "";   // FIX_PASS_2 F2: an empty bucket is an empty glass bucket — no watermark
+      track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${deckCopy.zoneEmpty}</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
@@ -3081,10 +3281,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // Once the bin actually holds cards, the deliberate-empty intent is spent — so emptying it later
     // (restoring the last card) falls back to the normal auto-close below.
     if (deleted.length) trashShowEmpty = false;
-    // An empty bin closes itself (e.g. after restoring the last deleted ticket).
-    // FIX_PASS_2 F2: the "get added here" placeholder is gone — the bin icon
-    // (with its blue active ring) is all the empty-bin state there is.
+    // An empty bin closes itself (e.g. after restoring the last deleted ticket) — UNLESS the user just
+    // opened it empty on purpose (trashShowEmpty), in which case it stays open to show the placeholder.
     if (trashMode && !deleted.length && !trashShowEmpty) { trashMode = false; fanned.trash = false; decks.right?.action?.classList.remove("is-active"); }
+    // Deliberately-opened empty bin: show the "get added here" placeholder in the lifted
+    // open-bin spot (the deck box itself is display:none while empty), matching where the cards would fan up.
+    if (decks.trash?.emptyPh) {
+      const showTrashPh = trashMode && !deleted.length;
+      decks.trash.emptyPh.style.display = showTrashPh ? "" : "none";
+      if (showTrashPh) {
+        decks.trash.emptyPh.style.width = `${CARD_W}px`;
+        decks.trash.emptyPh.style.height = `${CARD_H}px`;
+        decks.trash.emptyPh.style.bottom = `${MARGIN + CARD_H + 62}px`;
+      }
+    }
     updateStackFocus();
     renderZones();
     // A just-created ticket: once its card has spawned into the left stack, let it settle, then
@@ -3138,6 +3348,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // Today hand → contactDetail etc.) would otherwise hold its stale render
   // until the next store change (BLUEPRINT A3: the acted-on card must depart).
   let deferredRenderTimer = 0;
+  const showSystemState = (kind, message = "") => {
+    const host = ensureTheater();
+    let state = host.querySelector(":scope > .tk-system-state");
+    if (!state) {
+      state = document.createElement("div");
+      state.className = "tk-system-state";
+      host.appendChild(state);
+    }
+    if (!kind) { state.hidden = true; return; }
+    state.hidden = false;
+    state.dataset.kind = kind;
+    state.innerHTML = kind === "loading"
+      ? `<div class="tk-state-title">Loading ${esc(widgetTitle.toLowerCase())}s…</div><div class="tk-state-skeleton"><span></span><span></span><span></span></div>`
+      : `<div class="tk-state-title">The desk is offline</div><div class="tk-state-copy">${esc(message || `Could not load ${widgetTitle.toLowerCase()}s. Your last saved view remains safe.`)}</div>`;
+  };
   const scheduleDeferredRender = () => {
     clearTimeout(deferredRenderTimer);
     deferredRenderTimer = setTimeout(() => {
@@ -3148,8 +3373,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     }, 260);
   };
   const load = async () => {
-    try { const r = await source?.list?.(); tickets = recordsFromList(r); }
-    catch { tickets = []; }
+    if (!tickets.length) showSystemState("loading");
+    try { const r = await source?.list?.(); tickets = recordsFromList(r); showSystemState(null); }
+    catch (error) { tickets = []; showSystemState("error", error?.message); }
     migrateLegacyFaces();
     render();
     if (!subscribed) {
@@ -3170,6 +3396,53 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     fan: setFan,
     create: openCreate,
     openCreate,
+    previewState: (kind) => showSystemState(kind === "loading" ? "loading" : kind === "error" ? "error" : null),
+    // Census A1: Home asks the factory for its own DOM at k-scale. This is
+    // the same card inner markup, paint function and zone/header species as
+    // the full surface; only the non-interactive layout shell is miniature.
+    miniature: async () => {
+      ensureStyles();
+      let records = tickets;
+      try { records = recordsFromList(await source?.list?.()); } catch {}
+      const scene = document.createElement("div");
+      scene.className = `crm-factory-mini-scene crm-factory-mini-${widgetType}`;
+      if (zonesEnabled) {
+        const visibleStages = STAGES.slice(0, 4);
+        visibleStages.forEach((stage, index) => {
+          const zone = document.createElement("section");
+          zone.className = "tk-zone crm-factory-mini-zone";
+          zone.style.left = `${index * 270}px`;
+          zone.innerHTML = `<div class="tk-zone-hd"><span>${esc(stage.label)}</span></div><div class="tk-zone-body"><div class="tk-zone-track"></div></div>`;
+          const track = zone.querySelector(".tk-zone-track");
+          const cards = records.filter((record) => stageForRecord(record) === stage.key && !isDeleted(record.id) && !inAttentionDeck(record)).slice(0, 3);
+          if (!cards.length) track.innerHTML = `<div class="tk-zone-empty">${deckCopy.zoneEmpty}</div>`;
+          cards.forEach((record, cardIndex) => {
+            const card = document.createElement("div");
+            card.className = `tk-zcard tk-zcard-${widgetType}`;
+            card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
+            if (cardIndex) card.style.marginTop = `-${CARD_H - ZCARD_PEEK}px`;
+            applyCardPaint(card, record);
+            card.innerHTML = zoneCardInner(record);
+            track.appendChild(card);
+          });
+          scene.appendChild(zone);
+        });
+      } else {
+        const hand = document.createElement("div");
+        hand.className = "crm-factory-mini-hand";
+        records.filter((record) => !isDeleted(record.id)).slice(0, 5).forEach((record, index) => {
+          const card = document.createElement("div");
+          card.className = "tk-card";
+          card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
+          card.style.left = `${index * 118}px`; card.style.transform = `rotate(${(index - 2) * 2.2}deg)`;
+          applyCardPaint(card, record);
+          card.innerHTML = cardInner(record);
+          hand.appendChild(card);
+        });
+        scene.appendChild(hand);
+      }
+      return scene;
+    },
     isDeleted,
     delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
     // Send the ticket back to exactly where it was deleted from: its bucket (as the visual-TOP card, i.e.

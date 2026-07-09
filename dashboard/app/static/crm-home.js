@@ -9,12 +9,12 @@
   // placeholder tile is gone until the module exists; Tickets stays reachable
   // from the top workspace switch and quick-add.
   const MODULES = [
-    { key: "today", label: "Today", note: "The dealt hand for work due now", enabled: true },
-    { key: "people", label: "People", note: "Contacts and relationship attention", enabled: true },
-    { key: "pipeline", label: "Pipeline", note: "Deals, stages and wins", enabled: true },
-    { key: "money", label: "Money", note: "Invoices, cash aging and paid work", enabled: true },
-    { key: "calendar", label: "Calendar", note: "Scheduled work by day", enabled: true },
-    { key: "reports", label: "Reports", note: "Aggregates and builder widgets", enabled: true },
+    { key: "today", label: "Today", enabled: true },
+    { key: "people", label: "People", enabled: true },
+    { key: "pipeline", label: "Pipeline", enabled: true },
+    { key: "money", label: "Money", enabled: true },
+    { key: "calendar", label: "Calendar", enabled: true },
+    { key: "reports", label: "Reports", enabled: true },
   ];
   let camera = null;
   let subscribed = false;
@@ -117,7 +117,10 @@
       // Never rebuild the root mid-dive: refresh() would replace the layer the
       // camera (or the desk transit's lid) is animating. Try again shortly.
       if (camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) { scheduleStatsRefresh(); return; }
-      if (camera?.isActive?.() && camera.level() === 0) camera.refresh();
+      if (camera?.isActive?.() && camera.level() === 0) {
+        camera.refresh();
+        refreshLivePreviews();
+      }
     }, 120);
   };
   const subscribe = () => {
@@ -152,8 +155,26 @@
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42);
       }
       .crm-home-title { font-size: clamp(1rem, 2.4vw, 1.35rem); font-weight: 800; line-height: 1.1; }
-      .crm-home-note { margin-top: 8px; font-size: 0.8rem; line-height: 1.35; color: rgba(255,255,255,0.58); max-width: 24ch; }
-      .crm-home-preview { margin-top: auto; min-height: 52px; opacity: .82; color: rgba(255,255,255,0.62); }
+      .crm-home-preview { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 10px;
+        overflow: hidden; opacity: .88; color: rgba(255,255,255,0.62); }
+      /* Factory-produced real DOM, viewed at k-scale. The miniature contains
+         the same tk-zone/tk-card markup and paint as its full module. */
+      .crm-factory-mini-scene { position: absolute; left: 50%; top: 50%; width: 1080px; height: 650px;
+        transform: translate(-50%, -50%) scale(.31); transform-origin: center; pointer-events: none; }
+      .crm-factory-mini-zone { position: absolute !important; top: 0 !important; bottom: auto !important;
+        width: 240px !important; height: 620px !important; }
+      .crm-factory-mini-zone .tk-zone-body { min-height: 540px; }
+      .crm-factory-mini-zone .tk-zone-track { min-height: 540px; }
+      .crm-factory-mini-hand { position: absolute; inset: 120px 0 0; }
+      .crm-factory-mini-hand > .tk-card { position: absolute !important; top: 0 !important; bottom: auto !important; }
+      .crm-calendar-mini-scene { position: absolute !important; left: 50%; top: 50%; width: 1540px; height: 900px;
+        transform: translate(-50%, -50%) scale(.25); transform-origin: center; pointer-events: none; }
+      .crm-calendar-mini-scene .fc-grid { position: absolute !important; inset: 25px !important;
+        width: auto !important; height: auto !important; }
+      .crm-report-mini-scene { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, minmax(0,1fr));
+        grid-template-rows: repeat(2, minmax(0,1fr)); gap: 6px; pointer-events: none; }
+      .crm-report-mini-scene .crm-report-widget { position: relative !important; inset: auto !important; grid-area: auto !important;
+        min-width: 0 !important; min-height: 0 !important; width: auto !important; height: auto !important; margin: 0 !important; }
       .crm-home-count { font-size: .68rem; font-weight: 800; line-height: 1; color: rgba(255,255,255,0.68); }
       .crm-home-stack-preview { position: relative; height: 52px; }
       .crm-home-mini-card { position: absolute; left: 0; bottom: 0; width: 44px; height: 34px; border-radius: 6px;
@@ -225,8 +246,31 @@
 
   const bucketHTML = (module) => `
     <div class="crm-home-title">${esc(module.label)}</div>
-    <div class="crm-home-note">${esc(module.note)}</div>
     <div class="crm-home-preview" aria-hidden="true">${previewHTML(module.key)}</div>`;
+
+  const liveFactories = () => ({
+    today: window.crmToday,
+    people: window.peopleCards,
+    pipeline: window.dealPipeline,
+    money: window.moneyPipeline,
+    calendar: window.fractalCalendar,
+    reports: window.crmReports,
+  });
+  const refreshLivePreviews = async () => {
+    if (!camera?.isActive?.() || camera.level() !== 0) return;
+    const level = camera.layers?.()[0];
+    if (!level) return;
+    await Promise.all(Object.entries(liveFactories()).map(async ([key, factory]) => {
+      if (typeof factory?.miniature !== "function") return;
+      const preview = level.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);
+      if (!preview) return;
+      try {
+        const miniature = await factory.miniature();
+        if (!preview.isConnected || !miniature) return;
+        preview.replaceChildren(miniature);
+      } catch {}
+    }));
+  };
 
   const buildRoot = () => {
     const root = document.createElement("div");

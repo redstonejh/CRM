@@ -329,16 +329,22 @@ export function initializeBackgroundController({ portalFloatingMenu, restoreFloa
     document.body.classList.remove("has-photo-background");
   };
   
-  const backgroundDefault = "tone-grey";
+  // FIDELITY_ORDER §1: glass is always evaluated over the binding source
+  // wallpaper. Existing profiles retain their explicit choice; a fresh profile
+  // opens on the original ticketing surface's photo-water backdrop.
+  const backgroundDefault = "photo-water";
   const backgroundStorageKey = "dashboard-background";
+  const defaultBackgroundState = () => isPhotoTone(backgroundDefault)
+    ? { kind: "photo", tone: backgroundDefault }
+    : { kind: "preset", tone: backgroundDefault, hex: COLOR_PRESETS[backgroundDefault].hex };
   const parseBackgroundState = (value) => {
     if (typeof value === "string" && value.trim().startsWith("{")) {
-      return { kind: "preset", tone: backgroundDefault, hex: COLOR_PRESETS[backgroundDefault].hex };
+      return defaultBackgroundState();
     }
     if (isPhotoTone(value)) return { kind: "photo", tone: value };
     const migrated = LEGACY_TONE_MIGRATIONS[value] || value;
-    const preset = COLOR_PRESETS[migrated] ? migrated : backgroundDefault;
-    return { kind: "preset", tone: preset, hex: COLOR_PRESETS[preset].hex };
+    if (!COLOR_PRESETS[migrated]) return defaultBackgroundState();
+    return { kind: "preset", tone: migrated, hex: COLOR_PRESETS[migrated].hex };
   };
   const serializeBackgroundState = (state) => state?.tone || backgroundDefault;
   const savedBackgroundState = () => {

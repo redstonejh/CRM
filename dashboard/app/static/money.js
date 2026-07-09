@@ -78,7 +78,18 @@
   const money = (amount) => amount ? `$${Math.round(amount).toLocaleString()}` : "$0";
   const bucketSummary = (_stage, invoices) => {
     const total = invoices.reduce((sum, invoice) => sum + amountOf(invoice), 0);
-    return `${money(total)} / ${invoices.length}`;
+    return `${money(total)} · ${invoices.length} ${invoices.length === 1 ? "invoice" : "invoices"}`;
+  };
+  const humanDate = (value) => {
+    const iso = dateOnly(value);
+    if (!iso) return "";
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const date = new Date(`${iso}T00:00:00`);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
   const invoiceSource = {
@@ -143,13 +154,9 @@
         if (!due) return "";
         if (invoiceIntensity(r) === "overdue") {
           const days = Math.max(1, Math.floor((Date.now() - Date.parse(`${due}T00:00:00`)) / 86400000));
-          return { label: "Due", value: `${due} · ${days}d overdue` };
+          return { label: "Due", value: `${humanDate(due)} · ${days}d overdue` };
         }
-        return { label: "Due", value: due };
-      },
-      (r) => {
-        const state = invoiceState(r);
-        return state ? state.charAt(0).toUpperCase() + state.slice(1) : "";
+        return { label: "Due", value: humanDate(due) };
       },
     ],
   };

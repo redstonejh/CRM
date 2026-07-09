@@ -98,6 +98,17 @@
     try { return new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
     catch { return ""; }
   };
+  const humanDate = (value) => {
+    const ms = dateMs(value);
+    if (!ms) return "";
+    const date = new Date(ms); date.setHours(0, 0, 0, 0);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
   const entityLabel = (entity) => specFor(entity)?.label || "Record";
   const titleOf = (entity, record) => {
     if (entity === "companies") return firstText(valueOf(record, "name"), valueOf(record, "company"), valueOf(record, "title"), valueOf(record, "client"), record?.companyLabel, "Company");
@@ -109,7 +120,7 @@
   const subtitleOf = (entity, record) => {
     if (entity === "contacts") return firstText(valueOf(record, "company"), valueOf(record, "role"), valueOf(record, "description"), record?.host);
     if (entity === "deals") return [moneyText(amountOf(record)), firstText(valueOf(record, "stage"), valueOf(record, "state")), valueOf(record, "description")].filter(Boolean).join(" / ");
-    if (entity === "invoices") return [moneyText(amountOf(record)), firstText(valueOf(record, "state"), valueOf(record, "stage")), valueOf(record, "dueDate") ? `Due ${valueOf(record, "dueDate")}` : ""].filter(Boolean).join(" / ");
+    if (entity === "invoices") return [moneyText(amountOf(record)), firstText(valueOf(record, "state"), valueOf(record, "stage")), valueOf(record, "dueDate") ? `Due ${humanDate(valueOf(record, "dueDate"))}` : ""].filter(Boolean).join(" / ");
     return firstText(valueOf(record, "description"), valueOf(record, "host"), valueOf(record, "state"), valueOf(record, "status"));
   };
   const invoiceState = (invoice) => String(valueOf(invoice, "state") || valueOf(invoice, "stage") || "draft").toLowerCase();
@@ -132,17 +143,15 @@
     const priority = firstText(valueOf(record, "priority"), "medium");
     return palette[priority] ? priority : "medium";
   };
-  // FIX_PASS_2 F1 (applied here in BLUEPRINT A6): every card is the ONE glass
-  // recipe; entity heat is an edge accent (--tk-accent-rgb), never a body
-  // wash. Contacts stay accent-free — people never glow.
-  const GLASS_CARD_BG = "linear-gradient(180deg, rgba(83, 95, 117, 0.42), rgba(33, 41, 56, 0.34))";
-  const cardBackground = () => GLASS_CARD_BG;
-  const accentStyle = (entity, record) => {
+  // FIDELITY_ORDER §1: dive faces wear the original's full-body severity wash —
+  // the entity palette rendered as the fill gradient, exactly like every stack
+  // card. Contacts render the neutral "none" tone.
+  const cardBackground = (entity, record) => {
     const intensity = intensityOf(entity, record);
-    if (entity === "contacts" || intensity === "none") return " --tk-accent-on: 0;";
-    const rgb = palette[intensity];
-    return rgb ? ` --tk-accent-rgb: ${rgb}; --tk-accent-on: 1;` : " --tk-accent-on: 0;";
+    const rgb = palette[intensity] || palette.none;
+    return `linear-gradient(180deg, rgba(${rgb},0.4), rgba(${rgb},0.2))`;
   };
+  const accentStyle = () => "";
   const isOpenInvoice = (invoice) => !["paid", "void", "cancelled", "canceled"].includes(invoiceState(invoice));
   const isOpenDeal = (deal) => !["won", "lost"].includes(String(valueOf(deal, "state") || valueOf(deal, "stage") || "").toLowerCase());
   const inferredCompanyName = (entity, record) => {

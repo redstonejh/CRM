@@ -76,6 +76,13 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
          so they stay tack-sharp. Blur ramps 0→peak during the open and back to 0 on close (set in JS). */
       .td-scrim { position: fixed; inset: 0; z-index: 0; pointer-events: none;
         -webkit-backdrop-filter: blur(0px); backdrop-filter: blur(0px); }
+      /* Chromium black-boxes nested glass under a second full-screen blur on
+         the brightest bundled wallpaper. Use an optical veil for that one
+         reference background so every card remains legible. */
+      body[data-background="photo-water2"] .td-scrim {
+        -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+        background: rgba(12,16,24,var(--td-light-dim,0));
+      }
 
       /* The flyer that glides from the grid spot to centre (and back). It is a PLAIN,
          OPAQUE card built from scratch — NOT a clone of the live widget — so:
@@ -510,9 +517,9 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
         const cardTitle = String(record?.client || record?.title || record?.name || record?.meta?.client || "").trim();
         const flew = fromRect && window.fractalCalendar?.flyCardToDay?.(fromRect, date, { title: cardTitle });
         if (!flew) {
-          // Calendar isn't the neighbor → pulse its pill-bar shortcut once, so
-          // the card still visibly has somewhere to be.
-          const pill = document.querySelector('.crm-module-switch button[data-crm-module="calendar"]');
+          // Calendar isn't the neighbor → pulse the one Home control once, so
+          // the card still visibly has somewhere to be through the desk root.
+          const pill = document.querySelector('.crm-home-control');
           if (pill) {
             pill.classList.remove("crm-pill-pulse");
             void pill.offsetWidth;
@@ -664,8 +671,9 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   const setBlur = (px, ms, ease) => {
     const tr = `${ms}ms ${ease}`;
     if (scrim) {
-      scrim.style.transition = `backdrop-filter ${tr}, -webkit-backdrop-filter ${tr}`;
+      scrim.style.transition = `backdrop-filter ${tr}, -webkit-backdrop-filter ${tr}, background ${tr}`;
       scrim.style.backdropFilter = scrim.style.webkitBackdropFilter = `blur(${px}px)`;
+      scrim.style.setProperty("--td-light-dim", String(Math.min(.22, Math.max(0, px / Math.max(1, DOF_BLUR) * .18))));
     }
     if (overlay) overlay.querySelectorAll(".td-frontclone").forEach((c) => {
       c.style.transition = `filter ${tr}`;

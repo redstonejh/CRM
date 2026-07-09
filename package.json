@@ -16,6 +16,7 @@
     "visual:update": "node tools/visual/visual-diff.js --update",
     "visual:motion": "node tools/visual/motion-check.js",
     "visual:scenes": "node tools/visual/scenes.js",
+    "visual:census": "node tools/visual/census-gallery.js",
     "test:visual": "node tools/visual/visual-diff.js",
     "test:factory": "node tools/visual/factory-check.js",
     "test:ws": "node tools/visual/ws-parity-test.js",

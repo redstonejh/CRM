@@ -5,13 +5,6 @@
     current: "120,130,140",
   };
 
-  const stages = [
-    { key: "customers", label: "Customers" },
-    { key: "prospects", label: "Prospects" },
-    { key: "partners", label: "Partners" },
-    { key: "vendors", label: "Vendors" },
-  ];
-
   const companyFields = [
     { key: "company", label: "Company", q: "Company or account" },
     { key: "role", label: "Role", q: "Role or buying influence" },
@@ -19,8 +12,6 @@
     { key: "nextTouchAt", label: "Next touch", date: true, req: false },
     { key: "nextStep", label: "Next step", q: "What should happen next?", area: true, req: false },
   ];
-
-  const stageFields = Object.fromEntries(stages.map((stage) => [stage.key, companyFields]));
 
   const createFields = [
     { key: "client", label: "Name", q: "Contact name" },
@@ -70,10 +61,55 @@
     contactSource.update(to.id, { relatedContactIds: toIds });
   };
 
-  if (typeof window.createCrmCardDetail !== "function" || typeof window.createCrmCardSystem !== "function") {
-    console.error("[CRM] card factories are not loaded");
-    return;
-  }
+  const listRecords = (result) => Array.isArray(result) ? result : ((result && (result.records || result.tickets)) || []);
+  const initialize = async () => {
+    if (typeof window.createCrmCardDetail !== "function" || typeof window.createCrmCardSystem !== "function") {
+      console.error("[CRM] card factories are not loaded");
+      return;
+    }
+
+    // Census A2: company records, not relationship taxonomy, define the
+    // furniture. Contacts may still carry kind/stage as data, but it never
+    // determines which bucket exists or where a person is seated.
+    const [companyResult, contactResult, dealResult] = await Promise.all([
+      window.companies?.list?.({ includeDeleted: false }).catch?.(() => []),
+      contactSource.list().catch?.(() => []),
+      window.deals?.list?.({ includeDeleted: false }).catch?.(() => []),
+    ]);
+    const companies = listRecords(companyResult).filter((company) => company && !company.deletedAt);
+    const initialContacts = listRecords(contactResult).filter((contact) => contact && !contact.deletedAt);
+    const companyByName = new Map(companies.map((company) => [String(company.name || company.title || "").trim().toLowerCase(), company]));
+    const missingCompany = initialContacts.some((contact) => {
+      const id = String(valueOf(contact, "companyId") || "");
+      const name = String(valueOf(contact, "company") || "").trim().toLowerCase();
+      return !companies.some((company) => String(company.id) === id) && !companyByName.has(name);
+    });
+    const stages = companies.map((company) => ({
+      key: String(company.id),
+      label: String(company.name || company.title || "Company"),
+    }));
+    if (missingCompany || !stages.length) stages.push({ key: "unassigned-company", label: "Unassigned company" });
+    const stageFields = Object.fromEntries(stages.map((stage) => [stage.key, companyFields]));
+    const stageKeys = new Set(stages.map((stage) => stage.key));
+    const companyStage = (contact) => {
+      const id = String(valueOf(contact, "companyId") || "");
+      if (stageKeys.has(id)) return id;
+      const company = companyByName.get(String(valueOf(contact, "company") || "").trim().toLowerCase());
+      return company ? String(company.id) : "unassigned-company";
+    };
+    const openDealValue = new Map();
+    const recalculateDealValues = (records) => {
+      openDealValue.clear();
+      listRecords(records).forEach((deal) => {
+        if (!deal || deal.deletedAt || ["won", "lost"].includes(String(valueOf(deal, "state") || "").toLowerCase())) return;
+        const companyId = String(valueOf(deal, "companyId") || "unassigned-company");
+        const raw = valueOf(deal, "amount") ?? valueOf(deal, "value") ?? 0;
+        const amount = Number(String(raw).replace(/[^0-9.-]/g, "")) || 0;
+        openDealValue.set(companyId, (openDealValue.get(companyId) || 0) + amount);
+      });
+    };
+    recalculateDealValues(dealResult);
+    const money = (amount) => `$${Math.round(amount || 0).toLocaleString()}`;
 
   window.createCrmCardDetail({
     apiName: "contactDetail",
@@ -99,6 +135,17 @@
     const parsed = Date.parse(String(value || ""));
     return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
   };
+  const humanDate = (value) => {
+    const iso = dateOnly(value);
+    if (!iso) return "";
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const date = new Date(`${iso}T00:00:00`);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
   const daysSince = (value) => {
     const ms = typeof value === "number" ? value : Date.parse(String(value || ""));
     if (!Number.isFinite(ms)) return null;
@@ -115,7 +162,7 @@
         return age == null ? "" : { label: "Last touch", value: `${age}d ago` };
       },
       (r) => {
-        const next = dateOnly(valueOf(r, "nextTouchAt"));
+        const next = humanDate(valueOf(r, "nextTouchAt"));
         return next ? { label: "Next touch", value: next } : "";
       },
     ],
@@ -124,6 +171,7 @@
   window.createCrmCardSystem({
     apiName: "peopleCards",
     theater: "people",
+    stageOf: companyStage,
     face: contactFace,
     source: contactSource,
     detail: window.contactDetail,
@@ -162,6 +210,13 @@
     showProgressBars: false,
     showDateUnder: false,
     stageMovement: "free",
+    stageUpdateFields: (_id, stage) => {
+      const company = companies.find((item) => String(item.id) === String(stage));
+      return company
+        ? { companyId: company.id, company: company.name || company.title || "" }
+        : { companyId: "", company: "" };
+    },
+    bucketSummary: (stage, contacts) => `${money(openDealValue.get(stage.key) || 0)} · ${contacts.length} ${contacts.length === 1 ? "person" : "people"}`,
     zoneGravity: true,   // BLUEPRINT A2: contacts rest on the bucket floor
     leftDeckFilter: () => true,
     deckCopy: {
@@ -171,8 +226,17 @@
       trashTitle: "Recycle bin",
     },
     onLinkDrop: linkContacts,
-    active: false,
+    active: (document.body?.dataset?.crmModule || localStorage.getItem("crm-active-module")) === "people",
   });
 
   window.peopleCards.needsAttention = needsAttention;
+    try {
+      window.deals?.onChanged?.((payload) => {
+        recalculateDealValues(payload);
+        window.peopleCards?.reload?.();
+      });
+    } catch {}
+  };
+
+  initialize().catch((error) => console.error("[CRM] People company buckets failed", error));
 })();

@@ -9,8 +9,19 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const puppeteer = require('puppeteer-core');
+const pixelmatch = require('pixelmatch').default;
+const { PNG } = require('pngjs');
 
 const { start } = require('./harness.js');
+const { STAGE_MAP, seedTickets } = require('./reference.js');
+const { seed } = require('./seed.js');
+
+const PIXEL_DIFF_LIMIT = 0.02;
+const seedFactoryDataset = async (apiUrl) => {
+  const crmCounts = await seed(apiUrl);
+  const referenceCounts = await seedTickets(apiUrl);
+  return { ...crmCounts, referenceTickets: referenceCounts.tickets };
+};
 
 // Anatomy probes: selector → the computed properties that define the recipe.
 const PROBES = [
@@ -22,17 +33,21 @@ const PROBES = [
   { name: 'card subtitle', selector: '.tk-card .ticket-host, .tk-zcard .ticket-host', props: ['fontSize', 'color'] },
   { name: 'fan arrow button', selector: '.tk-arrow', props: ['width', 'height', 'borderRadius', 'backgroundImage'] },
   { name: 'stack action button', selector: '.tk-stack-btn', props: ['width', 'height', 'borderRadius', 'backgroundImage'] },
+  { name: 'flow arrow', selector: 'svg.tk-flow', props: ['opacity', 'zIndex', 'position'] },
+  { name: 'flow arrow shaft', selector: '.tk-flow-shaft', props: ['stroke', 'strokeWidth', 'fill'] },
+  { name: 'empty placeholder', selector: '.tk-empty', props: ['borderStyle', 'borderColor', 'borderRadius', 'color', 'fontSize', 'fontWeight'] },
+  { name: 'zone watermark', selector: '.tk-zone-empty', props: ['color', 'fontSize', 'textAlign', 'paddingTop'] },
 ];
 
-// Structural counts. FIX_PASS_2 F2 (the vision datum) DELETES the flow arrows,
-// dashed empty placeholders and zone watermarks — the CRM must have ZERO of
-// them even though the original still renders them.
+// Structural counts. FIDELITY_ORDER §0 reverses FIX_PASS_2 F2: the flow arrows,
+// dashed empty placeholders and zone watermark hints are the original's OWN
+// design and must exist in the CRM exactly as the original renders them
+// (arrows = stages + 1; placeholders exist per corner, shown only when empty).
 const STRUCTURE = [
   { name: 'stage zones', selector: '.tk-zone', min: 3, max: 3 },
   { name: 'corner decks', selector: '.tk-deck-left, .tk-deck-right', min: 2, max: 2 },
-  { name: 'flow arrows (deleted by F2)', selector: 'svg.tk-flow', min: 0, max: 0 },
-  { name: 'dashed placeholders (deleted by F2)', selector: '.tk-empty', min: 0, max: 0 },
-  { name: 'zone watermarks (deleted by F2)', selector: '.tk-zone-empty', min: 0, max: 0 },
+  { name: 'flow arrows (restored per FIDELITY_ORDER)', selector: 'svg.tk-flow', min: 4, max: 4 },
+  { name: 'dashed placeholders (restored per FIDELITY_ORDER)', selector: '.tk-empty', min: 3, max: 3 },
   { name: 'create button', selector: '.tk-stack-btn', min: 2, max: 2 },
 ];
 
@@ -50,28 +65,37 @@ function chromePath() {
   return found;
 }
 
-async function sample(page) {
-  return page.evaluate(({ probes, structure }) => {
+async function sample(page, rootSelector = '') {
+  return page.evaluate(({ probes, structure, rootSelector: selector }) => {
+    const root = selector ? document.querySelector(selector) : document;
+    if (!root) throw new Error(`Factory sample root missing: ${selector}`);
     const styles = {};
     for (const probe of probes) {
-      const el = document.querySelector(probe.selector);
+      const el = root.querySelector(probe.selector);
       if (!el) { styles[probe.name] = null; continue; }
       const cs = getComputedStyle(el);
       styles[probe.name] = Object.fromEntries(probe.props.map((p) => [p, cs[p]]));
     }
     const counts = {};
-    for (const item of structure) counts[item.name] = document.querySelectorAll(item.selector).length;
+    for (const item of structure) counts[item.name] = root.querySelectorAll(item.selector).length;
     return { styles, counts };
-  }, { probes: PROBES, structure: STRUCTURE });
+  }, { probes: PROBES, structure: STRUCTURE, rootSelector });
 }
 
 async function bootPage(browser, url, activate) {
+  console.log(`[factory] booting ${url}`);
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument((stageMap) => {
+    localStorage.setItem('dashboard-background', 'photo-water');
+    localStorage.setItem('tk-ticket-stage', JSON.stringify(stageMap));
+  }, STAGE_MAP);
   await page.goto(url, { waitUntil: 'load' });
+  console.log(`[factory] loaded ${url}`);
   await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting'), { timeout: 30000 });
   await new Promise((r) => setTimeout(r, 2500));
   if (activate) await page.evaluate(activate);
   await new Promise((r) => setTimeout(r, 1000));
+  console.log(`[factory] settled ${url}`);
   return page;
 }
 
@@ -84,7 +108,8 @@ async function main() {
 
   // One API (Rosa dataset incl. the ticket) serves BOTH dashboards — the
   // original only reads window.tickets, so extra entities are invisible to it.
-  const crm = await start({});
+  console.log('[factory] starting shared reference dataset');
+  const crm = await start({ seedFn: seedFactoryDataset });
   const orig = await start({ dashboardRoot: originalDash, staticPort: 3896, apiUrl: crm.apiUrl });
 
   const browser = await puppeteer.launch({
@@ -98,7 +123,7 @@ async function main() {
   const crmPage = await bootPage(browser, crm.staticUrl, () => window.crmWorkspaces.setActive('tickets'));
 
   const expected = await sample(origPage);
-  const actual = await sample(crmPage);
+  const actual = await sample(crmPage, '[data-crm-theater="tickets"]');
 
   let failures = 0;
   const report = (level, msg) => { console.log(`${level} ${msg}`); if (level === 'FAIL') failures++; };
@@ -118,6 +143,25 @@ async function main() {
       report('FAIL', `style: ${probe.name}.${prop} — original "${want[prop]}" vs CRM "${got[prop]}"`);
     }
   }
+  // The binding acceptance gate is the rendered result, not merely matching
+  // declarations. Compare equal-size, wallpapered frames after both surfaces
+  // have settled. The CRM's single 54px Home control may differ; the complete
+  // frame must still remain within the owner's two-percent budget.
+  const [originalPng, crmPng] = await Promise.all([
+    origPage.screenshot({ encoding: 'binary' }),
+    crmPage.screenshot({ encoding: 'binary' }),
+  ]).then((buffers) => buffers.map((buffer) => PNG.sync.read(buffer)));
+  const different = pixelmatch(
+    originalPng.data,
+    crmPng.data,
+    null,
+    originalPng.width,
+    originalPng.height,
+    { threshold: 0.1, includeAA: false },
+  );
+  const pixelRatio = different / (originalPng.width * originalPng.height);
+  report(pixelRatio <= PIXEL_DIFF_LIMIT ? ' ok ' : 'FAIL',
+    `pixels: Tickets vs original — ${(pixelRatio * 100).toFixed(3)}% (limit ${(PIXEL_DIFF_LIMIT * 100).toFixed(2)}%)`);
   const anyStyleOk = PROBES.every((p) => !expected.styles[p.name] || actual.styles[p.name]);
   if (anyStyleOk && !failures) console.log('\nFactory check PASSED: CRM Tickets matches the original anatomy.');
   else console.log(`\nFactory check: ${failures} mismatch(es).`);

@@ -105,6 +105,17 @@
     const parsed = Date.parse(value || "");
     return Number.isFinite(parsed) ? parsed : 0;
   };
+  const humanDate = (value) => {
+    const ms = dateMs(value);
+    if (!ms) return "";
+    const date = new Date(ms); date.setHours(0, 0, 0, 0);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.round((date - today) / 86400000);
+    if (days === 0) return "today";
+    if (days > 0 && days < 14) return `${days}d`;
+    if (days === -1) return "yesterday";
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
   const invoiceState = (invoice) => String(valueOf(invoice, "state") || valueOf(invoice, "stage") || "draft").toLowerCase();
   const isPastDue = (invoice) => {
     const direct = /^(\d{4}-\d{2}-\d{2})/.exec(firstText(valueOf(invoice, "dueDate")));
@@ -120,9 +131,9 @@
   };
   const subtitleOf = (entity, record) => {
     if (entity === "companies") return firstText(record?.host, valueOf(record, "domain"), valueOf(record, "kind"), valueOf(record, "description"));
-    if (entity === "contacts") return [firstText(valueOf(record, "company"), valueOf(record, "role")), valueOf(record, "nextTouchAt") ? `Next ${valueOf(record, "nextTouchAt")}` : ""].filter(Boolean).join(" / ");
-    if (entity === "deals") return [moneyText(amountOf(record)), firstText(valueOf(record, "stage"), valueOf(record, "state")), valueOf(record, "nextTouchAt") ? `Next ${valueOf(record, "nextTouchAt")}` : ""].filter(Boolean).join(" / ");
-    if (entity === "invoices") return [moneyText(amountOf(record)), firstText(valueOf(record, "state"), valueOf(record, "stage")), valueOf(record, "dueDate") ? `Due ${valueOf(record, "dueDate")}` : ""].filter(Boolean).join(" / ");
+    if (entity === "contacts") return [firstText(valueOf(record, "company"), valueOf(record, "role")), valueOf(record, "nextTouchAt") ? `Next ${humanDate(valueOf(record, "nextTouchAt"))}` : ""].filter(Boolean).join(" / ");
+    if (entity === "deals") return [moneyText(amountOf(record)), firstText(valueOf(record, "stage"), valueOf(record, "state")), valueOf(record, "nextTouchAt") ? `Next ${humanDate(valueOf(record, "nextTouchAt"))}` : ""].filter(Boolean).join(" / ");
+    if (entity === "invoices") return [moneyText(amountOf(record)), firstText(valueOf(record, "state"), valueOf(record, "stage")), valueOf(record, "dueDate") ? `Due ${humanDate(valueOf(record, "dueDate"))}` : ""].filter(Boolean).join(" / ");
     if (entity === "interactions") return firstText(valueOf(record, "note"), valueOf(record, "description"), valueOf(record, "at"));
     return firstText(valueOf(record, "description"), valueOf(record, "host"), valueOf(record, "state"), valueOf(record, "status"));
   };
@@ -320,7 +331,7 @@
       },
       (r) => {
         const due = firstText(r.targetRecord?.dueDate, r.dueDate);
-        return due ? { label: "Due", value: due.slice(0, 10) } : "";
+        return due ? { label: "Due", value: humanDate(due) } : "";
       },
     ],
   };

@@ -59,10 +59,14 @@ async function shootDetail(page, outDir) {
   // Open the detail panel for the first visible ticket card on the Tickets surface.
   await page.evaluate(() => window.crmWorkspaces.setActive('tickets'));
   await new Promise((r) => setTimeout(r, 800));
-  const opened = await page.evaluate(() => {
+  const opened = await page.evaluate(async () => {
     const card = document.querySelector('.tk-zcard, .tk-card');
     if (!card) return false;
-    card.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    const result = await window.tickets?.list?.({ includeDeleted: false });
+    const records = result?.records || result?.tickets || result || [];
+    const record = records.find((item) => item.id === card.dataset.id);
+    if (!record) return false;
+    window.ticketDetail?.open?.(record, card);
     return true;
   });
   await new Promise((r) => setTimeout(r, 1200));

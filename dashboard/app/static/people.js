@@ -162,6 +162,7 @@
     showProgressBars: false,
     showDateUnder: false,
     stageMovement: "free",
+    zoneGravity: true,   // BLUEPRINT A2: contacts rest on the bucket floor
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out contacts needing attention",

@@ -199,6 +199,7 @@
     defaultIntensity: "draft",
     intensityOf: invoiceIntensity,
     resolvedState: "paid",
+    zoneGravity: true,   // BLUEPRINT A2: invoices rest on the bucket floor
     isResolved: (invoice) => !!invoice && invoiceState(invoice) === "paid",
     canResolve: (invoice) => !!invoice && invoiceState(invoice) !== "paid",
     bucketSummary,

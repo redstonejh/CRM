@@ -96,6 +96,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   ];
   const STAGE_KEYS = STAGES.map((s) => s.key);
   const zonesEnabled = !deckOnly && config.zonesEnabled !== false && STAGE_KEYS.length > 0;
+  // BLUEPRINT A2 — gravity: cards obey gravity and SEAT at the bucket floor
+  // (title-peek stack resting low) instead of hanging from the lid. A per-
+  // instance config flag: the CRM surfaces opt in; the ticketing instance
+  // keeps the original's top-hung stack (factory parity with _src_ticketing).
+  const zoneGravity = config.zoneGravity === true;
   const STAGE_STORE = storageKeys.stage;
   let stageMap = (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })();
   const ticketById = (id) => tickets.find((x) => x && x.id === id) || null;
@@ -2114,9 +2119,23 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const zViewH = (s) => zoneBody[s]?.clientHeight || 0;
   const zContentH = (s) => zoneTrack[s]?.offsetHeight || 0;
   const zMin = (s) => Math.min(0, zViewH(s) - zContentH(s));
+  // Gravity seat: when the stack doesn't fill the bucket, the whole track sits
+  // on the bucket floor (seat = the empty headroom). An overflowing bucket has
+  // no seat — it scrolls exactly as before. The track box is min-height:100%
+  // (its offsetHeight never reports underfill), so the seat measures the real
+  // card stack: the last card's bottom edge in track coordinates.
+  const zStackH = (s) => {
+    const last = zoneTrack[s]?.lastElementChild;
+    return last ? last.offsetTop + last.offsetHeight : 0;
+  };
+  const zSeat = (s) => {
+    if (!zoneGravity) return 0;
+    const stack = zStackH(s);
+    return stack ? Math.max(0, zViewH(s) - stack) : 0;
+  };
   const positionZone = (s) => {
     const tr = zoneTrack[s], st = zoneScroll[s], body = zoneBody[s]; if (!tr || !st || !body) return;
-    tr.style.transform = `translateY(${Math.round(st.sy)}px)`;
+    tr.style.transform = `translateY(${Math.round(st.sy + zSeat(s))}px)`;
     const view = zViewH(s), content = zContentH(s), min = zMin(s);
     const sb = body.querySelector(".tk-zsb"), th = body.querySelector(".tk-zth");
     const over = content > view + 1;
@@ -2755,10 +2774,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // or the bottom (== card count) when it's below the stack — so an indiscriminate drop appends.
   const zoneInsertIndex = (stage, y) => {
     const body = zoneBody[stage], track = zoneTrack[stage]; if (!body || !track) return 0;
-    const r = body.getBoundingClientRect();
     const count = track.querySelectorAll(".tk-zcard").length;
-    const sy = zoneScroll[stage]?.sy || 0;   // track is translated by sy → undo it to get content-y
-    return clamp(Math.floor((y - r.top - sy) / ZCARD_PEEK), 0, count);
+    // The track's own rect already carries scroll AND the gravity seat — measure
+    // content-y from it instead of re-deriving the translations from state.
+    const top = track.getBoundingClientRect().top;
+    return clamp(Math.floor((y - top) / ZCARD_PEEK), 0, count);
   };
   // Live "sandwich" preview: while dragging over a bucket, cards at/after the insert layer slide
   // down (collision) to open a gap where the ticket will drop. No gap when appending to the bottom.
@@ -2773,8 +2793,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const previewGap = (stage, index) => {
     if (gapStage && gapStage !== stage) clearGap();
     gapStage = stage;
+    // Seated (gravity) stacks part UPWARD — the floor card never sinks below
+    // the bucket floor; the headroom above absorbs the gap. Overflowing (or
+    // top-hung) stacks keep the original downward part.
+    const up = zSeat(stage) > 0;
     (zoneTrack[stage]?.querySelectorAll(".tk-zcard") || []).forEach((c, i) => {
-      c.style.transform = i >= index ? `translateY(${ZCARD_PEEK}px)` : "";
+      if (up) c.style.transform = i < index ? `translateY(-${ZCARD_PEEK}px)` : "";
+      else c.style.transform = i >= index ? `translateY(${ZCARD_PEEK}px)` : "";
     });
     positionZone(stage);   // sandwich gap shifted cards → shadows track the reorder live
   };

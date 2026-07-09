@@ -177,6 +177,7 @@
     defaultIntensity: "warm",
     stalenessOf: (deal) => window.crmColdFront?.staleness?.(deal, "deals") || 0,
     resolvedState: "won",
+    zoneGravity: true,   // BLUEPRINT A2: deals rest on the bucket floor
     isResolved: (deal) => !!deal && (deal.state || "open") === "won",
     bucketSummary,
     resolvedPulse: true,

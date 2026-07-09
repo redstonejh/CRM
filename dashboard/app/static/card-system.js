@@ -2852,6 +2852,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const autoFanDue = (count) => {
     if (!autoFanOncePerDayKey || !count) return false;
+    // FIX_PASS_2 F4: the hand deals only on its OWN surface. Riding along on
+    // another workspace (Today stays mounted on Calendar) must not fan the
+    // deck or spend the once-per-day deal.
+    const activeModule = document.body?.dataset?.crmModule || "";
+    if (activeModule && activeModule !== theaterKey) return false;
     const today = localDate();
     try {
       if (localStorage.getItem(autoFanOncePerDayKey) === today) return false;

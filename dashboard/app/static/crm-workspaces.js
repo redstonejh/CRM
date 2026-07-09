@@ -52,7 +52,11 @@
   const setActive = (key) => {
     active = MODULES.some((m) => m.key === key) ? key : "home";
     localStorage.setItem(STORE_KEY, active);
-    // Close the summoned overlays FIRST — they own portaled panels that must
+    // The active-module marker goes up FIRST: module render paths (e.g. the
+    // Today hand's once-per-day auto-fan) read it to know which surface owns
+    // the stage.
+    document.body.dataset.crmModule = active;
+    // Close the summoned overlays next — they own portaled panels that must
     // cancel before the destination theater takes the stage.
     try { window.crmSearchDeck?.close?.(); } catch {}
     try { window.crmCompanyDive?.setActive?.(false); } catch {}
@@ -60,6 +64,12 @@
       const on = module.key === active || (module.key === "today" && active === "calendar");
       try { module.api()?.setActive?.(on); } catch {}
     });
+    // FIX_PASS_2 F4: the calendar arrives calm — the riding-along Today hand
+    // collapses to its closed pile (which also drops the depth-of-field scrim),
+    // so the year grid renders sharp. Fanning is on-demand only.
+    if (active === "calendar") {
+      try { window.crmToday?.fan?.("left", false); } catch {}
+    }
     // Enforce the one-theater invariant: whatever the modules' own setActive
     // logic did (or forgot), exactly the allowed theater roots are visible.
     const allowed = new Set(ALLOWED_THEATERS[active] || [active]);

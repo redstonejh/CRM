@@ -19,7 +19,13 @@
   <script>
     (() => {
       try {
-        const saved = localStorage.getItem("dashboard-background") || "tone-dark-grey";
+        // Guaranteed wallpaper (REMEDIATION_PLAN R6): a fresh profile gets a
+        // bundled photo background on first run — glass never renders naked.
+        let saved = localStorage.getItem("dashboard-background");
+        if (!saved) {
+          saved = "photo-water";
+          try { localStorage.setItem("dashboard-background", saved); } catch {}
+        }
         const presets = {
           "tone-light-grey": "#d1d5db",
           "tone-grey": "#6b7280",

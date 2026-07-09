@@ -280,6 +280,8 @@
       return [{ label, tone }];
     },
     autoFanOncePerDayKey: LAST_DEALT_KEY,
+    fanStyle: "hand",            // BLUEPRINT A3: the dealt hand — arc fan around screen centre
+    emptyStateText: "Desk clear.",
     onCalendarDrop: (record, date) => updateTarget(record, { scheduledDate: date, nextTouchAt: date }),
     onHomeStageDrop: (record, stage) => {
       const fields = stageDropFields(record, stage);

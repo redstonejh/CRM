@@ -114,6 +114,70 @@ const SCENES = [
       steps.assert(() => document.body.dataset.crmModule === 'home', 'B chained calendar→home'),
     ],
   },
+  {
+    name: 'scene-2-dealt-hand',
+    // Blueprint A3 proof: first entry deals the hand into an arc (65ms
+    // stagger); dragging a card out re-closes the gap; acting on a card via
+    // the next-touch chips flies it off; an emptied hand says "Desk clear."
+    steps: [
+      steps.evaluate(() => localStorage.removeItem('crm-today-last-dealt')),
+      steps.driveTo('today'),
+      steps.settle(700),               // ride the dive; the deal starts on landing
+      steps.frames('deal', 10, 130),
+      steps.settle(600),
+      steps.assert(() => document.querySelectorAll('[data-crm-theater="today"] .tk-card').length >= 4, 'hand dealt'),
+      // Drag a middle card up out of the hand and hold — the arc re-spaces
+      // beneath it — then release away from any target so it returns.
+      async ({ page, shoot }) => {
+        const at = await page.evaluate(() => {
+          const cards = [...document.querySelectorAll('[data-crm-theater="today"] .tk-card')];
+          const card = cards[Math.floor(cards.length / 2)];
+          const r = card.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        await page.mouse.move(at.x, at.y);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) { await page.mouse.move(at.x, at.y - i * 30); await sleep(25); }
+        await shoot('gap-reclose', 4, 140);
+        await page.mouse.up();
+        await shoot('gap-reopen', 3, 140);
+      },
+      steps.settle(500),
+      // Open the cold-front card (no future touch), close → the chip row
+      // blooms; +2d schedules the touch, the interaction re-warms the card,
+      // and it departs the hand (its cold-front reason is gone).
+      steps.click('[data-crm-theater="today"] .tk-card[data-id="contacts:ct_devon"]'),
+      steps.frames('open', 3, 160),
+      steps.settle(500),
+      steps.key('Escape'),
+      steps.settle(450),
+      steps.frames('chip-bloom', 2, 150),
+      steps.assert(() => !!document.querySelector('.td-next-touch [data-next-touch-days="2"]'), 'chip row bloomed'),
+      steps.click('.td-next-touch [data-next-touch-days="2"]'),
+      steps.frames('depart', 5, 150),
+      steps.settle(800),
+      steps.assert(() => !document.querySelector('[data-crm-theater="today"] .tk-card[data-id="contacts:ct_devon"]'), 'card departed the hand'),
+      // Empty the whole hand through the real bridges → "Desk clear."
+      steps.evaluate(async () => {
+        const far = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+        const now = new Date().toISOString();
+        const each = async (bridge, patch) => {
+          const payload = await bridge.list({ includeDeleted: false });
+          for (const r of (payload.records || [])) { try { await bridge.update(r.id, typeof patch === 'function' ? patch(r) : patch); } catch {} }
+        };
+        await each(window.tasks, { scheduledDate: far, dueDate: far });
+        await each(window.deals, { nextTouchAt: far, lastTouchAt: now });
+        await each(window.contacts, { nextTouchAt: far, lastTouchAt: now });
+        await each(window.invoices, (r) => (String(r.state).toLowerCase() === 'paid' ? { lastTouchAt: now } : { dueDate: far, state: 'draft', stage: 'draft', priority: 'draft', lastTouchAt: now }));
+        const items = (await window.crmStore.list('calendarItems')).records || [];
+        for (const it of items) { try { await window.crmStore.update('calendarItems', it.id, { date: far, scheduledDate: far }); } catch {} }
+        await window.crmToday.reload();
+      }),
+      steps.settle(1200),
+      steps.frames('desk-clear', 3, 200),
+      steps.assert(() => !!document.querySelector('.tk-desk-clear'), 'Desk clear shown'),
+    ],
+  },
 ];
 
 // ── runner ────────────────────────────────────────────────────────────────────

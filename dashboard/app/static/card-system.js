@@ -96,6 +96,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   ];
   const STAGE_KEYS = STAGES.map((s) => s.key);
   const zonesEnabled = !deckOnly && config.zonesEnabled !== false && STAGE_KEYS.length > 0;
+  // BLUEPRINT A3 — the dealt hand: a deck with fanStyle "hand" fans into a
+  // shallow ARC held around the centre of the screen (slightly overlapping
+  // when it must, GAP_FAN-spaced when it can) instead of the flat parked row.
+  // Today opts in; every other instance keeps the original flat fan.
+  const handMode = config.fanStyle === "hand";
+  const emptyStateText = typeof config.emptyStateText === "string" ? config.emptyStateText : "";
   // BLUEPRINT A2 — gravity: cards obey gravity and SEAT at the bucket floor
   // (title-peek stack resting low) instead of hanging from the lid. A per-
   // instance config flag: the CRM surfaces opt in; the ticketing instance
@@ -498,6 +504,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-deck-left { left: 0; } .tk-deck-right, .tk-deck-trash { right: 0; }
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
+      /* BLUEPRINT A3: the day's win condition — a quiet centred line once the
+         hand is empty. House ease, a beat after the last card departs. */
+      .tk-desk-clear { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        font-size: 1.15rem; font-weight: 700; letter-spacing: .04em; color: rgba(255,255,255,0.62);
+        text-shadow: 0 1px 12px rgba(0,0,0,0.55); z-index: 3000; pointer-events: none; opacity: 0;
+        animation: tkDeskClear .46s ${EASE} .28s forwards; }
+      @keyframes tkDeskClear { to { opacity: 1; } }
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
       /* FIX_PASS_2 F2: the dashed empty-stack placeholders are gone. An empty
          deck is the "+" button alone; an empty bucket is an empty glass bucket. */
@@ -1265,7 +1278,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const open = fanned[side];
     const step = CARD_W + GAP_FAN;
     const viewW = fanViewW();
-    const contentW = open ? (CARD_W + step * (n - 1)) : CARD_W;
+    // A hand never scrolls — overlap absorbs any overflow (handGeom shrinks the
+    // step), so its content never exceeds the view and the scrollbar stays off.
+    const contentW = open ? (handActive(side) ? CARD_W : CARD_W + step * (n - 1)) : CARD_W;
     deck.viewW = viewW; deck.contentW = contentW;
     const scrollMin = Math.min(0, viewW - contentW);
     deck.scrollX = clamp(deck.scrollX, scrollMin, 0);
@@ -1310,9 +1325,38 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // The track carries scroll; each card's transform is its SLOT only (so a reorder's .42s collision
   // animates independently of the rigid scroll). For left the track shifts by scrollX, for right by -scrollX.
   const setTrack = (side) => { const deck = decks[side]; if (deck && deck.track) deck.track.style.transform = `translateX(${side === "left" ? deck.scrollX : -deck.scrollX}px)`; };
+  // ── The held hand (BLUEPRINT A3) ─────────────────────────────────────────────
+  // Slot geometry for a hand of n: GAP_FAN spacing until the hand must overlap
+  // to fit the viewport, centred horizontally, lifted to the screen's middle,
+  // with a shallow arc (edge cards sit lower and tilt outward like held cards).
+  const handGeom = (n) => {
+    const viewW = window.innerWidth;
+    const step = n > 1 ? Math.min(CARD_W + GAP_FAN, (viewW - 2 * MARGIN - CARD_W) / (n - 1)) : 0;
+    const startX = (viewW - ((n - 1) * step + CARD_W)) / 2;
+    return { step, startX };
+  };
+  const handSlot = (i, n) => {
+    const { step, startX } = handGeom(n);
+    const u = i - (n - 1) / 2;                                   // signed distance from the hand's centre
+    const rot = clamp(u * 3.5, -16, 16);                         // outward tilt, capped like a real fan
+    const lift = Math.max(0, (window.innerHeight - CARD_H) / 2 - MARGIN - CARD_H * 0.06);
+    const drop = Math.min(60, ((u * step) ** 2) / 6400);         // the arc: edges settle lower
+    return { tx: startX - MARGIN + i * step, ty: -lift + drop, rot };
+  };
+  const handActive = (side) => handMode && side === "left";
+  const placeHand = (card, slot, n) => {
+    const s = handSlot(slot, n);
+    card._tx = s.tx; card._ty = s.ty; card._rot = s.rot;
+    card.style.zIndex = String(3000 - slot);
+    card.style.transform = `translate(${s.tx}px, ${s.ty}px) rotate(${s.rot}deg)`;
+  };
   const place = (card, side, i, open, step, deckSize = 2) => {
     let tx, ty, rot;
-    if (open) { tx = i * step; ty = 0; rot = 0; }   // slot position only — scroll is applied to the track
+    if (open && handActive(side)) {                              // the dealt hand: arc, not a parked row
+      const s = handSlot(i, deckSize);
+      tx = s.tx; ty = s.ty; rot = s.rot;
+    }
+    else if (open) { tx = i * step; ty = 0; rot = 0; }   // slot position only — scroll is applied to the track
     else { const d = Math.min(i, 6); tx = d * 3; ty = -d * 4; rot = (i % 2 ? 1 : -1) * Math.min(i, 3) * 1.6; }
     // FIX_PASS_2 F3: a pile of ONE still reads as a pile — the lone card sits
     // at the pile's angle and carries painted under-edges (.tk-pile-solo).
@@ -1336,6 +1380,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // card is skipped (it follows the cursor); the others fill consecutive slots via their .42s transition.
   const closeFanRanks = (side, dragged) => {
     const deck = decks[side]; if (!deck) return;
+    // A hand RE-SPACES toward its centre when a card leaves — the remaining
+    // cards re-fan as a hand of n-1, not a left-packed row (BLUEPRINT A3).
+    if (handActive(side) && fanned[side]) {
+      const rest = deck.cards.filter((c) => c !== dragged);
+      rest.forEach((c, slot) => placeHand(c, slot, rest.length));
+      return;
+    }
     const step = CARD_W + GAP_FAN;
     let slot = 0;
     deck.cards.forEach((c) => {
@@ -1353,6 +1404,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // .42s collision) to show exactly where the ticket would land. layout(side) closes it again.
   const previewFanGap = (side, gapIdx) => {
     const deck = decks[side]; if (!deck || !fanned[side]) return;
+    // Hand mode: open the slot within the arc — the cards re-space as a hand
+    // of n+1 with the gap slot left empty for the incoming card.
+    if (handActive(side)) {
+      const total = deck.cards.length + 1;
+      deck.cards.forEach((c, i) => placeHand(c, i < gapIdx ? i : i + 1, total));
+      return;
+    }
     const step = CARD_W + GAP_FAN;
     deck.cards.forEach((c, i) => {
       const slot = i < gapIdx ? i : i + 1;   // cards at/after the gap shove one slot over
@@ -1367,6 +1425,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // leftward from the deck's right edge; both ride the track scroll (deck.scrollX).
   const fanInsertIndex = (side, x) => {
     const deck = decks[side]; const n = deck ? deck.cards.length : 0; if (!n) return 0;
+    if (handActive(side)) {   // invert the hand's centred geometry instead of the row's
+      const { step, startX } = handGeom(n);
+      return step ? clamp(Math.round((x - startX - CARD_W / 2) / step), 0, n) : 0;
+    }
     const step = CARD_W + GAP_FAN;
     const idx = side === "left"
       ? Math.round((x - deck.scrollX - MARGIN - CARD_W / 2) / step)
@@ -2884,6 +2946,23 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
     setTimeout(() => { clone.remove(); if (dest.isConnected) dest.style.opacity = ""; }, shift ? 460 : 300);   // shifted → wait for the scroll to settle under the clone
   };
+  // BLUEPRINT A3 — "Desk clear.": the hand's emptiness is the day's win
+  // condition. When a deck-only hand has nothing left, a quiet centred line
+  // fades in (the departing card's own flight is the deck bowing out).
+  let deskClearEl = null;
+  const updateDeskClear = (empty) => {
+    if (!emptyStateText) return;
+    if (!empty) { deskClearEl?.remove(); deskClearEl = null; return; }
+    if (deskClearEl?.isConnected) return;
+    deskClearEl = document.createElement("div");
+    deskClearEl.className = "tk-desk-clear";
+    deskClearEl.textContent = emptyStateText;
+    ensureTheater().appendChild(deskClearEl);
+  };
+  // Re-entering the hand later the SAME day shows the remaining hand — no
+  // re-deal, no stagger (the once-per-day deal is already spent). Set on
+  // activation, consumed by the render that follows it.
+  let pendingHandReveal = false;
   const autoFanDue = (count) => {
     if (!autoFanOncePerDayKey || !count) return false;
     // FIX_PASS_2 F4: the hand deals only on its OWN surface. Riding along on
@@ -2917,11 +2996,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // beat behind the one before it — never an instant already-fanned swap.
     const dealHand = autoFanDue(leftList.length);
     buildDeck("left", leftList);
+    // Only on the hand's OWN surface — the ride-along on Calendar must not
+    // print "Desk clear." over the year grid.
+    updateDeskClear(handMode && deckOnly && leftList.length === 0 && (document.body?.dataset?.crmModule || "") === theaterKey);
+    if (!dealHand && pendingHandReveal && leftList.length > 1 && !fanned.left) {
+      pendingHandReveal = false;
+      setFan("left", true);   // the remaining hand, shown — not re-dealt
+    } else pendingHandReveal = false;
     if (dealHand && leftList.length > 1) {
       setTimeout(() => {
         const deck = decks.left;
         if (!deck || fanned.left) return;
-        deck.cards.forEach((c, i) => { c.style.transitionDelay = `${Math.min(i * 45, 380)}ms`; });
+        // BLUEPRINT A3: the blueprint's deal stagger is law — 65ms a card
+        // (cap raised so a full hand still reads as dealt one by one).
+        deck.cards.forEach((c, i) => { c.style.transitionDelay = `${Math.min(i * 65, 520)}ms`; });
         setFan("left", true);
         setTimeout(() => deck.cards.forEach((c) => { if (c.isConnected) c.style.transitionDelay = ""; }), 1000);
       }, 120);
@@ -2988,6 +3076,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     render();
   };
 
+  // Fallback flush for a render deferred while a detail was open. The direct
+  // flush (onDetailClosed) only fires when the OPEN detail belongs to this
+  // instance — a surface that routes opens to another entity's detail (the
+  // Today hand → contactDetail etc.) would otherwise hold its stale render
+  // until the next store change (BLUEPRINT A3: the acted-on card must depart).
+  let deferredRenderTimer = 0;
+  const scheduleDeferredRender = () => {
+    clearTimeout(deferredRenderTimer);
+    deferredRenderTimer = setTimeout(() => {
+      if (!pendingRender) return;
+      if (detail?.isOpen?.()) { scheduleDeferredRender(); return; }
+      pendingRender = false;
+      render();
+    }, 260);
+  };
   const load = async () => {
     try { const r = await source?.list?.(); tickets = recordsFromList(r); }
     catch { tickets = []; }
@@ -2999,7 +3102,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // (that detaches it → a copy snaps back to the stack). Defer the render until the panel closes.
       source?.onChanged?.((payload) => {
         tickets = recordsFromList(payload);
-        if (detail?.isOpen?.()) { pendingRender = true; return; }
+        if (detail?.isOpen?.()) { pendingRender = true; scheduleDeferredRender(); return; }
         render();
       });
     }
@@ -3109,6 +3212,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   publicApi.setActive = (on) => {
     active = !!on;
     if (active) {
+      // BLUEPRINT A3: arriving on the hand's own surface after today's deal
+      // was already spent → the render below reveals the remaining hand.
+      if (handMode && autoFanOncePerDayKey && document.body?.dataset?.crmModule === theaterKey) {
+        try { pendingHandReveal = localStorage.getItem(autoFanOncePerDayKey) === localDate(); } catch { pendingHandReveal = false; }
+      }
       if (!started) {
         started = true;
         load();

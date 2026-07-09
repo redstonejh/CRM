@@ -71,6 +71,10 @@ function rosaDataset() {
       decisionMaker: 'Marta Reyes', pain: 'In-house IT retired; need coverage by Q4.',
       budget: '20-30k / yr', proposal: 'Annual retainer, 12 seats, on-site quarterly.',
       closeDate: day(9),
+      // Every stage complete → the deal has EARNED the Won drop (the F6 motion
+      // check drags it onto the Won pile and records the flight + pulse).
+      nextStep: 'Send the signed retainer for countersignature.',
+      risk: 'Budget review could slip to August.',
       description: 'Annual managed-services retainer.',
       incidentDate: day(-30),
     },

@@ -1844,7 +1844,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       clearCalendarHighlight(); clearHomeStageHighlight();
       // Over the recycle bin (icon or open stack) → ring it open / target it, and skip the zone preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); return; }
-      if (previewLinkTarget(e.clientX, e.clientY, t, card)) { clearZoneHighlight(); clearGap(); return; }
+      const wonHover = rightDeckEnabled && side === "left" && e.clientY >= stackTopY() && canResolveRecord(t) && overCornerStack(e.clientX, e.clientY) === "right";
+      if (!wonHover && previewLinkTarget(e.clientX, e.clientY, t, card)) { clearZoneHighlight(); clearGap(); return; }
+      if (wonHover) clearLinkHighlight();
       // Dragging a TRASH card over an ELIGIBLE corner stack → it'll restore there; highlight it and
       // don't reorder the bin. Over an ineligible stack, no highlight → it'll spring back on release.
       if (side === "trash") { const es = eligibleCornerStack(e.clientX, e.clientY, t); setStackDrop(es); if (es) { clearZoneHighlight(); clearGap(); return; } }
@@ -1876,7 +1878,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       card.classList.remove("tk-dragging");
       // A plain click opens its config — EXCEPT trash cards, which have no config (their restore button does the work).
       if (!wasDrag) { if (side !== "trash") detail?.open(t, card); return; }
-      if (tryLinkDrop(e.clientX, e.clientY, t, card)) return;
+      // FIX_PASS_2 F6: a stage-complete card dropped on the Won/resolved pile
+      // RESOLVES — the vision's choreography outranks the card-on-card link
+      // (the pile's top card would otherwise swallow the drop as a link).
+      const wonDrop = rightDeckEnabled && side === "left" && overCornerStack(e.clientX, e.clientY) === "right" && canResolveRecord(t);
+      if (!wonDrop && tryLinkDrop(e.clientX, e.clientY, t, card)) return;
       // Dropped on the recycle bin (icon, open stack, or empty placeholder) → delete it into the bin (except trash cards).
       if (side !== "trash" && overTrash) { dropTicketToTrash(t, card.getBoundingClientRect()); return; }
       // A trash card dropped on an ELIGIBLE corner stack → restore it into THAT stack; over an
@@ -2647,7 +2653,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
       // Over the recycle bin → ring it open / target it, and skip the bucket/fan preview.
       if (trashDragMove(e.clientX, e.clientY)) { clearZoneHighlight(); clearGap(); if (fanGap) { layout(fanGap); fanGap = null; } return; }
-      if (previewLinkTarget(e.clientX, e.clientY, t, clone || card)) { clearZoneHighlight(); clearGap(); if (fanGap) { layout(fanGap); fanGap = null; } return; }
+      const wonHover = rightDeckEnabled && e.clientY >= stackTopY() && canResolveRecord(t) && overCornerStack(e.clientX, e.clientY) === "right";
+      if (!wonHover && previewLinkTarget(e.clientX, e.clientY, t, clone || card)) { clearZoneHighlight(); clearGap(); if (fanGap) { layout(fanGap); fanGap = null; } return; }
+      if (wonHover) clearLinkHighlight();
       preview(e.clientX, e.clientY);
     };
     // Settle the dragged clone smoothly into the ticket's resting card (its new slot after a drop, or
@@ -2687,7 +2695,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       }
       // Dropped on the recycle bin (icon, open stack, or empty placeholder) → delete it into the bin.
       if (overTrash) { const r = clone ? clone.getBoundingClientRect() : card.getBoundingClientRect(); if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); dropTicketToTrash(t, r); return; }
-      if (tryLinkDrop(e.clientX, e.clientY, t, clone || card)) { if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); return; }
+      const wonDrop = rightDeckEnabled && e.clientY >= stackTopY() && overCornerStack(e.clientX, e.clientY) === "right" && canResolveRecord(t);
+      if (!wonDrop && tryLinkDrop(e.clientX, e.clientY, t, clone || card)) { if (clone) { clone.remove(); clone = null; } card.classList.remove("tk-zdrag"); return; }
       // A real drag → apply the drop, render, then SETTLE the clone into the ticket's resting card.
       // Released over the matching fanned stack → splice into its row at the cursor slot, un-assigning
       // the stage so the ticket re-joins the inbox deck exactly there.
@@ -2878,8 +2887,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // tickets are hidden everywhere EXCEPT the right stack when it's flipped to trash mode.
     const avail = tickets.filter((t) => !onGrid.has(t.id) && !isDeleted(t.id) && (!stageOf(t.id) || inAttentionDeck(t)));
     const leftList = avail.filter(leftDeckFilter).sort(order);
-    if (autoFanDue(leftList.length)) fanned.left = true;
+    // FIX_PASS_2 F6: the morning hand DEALS. The deck materialises as the
+    // closed pile first, then fans out with the house easing, each card a
+    // beat behind the one before it — never an instant already-fanned swap.
+    const dealHand = autoFanDue(leftList.length);
     buildDeck("left", leftList);
+    if (dealHand && leftList.length > 1) {
+      setTimeout(() => {
+        const deck = decks.left;
+        if (!deck || fanned.left) return;
+        deck.cards.forEach((c, i) => { c.style.transitionDelay = `${Math.min(i * 45, 380)}ms`; });
+        setFan("left", true);
+        setTimeout(() => deck.cards.forEach((c) => { if (c.isConnected) c.style.transitionDelay = ""; }), 1000);
+      }, 120);
+    }
     // The right stack is the recycle bin when toggled (its DELETED tickets, blue-outlined), else the
     // resolved/closed pile — same stack mechanics either way (fan, scroll, drag, reorder).
     if (decks.right) buildDeck("right", rightDeckEnabled ? avail.filter(rightDeckFilter).sort(order) : []);   // resolved pile ALWAYS stays when enabled

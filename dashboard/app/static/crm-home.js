@@ -288,6 +288,7 @@
 
   camera = window.createFractalCamera({
     apiName: "crmHomeCamera",
+    theater: "home",
     surfaceClass: "crm-home-surface",
     layerClass: "crm-home-level",
     warmClass: "crm-home-warm",

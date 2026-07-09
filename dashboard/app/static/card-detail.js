@@ -767,6 +767,9 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   };
 
   const publicApi = { open, close, isOpen: () => !!(overlay && !overlay.hidden) };
+  // The detail panel portals to <body>, outside any theater root — so it must
+  // close itself whenever the workspace switches theaters.
+  document.addEventListener("crm:theater-switch", () => { if (publicApi.isOpen()) close(); });
   if (apiName) global[apiName] = publicApi;
   return publicApi;
 };

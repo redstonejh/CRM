@@ -107,6 +107,7 @@
 
   window.createCrmCardSystem({
     apiName: "dealPipeline",
+    theater: "pipeline",
     source: dealSource,
     detail: window.dealDetail,
     widgetType: "deal",

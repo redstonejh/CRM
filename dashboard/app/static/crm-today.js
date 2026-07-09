@@ -228,6 +228,7 @@
 
   window.createCrmCardSystem({
     apiName: "crmToday",
+    theater: "today",
     source: todaySource,
     detail: todayDetail,
     widgetType: "today",

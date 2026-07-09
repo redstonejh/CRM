@@ -34,13 +34,41 @@
     document.head.appendChild(style);
   };
 
+  // Which theaters may be visible on each surface. The Today hand rides along on
+  // the Calendar surface (cards are dragged onto days); everything else is
+  // strictly one theater per surface. Summoned overlays (search deck, company
+  // dive) are never allowed to survive a switch — they must re-open on demand.
+  const ALLOWED_THEATERS = {
+    home: ["home"],
+    today: ["today"],
+    tickets: ["tickets"],
+    people: ["people"],
+    pipeline: ["pipeline"],
+    money: ["money"],
+    calendar: ["calendar", "today"],
+    reports: ["reports"],
+  };
+
   const setActive = (key) => {
     active = MODULES.some((m) => m.key === key) ? key : "home";
     localStorage.setItem(STORE_KEY, active);
+    // Close the summoned overlays FIRST — they own portaled panels that must
+    // cancel before the destination theater takes the stage.
+    try { window.crmSearchDeck?.close?.(); } catch {}
+    try { window.crmCompanyDive?.setActive?.(false); } catch {}
     MODULES.forEach((module) => {
       const on = module.key === active || (module.key === "today" && active === "calendar");
       try { module.api()?.setActive?.(on); } catch {}
     });
+    // Enforce the one-theater invariant: whatever the modules' own setActive
+    // logic did (or forgot), exactly the allowed theater roots are visible.
+    const allowed = new Set(ALLOWED_THEATERS[active] || [active]);
+    document.querySelectorAll("[data-crm-theater]").forEach((el) => {
+      el.hidden = !allowed.has(el.dataset.crmTheater);
+    });
+    // Portaled chrome (card-detail panels, drag flyers) listens for this and
+    // closes/cancels — a theater switch never carries another module's UI along.
+    document.dispatchEvent(new CustomEvent("crm:theater-switch", { detail: { key: active } }));
     root?.querySelectorAll("button[data-crm-module]").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.crmModule === active);
       button.setAttribute("aria-pressed", button.dataset.crmModule === active ? "true" : "false");

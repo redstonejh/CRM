@@ -96,6 +96,7 @@
 
   window.createCrmCardSystem({
     apiName: "peopleCards",
+    theater: "people",
     source: contactSource,
     detail: window.contactDetail,
     widgetType: "contact",

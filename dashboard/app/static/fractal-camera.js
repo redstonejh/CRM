@@ -78,6 +78,7 @@
       surface = document.createElement("div");
       surface.className = surfaceClass;
       surface.dataset.level = "0";
+      if (config.theater) surface.dataset.crmTheater = String(config.theater);
       surface.hidden = !active;
       layers[0] = config.buildRoot?.(ctx()) || document.createElement("div");
       layers[0].classList.add(layerClass);

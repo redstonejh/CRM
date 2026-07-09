@@ -305,6 +305,7 @@
 
   cardApi = window.createCrmCardSystem({
     apiName: "crmSearchDeckCards",
+    theater: "search",
     source: searchSource,
     detail: searchDetail,
     widgetType: "search-result",

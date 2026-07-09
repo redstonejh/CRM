@@ -134,6 +134,7 @@
 
   window.createCrmCardSystem({
     apiName: "moneyPipeline",
+    theater: "money",
     source: invoiceSource,
     detail: window.invoiceDetail,
     widgetType: "invoice",

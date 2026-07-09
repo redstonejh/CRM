@@ -72,6 +72,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     ...(config.storageKeys || {}),
   };
   const instanceGlobal = apiName ? String(apiName) : "";
+  const theaterKey = String(config.theater || apiName);
   let active = config.active !== false;
   let started = false;
   let publicApi = null;
@@ -215,7 +216,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
                               // create fields (client/date/description) are saved; cancelling discards it
   let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
 
-  let root = null, stackScrim = null;
+  let root = null, stackScrim = null, theater = null;
   const decks = { left: null, right: null, trash: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false, trash: false };
   const CONTROL_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : [])];
@@ -224,8 +225,24 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let tickets = [], subscribed = false;
   let linkHighlightEl = null;
 
+  // ONE owned root per instance. Everything this factory creates — stacks,
+  // scrim, zones, flow arrows, menus, drag flyers — lives inside it, so hiding
+  // the theater hides the whole module in one move. (The old per-element
+  // `hidden` toggles silently failed on .tk-zones: its author-level
+  // `display: contents` overrode the UA [hidden] rule, which is exactly how
+  // the Triage/Investigation/Resolution buckets bled through every surface.)
+  const ensureTheater = () => {
+    if (theater) return theater;
+    ensureStyles();
+    theater = document.createElement("section");
+    theater.className = "crm-theater";
+    theater.dataset.crmTheater = theaterKey;
+    theater.hidden = !active;
+    document.body.appendChild(theater);
+    return theater;
+  };
   const applyActiveVisibility = () => {
-    [root, zonesRoot, stackScrim].forEach((el) => { if (el) el.hidden = !active; });
+    if (theater) theater.hidden = !active;
   };
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -466,6 +483,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     style.textContent = `
       /* Text in the ticket UI is never selectable — dragging/clicking must not highlight or capture text.
          (The only place selection is allowed is the config menu's editable fields — see ticket-detail.js.) */
+      /* The theater: one owned root per card-system instance. display:contents so it adds NO box
+         or stacking context (its fixed-position children keep behaving exactly as before) — and the
+         [hidden] rule is author-level + !important so it actually wins over display:contents (the UA
+         [hidden] rule does not, which is how zones used to bleed through hidden). */
+      .crm-theater { display: contents; }
+      .crm-theater[hidden] { display: none !important; }
       .tk-stacks, .tk-zones { -webkit-user-select: none; user-select: none; }
       .tk-stacks { position: fixed; inset: auto 0 0 0; z-index: 4000; pointer-events: none; -webkit-app-region: no-drag; }
       /* Depth-of-field: a full-screen blur layer BETWEEN the focused stack (z 3) and everything else
@@ -821,7 +844,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         : trashEnabled
           ? `<button class="tk-menu-item" data-act="trash">move to trash</button>`
           : "");
-    document.body.appendChild(m);
+    ensureTheater().appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;
@@ -857,7 +880,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       `<div class="tk-swatches">${TICKET_COLORS.map((c) =>
         `<button class="tk-swatch${c === cur ? " is-active" : ""}" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join("")}</div>` +
       `<button class="tk-menu-item tk-menu-check" data-act="match"><span class="tk-tick">${cur ? "" : "&#10003;"}</span><span>match severity</span></button>`;
-    document.body.appendChild(m);
+    ensureTheater().appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;   // reuse the main menu's dismiss wiring (outside press / Escape / wheel)
@@ -887,7 +910,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       (entries.length
         ? entries.map((e) => `<div class="tk-act-row"><span class="tk-act-when">${esc(when(e.at))}</span><span class="tk-act-text">${esc(e.text)}${e.by ? ` <span class="tk-act-by">— ${esc(e.by)}</span>` : ""}</span></div>`).join("")
         : `<div class="tk-act-row tk-act-none">No activity yet</div>`);
-    document.body.appendChild(m);
+    ensureTheater().appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;   // same dismiss wiring: outside press / Escape (wheel INSIDE it scrolls the list)
@@ -921,7 +944,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.backgroundImage = cardBg(t);
     applyStaleness(clone, t);
     clone.innerHTML = cardInner(t);
-    document.body.appendChild(clone);
+    ensureTheater().appendChild(clone);
     fitCardFields(clone);
     requestAnimationFrame(() => { clone.style.transform = "scale(0.12)"; clone.style.opacity = "0"; });
     setTimeout(() => { clone.remove(); doPurge(); }, 320);
@@ -940,7 +963,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.backgroundImage = cardBg(t);
     applyStaleness(clone, t);
     clone.innerHTML = cardInner(t);
-    document.body.appendChild(clone);
+    ensureTheater().appendChild(clone);
     fitCardFields(clone);
     requestAnimationFrame(() => { clone.style.transform = `translate(${Math.round(to.left - fromRect.left)}px, ${Math.round(to.top - fromRect.top)}px) scale(${(to.width / fromRect.width).toFixed(4)}, ${(to.height / fromRect.height).toFixed(4)})`; });
     setTimeout(() => { clone.remove(); if (destEl.isConnected) destEl.style.opacity = ""; if (onLanded) onLanded(); }, 470);
@@ -1049,11 +1072,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const ensureRoot = () => {
     if (root) return;
     ensureStyles();
+    ensureTheater();
     root = document.createElement("div");
     root.className = "tk-stacks";
-    // Depth-of-field scrim — a BODY-level layer (z 3900), NOT a child of .tk-stacks, so it sits below
+    // Depth-of-field scrim — a theater-level layer (z 3900), NOT a child of .tk-stacks, so it sits below
     // the stacks (which stay sharp) yet above the resting buckets/dashboard (which it blurs).
-    stackScrim = document.createElement("div"); stackScrim.className = "tk-scrim"; document.body.appendChild(stackScrim);
+    stackScrim = document.createElement("div"); stackScrim.className = "tk-scrim"; theater.appendChild(stackScrim);
     for (const side of CONTROL_SIDES) {
       const box = document.createElement("div");
       box.className = `tk-deck tk-deck-${side}`;
@@ -1117,7 +1141,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       root.appendChild(box); root.appendChild(empty);
       decks.trash = { box, track, arrow, bar, thumb, action: null, emptyPh: empty, cards: [], scrollX: 0, contentW: 0, viewW: 0, order: loadOrder("trash") };
     }
-    document.body.appendChild(root);
+    theater.appendChild(root);
     window.addEventListener("resize", () => { matchCardSize(); sizeRoot(); syncDropFloor(); DECK_SIDES.forEach(layout); });
     // Watch native widget drags from the outside so a grid ticket can be dropped back
     // into its stack. Capture phase → these run before the native drag's own document
@@ -1643,7 +1667,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const clone = card.cloneNode(true);
     clone.className = "tk-card tk-flying";
     clone.style.cssText = `position:fixed; left:${cr.left}px; top:${cr.top}px; width:${cr.width}px; height:${cr.height}px; margin:0; z-index:9999;`;
-    document.body.appendChild(clone);
+    ensureTheater().appendChild(clone);
     const placed = addTicketToGrid(t, cell);
     render();   // the ticket now has a grid widget → it leaves its stack
     requestAnimationFrame(() => {
@@ -1765,7 +1789,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.backgroundImage = cardBg(t);
     applyStaleness(clone, t);
     clone.innerHTML = cardInner(t);
-    document.body.appendChild(clone);
+    ensureTheater().appendChild(clone);
     fitCardFields(clone);
     if (!target) { requestAnimationFrame(() => { clone.style.opacity = "0"; }); setTimeout(() => clone.remove(), 420); return; }
     // Measure the card's resting slot with its transition suppressed, then hide it
@@ -2344,7 +2368,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const wrap = document.createElement("div");
       wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><path class="tk-flow-shaft"></path><path class="tk-flow-head"></path></svg>`;
       const svg = wrap.firstElementChild;
-      document.body.appendChild(svg);
+      ensureTheater().appendChild(svg);
       flowSvgs.push(svg);
       flowShafts.push(svg.querySelector(".tk-flow-shaft"));
       flowHeads.push(svg.querySelector(".tk-flow-head"));
@@ -2483,7 +2507,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (window.ResizeObserver) new ResizeObserver(() => clampZoneScroll(s.key)).observe(zoneBody[s.key]);
       wireZoneThumb(s.key);
     });
-    document.body.appendChild(zonesRoot);
+    ensureTheater().appendChild(zonesRoot);
     layoutZones();
     requestAnimationFrame(layoutZones);              // re-measure once the grid has laid out
     window.addEventListener("resize", layoutZones);
@@ -2706,7 +2730,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         clone.style.backgroundImage = cardBg(t);
         applyStaleness(clone, t);
         clone.innerHTML = zoneCardInner(t);
-        document.body.appendChild(clone);
+        ensureTheater().appendChild(clone);
         fitCardFields(clone);
         card.classList.add("tk-zdrag");
         dragPreviewFn = preview;                 // re-run while autoscrolling so the gap follows the cursor
@@ -2916,7 +2940,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     clone.style.backgroundImage = cardBg(t);
     applyStaleness(clone, t);
     clone.innerHTML = zoneCardInner(t);
-    document.body.appendChild(clone);
+    ensureTheater().appendChild(clone);
     fitCardFields(clone);
     dest.style.opacity = "0";
     requestAnimationFrame(() => {
@@ -3074,7 +3098,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       clone.style.backgroundImage = cardBg(t);
       applyStaleness(clone, t);
       clone.innerHTML = cardInner(t);
-      document.body.appendChild(clone);
+      ensureTheater().appendChild(clone);
       fitCardFields(clone);
       requestAnimationFrame(() => {
         clone.style.transform = `translate(${Math.round(to.left - from.left)}px, ${Math.round(to.top - from.top)}px) scale(${(to.width / from.width).toFixed(4)}, ${(to.height / from.height).toFixed(4)})`;

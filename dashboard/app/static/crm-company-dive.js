@@ -499,6 +499,7 @@
 
   camera = window.createFractalCamera({
     apiName: "crmCompanyCamera",
+    theater: "company-dive",
     surfaceClass: "crm-company-surface",
     layerClass: "crm-company-level",
     warmClass: "crm-company-warm",

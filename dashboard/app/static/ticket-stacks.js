@@ -50,6 +50,7 @@
 
   window.createCrmCardSystem({
     apiName: "ticketStacks",
+    theater: "tickets",
     source: window.tickets,
     detail: window.ticketDetail,
     widgetType: "ticket",

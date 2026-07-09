@@ -393,6 +393,7 @@
 
   camera = window.createFractalCamera({
     apiName: "fractalCalendarCamera",
+    theater: "calendar",
     surfaceClass: "fc-surface",
     layerClass: "fc-level",
     warmClass: "fc-warm",

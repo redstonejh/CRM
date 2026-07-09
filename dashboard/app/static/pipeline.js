@@ -132,9 +132,18 @@
     ],
   };
 
+  // FIX_PASS_2 F5: the bucket follows the deal's stage/state; a won or lost
+  // deal is never bucketed (it lives in the Won pile / trash instead).
+  const dealBucket = (deal) => {
+    if (isClosedDeal(deal)) return false;
+    const stage = String(valueOf(deal, "stage") || valueOf(deal, "state") || "").toLowerCase();
+    return ["lead", "qualified", "proposal", "negotiation"].includes(stage) ? stage : null;
+  };
+
   window.createCrmCardSystem({
     apiName: "dealPipeline",
     theater: "pipeline",
+    stageOf: dealBucket,
     face: dealFace,
     source: dealSource,
     detail: window.dealDetail,

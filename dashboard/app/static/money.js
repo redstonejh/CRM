@@ -154,9 +154,18 @@
     ],
   };
 
+  // FIX_PASS_2 F5: the bucket follows the invoice's DERIVED state — a sent
+  // invoice past its due date is Overdue without a drag; paid → the pile.
+  const invoiceBucket = (invoice) => {
+    const state = invoiceIntensity(invoice);
+    if (state === "paid") return false;
+    return ["draft", "sent", "overdue"].includes(state) ? state : null;
+  };
+
   window.createCrmCardSystem({
     apiName: "moneyPipeline",
     theater: "money",
+    stageOf: invoiceBucket,
     face: invoiceFace,
     source: invoiceSource,
     detail: window.invoiceDetail,

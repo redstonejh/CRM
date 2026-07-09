@@ -103,9 +103,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (!id || !fields || !Object.keys(fields).length) return;
     try { source?.update?.(id, fields); } catch {}
   };
+  // FIX_PASS_2 F5: a record whose state IMPLIES a stage lands in that bucket
+  // without a manual drag. config.stageOf(record) derives it (e.g. an invoice
+  // sent past its due date reads as Overdue even while its stored stage says
+  // "sent"); the stored doc stage and the local stage map are the fallbacks.
+  const configuredStageOf = typeof config.stageOf === "function" ? config.stageOf : null;
   const stageOf = (id) => {
     if (!zonesEnabled) return null;
-    const docStage = ticketById(id)?.stage;
+    const t = ticketById(id);
+    if (configuredStageOf && t) {
+      const derived = configuredStageOf(t);
+      if (STAGE_KEYS.includes(derived)) return derived;
+      if (derived === false) return null;   // explicit "not bucketed" (e.g. paid → the pile)
+    }
+    const docStage = t?.stage;
     if (STAGE_KEYS.includes(docStage)) return docStage;
     return id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null;
   };

@@ -178,6 +178,87 @@ const SCENES = [
       steps.assert(() => !!document.querySelector('.tk-desk-clear'), 'Desk clear shown'),
     ],
   },
+  {
+    name: 'scene-6-calendar',
+    // Blueprint A4 proof: month cells hold title-peek bands + the today glow;
+    // a hand card dragged onto a day FLIES in and seats; the day dive is a
+    // bucket of openable cards; B chains day→month→year.
+    steps: [
+      steps.driveTo('calendar'),
+      steps.settle(900),
+      steps.frames('year', 2, 200),
+      // Dive into the current month.
+      async ({ page }) => {
+        const at = await page.evaluate(() => {
+          const month = new Date().getMonth() + 1;
+          const el = document.querySelector(`[data-crm-theater="calendar"] .fc-month[data-month="${month}"]`);
+          const r = el.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        await page.mouse.click(at.x, at.y);
+      },
+      steps.frames('month-dive', 5, 140),
+      steps.settle(400),
+      steps.assert(() => !!document.querySelector('.fc-expander[data-kind="month"] .fc-day.fc-today'), 'today cell glows'),
+      steps.assert(() => !!document.querySelector('.fc-expander[data-kind="month"] .fc-chip'), 'peek bands render in day cells'),
+      // Fan the riding-along hand and fly the overdue invoice onto a day.
+      steps.evaluate(() => window.crmToday.fan('left', true)),
+      steps.settle(800),
+      async ({ page, shoot }) => {
+        const drag = await page.evaluate(() => {
+          const card = document.querySelector('[data-crm-theater="today"] .tk-card[data-id="invoices:inv_1038"]');
+          const day = [...document.querySelectorAll('.fc-expander[data-kind="month"] .fc-day[data-date]')]
+            .find((el) => el.dataset.date.endsWith('-20'));
+          if (!card || !day) return null;
+          const a = card.getBoundingClientRect(); const b = day.getBoundingClientRect();
+          return { fx: a.left + a.width / 2, fy: a.top + a.height / 2, tx: b.left + b.width / 2, ty: b.top + b.height / 2 };
+        });
+        if (!drag) throw new Error('drag-to-day endpoints missing');
+        await page.mouse.move(drag.fx, drag.fy);
+        await page.mouse.down();
+        for (let i = 1; i <= 10; i++) {
+          await page.mouse.move(drag.fx + (drag.tx - drag.fx) * (i / 10), drag.fy + (drag.ty - drag.fy) * (i / 10));
+          await sleep(28);
+        }
+        await page.mouse.up();
+        await shoot('drop-flight', 5, 130);
+      },
+      steps.settle(900),
+      steps.assert(() => {
+        const day = [...document.querySelectorAll('.fc-expander[data-kind="month"] .fc-day[data-date]')]
+          .find((el) => el.dataset.date.endsWith('-20'));
+        return !!day?.querySelector('.fc-chip[data-id="inv_1038"]');
+      }, 'dropped card seated as a peek band'),
+      // Day dive: the day is a bucket of openable cards.
+      async ({ page }) => {
+        const at = await page.evaluate(() => {
+          const day = [...document.querySelectorAll('.fc-expander[data-kind="month"] .fc-day[data-date]')]
+            .find((el) => el.dataset.date.endsWith('-20'));
+          const r = day.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        await page.mouse.click(at.x, at.y);
+      },
+      steps.frames('day-dive', 4, 140),
+      steps.settle(400),
+      steps.click('.fc-day-detail .fc-chip[data-id="inv_1038"]'),
+      steps.frames('open-from-day', 4, 150),
+      steps.settle(400),
+      steps.assert(() => !!document.querySelector('.ticket-detail-overlay:not([hidden])'), 'record opened from the day bucket'),
+      steps.key('Escape'),
+      steps.settle(500),
+      // The overdue invoice blooms the next-touch chips — let it go closes out.
+      steps.evaluate(() => { document.querySelector('.td-next-touch [data-next-touch-let-go]')?.click(); }),
+      steps.settle(700),
+      steps.key('b'),
+      steps.frames('b-to-month', 3, 140),
+      steps.settle(400),
+      steps.key('b'),
+      steps.frames('b-to-year', 3, 140),
+      steps.settle(400),
+      steps.assert(() => window.fractalCalendarCamera.level() === 0, 'B chained back to the year'),
+    ],
+  },
 ];
 
 // ── runner ────────────────────────────────────────────────────────────────────

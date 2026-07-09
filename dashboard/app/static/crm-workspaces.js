@@ -30,6 +30,14 @@
         line-height: 1; cursor: pointer; transition: color .15s ease, background .15s ease; }
       .crm-module-switch button:hover { color: rgba(255,255,255,0.86); }
       .crm-module-switch button.is-active { color: #fff; background: rgba(255,255,255,0.12); }
+      /* BLUEPRINT A4 / Scene VII: when a next-touch chip lands a card on a day
+         the calendar can't show, its shortcut pulses once — the card still
+         visibly has somewhere to be. */
+      .crm-module-switch button.crm-pill-pulse { animation: crmPillPulse .7s cubic-bezier(.22, 1, .26, 1); }
+      @keyframes crmPillPulse {
+        0% { box-shadow: 0 0 0 0 rgba(125,180,255,0.75); color: #fff; }
+        100% { box-shadow: 0 0 0 16px rgba(125,180,255,0); }
+      }
     `;
     document.head.appendChild(style);
   };

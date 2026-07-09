@@ -503,7 +503,23 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       if (!date) return;
       setBusy(true);
       try {
+        // Capture the card's rect BEFORE the close retracts it — the chip tap
+        // flies the card to its calendar day (BLUEPRINT A4 / Scene VII).
+        const fromRect = flyCard?.getBoundingClientRect?.() || null;
         if (typeof nextTouch.schedule === "function") await nextTouch.schedule(record, date, mode);
+        const cardTitle = String(record?.client || record?.title || record?.name || record?.meta?.client || "").trim();
+        const flew = fromRect && window.fractalCalendar?.flyCardToDay?.(fromRect, date, { title: cardTitle });
+        if (!flew) {
+          // Calendar isn't the neighbor → pulse its pill-bar shortcut once, so
+          // the card still visibly has somewhere to be.
+          const pill = document.querySelector('.crm-module-switch button[data-crm-module="calendar"]');
+          if (pill) {
+            pill.classList.remove("crm-pill-pulse");
+            void pill.offsetWidth;
+            pill.classList.add("crm-pill-pulse");
+            setTimeout(() => pill.classList.remove("crm-pill-pulse"), 800);
+          }
+        }
         close();
       } catch (err) {
         fail(err);

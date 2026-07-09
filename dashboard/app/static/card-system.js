@@ -2607,7 +2607,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const calendarTargetAt = (x, y, ignoreEl = null) => {
     if (!onCalendarDrop) return null;
-    const el = pointElement(x, y, ignoreEl)?.closest?.(".fc-day[data-date], .fc-day-detail[data-date], .fc-empty[data-date]") || null;
+    // Look THROUGH this instance's own stack chrome (BLUEPRINT A4): the held
+    // hand fans across the middle of the screen, so a drop aimed at a day cell
+    // often lands on a sibling card first. Other overlays still block the drop
+    // (the first non-stack element decides).
+    let el = null;
+    for (const cand of (document.elementsFromPoint?.(x, y) || [])) {
+      if (ignoreEl && (cand === ignoreEl || ignoreEl.contains(cand))) continue;
+      if (cand.closest?.(".tk-card, .tk-deck, .tk-track, .tk-scrim")) continue;
+      el = cand.closest?.(".fc-day[data-date], .fc-day-detail[data-date], .fc-empty[data-date]");
+      break;
+    }
     const date = el?.dataset?.date || "";
     return date ? { el, date } : null;
   };
@@ -2625,8 +2635,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const hit = calendarTargetAt(x, y, ignoreEl);
     clearCalendarHighlight();
     if (!hit) return false;
+    // BLUEPRINT A4: the drop is a FLIGHT — the released card flies into the
+    // day cell and the peek band appears as it seats, never a teleport.
+    const fromRect = ignoreEl?.getBoundingClientRect?.() || null;
     Promise.resolve(onCalendarDrop(record, hit.date, hit.el)).then((result) => {
-      if (result !== false) load();
+      if (result !== false) {
+        if (fromRect) { try { window.fractalCalendar?.flyCardToDay?.(fromRect, hit.date, { title: titleOf(record) }); } catch {} }
+        load();
+      }
     }).catch(() => {});
     return true;
   };

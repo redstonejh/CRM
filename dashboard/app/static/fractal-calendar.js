@@ -31,6 +31,14 @@
     '"': "&quot;",
   }[char]));
   const clampN = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
+  // Test seam (BLUEPRINT A4): the today-glow and any "now" derivation honor a
+  // pinned clock so the harness can freeze the wall. Product behavior when
+  // unset is the real clock.
+  const crmNow = () => (window.__CRM_NOW__ ? new Date(window.__CRM_NOW__) : new Date());
+  const todayIso = () => {
+    const d = crmNow();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
   const daysIn = (month) => new Date(currentYear, month + 1, 0).getDate();
   const firstDow = (month) => new Date(currentYear, month, 1).getDay();
   const iso = (month, day) => `${currentYear}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -106,14 +114,42 @@
       .fc-day-num { position: absolute; top: 6%; left: 7%; font-size: 0.85rem; font-weight: 700;
         color: rgba(255,255,255,0.78); line-height: 1; }
       .fc-day-body { position: absolute; inset: 24% 5% 5%; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
-      .fc-scheduled-list { display: flex; flex-direction: column; gap: 3px; min-height: 0; overflow: hidden; }
-      .fc-chip { border-radius: 999px; padding: 2px 6px; font-size: 0.64rem; line-height: 1.15;
-        color: rgba(255,255,255,0.86); background: rgba(125,180,255,0.18);
+      .fc-scheduled-list { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: hidden; }
+      /* BLUEPRINT A4: day cells hold TITLE-PEEK bands — the card anatomy at
+         k-scale (glass body, left edge accent), stacked flush like a peeking
+         pile, never colored pills. Red stays money-only (data-hot). */
+      .fc-chip { position: relative; border-radius: 3px; margin-top: -1px; padding: 2px 6px 2px 9px;
+        font-size: 0.64rem; line-height: 1.2; color: rgba(255,255,255,0.88);
+        background: linear-gradient(180deg, rgba(83,95,117,0.6), rgba(33,41,56,0.55));
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 6px rgba(0,0,0,0.22);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .fc-chip[data-type="deal"] { background: rgba(249,115,22,0.18); }
-      .fc-chip[data-type="contact"] { background: rgba(148,163,184,0.22); }
-      .fc-chip[data-type="task"] { background: rgba(111,201,154,0.18); }
-      .fc-chip[data-type="invoice"] { background: rgba(234,88,12,0.18); }
+      .fc-chip:first-child { margin-top: 0; }
+      .fc-chip::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+        background: rgba(148,163,184,0.35); }
+      .fc-chip[data-type="deal"]::before { background: rgba(249,115,22,0.85); }
+      .fc-chip[data-type="task"]::before { background: rgba(111,201,154,0.85); }
+      .fc-chip[data-type="ticket"]::before { background: rgba(125,180,255,0.85); }
+      .fc-chip[data-type="invoice"]::before { background: rgba(56,189,248,0.85); }
+      .fc-chip[data-type="contact"]::before, .fc-chip[data-type="calendar"]::before { background: rgba(148,163,184,0.35); }
+      .fc-chip[data-hot="true"]::before { background: rgba(220,38,38,0.95); }   /* overdue invoice — the only red */
+      .fc-chip-more { font-size: 0.6rem; padding: 1px 6px; color: rgba(255,255,255,0.5); }
+      /* Inside the day dive the same bands read near-card-size and open on click. */
+      .fc-day-detail .fc-chip { font-size: 0.82rem; padding: 9px 12px 9px 14px; border-radius: 6px;
+        margin-top: 3px; cursor: pointer; }
+      .fc-day-detail .fc-chip:hover { background: linear-gradient(180deg, rgba(103,115,137,0.66), rgba(53,61,76,0.6));
+        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.4), inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 8px rgba(0,0,0,0.28); }
+      /* BLUEPRINT A4: today's cell carries the lid glow — the wall's only
+         ambient signal. */
+      .fc-day.fc-today { box-shadow: inset 0 0 0 1px rgba(125,180,255,0.55), inset 0 1px 0 rgba(255,255,255,0.14),
+        0 0 16px rgba(90,150,255,0.38); }
+      /* The drag-to-day / chip-tap flight: a shrinking glass card that seats
+         into the day cell (house ease, opaque body — no backdrop under transform). */
+      .fc-fly-card { position: fixed; z-index: 6000; pointer-events: none; box-sizing: border-box;
+        border-radius: 12px; padding: 10px 12px; color: #fff; font-size: 0.9rem; font-weight: 700;
+        overflow: hidden; background-color: rgb(74, 84, 101);
+        background-image: linear-gradient(180deg, rgba(83,95,117,0.85), rgba(33,41,56,0.9));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 18px 42px rgba(0,0,0,0.4);
+        transition: transform 460ms ${EASE}, opacity 220ms ease 300ms; }
       .fc-empty, .fc-day-detail { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center;
         color: rgba(255,255,255,0.42); font-size: 0.8rem; line-height: 1.4; }
       .fc-day-detail { margin: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; text-align: left; }
@@ -144,14 +180,18 @@
 
   const scheduledFor = (date) => scheduledByDate.get(date) || [];
   const scheduledHTML = (date, limit = 4) => {
-    const items = scheduledFor(date).slice(0, limit);
+    const all = scheduledFor(date);
+    const items = all.slice(0, limit);
     if (!items.length) return "";
+    const extra = all.length - items.length;
     return `<div class="fc-scheduled-list">${items.map((item) =>
-      `<div class="fc-chip" data-type="${esc(item.type)}">${esc(item.label)}: ${esc(item.title)}</div>`).join("")}</div>`;
+      `<div class="fc-chip" data-type="${esc(item.type)}" data-id="${esc(item.id)}"${item.hot ? ' data-hot="true"' : ""}>${esc(item.title)}</div>`).join("")}${
+      extra > 0 ? `<div class="fc-chip-more">+${extra} more</div>` : ""}</div>`;
   };
   const dayCellHTML = (month, day) => {
     const date = iso(month, day);
-    return `<div class="fc-day" data-date="${date}"><span class="fc-day-num">${day}</span><div class="fc-day-body">${scheduledHTML(date)}</div></div>`;
+    const today = date === todayIso() ? " fc-today" : "";
+    return `<div class="fc-day${today}" data-date="${date}"><span class="fc-day-num">${day}</span><div class="fc-day-body">${scheduledHTML(date)}</div></div>`;
   };
   const monthDaysHTML = (month) => {
     const leading = firstDow(month);
@@ -297,12 +337,16 @@
 
   const loadScheduled = async ({ refresh = false } = {}) => {
     const next = new Map();
+    const overdueInvoice = (record) => {
+      const state = String(record?.state || record?.stage || record?.priority || "").toLowerCase();
+      return state.includes("overdue");
+    };
     const add = (type, label, record) => {
       if (!record || record.deletedAt) return;
       const date = scheduledDateOf(record);
       if (!date || !yearDate(date)) return;
       const items = next.get(date) || [];
-      items.push({ type, label, id: record.id, title: titleOf(record) });
+      items.push({ type, label, id: record.id, title: titleOf(record), hot: type === "invoice" && overdueInvoice(record) });
       next.set(date, items);
     };
     await Promise.all(entitySources.map(async (source) => {
@@ -317,7 +361,25 @@
       recordsFrom(result).forEach((record) => add("calendar", "Calendar", record));
     } catch {}
     scheduledByDate = next;
-    if (refresh && camera) camera.rebuildRoot();
+    if (refresh && camera) refreshLevels();
+  };
+  // Refresh every visible layer IN PLACE (BLUEPRINT A4): a data change while
+  // dived into a month/day must repaint the chips without collapsing the
+  // camera back to the year (rebuildRoot resets to level 0 — a navigation cut).
+  const refreshLevels = () => {
+    if (!camera) return;
+    if (camera.isTransitioning?.()) { scheduleReload(); return; }   // never repaint mid-dive
+    camera.dropWarm?.();
+    const layers = camera.layers();
+    layers[0]?.querySelectorAll?.(".fc-month").forEach((bucket) => {
+      bucket.innerHTML = monthInnerHTML(Number(bucket.dataset.month) - 1);
+    });
+    layers.slice(1).forEach((layer) => {
+      if (!layer?.dataset) return;
+      if (layer.dataset.kind === "month") layer.innerHTML = monthInnerHTML(Number(layer.dataset.month) - 1);
+      else if (layer.dataset.kind === "day") layer.innerHTML = dayInnerHTML(layer.dataset.date);
+    });
+    camera.layout();
   };
   const scheduleReload = () => {
     clearTimeout(reloadTimer);
@@ -381,6 +443,69 @@
       if (widget && target?.dataset?.date) scheduleWidget(widget, target.dataset.date);
     }, true);
   };
+  // BLUEPRINT A4: the day at full size is a bucket of that day's cards —
+  // clicking a title-peek band inside the day dive opens the record's own
+  // detail (the same open every surface plays). Camera clicks are untouched:
+  // this only fires inside .fc-day-detail, which exists at day level only.
+  const detailForType = (type) => ({
+    ticket: window.ticketDetail,
+    deal: window.dealDetail,
+    contact: window.contactDetail,
+    invoice: window.invoiceDetail,
+  }[type] || null);
+  const wireDayOpens = () => {
+    document.addEventListener("click", async (event) => {
+      const chip = event.target?.closest?.(".fc-day-detail .fc-chip[data-id]");
+      if (!chip || !camera?.surface?.()?.contains(chip)) return;
+      const detail = detailForType(chip.dataset.type);
+      const source = entitySources.find((entry) => entry.type === chip.dataset.type);
+      if (!detail?.open || !source) return;
+      event.preventDefault();
+      event.stopPropagation();
+      let record = null;
+      try {
+        const bridge = source.bridge();
+        const got = await bridge?.get?.(chip.dataset.id);
+        record = got?.record || got?.ticket || (got?.id ? got : null);
+        if (!record) record = recordsFrom(await bridge?.list?.({ includeDeleted: true })).find((r) => String(r?.id || "") === chip.dataset.id) || null;
+      } catch {}
+      if (record) { try { detail.open(record, chip); } catch {} }
+    }, true);
+  };
+
+  // BLUEPRINT A4: the flight — a card (a drag release, or a next-touch chip
+  // tap) flies from `fromRect` into its calendar day and seats as the peek
+  // band appearing beneath it. Returns false when the calendar isn't on
+  // stage or the day cell isn't visible (callers fall back to the pill pulse).
+  const flyCardToDay = (fromRect, date, { title = "" } = {}) => {
+    const surface = camera?.surface?.();
+    if (!camera?.isActive?.() || !surface || surface.hidden) return false;
+    const dest = surface.querySelector(`.fc-day[data-date="${date}"], .fc-day-detail[data-date="${date}"], .fc-empty[data-date="${date}"]`);
+    if (!dest || !fromRect || fromRect.width < 4) return false;
+    const to = dest.getBoundingClientRect();
+    if (to.width < 4) return false;
+    const clone = document.createElement("div");
+    clone.className = "fc-fly-card";
+    clone.textContent = title;
+    Object.assign(clone.style, {
+      left: `${Math.round(fromRect.left)}px`, top: `${Math.round(fromRect.top)}px`,
+      width: `${Math.round(fromRect.width)}px`, height: `${Math.round(fromRect.height)}px`,
+      transformOrigin: "top left",
+    });
+    document.body.appendChild(clone);
+    requestAnimationFrame(() => {
+      clone.style.transform = `translate(${Math.round(to.left - fromRect.left)}px, ${Math.round(to.top - fromRect.top)}px) scale(${(to.width / fromRect.width).toFixed(4)}, ${(to.height / fromRect.height).toFixed(4)})`;
+      clone.style.opacity = "0.12";
+    });
+    setTimeout(() => {
+      clone.remove();
+      dest.classList.add("is-drop-target");             // one settle pulse where it seated
+      setTimeout(() => dest.classList.remove("is-drop-target"), 340);
+    }, 500);
+    scheduleReload();
+    return true;
+  };
+
   const wireYearControls = () => {
     document.addEventListener("click", (event) => {
       const button = event.target?.closest?.(".fc-year-btn");
@@ -418,6 +543,7 @@
     onReady: () => {
       wireYearControls();
       wireDrops();
+      wireDayOpens();
       subscribeScheduled();
       loadScheduled({ refresh: true });
     },
@@ -436,6 +562,7 @@
     dayEl: (date) => camera.surface()?.querySelector(`.fc-day[data-date="${date}"], .fc-empty[data-date="${date}"], .fc-day-detail[data-date="${date}"]`) || null,
     monthEl: (month) => camera.surface()?.querySelector(`.fc-expander[data-month="${month}"], .fc-month[data-month="${month}"]`) || null,
     scheduleWidget,
+    flyCardToDay,
     _parity: (monthIndex, opacity = 1) => {
       const layers = camera.layers();
       const mini = layers[0]?.querySelector(`.fc-month[data-month="${monthIndex}"]`);

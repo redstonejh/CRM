@@ -34,6 +34,9 @@
          the calendar can't show, its shortcut pulses once — the card still
          visibly has somewhere to be. */
       .crm-module-switch button.crm-pill-pulse { animation: crmPillPulse .7s cubic-bezier(.22, 1, .26, 1); }
+      /* BLUEPRINT A5: the flip target lights while an eligible card hovers it. */
+      .crm-module-switch button.crm-pill-drop { color: #fff;
+        box-shadow: 0 0 0 2px rgba(125,180,255,0.75), 0 0 18px rgba(90,150,255,0.5); }
       @keyframes crmPillPulse {
         0% { box-shadow: 0 0 0 0 rgba(125,180,255,0.75); color: #fff; }
         100% { box-shadow: 0 0 0 16px rgba(125,180,255,0); }

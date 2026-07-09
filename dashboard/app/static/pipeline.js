@@ -178,6 +178,22 @@
     stalenessOf: (deal) => window.crmColdFront?.staleness?.(deal, "deals") || 0,
     resolvedState: "won",
     zoneGravity: true,   // BLUEPRINT A2: deals rest on the bucket floor
+    // BLUEPRINT A5: a won deal dropped on the Money pill turns over mid-flight
+    // and lands in Draft as an invoice pre-filled from the deal.
+    flipTarget: {
+      module: "money",
+      accepts: (deal) => String(valueOf(deal, "state") || "").toLowerCase() === "won",
+      build: (deal) => ({
+        title: `${valueOf(deal, "client") || valueOf(deal, "title") || "Deal"} — invoice`,
+        client: valueOf(deal, "client") || valueOf(deal, "title") || "",
+        companyId: valueOf(deal, "companyId") || "",
+        dealId: deal.id,
+        state: "draft", stage: "draft", priority: "draft",
+        amount: amountOf(deal) || "",
+        dueDate: "",
+        description: `Drafted from won deal "${valueOf(deal, "title") || valueOf(deal, "client") || deal.id}".`,
+      }),
+    },
     isResolved: (deal) => !!deal && (deal.state || "open") === "won",
     bucketSummary,
     resolvedPulse: true,

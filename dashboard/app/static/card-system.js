@@ -102,6 +102,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // Today opts in; every other instance keeps the original flat fan.
   const handMode = config.fanStyle === "hand";
   const emptyStateText = typeof config.emptyStateText === "string" ? config.emptyStateText : "";
+  // BLUEPRINT A5 — the flip: a config seam naming the sibling module a card
+  // can transform INTO (pipeline: a won deal dropped on Money becomes a Draft
+  // invoice). The drop target is the destination's pill-bar shortcut — the
+  // one piece of the destination visible from every surface.
+  const flipTarget = config.flipTarget || null;
+  const flipEligible = (record) => { try { return !!flipTarget && (!flipTarget.accepts || !!flipTarget.accepts(record)); } catch { return false; } };
+  const flipPillEl = () => flipTarget ? document.querySelector(`.crm-module-switch button[data-crm-module="${flipTarget.module}"]`) : null;
+  const overFlipPill = (x, y) => {
+    const el = flipPillEl(); if (!el) return false;
+    const r = el.getBoundingClientRect(); const PAD = 16;   // generous catch pad
+    return x >= r.left - PAD && x <= r.right + PAD && y >= r.top - PAD && y <= r.bottom + PAD;
+  };
+  const setFlipPillHover = (on) => { const el = flipPillEl(); if (el) el.classList.toggle("crm-pill-drop", !!on); };
   // BLUEPRINT A2 — gravity: cards obey gravity and SEAT at the bucket floor
   // (title-peek stack resting low) instead of hanging from the lid. A per-
   // instance config flag: the CRM surfaces opt in; the ticketing instance
@@ -1906,6 +1919,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (!dragging) return;
       card.style.transform = `translate(${baseTx + dx}px, ${baseTy + dy}px) rotate(0deg) scale(1.03)`;
       updateAutoScroll(e.clientX, e.clientY);   // scroll a bucket/deck if the cursor nears a scrollable edge
+      // BLUEPRINT A5: an eligible card hovering the flip module's pill lights
+      // it as the drop that turns the card over.
+      if (flipTarget && flipEligible(t)) {
+        const overFlip = overFlipPill(e.clientX, e.clientY);
+        setFlipPillHover(overFlip);
+        if (overFlip) { clearCalendarHighlight(); clearHomeStageHighlight(); clearZoneHighlight(); clearGap(); return; }
+      }
       if (previewCalendarTarget(e.clientX, e.clientY, card)) { clearHomeStageHighlight(); clearZoneHighlight(); clearGap(); return; }
       if (previewHomeStageTarget(e.clientX, e.clientY, t, card)) { clearCalendarHighlight(); clearZoneHighlight(); clearGap(); return; }
       clearCalendarHighlight(); clearHomeStageHighlight();
@@ -1944,7 +1964,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const wasDrag = dragging; dragging = false; down = false;
       card.classList.remove("tk-dragging");
       // A plain click opens its config — EXCEPT trash cards, which have no config (their restore button does the work).
-      if (!wasDrag) { if (side !== "trash") detail?.open(t, card); return; }
+      if (!wasDrag) { setFlipPillHover(false); if (side !== "trash") detail?.open(t, card); return; }
+      // BLUEPRINT A5: released on the flip module's pill → the card turns
+      // over mid-flight and lands there as its transformed sibling (won deal
+      // → Draft invoice). The source card returns to its pile beneath the
+      // transit; the flight is a clone.
+      if (flipTarget && flipEligible(t) && overFlipPill(e.clientX, e.clientY)) {
+        setFlipPillHover(false);
+        const fromRect = card.getBoundingClientRect();
+        layout(side);
+        try { window.crmFlip?.play?.({ record: t, fromRect, target: flipTarget }); } catch {}
+        return;
+      }
+      setFlipPillHover(false);
       // FIX_PASS_2 F6: a stage-complete card dropped on the Won/resolved pile
       // RESOLVES — the vision's choreography outranks the card-on-card link
       // (the pile's top card would otherwise swallow the drop as a link).

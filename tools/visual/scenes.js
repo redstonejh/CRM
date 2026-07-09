@@ -179,6 +179,60 @@ const SCENES = [
     ],
   },
   {
+    name: 'scene-4-the-flip',
+    // Blueprint A5 proof: a won deal dragged from Pipeline's Won pile onto the
+    // Money pill glides to Money, turns over mid-flight, and lands in Draft as
+    // an invoice pre-filled from the deal.
+    steps: [
+      steps.driveTo('pipeline'),
+      steps.settle(900),
+      steps.frames('pipeline', 1, 200),
+      async ({ page, shoot }) => {
+        const drag = await page.evaluate(() => {
+          const card = document.querySelector('[data-crm-theater="pipeline"] .tk-deck-right .tk-card[data-id="dl_foxglove_rebrand"]');
+          const pill = document.querySelector('.crm-module-switch button[data-crm-module="money"]');
+          if (!card || !pill) return null;
+          const a = card.getBoundingClientRect(); const b = pill.getBoundingClientRect();
+          return { fx: a.left + a.width / 2, fy: a.top + a.height / 2, tx: b.left + b.width / 2, ty: b.top + b.height / 2 };
+        });
+        if (!drag) throw new Error('flip drag endpoints missing');
+        await page.mouse.move(drag.fx, drag.fy);
+        await page.mouse.down();
+        for (let i = 1; i <= 12; i++) {
+          await page.mouse.move(drag.fx + (drag.tx - drag.fx) * (i / 12), drag.fy + (drag.ty - drag.fy) * (i / 12));
+          await sleep(30);
+        }
+        await shoot('pill-lit', 1, 120);
+        await page.mouse.up();
+        await shoot('flip-flight', 10, 140);
+      },
+      steps.settle(900),
+      steps.assert(() => document.body.dataset.crmModule === 'money', 'the desk glided to Money'),
+      steps.assert(async () => {
+        const payload = await window.invoices.list({ includeDeleted: false });
+        return (payload.records || []).some((inv) => inv.dealId === 'dl_foxglove_rebrand' && String(inv.state).toLowerCase() === 'draft');
+      }, 'a Draft invoice pre-filled from the won deal exists'),
+      steps.frames('landed', 2, 200),
+      // Open the landed invoice — the detail shows the pre-filled face.
+      async ({ page }) => {
+        const at = await page.evaluate(async () => {
+          const payload = await window.invoices.list({ includeDeleted: false });
+          const inv = (payload.records || []).find((r) => r.dealId === 'dl_foxglove_rebrand');
+          const card = document.querySelector(`[data-crm-theater="money"] .tk-zcard[data-id="${inv.id}"]`);
+          if (!card) return null;
+          const r = card.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+        if (at) await page.mouse.click(at.x, at.y);
+      },
+      steps.frames('invoice-open', 4, 160),
+      steps.key('Escape'),
+      steps.settle(500),
+      steps.evaluate(() => { document.querySelector('.td-next-touch [data-next-touch-let-go]')?.click(); }),
+      steps.settle(600),
+    ],
+  },
+  {
     name: 'scene-6-calendar',
     // Blueprint A4 proof: month cells hold title-peek bands + the today glow;
     // a hand card dragged onto a day FLIES in and seats; the day dive is a

@@ -7,7 +7,8 @@
     const maxLevel = Number.isFinite(config.maxLevel) ? config.maxLevel : 2;
     const ease = config.ease || "cubic-bezier(.22, 1, .26, 1)";
     const morphMs = Number(config.morphMs) || 460;
-    const margin = Number(config.margin) || 16;
+    const configuredMargin = Number(config.margin);
+    const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
     let top = 58;
     let surface = null;
@@ -16,6 +17,7 @@
     let srcSel = [];
     let transitioning = false;
     let transitionSeq = 0;
+    let transitionWaiters = [];
     let warm = null;
     let active = config.active !== false;
 
@@ -57,6 +59,12 @@
         fn();
       };
     };
+    const settleWaiters = () => {
+      const waiters = transitionWaiters;
+      transitionWaiters = [];
+      waiters.forEach((resolve) => resolve(ctx()));
+    };
+    const whenSettled = () => transitioning ? new Promise((resolve) => transitionWaiters.push(resolve)) : Promise.resolve(ctx());
     const afterTransform = (el, fn) => {
       let done = false;
       const finish = () => {
@@ -136,6 +144,7 @@
     };
     const expand = (target) => {
       if (!target || !active || transitioning || level >= maxLevel) return;
+      config.prepareTarget?.(target, ctx());
       const seq = ++transitionSeq;
       transitioning = true;
       surface.querySelectorAll(`.${config.contractingClass || "fractal-camera-contracting"}`).forEach((el) => el.remove());
@@ -183,8 +192,10 @@
         surface.dataset.level = String(level);
         transitioning = false;
         config.onLevelChange?.(ctx());
+        config.onTransitionEnd?.("expand", ctx());
+        settleWaiters();
       });
-      commit();
+      config.onTransitionStart?.("expand", ctx());
       afterTransform(expander, () => {
         if (seq !== transitionSeq) return;
         commit();
@@ -207,6 +218,7 @@
       if (!expander || !below || !source) {
         level = Math.max(0, level - 1);
         transitioning = false;
+        settleWaiters();
         return;
       }
       const E = expRect();
@@ -235,8 +247,10 @@
         dropWarm();
         transitioning = false;
         config.onLevelChange?.(ctx());
+        config.onTransitionEnd?.("contract", ctx());
+        settleWaiters();
       });
-      commit();
+      config.onTransitionStart?.("contract", ctx());
       void below.offsetWidth;
       requestAnimationFrame(() => {
         if (seq !== transitionSeq) return;
@@ -350,6 +364,7 @@
       backToRoot,
       jumpTo,
       isTransitioning: () => transitioning,
+      whenSettled,
       refresh,
       rebuildRoot,
       dropWarm,

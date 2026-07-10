@@ -7,7 +7,7 @@ const { WebSocket, WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.PORT || process.env.CRM_API_PORT || 3899);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/crm';
-const VALID_ENTITIES = new Set(['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions']);
+const VALID_ENTITIES = new Set(['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions']);
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'updatedAt', 'version']);
 const REPORT_ENTITIES = [...VALID_ENTITIES];
 const CREATE_BODY_KEYS = new Set(['fields', 'actor', 'options']);
@@ -123,6 +123,258 @@ function broadcast(message) {
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) client.send(body);
   }
+}
+
+const DOMAIN_SPECS = {
+  relationships: {
+    table: 'crm_relationships', prefix: 'rel',
+    fields: {
+      fromEntity: 'from_entity', fromId: 'from_id', toEntity: 'to_entity', toId: 'to_id',
+      kind: 'kind', role: 'role',
+    },
+    required: ['fromEntity', 'fromId', 'toEntity', 'toId'],
+  },
+  commitments: {
+    table: 'crm_commitments', prefix: 'com', linkTable: 'crm_commitment_links', linkKey: 'commitment_id',
+    fields: {
+      title: 'title', kind: 'kind', status: 'status', dueAt: 'due_at', assignee: 'assignee',
+      visibility: 'visibility', priority: 'priority', completedAt: 'completed_at', outcome: 'outcome',
+    },
+    dates: new Set(['dueAt', 'completedAt']), required: ['title'],
+  },
+  activities: {
+    table: 'crm_activities', prefix: 'act', linkTable: 'crm_activity_links', linkKey: 'activity_id',
+    fields: { kind: 'kind', occurredAt: 'occurred_at', actor: 'actor', content: 'content' },
+    dates: new Set(['occurredAt']),
+  },
+  'workflow-entries': {
+    table: 'crm_workflow_entries', prefix: 'flow',
+    fields: {
+      workflowKey: 'workflow_key', entityType: 'entity_type', recordId: 'record_id',
+      stage: 'stage', rank: 'rank', owner: 'owner',
+    },
+    required: ['workflowKey', 'entityType', 'recordId', 'stage'],
+  },
+};
+
+const DOMAIN_RESERVED = new Set([
+  'id', 'resource', 'createdAt', 'updatedAt', 'version', 'deletedAt', 'links', 'actor', 'expectedVersion',
+]);
+
+function domainSpec(raw) {
+  const key = String(raw || '').trim();
+  return DOMAIN_SPECS[key] ? { key, ...DOMAIN_SPECS[key] } : null;
+}
+
+function domainId(spec) {
+  return `${spec.prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function domainDoc(spec, fields, previous = {}) {
+  const doc = { ...(previous && typeof previous === 'object' ? previous : {}) };
+  Object.entries(fields || {}).forEach(([key, value]) => {
+    if (!spec.fields[key] && !DOMAIN_RESERVED.has(key)) doc[key] = value;
+  });
+  return doc;
+}
+
+function normalizeDomainLinks(links) {
+  if (!Array.isArray(links)) return [];
+  const seen = new Set();
+  return links.map((link) => ({
+    entityType: String(link?.entityType || link?.entity || '').trim(),
+    recordId: safeId(link?.recordId || link?.id),
+    relation: String(link?.relation || 'regarding').trim() || 'regarding',
+  })).filter((link) => {
+    const key = `${link.entityType}:${link.recordId}:${link.relation}`;
+    if (!link.entityType || !link.recordId || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function domainValue(spec, key, value) {
+  if (spec.dates?.has(key)) {
+    if (value == null || value === '') return null;
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) throw new Error(`${key} must be a valid date`);
+    return date.toISOString();
+  }
+  if (key === 'rank') {
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new Error('rank must be a number');
+    return number;
+  }
+  return value;
+}
+
+function domainRow(spec, row, links = []) {
+  if (!row) return null;
+  const record = { ...(row.doc && typeof row.doc === 'object' ? row.doc : {}) };
+  Object.entries(spec.fields).forEach(([api, column]) => { record[api] = row[column]; });
+  for (const key of spec.dates || []) record[key] = dateIso(record[key]);
+  return {
+    ...record,
+    id: row.id,
+    resource: spec.key,
+    createdAt: dateIso(row.created_at),
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+    version: row.version,
+    deletedAt: dateIso(row.deleted_at),
+    ...(spec.linkTable ? { links } : {}),
+  };
+}
+
+async function domainLinks(client, spec, ids) {
+  if (!spec.linkTable || !ids.length) return new Map();
+  const rows = await client.query(
+    `SELECT ${spec.linkKey}, entity_type, record_id, relation FROM ${spec.linkTable} WHERE ${spec.linkKey} = ANY($1::text[])`,
+    [ids],
+  );
+  const map = new Map(ids.map((id) => [id, []]));
+  rows.rows.forEach((row) => map.get(row[spec.linkKey])?.push({
+    entityType: row.entity_type, recordId: row.record_id, relation: row.relation,
+  }));
+  return map;
+}
+
+async function replaceDomainLinks(client, spec, id, links) {
+  if (!spec.linkTable) return;
+  await client.query(`DELETE FROM ${spec.linkTable} WHERE ${spec.linkKey} = $1`, [id]);
+  for (const link of normalizeDomainLinks(links)) {
+    await client.query(
+      `INSERT INTO ${spec.linkTable} (${spec.linkKey}, entity_type, record_id, relation) VALUES ($1, $2, $3, $4)`,
+      [id, link.entityType, link.recordId, link.relation],
+    );
+  }
+}
+
+async function listDomain(res, spec, url) {
+  const where = [];
+  const values = [];
+  let linkJoin = '';
+  const add = (sql, value) => { values.push(value); where.push(sql.replace('?', `$${values.length}`)); };
+  if (url.searchParams.get('includeDeleted') !== 'true') where.push('d.deleted_at IS NULL');
+  const directFilters = {
+    status: 'status', assignee: 'assignee', workflowKey: 'workflow_key', stage: 'stage',
+    entityType: spec.key === 'relationships' ? 'from_entity' : 'entity_type',
+    recordId: spec.key === 'relationships' ? 'from_id' : 'record_id',
+  };
+  Object.entries(directFilters).forEach(([param, column]) => {
+    if (spec.fields[param] && url.searchParams.has(param)) add(`d.${column} = ?`, url.searchParams.get(param));
+  });
+  if (spec.key === 'relationships' && url.searchParams.has('relatedEntity') && url.searchParams.has('relatedId')) {
+    const entity = url.searchParams.get('relatedEntity');
+    const id = safeId(url.searchParams.get('relatedId'));
+    values.push(entity, id, entity, id);
+    const n = values.length;
+    where.push(`((d.from_entity = $${n - 3} AND d.from_id = $${n - 2}) OR (d.to_entity = $${n - 1} AND d.to_id = $${n}))`);
+  }
+  if (spec.linkTable && url.searchParams.has('entityType') && url.searchParams.has('recordId')) {
+    values.push(url.searchParams.get('entityType'), safeId(url.searchParams.get('recordId')));
+    const n = values.length;
+    linkJoin = `JOIN ${spec.linkTable} l ON l.${spec.linkKey} = d.id`;
+    where.push(`l.entity_type = $${n - 1} AND l.record_id = $${n}`);
+  }
+  if (spec.key === 'commitments' && url.searchParams.has('dueBefore')) add('d.due_at <= ?', url.searchParams.get('dueBefore'));
+  if (spec.key === 'commitments' && url.searchParams.has('dueAfter')) add('d.due_at >= ?', url.searchParams.get('dueAfter'));
+  const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 200));
+  values.push(limit);
+  const rows = await pool.query(
+    `SELECT d.* FROM ${spec.table} d ${linkJoin} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY d.updated_at DESC LIMIT $${values.length}`,
+    values,
+  );
+  const links = await domainLinks(pool, spec, rows.rows.map((row) => row.id));
+  ok(res, { resource: spec.key, records: rows.rows.map((row) => domainRow(spec, row, links.get(row.id) || [])) });
+}
+
+async function getDomain(res, spec, id) {
+  const rows = await pool.query(`SELECT * FROM ${spec.table} WHERE id = $1`, [id]);
+  if (!rows.rows[0]) return fail(res, 404, 'Not found');
+  const links = await domainLinks(pool, spec, [id]);
+  ok(res, { resource: spec.key, record: domainRow(spec, rows.rows[0], links.get(id) || []) });
+}
+
+async function createDomain(res, spec, body) {
+  if (!objectBody(body)) return fail(res, 400, 'JSON body must be an object');
+  const fields = objectBody(body.fields) || body;
+  const missing = (spec.required || []).filter((key) => fields[key] == null || fields[key] === '');
+  if (missing.length) return fail(res, 400, `Missing required fields: ${missing.join(', ')}`);
+  const id = safeId(fields.id) || domainId(spec);
+  const columns = ['id', 'doc'];
+  const values = [id, domainDoc(spec, fields)];
+  Object.entries(spec.fields).forEach(([api, column]) => {
+    if (!hasOwn(fields, api)) return;
+    columns.push(column);
+    values.push(domainValue(spec, api, fields[api]));
+  });
+  const placeholders = values.map((_, index) => `$${index + 1}`);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const inserted = await client.query(
+      `INSERT INTO ${spec.table} (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`, values,
+    );
+    await replaceDomainLinks(client, spec, id, fields.links || body.links || []);
+    await client.query('COMMIT');
+    const linkMap = await domainLinks(pool, spec, [id]);
+    const record = domainRow(spec, inserted.rows[0], linkMap.get(id) || []);
+    broadcast({ type: 'domain-changed', resource: spec.key, record });
+    json(res, 201, { ok: true, resource: spec.key, record });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return fail(res, 409, 'A matching active record already exists');
+    throw err;
+  } finally { client.release(); }
+}
+
+async function patchDomain(res, spec, id, body) {
+  if (!objectBody(body)) return fail(res, 400, 'JSON body must be an object');
+  const fields = objectBody(body.fields) || body;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const selected = await client.query(`SELECT * FROM ${spec.table} WHERE id = $1 FOR UPDATE`, [id]);
+    const current = selected.rows[0];
+    if (!current) { await client.query('ROLLBACK'); return fail(res, 404, 'Not found'); }
+    const expected = Number(body.expectedVersion ?? fields.expectedVersion);
+    if (Number.isFinite(expected) && expected !== current.version) {
+      await client.query('ROLLBACK');
+      return fail(res, 409, 'Version conflict');
+    }
+    const sets = ['doc = $2', 'version = version + 1', 'updated_at = now()'];
+    const values = [id, domainDoc(spec, fields, current.doc)];
+    Object.entries(spec.fields).forEach(([api, column]) => {
+      if (!hasOwn(fields, api)) return;
+      values.push(domainValue(spec, api, fields[api]));
+      sets.push(`${column} = $${values.length}`);
+    });
+    const updated = await client.query(
+      `UPDATE ${spec.table} SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, values,
+    );
+    if (spec.linkTable && (hasOwn(fields, 'links') || hasOwn(body, 'links'))) {
+      await replaceDomainLinks(client, spec, id, fields.links || body.links || []);
+    }
+    await client.query('COMMIT');
+    const linkMap = await domainLinks(pool, spec, [id]);
+    const record = domainRow(spec, updated.rows[0], linkMap.get(id) || []);
+    broadcast({ type: 'domain-changed', resource: spec.key, record });
+    ok(res, { resource: spec.key, record });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return fail(res, 409, 'A matching active record already exists');
+    throw err;
+  } finally { client.release(); }
+}
+
+async function deleteDomain(res, spec, id, url) {
+  const hard = url.searchParams.get('hard') === 'true';
+  const rows = hard
+    ? await pool.query(`DELETE FROM ${spec.table} WHERE id = $1 RETURNING *`, [id])
+    : await pool.query(`UPDATE ${spec.table} SET deleted_at = now(), updated_at = now(), version = version + 1 WHERE id = $1 RETURNING *`, [id]);
+  if (!rows.rows[0]) return fail(res, 404, 'Not found');
+  broadcast({ type: 'domain-changed', resource: spec.key, id, deleted: true, hard });
+  ok(res, { resource: spec.key, id, deleted: true, hard });
 }
 
 const RELATED_ENTITY_FIELDS = {
@@ -253,6 +505,178 @@ async function initDb() {
   await pool.query(sql);
 }
 
+// One-way compatibility projection. Existing installs keep their data, while
+// the reconstructed UI reads the explicit operating model from first boot.
+async function migrateLegacyDomain() {
+  const rows = await pool.query('SELECT * FROM crm_records WHERE deleted_at IS NULL');
+  const records = rows.rows.map(rowToRecord);
+  const companyByName = new Map(records.filter((record) => record.entityType === 'companies').map((company) => [
+    firstText(company.name, company.title, company.client).toLowerCase(), company.id,
+  ]).filter(([name]) => name));
+  const client = await pool.connect();
+  const linkFields = (record) => normalizeRelatedRefs(record).map((ref) => ({
+    entityType: ref.entity, recordId: ref.id, relation: 'regarding',
+  }));
+  try {
+    await client.query('BEGIN');
+    for (const record of records) {
+      const entity = record.entityType;
+      if (['deals', 'jobs', 'cases', 'tickets', 'invoices'].includes(entity)) {
+        const workflowKey = entity === 'deals' ? 'sales' : entity === 'invoices' ? 'money' : entity === 'tickets' ? 'cases' : entity;
+        const stage = firstText(record.stage, record.state, record.status, entity === 'invoices' ? 'draft' : 'new').toLowerCase();
+        await client.query(
+          `INSERT INTO crm_workflow_entries (id, workflow_key, entity_type, record_id, stage, rank, owner, doc)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`,
+          [`legacy_flow_${safeId(entity)}_${safeId(record.id)}`, workflowKey, entity, record.id, stage, Number(record.rank) || 0, record.assignee || record.owner || null, { source: 'legacy-projection' }],
+        );
+      }
+      if (entity === 'tasks' || entity === 'calendarItems') {
+        const commitmentId = `legacy_commitment_${safeId(entity)}_${safeId(record.id)}`;
+        const dueAt = firstText(record.dueAt, record.dueDate, record.at, record.date, record.startDate, record.scheduledDate) || null;
+        const status = CLOSED_STATES.has(firstText(record.state, record.status).toLowerCase()) ? 'completed' : 'open';
+        await client.query(
+          `INSERT INTO crm_commitments (id, title, kind, status, due_at, assignee, priority, completed_at, outcome, doc)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING`,
+          [commitmentId, firstText(record.title, record.name, record.description, entity === 'tasks' ? 'Task' : 'Scheduled commitment'),
+            entity === 'tasks' ? 'task' : firstText(record.kind, record.type, 'meeting'), status, dueAt,
+            record.assignee || record.owner || null, record.priority || 'normal', record.completedAt || null,
+            record.outcome || null, { source: 'legacy-projection', sourceEntity: entity, sourceId: record.id }],
+        );
+        await replaceDomainLinks(client, DOMAIN_SPECS.commitments ? domainSpec('commitments') : null, commitmentId, linkFields(record));
+      }
+      if (entity === 'interactions') {
+        const activityId = `legacy_activity_${safeId(record.id)}`;
+        await client.query(
+          `INSERT INTO crm_activities (id, kind, occurred_at, actor, content, doc)
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+          [activityId, firstText(record.kind, record.type, 'note'), firstText(record.at, record.createdAt) || new Date().toISOString(),
+            record.actor || record.by || null, firstText(record.note, record.content, record.description, record.title),
+            { source: 'legacy-projection', sourceId: record.id }],
+        );
+        await replaceDomainLinks(client, domainSpec('activities'), activityId, linkFields(record));
+      }
+      if (entity !== 'companies') {
+        const inferredName = firstText(record.company, record.companyName, record.companyLabel,
+          ['deals', 'jobs', 'cases', 'tickets', 'invoices'].includes(entity) ? record.client : '').toLowerCase();
+        const companyId = record.companyId || companyByName.get(inferredName) || '';
+        if (!companyId) continue;
+        const relationshipId = `legacy_rel_${safeId(entity)}_${safeId(record.id)}_${safeId(companyId)}`;
+        await client.query(
+          `INSERT INTO crm_relationships (id, from_entity, from_id, to_entity, to_id, kind, doc)
+           VALUES ($1, $2, $3, 'companies', $4, 'belongs-to', $5) ON CONFLICT DO NOTHING`,
+          [relationshipId, entity, record.id, safeId(companyId), { source: 'legacy-projection' }],
+        );
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
+}
+
+async function syncWorkflowRecord(entity, record) {
+  if (!record || !['deals', 'jobs', 'cases', 'tickets', 'invoices'].includes(entity)) return null;
+  const workflowKey = entity === 'deals' ? 'sales' : entity === 'invoices' ? 'money' : entity === 'tickets' ? 'cases' : entity;
+  const id = `flow_${safeId(workflowKey)}_${safeId(entity)}_${safeId(record.id)}`;
+  const stage = firstText(record.stage, record.state, record.status, entity === 'invoices' ? 'draft' : 'new').toLowerCase();
+  const existing = await pool.query(
+    'SELECT * FROM crm_workflow_entries WHERE workflow_key = $1 AND entity_type = $2 AND record_id = $3 AND deleted_at IS NULL ORDER BY created_at LIMIT 1',
+    [workflowKey, entity, record.id],
+  );
+  let result;
+  if (existing.rows[0]) {
+    result = await pool.query(
+      `UPDATE crm_workflow_entries SET stage = $2, rank = $3, owner = $4, updated_at = now(), version = version + 1
+       WHERE id = $1 RETURNING *`,
+      [existing.rows[0].id, stage, Number(record.rank) || existing.rows[0].rank || 0, record.assignee || record.owner || null],
+    );
+  } else {
+    result = await pool.query(
+      `INSERT INTO crm_workflow_entries (id, workflow_key, entity_type, record_id, stage, rank, owner, doc)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [id, workflowKey, entity, record.id, stage, Number(record.rank) || 0, record.assignee || record.owner || null, { source: 'record-sync' }],
+    );
+  }
+  const flow = domainRow(domainSpec('workflow-entries'), result.rows[0]);
+  broadcast({ type: 'domain-changed', resource: 'workflow-entries', record: flow });
+  return flow;
+}
+
+async function syncOperationalRecord(entity, record) {
+  await syncWorkflowRecord(entity, record);
+  if (!record) return;
+  if (entity === 'tasks' || entity === 'calendarItems') {
+    const spec = domainSpec('commitments');
+    const id = `legacy_commitment_${safeId(entity)}_${safeId(record.id)}`;
+    const dueAt = firstText(record.dueAt, record.dueDate, record.at, record.date, record.startDate, record.scheduledDate) || null;
+    const status = CLOSED_STATES.has(firstText(record.state, record.status).toLowerCase()) ? 'completed' : 'open';
+    const existing = await pool.query('SELECT * FROM crm_commitments WHERE id = $1', [id]);
+    let result;
+    if (existing.rows[0]) {
+      result = await pool.query(
+        `UPDATE crm_commitments SET title = $2, kind = $3, status = $4, due_at = $5, assignee = $6, priority = $7,
+         completed_at = $8, outcome = $9, deleted_at = $10, updated_at = now(), version = version + 1 WHERE id = $1 RETURNING *`,
+        [id, firstText(record.title, record.name, record.description, entity === 'tasks' ? 'Task' : 'Scheduled commitment'),
+          entity === 'tasks' ? 'task' : firstText(record.kind, record.type, 'meeting'), status, dueAt,
+          record.assignee || record.owner || null, record.priority || 'normal', record.completedAt || null,
+          record.outcome || null, record.deletedAt || null],
+      );
+    } else {
+      result = await pool.query(
+        `INSERT INTO crm_commitments (id, title, kind, status, due_at, assignee, priority, completed_at, outcome, deleted_at, doc)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [id, firstText(record.title, record.name, record.description, entity === 'tasks' ? 'Task' : 'Scheduled commitment'),
+          entity === 'tasks' ? 'task' : firstText(record.kind, record.type, 'meeting'), status, dueAt,
+          record.assignee || record.owner || null, record.priority || 'normal', record.completedAt || null,
+          record.outcome || null, record.deletedAt || null, { source: 'legacy-projection', sourceEntity: entity, sourceId: record.id }],
+      );
+    }
+    const links = normalizeRelatedRefs(record).map((ref) => ({ entityType: ref.entity, recordId: ref.id, relation: 'regarding' }));
+    const client = await pool.connect();
+    try { await replaceDomainLinks(client, spec, id, links); } finally { client.release(); }
+    const linkMap = await domainLinks(pool, spec, [id]);
+    const commitment = domainRow(spec, result.rows[0], linkMap.get(id) || []);
+    broadcast({ type: 'domain-changed', resource: 'commitments', record: commitment });
+  }
+  if (entity === 'interactions') {
+    const spec = domainSpec('activities');
+    const id = `legacy_activity_${safeId(record.id)}`;
+    const values = [id, firstText(record.kind, record.type, 'note'), firstText(record.at, record.createdAt) || new Date().toISOString(),
+      record.actor || record.by || null, firstText(record.note, record.content, record.description, record.title), record.deletedAt || null];
+    const existing = await pool.query('SELECT * FROM crm_activities WHERE id = $1', [id]);
+    const result = existing.rows[0]
+      ? await pool.query(`UPDATE crm_activities SET kind=$2,occurred_at=$3,actor=$4,content=$5,deleted_at=$6,updated_at=now(),version=version+1 WHERE id=$1 RETURNING *`, values)
+      : await pool.query(`INSERT INTO crm_activities (id,kind,occurred_at,actor,content,deleted_at,doc) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [...values, { source: 'legacy-projection', sourceId: record.id }]);
+    const links = normalizeRelatedRefs(record).map((ref) => ({ entityType: ref.entity, recordId: ref.id, relation: 'regarding' }));
+    const client = await pool.connect();
+    try { await replaceDomainLinks(client, spec, id, links); } finally { client.release(); }
+    const linkMap = await domainLinks(pool, spec, [id]);
+    const activity = domainRow(spec, result.rows[0], linkMap.get(id) || []);
+    broadcast({ type: 'domain-changed', resource: 'activities', record: activity });
+  }
+  if (entity !== 'companies') {
+    let companyId = record.companyId || '';
+    if (!companyId) {
+      const companyName = firstText(record.company, record.companyName, record.companyLabel,
+        ['deals', 'jobs', 'cases', 'tickets', 'invoices'].includes(entity) ? record.client : '');
+      if (companyName) {
+        const companyRows = await pool.query("SELECT * FROM crm_records WHERE entity_type = 'companies' AND deleted_at IS NULL");
+        const match = companyRows.rows.map(rowToRecord).find((company) => firstText(company.name, company.title, company.client).toLowerCase() === companyName.toLowerCase());
+        companyId = match?.id || '';
+      }
+    }
+    if (!companyId) return;
+    const id = `legacy_rel_${safeId(entity)}_${safeId(record.id)}_${safeId(companyId)}`;
+    const result = await pool.query(
+      `INSERT INTO crm_relationships (id,from_entity,from_id,to_entity,to_id,kind,doc)
+       VALUES ($1,$2,$3,'companies',$4,'belongs-to',$5) ON CONFLICT (id) DO UPDATE SET deleted_at=NULL,updated_at=now(),version=crm_relationships.version+1 RETURNING *`,
+      [id, entity, record.id, safeId(companyId), { source: 'legacy-projection' }],
+    );
+    broadcast({ type: 'domain-changed', resource: 'relationships', record: domainRow(domainSpec('relationships'), result.rows[0]) });
+  }
+}
+
 async function listRecords(res, entity, url) {
   const includeDeleted = url.searchParams.get('includeDeleted') !== 'false';
   const rows = await pool.query(
@@ -307,6 +731,7 @@ async function createRecord(res, entity, body) {
   const record = rowToRecord(result.rows[0]);
   let relatedRecords = [];
   if (entity === 'interactions') relatedRecords = await fanOutInteraction(record, actor);
+  await syncOperationalRecord(entity, record);
   broadcast({ type: 'changed', entity, record });
   json(res, 201, { ok: true, entity, record, relatedRecords });
 }
@@ -371,6 +796,7 @@ async function patchRecord(res, entity, id, body, req) {
     );
     await client.query('COMMIT');
     const record = rowToRecord(updated.rows[0]);
+    await syncOperationalRecord(entity, record);
     broadcast({ type: 'changed', entity, record });
     ok(res, { entity, record, changed });
   } catch (err) {
@@ -866,6 +1292,17 @@ async function route(req, res) {
   if (url.pathname === '/api/reports/summary' && req.method === 'GET') return reportSummary(res);
 
   const parts = url.pathname.split('/').filter(Boolean);
+  if (parts[0] === 'api' && parts[1] === 'domain') {
+    const spec = domainSpec(parts[2]);
+    if (!spec) return fail(res, 404, 'Unknown domain resource');
+    const domainRecordId = parts[3] ? safeId(decodeURIComponent(parts[3])) : null;
+    if (req.method === 'GET' && !domainRecordId) return listDomain(res, spec, url);
+    if (req.method === 'GET' && domainRecordId) return getDomain(res, spec, domainRecordId);
+    if (req.method === 'POST' && !domainRecordId) return createDomain(res, spec, await readBody(req));
+    if (req.method === 'PATCH' && domainRecordId) return patchDomain(res, spec, domainRecordId, await readBody(req));
+    if (req.method === 'DELETE' && domainRecordId) return deleteDomain(res, spec, domainRecordId, url);
+    return fail(res, 405, 'Method not allowed');
+  }
   if (parts[0] !== 'api' || parts[1] !== 'entities') return fail(res, 404, 'Not found');
   const entity = entityName(parts[2]);
   if (!entity) return fail(res, 404, 'Unknown entity');
@@ -881,6 +1318,7 @@ async function route(req, res) {
 
 async function main() {
   await initDb();
+  await migrateLegacyDomain();
   startOverdueSweep();
   const server = http.createServer((req, res) => {
     route(req, res).catch((err) => {

@@ -116,6 +116,61 @@ async function main() {
   assert('hard delete broadcasts a deleted packet and removes the record',
     !!deletedMsg && !finalList.json.records.some((r) => r.id === 'ws_pre'));
 
+  // 8 — constitutional domain spine: typed work can relate to ordinary records
+  // without changing those records into tickets.
+  const relationship = await api('POST', '/api/domain/relationships', { fields: {
+    id: 'rel_test', fromEntity: 'contacts', fromId: 'person_1',
+    toEntity: 'companies', toId: 'company_1', kind: 'works-at', role: 'Buyer',
+  } });
+  assert('relationship preserves both typed endpoints', relationship.status === 201
+    && relationship.json.record.fromId === 'person_1' && relationship.json.record.toId === 'company_1');
+  const reverseLookup = await api('GET', '/api/domain/relationships?relatedEntity=companies&relatedId=company_1');
+  assert('relationship lookup is reciprocal', reverseLookup.json.records.some((r) => r.id === 'rel_test'));
+
+  const commitment = await api('POST', '/api/domain/commitments', { fields: {
+    id: 'commitment_test', title: 'Send revised proposal', kind: 'follow-up',
+    dueAt: '2030-01-02T17:00:00.000Z', assignee: 'rosa', priority: 'high',
+    links: [
+      { entityType: 'contacts', recordId: 'person_1' },
+      { entityType: 'deals', recordId: 'deal_1', relation: 'advances' },
+    ],
+  } });
+  assert('commitment has explicit owner, due time, and multiple contexts', commitment.status === 201
+    && commitment.json.record.assignee === 'rosa' && commitment.json.record.links.length === 2);
+  const commitmentMsg = await client.waitFor((m) => m.type === 'domain-changed'
+    && m.resource === 'commitments' && m.record?.id === 'commitment_test');
+  assert('domain writes propagate over the live feed', !!commitmentMsg);
+  const contextualCommitments = await api('GET', '/api/domain/commitments?entityType=deals&recordId=deal_1');
+  assert('commitments can be retrieved from record context', contextualCommitments.json.records.some((r) => r.id === 'commitment_test'));
+
+  const complete = await api('PATCH', '/api/domain/commitments/commitment_test', {
+    fields: { status: 'completed', completedAt: '2030-01-02T18:00:00.000Z', outcome: 'Proposal sent' },
+    expectedVersion: commitment.json.record.version,
+  });
+  assert('commitment completion records an outcome and advances version', complete.json.record.status === 'completed'
+    && complete.json.record.outcome === 'Proposal sent' && complete.json.record.version === 2);
+  const staleCommitment = await api('PATCH', '/api/domain/commitments/commitment_test', {
+    fields: { priority: 'low' }, expectedVersion: 1,
+  });
+  assert('domain writes reject stale versions', staleCommitment.status === 409);
+
+  const activity = await api('POST', '/api/domain/activities', { fields: {
+    id: 'activity_test', kind: 'call', actor: 'rosa', content: 'Buyer approved scope',
+    links: [{ entityType: 'companies', recordId: 'company_1' }],
+  } });
+  assert('activity is durable and context-linked', activity.status === 201
+    && activity.json.record.kind === 'call' && activity.json.record.links[0].recordId === 'company_1');
+
+  const flow = await api('POST', '/api/domain/workflow-entries', { fields: {
+    id: 'flow_test', workflowKey: 'sales', entityType: 'deals', recordId: 'deal_1',
+    stage: 'proposal', rank: 20, owner: 'rosa',
+  } });
+  assert('workflow membership is independent of the underlying record', flow.status === 201
+    && flow.json.record.workflowKey === 'sales' && flow.json.record.stage === 'proposal');
+  const flowList = await api('GET', '/api/domain/workflow-entries?workflowKey=sales&stage=proposal');
+  assert('workflow entries filter by workflow and stage', flowList.json.records.length === 1
+    && flowList.json.records[0].recordId === 'deal_1');
+
   client.ws.close();
   console.log(`\nWS parity: ${passed}/${passed + failed} assertions passed.`);
   process.exit(failed ? 1 : 0);

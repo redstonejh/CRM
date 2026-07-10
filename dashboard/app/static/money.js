@@ -222,6 +222,7 @@
       leftTitle: "Active invoices",
       rightTitle: "Paid",
       createAria: "Create an invoice",
+      createLabel: "New invoice",
       trashAria: "Recycle bin (deleted invoices)",
     },
     onLinkDrop: linkInvoices,

@@ -55,7 +55,7 @@
     source: window.tickets,
     detail: window.ticketDetail,
     widgetType: "ticket",
-    widgetTitle: "Ticket",
+    widgetTitle: "Case",
     widgetCardClass: "ticket-widget-card",
     pinPrefix: "ticket-pin-",
     storageKeys: {
@@ -72,5 +72,6 @@
     createFields,
     severityRgb,
     resolvedState: "resolved",
+    deckCopy: { leftTitle: "New cases", rightTitle: "Closed", createAria: "Create a case", createLabel: "New case", emptyLeft: "New cases<br>land here", emptyRight: "Closed cases<br>land here" },
   });
 })();

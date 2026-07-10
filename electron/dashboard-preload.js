@@ -83,6 +83,14 @@ contextBridge.exposeInMainWorld('crmStore', {
   remove: (entity, id, options = {}) => ipcRenderer.invoke('store:delete', { entity, id, ...options }),
   onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
 });
+contextBridge.exposeInMainWorld('crmDomain', {
+  list: (resource, query = {}) => ipcRenderer.invoke('domain:list', { resource, query }),
+  get: (resource, id) => ipcRenderer.invoke('domain:get', { resource, id }),
+  create: (resource, fields) => ipcRenderer.invoke('domain:create', { resource, fields }),
+  update: (resource, id, fields, expectedVersion) => ipcRenderer.invoke('domain:update', { resource, id, fields, expectedVersion }),
+  remove: (resource, id, options = {}) => ipcRenderer.invoke('domain:delete', { resource, id, ...options }),
+  onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
+});
 contextBridge.exposeInMainWorld('crmReportsApi', {
   summary: () => ipcRenderer.invoke('reports:summary'),
 });

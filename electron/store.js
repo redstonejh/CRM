@@ -7,7 +7,7 @@
 import WebSocket from 'ws';
 
 const DEFAULT_API_URL = process.env.CRM_API_URL || 'http://127.0.0.1:3899';
-const ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
+const ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'history', 'version']);
 const CLOSED_STATES = new Set(['resolved', 'done', 'closed', 'complete', 'completed', 'cancelled', 'archived']);
 const DEAL_OUTCOME_STATES = new Set(['won', 'lost']);
@@ -169,6 +169,10 @@ function connectSocket() {
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(String(data));
+      if (msg.type === 'domain-changed') {
+        emitChange();
+        return;
+      }
       const entity = safeEntity(msg.entity);
       if (msg.type === 'deleted' && msg.id) removeRecord(entity, msg.id);
       else if (msg.record) applyRecord(entity, msg.record);
@@ -233,6 +237,51 @@ export async function storeHealth() {
     status: res.status || (res.ok ? 'live' : 'offline'),
     error: res.error || null,
   };
+}
+
+const DOMAIN_RESOURCES = new Set(['relationships', 'commitments', 'activities', 'workflow-entries']);
+
+function safeDomainResource(resource) {
+  const key = String(resource || '').trim();
+  if (!DOMAIN_RESOURCES.has(key)) throw new Error(`Invalid domain resource: ${resource}`);
+  return key;
+}
+
+function domainQuery(query = {}) {
+  const params = new URLSearchParams();
+  Object.entries(query || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  });
+  const suffix = params.toString();
+  return suffix ? `?${suffix}` : '';
+}
+
+export async function listDomain(resource, query = {}) {
+  const key = safeDomainResource(resource);
+  return request(`/api/domain/${encodeURIComponent(key)}${domainQuery(query)}`);
+}
+
+export async function getDomain(resource, id) {
+  const key = safeDomainResource(resource);
+  return request(`/api/domain/${encodeURIComponent(key)}/${encodeURIComponent(safeId(id))}`);
+}
+
+export async function createDomain(resource, fields = {}) {
+  const key = safeDomainResource(resource);
+  return request(`/api/domain/${encodeURIComponent(key)}`, { method: 'POST', body: { fields } });
+}
+
+export async function updateDomain(resource, id, fields = {}, expectedVersion) {
+  const key = safeDomainResource(resource);
+  return request(`/api/domain/${encodeURIComponent(key)}/${encodeURIComponent(safeId(id))}`, {
+    method: 'PATCH', body: { fields, expectedVersion },
+  });
+}
+
+export async function deleteDomain(resource, id, { hard = false } = {}) {
+  const key = safeDomainResource(resource);
+  const suffix = hard ? '?hard=true' : '';
+  return request(`/api/domain/${encodeURIComponent(key)}/${encodeURIComponent(safeId(id))}${suffix}`, { method: 'DELETE' });
 }
 
 export function listRecords(entity, { includeDeleted = true } = {}) {

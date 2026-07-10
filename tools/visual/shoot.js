@@ -15,7 +15,7 @@ const puppeteer = require('puppeteer-core');
 
 const { start } = require('./harness.js');
 
-const WORKSPACES = ['home', 'today', 'tickets', 'people', 'pipeline', 'money', 'calendar', 'reports'];
+const WORKSPACES = ['home', 'desk', 'people', 'pipeline', 'jobs', 'money', 'calendar', 'cases'];
 
 function chromePath() {
   const candidates = [
@@ -57,7 +57,7 @@ async function shootWorkspace(page, key, outDir, prefix, index) {
 
 async function shootDetail(page, outDir) {
   // Open the detail panel for the first visible ticket card on the Tickets surface.
-  await page.evaluate(() => window.crmWorkspaces.setActive('tickets'));
+  await page.evaluate(() => window.crmWorkspaces.setActive('cases'));
   await new Promise((r) => setTimeout(r, 800));
   const opened = await page.evaluate(async () => {
     const card = document.querySelector('.tk-zcard, .tk-card');

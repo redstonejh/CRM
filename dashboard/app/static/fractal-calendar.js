@@ -55,11 +55,9 @@
     return meta.client || meta.title || record?.companyLabel || record?.title || record?.name || record?.host || "Untitled";
   };
   const entitySources = [
-    { type: "ticket", label: "Ticket", bridge: () => window.tickets },
-    { type: "deal", label: "Deal", bridge: () => window.deals },
-    { type: "contact", label: "Contact", bridge: () => window.contacts },
-    { type: "task", label: "Task", bridge: () => window.tasks },
-    { type: "invoice", label: "Invoice", bridge: () => window.invoices },
+    { type: "ticket", entity: "tickets" }, { type: "deal", entity: "deals" },
+    { type: "contact", entity: "contacts" }, { type: "job", entity: "jobs" },
+    { type: "invoice", entity: "invoices" },
   ];
 
   const ensureStyles = () => {
@@ -337,28 +335,19 @@
 
   const loadScheduled = async ({ refresh = false } = {}) => {
     const next = new Map();
-    const overdueInvoice = (record) => {
-      const state = String(record?.state || record?.stage || record?.priority || "").toLowerCase();
-      return state.includes("overdue");
-    };
     const add = (type, label, record) => {
       if (!record || record.deletedAt) return;
       const date = scheduledDateOf(record);
       if (!date || !yearDate(date)) return;
       const items = next.get(date) || [];
-      items.push({ type, label, id: record.id, title: titleOf(record), hot: type === "invoice" && overdueInvoice(record) });
+      items.push({ type, label, id: record.id, title: titleOf(record), hot: record.priority === "urgent" && Date.parse(record.dueAt || "") < Date.now() });
       next.set(date, items);
     };
-    await Promise.all(entitySources.map(async (source) => {
-      try {
-        const bridge = source.bridge();
-        const result = await bridge?.list?.({ includeDeleted: true });
-        recordsFrom(result).forEach((record) => add(source.type, source.label, record));
-      } catch {}
-    }));
     try {
-      const result = await window.crmStore?.list?.("calendarItems", { includeDeleted: true });
-      recordsFrom(result).forEach((record) => add("calendar", "Calendar", record));
+      const result = await window.crmDomain?.list?.("commitments", { includeDeleted: false, limit: 500 });
+      recordsFrom(result).filter((record) => !["completed", "cancelled", "canceled"].includes(String(record.status).toLowerCase())).forEach((record) => {
+        add("commitment", record.kind || "Commitment", { ...record, dueDate: record.dueAt });
+      });
     } catch {}
     scheduledByDate = next;
     if (refresh && camera) refreshLevels();
@@ -388,10 +377,7 @@
   const subscribeScheduled = () => {
     if (subscriptionsReady) return;
     subscriptionsReady = true;
-    entitySources.forEach((source) => {
-      try { source.bridge()?.onChanged?.(scheduleReload); } catch {}
-    });
-    try { window.crmStore?.onChanged?.(scheduleReload); } catch {}
+    try { window.crmDomain?.onChanged?.(scheduleReload); } catch {}
   };
 
   const draggedWidget = () => document.querySelector(
@@ -420,7 +406,11 @@
     const id = widget?.dataset?.ticketId || "";
     if (!source || !id || !date) return false;
     try {
-      const result = await source.bridge()?.update?.(id, { scheduledDate: date });
+      const cardTitle = widget.querySelector?.(".ticket-company")?.textContent?.trim() || `Follow up ${source.entity}`;
+      const result = await window.crmDomain?.create?.("commitments", {
+        title: cardTitle, kind: "follow-up", dueAt: `${date}T09:00:00`,
+        links: [{ entityType: source.entity, recordId: id }],
+      });
       if (result && result.ok === false) return false;
       scheduleReload();
       return true;
@@ -447,29 +437,19 @@
   // clicking a title-peek band inside the day dive opens the record's own
   // detail (the same open every surface plays). Camera clicks are untouched:
   // this only fires inside .fc-day-detail, which exists at day level only.
-  const detailForType = (type) => ({
-    ticket: window.ticketDetail,
-    deal: window.dealDetail,
-    contact: window.contactDetail,
-    invoice: window.invoiceDetail,
-  }[type] || null);
   const wireDayOpens = () => {
     document.addEventListener("click", async (event) => {
       const chip = event.target?.closest?.(".fc-day-detail .fc-chip[data-id]");
       if (!chip || !camera?.surface?.()?.contains(chip)) return;
-      const detail = detailForType(chip.dataset.type);
-      const source = entitySources.find((entry) => entry.type === chip.dataset.type);
-      if (!detail?.open || !source) return;
+      if (chip.dataset.type !== "commitment") return;
       event.preventDefault();
       event.stopPropagation();
-      let record = null;
+      let commitment = null;
       try {
-        const bridge = source.bridge();
-        const got = await bridge?.get?.(chip.dataset.id);
-        record = got?.record || got?.ticket || (got?.id ? got : null);
-        if (!record) record = recordsFrom(await bridge?.list?.({ includeDeleted: true })).find((r) => String(r?.id || "") === chip.dataset.id) || null;
+        commitment = (await window.crmDomain?.get?.("commitments", chip.dataset.id))?.record || null;
       } catch {}
-      if (record) { try { detail.open(record, chip); } catch {} }
+      const link = commitment?.links?.[0];
+      if (link) window.crmRecordWorld?.open?.(link.entityType, link.recordId);
     }, true);
   };
 

@@ -36,7 +36,7 @@
   // The dive-in ending: the expanded lid keeps covering the stage while the
   // destination theater is committed beneath it, then unfrosts away. The swap
   // happens behind blur(28px) glass — continuous to the eye, never a cut.
-  const finishDiveIn = (key, done) => {
+  const finishDiveIn = async (key, done) => {
     const cam = camera();
     const surface = cam?.surface?.();
     const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
@@ -49,6 +49,10 @@
       document.body.appendChild(veil);
     }
     commit(key);
+    // Keep the settled full-viewport baseline over the theater until the real
+    // destination has completed its own render. Because both share the same
+    // coordinates, the only visible release is the acrylic material itself.
+    try { await window.crmHome?.waitForModuleSettled?.(key); } catch {}
     if (veil) {
       requestAnimationFrame(() => { veil.style.opacity = "0"; });
       setTimeout(() => {
@@ -76,16 +80,17 @@
       if (cam.level() > 0) cam.rebuildRoot();
       cam.expand(bucket);
     }
-    setTimeout(() => finishDiveIn(key, done), SETTLE_MS);
+    Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done));
   };
 
   // Module → Home: seat the module's own bucket lid over the stage at full
   // size (jumpTo), commit Home behind its frost, then contract() flies the lid
   // back into its Home slot — the identical camera move, reversed.
-  const diveOut = (fromKey, done) => {
+  const diveOut = async (fromKey, done) => {
     const cam = camera();
     try { window.crmHome?.setActive?.(true); } catch {}
     if (!cam) { commit("home"); done(); return; }
+    try { await window.crmHome?.captureBaseline?.(fromKey, { mount: true }); } catch {}
     if (cam.level() > 0) cam.rebuildRoot();
     const bucket = bucketFor(fromKey);
     const surface = cam.surface();
@@ -94,10 +99,10 @@
     commit("home");   // the module vanishes behind the full-screen lid, same frame
     requestAnimationFrame(() => {
       cam.back();     // 460ms house contract into the Home slot
-      setTimeout(() => {
+      Promise.resolve(cam.whenSettled?.()).then(() => {
         if (surface) surface.style.zIndex = "";
         done();
-      }, SETTLE_MS);
+      });
     });
   };
 
@@ -140,7 +145,7 @@
       queued = null;
       if (next) driveTo(next.key).then(next.resolve);
     };
-    setTimeout(() => finishDiveIn(key, done), SETTLE_MS);
+    Promise.resolve(camera()?.whenSettled?.()).then(() => finishDiveIn(key, done));
   });
 
   // B / Esc backs out to Home from any camera-less module. Camera surfaces

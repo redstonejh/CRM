@@ -754,6 +754,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         color: #fff; display: flex; align-items: center; justify-content: center;
         transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, opacity .25s ease; }
       .tk-stack-btn:hover { transform: scale(1.08); }
+      .tk-stack-btn.tk-create-action { width: auto; min-width: 88px; height: 32px; padding: 0 11px; border-radius: 10px;
+        transform: translateX(-50%); font: 650 10px/1 system-ui, sans-serif; color: rgba(235,242,252,.82); }
+      .tk-stack-btn.tk-create-action:hover { transform: translateX(-50%) scale(1.04); }
       .tk-stack-btn svg { width: 16px; height: 16px; }
       .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
@@ -1243,7 +1246,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       action.className = "tk-stack-btn"; action.type = "button";
       if (side === "left") {
         action.setAttribute("aria-label", deckCopy.createAria);
-        action.innerHTML = PLUS_SVG;
+        action.classList.add("tk-create-action");
+        action.textContent = deckCopy.createLabel || deckCopy.createAria;
         action.hidden = !createEnabled;
         if (createEnabled) action.addEventListener("click", openCreate);
       } else {
@@ -1486,7 +1490,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     updateStackFocus();
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
-      deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - 17}px`;
+      deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - (side === "left" ? 0 : 17)}px`;
       deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
       if (side === "left") deck.action.hidden = !createEnabled;
     }
@@ -3438,6 +3442,22 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     create: openCreate,
     openCreate,
     previewState: (kind) => showSystemState(kind === "loading" ? "loading" : kind === "error" ? "error" : null),
+    // Home captures the real full-viewport theater at lifecycle boundaries.
+    // An inactive factory normally skips render() entirely, so lay it out once
+    // synchronously and hide it again before the browser has a paint chance.
+    // The detached snapshot is then responsible for Home's progressive LOD.
+    baseline: async () => {
+      if (!started) {
+        started = true;
+        await load();
+      }
+      const wasActive = active;
+      active = true;
+      render();
+      active = wasActive;
+      applyActiveVisibility();
+      return ensureTheater();
+    },
     // Census A1: Home asks the factory for its own DOM at k-scale. This is
     // the same card inner markup, paint function and zone/header species as
     // the full surface; only the non-interactive layout shell is miniature.

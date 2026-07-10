@@ -11,7 +11,7 @@
 (() => {
   const API_URL = (window.__CRM_API_URL__ || 'http://127.0.0.1:3899').replace(/\/+$/, '');
   const ACTOR = window.__CRM_ACTOR__ || 'rosa';
-  const ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
+  const ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
   const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'history', 'version']);
 
   // ─── Channel bus (replaces ipcRenderer events) ─────────────────────────────
@@ -238,6 +238,10 @@
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(String(event.data));
+        if (msg.type === 'domain-changed') {
+          scheduleBroadcast();
+          return;
+        }
         if (!msg.entity) return;
         const entity = safeEntity(msg.entity);
         if (msg.type === 'deleted' && msg.id) removeRecord(entity, msg.id);
@@ -405,6 +409,26 @@
     create: (entity, fields) => createRecord(safeEntity(entity), fields || {}, ACTOR),
     update: (entity, id, fields) => updateRecord(safeEntity(entity), id, fields || {}, ACTOR),
     remove: (entity, id, options = {}) => deleteRecord(safeEntity(entity), id, ACTOR, { hard: !!options.hard }),
+    onChanged: (cb) => on('store:changed', cb),
+  };
+  function domainPath(resource, id = '', query = {}) {
+    const valid = ['relationships', 'commitments', 'activities', 'workflow-entries'];
+    if (!valid.includes(resource)) throw new Error(`Invalid domain resource: ${resource}`);
+    const params = new URLSearchParams();
+    Object.entries(query || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    });
+    const suffix = params.toString() ? `?${params}` : '';
+    return `/api/domain/${encodeURIComponent(resource)}${id ? `/${encodeURIComponent(safeId(id))}` : ''}${suffix}`;
+  }
+  window.crmDomain = {
+    list: (resource, query = {}) => request(domainPath(resource, '', query)),
+    get: (resource, id) => request(domainPath(resource, id)),
+    create: (resource, fields) => request(domainPath(resource), { method: 'POST', body: { fields } }),
+    update: (resource, id, fields, expectedVersion) => request(domainPath(resource, id), {
+      method: 'PATCH', body: { fields, expectedVersion },
+    }),
+    remove: (resource, id, options = {}) => request(domainPath(resource, id, options.hard ? { hard: true } : {}), { method: 'DELETE' }),
     onChanged: (cb) => on('store:changed', cb),
   };
   window.crmReportsApi = {

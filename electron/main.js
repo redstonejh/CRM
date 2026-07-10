@@ -18,6 +18,7 @@ import {
 import {
   listRecords, getRecord, createRecord, updateRecord, deleteRecord,
   storeConnectionState, storeConnectionInfo, storeHealth, reportSummary,
+  listDomain, getDomain, createDomain, updateDomain, deleteDomain,
 } from './store.js';
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
@@ -68,7 +69,7 @@ function normalizeApiUrl(value) {
 let tray = null;
 let mainWindow = null;
 let settings = loadSettings();
-const CRM_ENTITIES = ['tickets', 'deals', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
+const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —
@@ -398,6 +399,21 @@ ipcMain.handle('store:delete', (_e, { entity, id, hard = false } = {}) => {
   if (!key) return { ok: false, error: 'Unknown entity' };
   const g = requireUser(); if (g.error) return g.error;
   return deleteRecord(key, id, g.who, { hard: !!hard });
+});
+
+ipcMain.handle('domain:list', (_e, { resource, query } = {}) => listDomain(resource, query));
+ipcMain.handle('domain:get', (_e, { resource, id } = {}) => getDomain(resource, id));
+ipcMain.handle('domain:create', (_e, { resource, fields } = {}) => {
+  const g = requireUser(); if (g.error) return g.error;
+  return createDomain(resource, { ...(fields || {}), actor: fields?.actor || g.who });
+});
+ipcMain.handle('domain:update', (_e, { resource, id, fields, expectedVersion } = {}) => {
+  const g = requireUser(); if (g.error) return g.error;
+  return updateDomain(resource, id, fields || {}, expectedVersion);
+});
+ipcMain.handle('domain:delete', (_e, { resource, id, hard = false } = {}) => {
+  const g = requireUser(); if (g.error) return g.error;
+  return deleteDomain(resource, id, { hard: !!hard });
 });
 
 ipcMain.handle('reports:summary', () => reportSummary());

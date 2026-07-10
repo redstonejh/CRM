@@ -9,12 +9,12 @@
   // placeholder tile is gone until the module exists; Tickets stays reachable
   // from the top workspace switch.
   const MODULES = [
-    { key: "today", label: "Today", enabled: true },
+    { key: "desk", label: "Desk", enabled: true },
     { key: "people", label: "People", enabled: true },
     { key: "pipeline", label: "Pipeline", enabled: true },
+    { key: "jobs", label: "Jobs", enabled: true },
     { key: "money", label: "Money", enabled: true },
     { key: "calendar", label: "Calendar", enabled: true },
-    { key: "reports", label: "Reports", enabled: true },
   ];
   let camera = null;
   let subscribed = false;
@@ -22,6 +22,11 @@
   let previewTimer = 0;
   let previewGeneration = 0;
   let previewAttempt = 0;
+  let previewModel = window.crmHomePreviewData?.emptyModel?.() || { commitments: [], flows: [], companies: [], contacts: [], recordIndex: new Map() };
+  const previewBaselines = new Map();
+  const baselineJobs = new Map();
+  let activePreviewKey = "";
+  let lastWorkspace = "home";
   const PREVIEW_RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   let homeStats = {
     today: { count: 0 },
@@ -116,16 +121,10 @@
   };
   const scheduleStatsRefresh = () => {
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(async () => {
-      homeStats = await loadHomeStats();
-      // Never rebuild the root mid-dive: refresh() would replace the layer the
-      // camera (or the desk transit's lid) is animating. Try again shortly.
-      if (camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) { scheduleStatsRefresh(); return; }
-      if (camera?.isActive?.() && camera.level() === 0) {
-        camera.refresh();
-        scheduleLivePreviews(true);
-      }
-    }, 120);
+    // Data changes repaint the real module that owns them. Home deliberately
+    // does not maintain six live render trees; its cached LOD is recaptured at
+    // the next enter/leave boundary.
+    refreshTimer = setTimeout(() => {}, 120);
   };
   const subscribe = () => {
     if (subscribed) return;
@@ -143,14 +142,14 @@
       .crm-home-surface[hidden] { display: none; }
       .crm-home-level { position: absolute; inset: 0; transform-origin: 0 0; }
       .crm-home-grid { position: absolute; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
-        grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 14px; }
+        grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 16px; }
       /* The fc-bucket glass recipe (fractal-calendar.js is the source): gradient
          body, inset ring + top highlight, k-scaled radius from the bucket's own
          measured size (--home-r, set in layout()). */
-      .crm-home-bucket { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
-        overflow: hidden; color: #fff; cursor: pointer; border: 0;
-        border-radius: var(--home-r, 16px); padding: 14px 16px;
-        background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
+      .crm-home-bucket { position: relative; box-sizing: border-box; display: block; min-height: 0;
+        overflow: hidden; color: #fff; cursor: pointer; border: 0; container-type: size;
+        border-radius: var(--home-r, 16px); padding: 0;
+        background: linear-gradient(180deg, rgba(22,26,36,0.34), rgba(12,16,24,0.28));
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14), inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
         transition: box-shadow .18s ease, background .18s ease; }
@@ -158,9 +157,15 @@
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42);
       }
-      .crm-home-title { font-size: clamp(1rem, 2.4vw, 1.35rem); font-weight: 800; line-height: 1.1; }
-      .crm-home-preview { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 10px;
-        overflow: hidden; opacity: .88; color: rgba(255,255,255,0.62); }
+      .crm-home-title-glass { position: absolute; z-index: 4; left: 50%; top: 50%; transform: translate(-50%,-50%);
+        width: max-content; max-width: 80%; padding: 0; border: 0; border-radius: 0; text-align: center; pointer-events: none;
+        background: none; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none;
+        transition: opacity .18s ease; }
+      .crm-home-title { font: 600 clamp(11px, 3.2cqh, 15px)/1.05 system-ui; letter-spacing: .14em; text-transform: uppercase;
+        color: rgba(226,234,246,.66); text-shadow: 0 1px 0 rgba(255,255,255,.19), 0 -1px 0 rgba(0,0,0,.78), 0 2px 8px rgba(0,0,0,.24); }
+      .crm-home-bucket:hover .crm-home-title-glass { opacity: .72; }
+      .crm-home-preview { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
+        overflow: hidden; opacity: .92; color: rgba(255,255,255,0.62); }
       .crm-home-preview-state { position: absolute; inset: 0; display: grid; place-items: center;
         font-size: .68rem; font-weight: 760; letter-spacing: .08em; text-transform: uppercase;
         color: rgba(255,255,255,.38); }
@@ -169,70 +174,142 @@
         animation: crm-home-preview-wait 1.15s ease-in-out infinite; }
       .crm-home-preview[data-preview-state="error"] .crm-home-preview-state { color: rgba(255,190,150,.64); }
       @keyframes crm-home-preview-wait { 0%,100% { opacity:.2; transform:scaleX(.45) } 50% { opacity:1; transform:scaleX(1) } }
-      /* Factory-produced real DOM, viewed at k-scale. The miniature contains
-         the same tk-zone/tk-card markup and paint as its full module. */
-      .crm-factory-mini-scene { position: absolute; left: 50%; top: 50%; width: 1080px; height: 650px;
-        transform: translate(-50%, -50%) scale(.31); transform-origin: center; pointer-events: none; }
-      .crm-factory-mini-zone { position: absolute !important; top: 0 !important; bottom: auto !important;
-        width: 240px !important; height: 620px !important; }
-      .crm-factory-mini-zone .tk-zone-body { min-height: 540px; }
-      .crm-factory-mini-zone .tk-zone-track { min-height: 540px; }
-      .crm-factory-mini-hand { position: absolute; inset: 120px 0 0; }
-      .crm-factory-mini-hand > .tk-card { position: absolute !important; top: 0 !important; bottom: auto !important; }
-      .crm-calendar-mini-scene { position: absolute !important; left: 50%; top: 50%; width: 1540px; height: 900px;
-        transform: translate(-50%, -50%) scale(.25); transform-origin: center; pointer-events: none; }
-      .crm-calendar-mini-scene .fc-grid { position: absolute !important; inset: 25px !important;
-        width: auto !important; height: auto !important; }
-      .crm-report-mini-scene { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, minmax(0,1fr));
-        grid-template-rows: repeat(2, minmax(0,1fr)); gap: 6px; pointer-events: none; }
-      .crm-report-mini-scene .crm-report-widget { position: relative !important; inset: auto !important; grid-area: auto !important;
-        min-width: 0 !important; min-height: 0 !important; width: auto !important; height: auto !important; margin: 0 !important; }
+      /* A Home preview is a cached full-viewport baseline, never a separately
+         rendered miniature. Only one near/transition LOD is promoted at once. */
+      .crm-home-lod-scene { position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none;
+        transform-origin: 0 0; contain: layout paint style; }
+      .crm-home-lod-scene > .crm-home-lod-root { display: block !important; pointer-events: none !important; }
+      .crm-home-lod-scene [data-crm-theater] { pointer-events: none !important; }
+      .crm-home-lod-scene[data-lod="far"] :is(.tk-menu,.tk-stack-scrim,.crm-desk-composer,.record-world-shell,canvas) { display: none !important; }
+      .crm-home-lod-scene[data-lod="far"] :is(.ticket-description,.ticket-fields,.ticket-face-badges,.crm-desk-commitment-context,.crm-desk-work-meta,.crm-desk-activity-text,.crm-person-role,.fc-chip) { visibility: hidden !important; }
+      .crm-home-lod-scene :is(.crm-home-empty,.crm-desk-empty,.crm-people-empty,.tk-zone-empty,.tk-empty,.tk-desk-clear) { visibility: hidden !important; }
       .crm-home-expander { position: absolute; z-index: 5; pointer-events: auto; -webkit-app-region: no-drag;
         transform-origin: 0 0; }
+      .crm-home-expander .crm-home-lod-scene { transform: none !important; contain: paint style; }
+      .crm-home-expander .crm-home-title-glass { opacity: 0; transition: opacity 180ms ease; }
       .crm-home-warm, .crm-home-warm * { pointer-events: none !important; }
     `;
     document.head.appendChild(style);
   };
 
   const bucketHTML = (module) => `
-    <div class="crm-home-title">${esc(module.label)}</div>
-    <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-hidden="true">
-      <div class="crm-home-preview-state">Live view</div>
-    </div>`;
+    <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-hidden="true"></div>
+    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div>`;
 
   const liveFactories = () => ({
-    today: window.crmToday,
-    people: window.peopleCards,
+    desk: window.crmDesk,
+    people: window.crmPeopleRoom,
     pipeline: window.dealPipeline,
+    jobs: window.jobPipeline,
     money: window.moneyPipeline,
     calendar: window.fractalCalendar,
-    reports: window.crmReports,
   });
+
+  const theaterFor = (key) => ({ people: "relationships" }[key] || key);
+  const sourceFor = (key) => [...document.querySelectorAll(`[data-crm-theater="${theaterFor(key)}"]`)]
+    .find((node) => !node.closest(".crm-home-surface,.crm-transit-veil")) || null;
+  const sanitizeClone = (source) => {
+    const clone = source.cloneNode(true);
+    clone.hidden = false;
+    clone.removeAttribute("hidden");
+    clone.removeAttribute("data-crm-theater");
+    clone.classList.add("crm-home-lod-root");
+    clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+    clone.querySelectorAll("input,button,select,textarea,a,[tabindex]").forEach((node) => {
+      node.setAttribute("tabindex", "-1");
+      if ("disabled" in node) node.disabled = true;
+    });
+    clone.querySelectorAll(":scope > [hidden]").forEach((node) => node.remove());
+    clone.inert = true;
+    return clone;
+  };
+  const captureBaseline = (key) => {
+    const source = sourceFor(key);
+    if (!source) return null;
+    const baseline = {
+      root: sanitizeClone(source),
+      width: window.innerWidth,
+      height: window.innerHeight,
+      capturedAt: performance.now(),
+    };
+    previewBaselines.set(key, baseline);
+    return baseline;
+  };
+  const trimFarLod = (scene) => {
+    const selectors = [".tk-zone-track", ".tk-deck-box", ".crm-desk-commitments", ".crm-desk-work-deck", ".crm-company-people", ".crm-company-list"];
+    scene.querySelectorAll(selectors.join(",")).forEach((group) => {
+      [...group.children].slice(5).forEach((node) => node.remove());
+    });
+    scene.querySelectorAll(":is(.tk-menu,.crm-desk-composer,.record-world-shell,.record-world-backdrop,.ticket-detail-overlay)").forEach((node) => node.remove());
+  };
+  const sceneFor = (key, lod = "far") => {
+    const baseline = previewBaselines.get(key);
+    if (!baseline) return null;
+    const scene = document.createElement("div");
+    scene.className = "crm-home-lod-scene";
+    scene.dataset.lod = lod;
+    scene.dataset.previewKey = key;
+    Object.assign(scene.style, { width: `${baseline.width}px`, height: `${baseline.height}px` });
+    scene.appendChild(baseline.root.cloneNode(true));
+    if (lod === "far") trimFarLod(scene);
+    return scene;
+  };
+  const fitPreview = (preview) => {
+    const scene = preview?.querySelector(":scope > .crm-home-lod-scene");
+    if (!scene) return;
+    const baseline = previewBaselines.get(preview.dataset.previewKey);
+    if (!baseline || preview.closest(".crm-home-expander")) return;
+    const scale = Math.min(preview.clientWidth / baseline.width, preview.clientHeight / baseline.height);
+    const x = (preview.clientWidth - baseline.width * scale) / 2;
+    const y = (preview.clientHeight - baseline.height * scale) / 2;
+    scene.style.transform = `translate(${x.toFixed(2)}px,${y.toFixed(2)}px) scale(${scale.toFixed(6)})`;
+  };
+  const mountPreview = (key, lod = "far") => {
+    const preview = camera?.layers?.()[0]?.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);
+    const scene = sceneFor(key, lod);
+    if (!preview || !scene) return false;
+    preview.replaceChildren(scene);
+    preview.dataset.previewState = "ready";
+    fitPreview(preview);
+    return true;
+  };
+  const setPreviewLod = (key, lod) => {
+    if (lod !== "far" && activePreviewKey && activePreviewKey !== key) mountPreview(activePreviewKey, "far");
+    if (mountPreview(key, lod)) activePreviewKey = lod === "far" ? "" : key;
+  };
+  const refreshBaseline = async (key, { reload = false, mount = true } = {}) => {
+    if (baselineJobs.has(key)) return baselineJobs.get(key);
+    const job = (async () => {
+      const factory = liveFactories()[key];
+      if (reload) {
+        try {
+          if (typeof factory?.baseline === "function") await factory.baseline();
+          else if (typeof factory?.reload === "function") await factory.reload();
+          else if (typeof factory?.refresh === "function") await factory.refresh();
+        } catch {}
+      }
+      const baseline = captureBaseline(key);
+      if (baseline && mount && camera?.isActive?.() && camera.level() === 0) mountPreview(key, key === activePreviewKey ? "near" : "far");
+      return baseline;
+    })().finally(() => baselineJobs.delete(key));
+    baselineJobs.set(key, job);
+    return job;
+  };
   const refreshLivePreviews = async (generation = previewGeneration) => {
     if (!camera?.isActive?.() || camera.level() !== 0) return { ready: 0, missing: MODULES.map(({ key }) => key) };
     const level = camera.layers?.()[0];
     if (!level) return { ready: 0, missing: MODULES.map(({ key }) => key) };
     const missing = [];
     let ready = 0;
-    await Promise.all(Object.entries(liveFactories()).map(async ([key, factory]) => {
+    await Promise.all(MODULES.map(async ({ key }) => {
       const preview = level.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);
       if (!preview) return;
-      if (typeof factory?.miniature !== "function") {
-        missing.push(key);
-        return;
-      }
       try {
-        const miniature = await factory.miniature();
-        if (generation !== previewGeneration || !preview.isConnected || !miniature) return;
-        preview.replaceChildren(miniature);
-        preview.dataset.previewState = "ready";
+        const baseline = previewBaselines.get(key) || await refreshBaseline(key, { reload: true, mount: false });
+        if (generation !== previewGeneration || !preview.isConnected || !baseline) { missing.push(key); return; }
+        mountPreview(key, "far");
         ready += 1;
-      } catch {
-        if (generation !== previewGeneration || !preview.isConnected) return;
-        preview.dataset.previewState = "error";
-        preview.innerHTML = '<div class="crm-home-preview-state">Retrying live view</div>';
-        missing.push(key);
-      }
+      } catch { missing.push(key); }
     }));
     return { ready, missing };
   };
@@ -273,17 +350,22 @@
     return root;
   };
 
-  // Fill the working viewport the way the calendar's year view does: cells
-  // aspect-locked to the viewport, the 3x2 grid centred inside expRect(), the
-  // bucket radius k-scaled from the measured cell (fc's RADIUS_F discipline).
+  // Each bucket is the aspect ratio of the real window beneath it. That lets
+  // the cached baseline use one uniform scale at Home and land at scale(1)
+  // with no crop, second transform, or final-frame correction.
   const RADIUS_F = 16 / 245;
   const layout = ({ expRect }) => {
     const surface = camera?.surface?.();
     const grid = surface?.querySelector(".crm-home-grid");
     if (!grid) return;
-    const GAP = 14, COLS = 3, ROWS = 2;
-    const E = expRect();
-    const aspect = E.w / E.h;
+    const GAP = 16, COLS = 3, ROWS = 2, OUTER = 16;
+    const full = expRect();
+    let controlsBottom = 42;
+    document.querySelectorAll(".window-control-cluster").forEach((node) => {
+      controlsBottom = Math.max(controlsBottom, node.getBoundingClientRect().bottom);
+    });
+    const E = { x: OUTER, y: Math.round(controlsBottom + 12), w: full.w - OUTER * 2, h: full.h - Math.round(controlsBottom + 12) - OUTER };
+    const aspect = window.innerWidth / window.innerHeight;
     let cellW = (E.w - (COLS - 1) * GAP) / COLS;
     let cellH = cellW / aspect;
     if (ROWS * cellH + (ROWS - 1) * GAP > E.h) {
@@ -300,14 +382,18 @@
     });
     const radius = Math.min(64, Math.max(2, RADIUS_F * Math.min(cellW, cellH) * 2));
     surface.style.setProperty("--home-r", `${radius.toFixed(1)}px`);
+    surface.querySelectorAll(".crm-home-preview").forEach(fitPreview);
   };
 
   const targetAtPoint = (x, y, context) => {
     if (context.level > 0) return null;
-    return [...(context.layers[0]?.querySelectorAll('.crm-home-bucket[data-enabled="true"]') || [])].find((bucket) => {
+    const target = [...(context.layers[0]?.querySelectorAll('.crm-home-bucket[data-enabled="true"]') || [])].find((bucket) => {
       const rect = bucket.getBoundingClientRect();
       return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }) || null;
+    const key = target?.dataset?.module || "";
+    if (key && activePreviewKey !== key) setPreviewLod(key, "near");
+    return target;
   };
 
   const targetFromEvent = (event, context) => {
@@ -323,6 +409,12 @@
     bucket.className = "crm-home-bucket crm-home-expander";
     bucket.dataset.module = module.key;
     bucket.innerHTML = bucketHTML(module);
+    const preview = bucket.querySelector(".crm-home-preview");
+    const scene = sceneFor(module.key, "transition");
+    if (preview && scene) {
+      preview.replaceChildren(scene);
+      preview.dataset.previewState = "ready";
+    }
     return bucket;
   };
 
@@ -345,7 +437,8 @@
     contractingClass: "crm-home-contracting",
     active: false,
     maxLevel: 1,
-    margin: 16,
+    margin: 0,
+    measureTop: () => 0,
     ensureStyles,
     buildRoot,
     layout,
@@ -354,6 +447,7 @@
     buildExpander,
     keyOf: (target) => target.dataset.module || "",
     sourceSelector: (target) => `.crm-home-bucket[data-module="${target.dataset.module}"]`,
+    prepareTarget: (target) => setPreviewLod(target.dataset.module || "", "transition"),
   });
 
   document.addEventListener("click", (event) => {
@@ -367,7 +461,6 @@
     subscribe();
     camera.setActive(on);
     if (on) {
-      scheduleStatsRefresh();
       scheduleLivePreviews(true);
     } else {
       clearTimeout(previewTimer);
@@ -376,14 +469,59 @@
     return window.crmHome;
   };
 
+  const waitForModuleSettled = (key, timeoutMs = 1800) => new Promise((resolve) => {
+    const started = performance.now();
+    const readySelector = {
+      desk: ".crm-desk-frame", people: ".crm-people-frame,.crm-company-list",
+      pipeline: ".tk-zone,.tk-deck", jobs: ".tk-zone,.tk-deck", money: ".tk-zone,.tk-deck",
+      calendar: ".fc-grid",
+    }[key] || "*";
+    let stableFrames = 0;
+    let lastSignature = "";
+    const tick = () => {
+      const source = sourceFor(key);
+      const ready = !!source?.querySelector?.(readySelector);
+      const signature = ready ? `${source.childElementCount}:${source.textContent.length}:${source.querySelectorAll("*").length}` : "";
+      stableFrames = ready && signature === lastSignature ? stableFrames + 1 : 0;
+      lastSignature = signature;
+      if (stableFrames >= 2 || performance.now() - started >= timeoutMs) {
+        refreshBaseline(key, { mount: false }).finally(resolve);
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  document.addEventListener("crm:theater-switch", (event) => {
+    const next = event.detail?.key || "home";
+    const previous = lastWorkspace;
+    lastWorkspace = next;
+    if (previous !== "home" && previous !== next) refreshBaseline(previous, { mount: next === "home" });
+    if (next !== "home") waitForModuleSettled(next);
+    else if (camera?.isActive?.()) scheduleLivePreviews(true);
+  });
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      MODULES.forEach(({ key }) => {
+        if (sourceFor(key)) captureBaseline(key);
+      });
+      if (camera?.isActive?.() && camera.level() === 0) MODULES.forEach(({ key }) => mountPreview(key, "far"));
+    }, 100);
+  });
+
   window.crmHome = {
     setActive,
     isActive: () => camera.isActive(),
     refresh: () => {
-      scheduleStatsRefresh();
       camera.refresh();
       scheduleLivePreviews(true);
     },
+    captureBaseline: (key, options) => refreshBaseline(key, options),
+    waitForModuleSettled,
     previewStatus: () => MODULES.map(({ key }) => ({
       key,
       state: camera.layers?.()[0]?.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`)?.dataset?.previewState || "missing",

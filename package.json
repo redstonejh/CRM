@@ -17,6 +17,7 @@
     "visual:motion": "node tools/visual/motion-check.js",
     "visual:scenes": "node tools/visual/scenes.js",
     "visual:census": "node tools/visual/census-gallery.js",
+    "visual:electron": "node tools/visual/electron-playwright.js",
     "test:visual": "node tools/visual/visual-diff.js",
     "test:factory": "node tools/visual/factory-check.js",
     "test:interaction": "node tools/visual/interaction-contract.js",
@@ -38,6 +39,7 @@
     "electron": "^34.0.0",
     "pg-mem": "^3.0.14",
     "pixelmatch": "^7.2.0",
+    "playwright": "^1.61.1",
     "pngjs": "^7.0.0",
     "puppeteer-core": "^25.3.0",
     "vite": "^6.0.0"

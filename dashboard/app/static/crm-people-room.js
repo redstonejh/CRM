@@ -1,0 +1,43 @@
+// crm-people-room.js — relationships grouped by company, never staged as tickets.
+(() => {
+  let root; let active = false; let timer = 0;
+  const esc = (v) => String(v ?? "").replace(/[&<>\"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const first = (...v) => v.map((x) => String(x ?? "").trim()).find(Boolean) || "";
+  const title = (r) => first(r?.name, r?.title, r?.client, r?.companyLabel, r?.id, "Untitled");
+  const list = async (e) => (await window.crmStore.list(e, { includeDeleted: false }))?.records || [];
+  function styles() {
+    if (document.getElementById("crm-people-room-styles")) return;
+    const s = document.createElement("style"); s.id = "crm-people-room-styles"; s.textContent = `
+      .crm-people-room{position:fixed;inset:0;z-index:840;color:rgba(244,247,252,.92);-webkit-app-region:no-drag}.crm-people-room[hidden]{display:none}
+      .crm-people-frame{position:absolute;inset:54px 56px 90px;max-width:1480px;margin:auto;display:grid;grid-template-rows:auto minmax(0,1fr)}
+      .crm-people-head{display:flex;align-items:flex-end;justify-content:space-between;padding:0 2px 20px}.crm-people-title{font:650 18px system-ui;letter-spacing:-.015em}.crm-people-sub{margin-top:5px;font-size:11px;color:rgba(216,225,239,.45)}
+      .crm-people-search{width:250px;height:34px;box-sizing:border-box;padding:0 11px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(13,18,25,.45);color:#fff;outline:none;font:11px system-ui}
+      .crm-company-list{min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));align-content:start;gap:12px;padding:2px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.17) transparent}
+      .crm-company-account{min-height:194px;display:flex;flex-direction:column;padding:14px;border:1px solid rgba(255,255,255,.11);border-radius:17px;background:linear-gradient(155deg,rgba(27,33,44,.7),rgba(11,15,22,.62));box-shadow:inset 0 1px rgba(255,255,255,.09),0 17px 40px rgba(0,0,0,.2)}
+      .crm-company-account-head{display:flex;align-items:start;justify-content:space-between;gap:10px}.crm-company-account-name{border:0;background:none;color:inherit;padding:0;text-align:left;font:650 14px system-ui;cursor:pointer}.crm-company-account-name:hover{color:#fff}.crm-company-account-meta{margin-top:4px;font-size:9px;color:rgba(214,225,241,.38)}
+      .crm-company-value{font:620 10px system-ui;color:rgba(176,203,240,.58)}.crm-company-people{display:grid;gap:4px;margin-top:12px}.crm-person-row{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:6px;border:0;border-radius:9px;background:rgba(255,255,255,.027);color:inherit;text-align:left;cursor:pointer}.crm-person-row:hover{background:rgba(255,255,255,.065)}
+      .crm-person-avatar{width:25px;height:29px;display:grid;place-items:center;border-radius:7px;background:rgba(126,159,207,.12);border:1px solid rgba(167,194,232,.11);font:650 9px system-ui;color:rgba(221,233,250,.6)}.crm-person-name{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.crm-person-role{margin-top:2px;font-size:9px;color:rgba(216,226,241,.37)}.crm-person-due{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.13)}.crm-person-due.is-due{background:rgba(236,155,126,.8);box-shadow:0 0 8px rgba(222,112,79,.28)}
+      .crm-company-more{margin-top:6px;font-size:9px;color:rgba(213,224,240,.34);padding-left:6px}.crm-people-empty{font-size:11px;color:rgba(215,225,240,.37);padding:20px}
+    `; document.head.appendChild(s);
+  }
+  async function load() {
+    const [companies, contacts, deals, commitments, relationships] = await Promise.all([list("companies"),list("contacts"),list("deals"),window.crmDomain.list("commitments"),window.crmDomain.list("relationships")]);
+    const rels = relationships.records || []; const open = (commitments.records || []).filter((c) => !["completed","cancelled"].includes(String(c.status).toLowerCase()));
+    const groups = companies.map((company) => ({ company, people: [], value: 0 })); const byId = new Map(groups.map((g) => [String(g.company.id),g]));
+    contacts.forEach((person) => {
+      let group = byId.get(String(person.companyId || ""));
+      if (!group) { const rel = rels.find((r) => (r.fromEntity === "contacts" && r.fromId === person.id && r.toEntity === "companies") || (r.toEntity === "contacts" && r.toId === person.id && r.fromEntity === "companies")); const companyId = rel && (rel.fromEntity === "companies" ? rel.fromId : rel.toId); group = byId.get(String(companyId || "")); }
+      if (!group) { group = groups.find((g) => g.company.synthetic); if (!group) { group={company:{id:"unassigned",name:"Unassigned",synthetic:true},people:[],value:0}; groups.push(group); } }
+      person.due = open.some((c) => (c.links || []).some((l) => l.entityType === "contacts" && l.recordId === person.id)); group.people.push(person);
+    });
+    deals.filter((d) => !["won","lost"].includes(String(d.state || d.stage).toLowerCase())).forEach((d) => { const g=byId.get(String(d.companyId||"")); if(g) g.value += Number(String(d.amount||d.value||0).replace(/[^0-9.-]/g,""))||0; });
+    return groups.sort((a,b)=>(b.value-a.value)||title(a.company).localeCompare(title(b.company)));
+  }
+  function initials(person){return title(person).split(/\s+/).slice(0,2).map((v)=>v[0]).join("").toUpperCase()}
+  function draw(groups, query="") { const q=query.trim().toLowerCase(); const filtered=groups.map((g)=>({...g,people:g.people.filter((p)=>!q||`${title(p)} ${p.role||""} ${title(g.company)}`.toLowerCase().includes(q))})).filter((g)=>!q||g.people.length||title(g.company).toLowerCase().includes(q));
+    root.querySelector(".crm-company-list").innerHTML=filtered.length?filtered.map((g)=>`<section class="crm-company-account"><div class="crm-company-account-head"><div><button class="crm-company-account-name" data-record-entity="companies" data-record-id="${esc(g.company.id)}">${esc(title(g.company))}</button><div class="crm-company-account-meta">${g.people.length} ${g.people.length===1?"person":"people"}</div></div>${g.value?`<div class="crm-company-value">$${Math.round(g.value).toLocaleString()} open</div>`:""}</div><div class="crm-company-people">${g.people.slice(0,5).map((p)=>`<button class="crm-person-row" data-record-entity="contacts" data-record-id="${esc(p.id)}"><span class="crm-person-avatar">${esc(initials(p))}</span><span><div class="crm-person-name">${esc(title(p))}</div><div class="crm-person-role">${esc(first(p.role,p.email,"Relationship"))}</div></span><i class="crm-person-due${p.due?" is-due":""}" title="${p.due?"Open commitment":"No open commitment"}"></i></button>`).join("")}</div>${g.people.length>5?`<div class="crm-company-more">${g.people.length-5} more</div>`:""}</section>`).join(""):`<div class="crm-people-empty">No relationships match this view.</div>`; }
+  async function refresh(){const groups=await load(); root.innerHTML=`<div class="crm-people-frame"><header class="crm-people-head"><div><div class="crm-people-title">Relationships</div><div class="crm-people-sub">People live inside company context; the warm dot means something is owed.</div></div><input class="crm-people-search" type="search" placeholder="Find a person or company" aria-label="Find a person or company"></header><div class="crm-company-list"></div></div>`; draw(groups); root.querySelector("input").addEventListener("input",(e)=>draw(groups,e.target.value)); }
+  async function miniature(){if(!root)mount();await refresh();const clone=root.cloneNode(true);clone.hidden=false;clone.removeAttribute("data-crm-theater");Object.assign(clone.style,{position:"absolute",left:"50%",top:"50%",width:"1280px",height:"860px",transform:"translate(-50%,-50%) scale(.285)",transformOrigin:"center",pointerEvents:"none"});return clone}
+  function mount(){styles();root=document.createElement("main");root.className="crm-people-room";root.dataset.crmTheater="relationships";root.hidden=true;document.body.appendChild(root);root.addEventListener("click",(e)=>{const t=e.target.closest("[data-record-entity]");if(t)window.crmRecordWorld.open(t.dataset.recordEntity,t.dataset.recordId)});try{window.crmStore.onChanged(()=>{clearTimeout(timer);timer=setTimeout(refresh,120)})}catch{}try{window.crmDomain.onChanged(()=>{clearTimeout(timer);timer=setTimeout(refresh,120)})}catch{}}
+  const api={setActive(on){active=!!on;if(!root)mount();root.hidden=!active;if(active)refresh();return api},refresh,miniature}; if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",mount);else mount();window.crmPeopleRoom=api;
+})();

@@ -209,7 +209,7 @@
     isResolved: (deal) => !!deal && (deal.state || "open") === "won",
     bucketSummary,
     resolvedPulse: true,
-    deckCopy: { leftTitle: "Open deals", rightTitle: "Won" },
+    deckCopy: { leftTitle: "Open deals", rightTitle: "Won", createAria: "Create a deal", createLabel: "New deal" },
     onLinkDrop: linkDeals,
     active: false,
   });

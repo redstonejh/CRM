@@ -37,59 +37,58 @@
     style.textContent = `
       /* Only the separate title-bar strip owns Electron app regions. Keeping
          this full-window room neutral prevents it from excluding the strip. */
-      .crm-desk-surface { position:fixed; inset:0; z-index:835; color:rgba(243,247,253,.93); pointer-events:auto; overflow:hidden; }
+      .crm-desk-surface { position:fixed; inset:0; z-index:835; color:#fff; pointer-events:auto; overflow:hidden; }
       .crm-desk-surface[hidden] { display:none; }
       .crm-desk-frame { position:absolute; inset:54px 56px 90px; display:grid; grid-template-rows:auto minmax(0,1fr); max-width:1500px; margin:auto; }
       .crm-desk-head { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:0 2px 22px; }
-      .crm-desk-date { font:650 18px/1.15 system-ui; letter-spacing:-.015em; color:rgba(245,248,253,.9); }
-      .crm-desk-brief { margin-top:6px; font-size:11px; color:rgba(211,222,239,.48); }
-      .crm-desk-new { border:1px solid rgba(174,202,244,.2); border-radius:10px; background:rgba(126,165,220,.09); color:rgba(230,239,253,.82); padding:8px 11px; font:620 11px system-ui; cursor:pointer; }
-      .crm-desk-new:hover { background:rgba(126,165,220,.18); color:#fff; }
+      .crm-desk-date { font:650 18px/1.15 system-ui; letter-spacing:-.015em; color:#fff; }
+      .crm-desk-brief { margin-top:6px; font-size:11px; color:rgba(255,255,255,.62); }
+      .crm-desk-new { min-height:34px; }
       .crm-desk-grid { min-height:0; display:grid; grid-template-columns:minmax(310px,.84fr) minmax(430px,1.25fr) minmax(290px,.8fr); gap:13px; }
-      .crm-desk-panel { min-height:0; display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,.115); border-radius:19px;
-        background:linear-gradient(155deg,rgba(26,31,41,.72),rgba(10,14,21,.64)); backdrop-filter:blur(26px) saturate(120%);
-        box-shadow:inset 0 1px rgba(255,255,255,.1),0 20px 52px rgba(0,0,0,.24); }
-      .crm-desk-panel-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:17px 18px 12px; }
-      .crm-desk-panel-title { font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.13em; color:rgba(182,203,233,.64); }
-      .crm-desk-panel-count { font-size:10px; color:rgba(219,227,240,.35); }
-      .crm-desk-scroll { min-height:0; overflow:auto; padding:0 11px 13px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.17) transparent; }
-      .crm-desk-commitments { display:grid; gap:5px; }
-      .crm-desk-commitment { position:relative; display:grid; grid-template-columns:21px minmax(0,1fr) auto; gap:9px; align-items:center; min-height:54px; padding:8px 9px;
-        border:1px solid transparent; border-radius:11px; background:rgba(255,255,255,.026); transition:background .14s,border-color .14s,transform .14s; }
-      .crm-desk-commitment:hover { background:rgba(255,255,255,.058); border-color:rgba(255,255,255,.07); transform:translateX(2px); }
-      .crm-desk-check { width:18px; height:18px; border-radius:50%; border:1px solid rgba(204,219,241,.34); background:transparent; cursor:pointer; }
-      .crm-desk-check:hover { border-color:rgba(146,192,255,.86); background:rgba(105,162,240,.15); }
+      /* Desk is a consumer: the shell below is byte-identical to the account
+         dropdown/background picker material. It is not a third reference. */
+      .crm-desk-panel { min-height:0; display:flex; flex-direction:column; gap:9px; overflow:hidden; padding:9px 6px;
+        border:1px solid rgba(255,255,255,.22); border-radius:14px;
+        background:linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55));
+        -webkit-backdrop-filter:blur(26px) saturate(140%); backdrop-filter:blur(26px) saturate(140%);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 18px 42px rgba(0,0,0,.4); }
+      .crm-desk-panel-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:0 12px; }
+      .crm-desk-panel-title { font-size:.95rem; font-weight:700; color:#fff; }
+      .crm-desk-panel-count { font-size:.78rem; color:rgba(255,255,255,.62); }
+      .crm-desk-scroll { min-height:0; overflow:auto; padding:0; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.26) transparent; }
+      .crm-desk-commitments { display:flex; flex-direction:column; gap:9px; }
+      .crm-desk-commitment { position:relative; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:9px; align-items:center; min-height:54px; padding:0 12px;
+        border:0; border-radius:8px; background:transparent; color:rgba(255,255,255,.62); transition:color .14s ease; }
+      .crm-desk-commitment:hover { background:transparent; color:#fff; transform:none; }
+      .crm-desk-check { min-height:30px; }
       .crm-desk-commitment-main { min-width:0; cursor:pointer; }
-      .crm-desk-commitment-title { font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .crm-desk-commitment-context { margin-top:4px; font-size:9px; color:rgba(214,224,240,.38); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .crm-desk-due { padding:4px 6px; border-radius:6px; font-size:9px; color:rgba(215,226,242,.51); white-space:nowrap; }
-      .crm-desk-due.is-late { color:rgba(247,167,147,.88); background:rgba(187,75,55,.09); }
-      .crm-desk-divider { display:flex; align-items:center; gap:8px; padding:12px 5px 7px; font-size:9px; text-transform:uppercase; letter-spacing:.1em; color:rgba(211,222,239,.35); }
-      .crm-desk-divider:after { content:""; flex:1; height:1px; background:rgba(255,255,255,.065); }
-      .crm-desk-work-groups { display:grid; gap:13px; }
-      .crm-desk-work-head { display:flex; justify-content:space-between; align-items:center; padding:0 3px 7px; }
-      .crm-desk-work-name { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:rgba(205,220,242,.56); }
-      .crm-desk-work-count { font-size:9px; color:rgba(212,223,239,.3); }
-      .crm-desk-work-deck { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
-      .crm-desk-work-card { position:relative; min-width:0; height:92px; padding:10px; text-align:left; color:inherit; cursor:pointer; overflow:hidden;
-        border:1px solid rgba(255,255,255,.08); border-radius:12px; background:linear-gradient(155deg,rgba(105,128,166,.13),rgba(255,255,255,.025)); }
-      .crm-desk-work-card:hover { border-color:rgba(157,193,244,.28); background:linear-gradient(155deg,rgba(105,145,205,.2),rgba(255,255,255,.035)); }
+      .crm-desk-commitment-title { font-size:.95rem; font-weight:600; line-height:1.3; color:inherit; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .crm-desk-commitment-context { margin-top:2px; font-size:.78rem; color:rgba(255,255,255,.5); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .crm-desk-due { font-size:.78rem; color:rgba(255,255,255,.5); white-space:nowrap; }
+      .crm-desk-due.is-late { color:rgba(255,135,135,.85); background:transparent; }
+      .crm-desk-divider { padding:3px 12px 0; font-size:.78rem; font-weight:700; color:rgba(255,255,255,.62); }
+      .crm-desk-work-groups { display:flex; flex-direction:column; gap:9px; }
+      .crm-desk-work-head { display:flex; justify-content:space-between; align-items:center; padding:0 12px; }
+      .crm-desk-work-name { font-size:.78rem; font-weight:700; color:rgba(255,255,255,.62); }
+      .crm-desk-work-count { font-size:.78rem; color:rgba(255,255,255,.5); }
+      .crm-desk-work-deck { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+      .crm-desk-work-card { position:relative; min-width:0; height:92px; text-align:left; overflow:hidden; }
       .crm-desk-work-title { font-size:11px; font-weight:620; line-height:1.25; height:29px; overflow:hidden; }
-      .crm-desk-work-meta { margin-top:5px; font-size:9px; text-transform:capitalize; color:rgba(217,227,242,.42); }
-      .crm-desk-stagebar { position:absolute; left:10px; right:10px; bottom:10px; display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:3px; }
+      .crm-desk-work-meta { margin-top:5px; font-size:.78rem; text-transform:capitalize; color:rgba(255,255,255,.5); }
+      .crm-desk-stagebar { position:absolute; left:12px; right:12px; bottom:10px; display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:3px; }
       .crm-desk-stagebar i { height:3px; border-radius:8px; background:rgba(255,255,255,.095); }
-      .crm-desk-stagebar i.is-on { background:rgba(137,180,240,.7); }
-      .crm-desk-activity { position:relative; display:grid; gap:2px; padding:7px 5px 12px 20px; }
-      .crm-desk-activity:before { content:""; position:absolute; left:5px; top:12px; width:5px; height:5px; border-radius:50%; background:rgba(151,184,231,.58); }
-      .crm-desk-activity:after { content:""; position:absolute; left:7px; top:19px; bottom:-2px; width:1px; background:rgba(255,255,255,.07); }
-      .crm-desk-activity:last-child:after { display:none; }
-      .crm-desk-activity-when { font-size:9px; color:rgba(211,222,239,.34); }
-      .crm-desk-activity-text { font-size:11px; line-height:1.4; color:rgba(235,240,248,.72); }
-      .crm-desk-empty { padding:15px 7px; font-size:11px; line-height:1.5; color:rgba(217,226,240,.34); }
-      .crm-desk-composer { position:fixed; z-index:7300; top:76px; right:58px; width:min(360px,calc(100vw - 40px)); padding:13px; display:grid; gap:8px;
-        border:1px solid rgba(255,255,255,.15); border-radius:14px; background:rgba(17,22,30,.94); box-shadow:0 24px 70px rgba(0,0,0,.48); }
+      .crm-desk-stagebar i.is-on { background:rgba(255,255,255,.62); }
+      .crm-desk-activity { display:grid; gap:2px; min-height:46px; padding:0 12px; color:rgba(255,255,255,.62); }
+      .crm-desk-activity-when { font-size:.78rem; color:rgba(255,255,255,.5); }
+      .crm-desk-activity-text { font-size:.95rem; font-weight:600; line-height:1.4; color:inherit; }
+      .crm-desk-empty { padding:0 12px; font-size:.85rem; line-height:1.5; color:rgba(255,255,255,.62); }
+      .crm-desk-composer { position:fixed; z-index:7300; top:76px; right:58px; width:min(360px,calc(100vw - 40px)); padding:9px 6px; display:grid; gap:9px;
+        border:1px solid rgba(255,255,255,.22); border-radius:14px;
+        background:linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55));
+        -webkit-backdrop-filter:blur(26px) saturate(140%); backdrop-filter:blur(26px) saturate(140%);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 18px 42px rgba(0,0,0,.4); }
       .crm-desk-composer[hidden] { display:none; }
-      .crm-desk-input { width:100%; box-sizing:border-box; min-height:35px; padding:8px 9px; color:#fff; background:rgba(0,0,0,.18); border:1px solid rgba(255,255,255,.12); border-radius:8px; outline:none; font:12px system-ui; }
+      .crm-desk-input { width:100%; min-height:35px; }
       .crm-desk-composer-actions { display:flex; justify-content:flex-end; gap:7px; }
       @media(max-width:1050px){.crm-desk-frame{inset:50px 25px 86px}.crm-desk-grid{grid-template-columns:.9fr 1.2fr}.crm-desk-panel:last-child{display:none}}
     `;
@@ -130,18 +129,18 @@
   function commitmentHTML(item) {
     const late = item.dueAt && dueMs(item) < dayStart();
     const context = item.context;
-    return `<div class="crm-desk-commitment" data-commitment-id="${esc(item.id)}">
-      <button class="crm-desk-check" type="button" data-complete="${esc(item.id)}" aria-label="Complete ${esc(item.title)}"></button>
+    return `<div class="crm-desk-commitment crm-menu-item" data-commitment-id="${esc(item.id)}">
+      <button class="crm-desk-check crm-menu-action" type="button" data-complete="${esc(item.id)}" aria-label="Complete ${esc(item.title)}">Done</button>
       <div class="crm-desk-commitment-main"${context ? ` data-record-entity="${esc(context.entityType)}" data-record-id="${esc(context.recordId)}"` : ""}><div class="crm-desk-commitment-title">${esc(item.title)}</div><div class="crm-desk-commitment-context">${esc(context ? title(context.record) : first(item.kind, item.assignee, "Commitment"))}</div></div>
       <div class="crm-desk-due${late ? " is-late" : ""}">${esc(dueLabel(item))}</div>
     </div>`;
   }
   function workHTML(flow) {
-    return `<button class="crm-desk-work-card" type="button" data-record-entity="${esc(flow.entityType)}" data-record-id="${esc(flow.recordId)}"><div class="crm-desk-work-title">${esc(title(flow.record || { id: flow.recordId }))}</div><div class="crm-desk-work-meta">${esc(flow.stage)}${flow.owner ? ` · ${esc(flow.owner)}` : ""}</div>${stageBar(flow)}</button>`;
+    return `<button class="crm-desk-work-card crm-menu-action" type="button" data-record-entity="${esc(flow.entityType)}" data-record-id="${esc(flow.recordId)}"><div class="crm-desk-work-title">${esc(title(flow.record || { id: flow.recordId }))}</div><div class="crm-desk-work-meta">${esc(flow.stage)}${flow.owner ? ` · ${esc(flow.owner)}` : ""}</div>${stageBar(flow)}</button>`;
   }
   function activityHTML(item) {
     const date = new Date(item.occurredAt || item.createdAt);
-    return `<div class="crm-desk-activity"><div class="crm-desk-activity-when">${esc(Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "")}${item.actor ? ` · ${esc(item.actor)}` : ""}</div><div class="crm-desk-activity-text">${esc(first(item.content, item.kind))}</div></div>`;
+    return `<div class="crm-desk-activity crm-menu-item"><div class="crm-desk-activity-when">${esc(Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "")}${item.actor ? ` · ${esc(item.actor)}` : ""}</div><div class="crm-desk-activity-text">${esc(first(item.content, item.kind))}</div></div>`;
   }
 
   function render() {
@@ -154,20 +153,20 @@
     const date = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
     const brief = overdue.length ? `${overdue.length} overdue · ${today.length} due today` : today.length ? `${today.length} due today · the rest can wait` : "Nothing is on fire. Protect the next useful move.";
     root.innerHTML = `<div class="crm-desk-frame">
-      <header class="crm-desk-head"><div><div class="crm-desk-date">${esc(date)}</div><div class="crm-desk-brief">${esc(brief)}</div></div><button class="crm-desk-new" type="button" data-new-commitment>New commitment</button></header>
+      <header class="crm-desk-head"><div><div class="crm-desk-date">${esc(date)}</div><div class="crm-desk-brief">${esc(brief)}</div></div><button class="crm-desk-new crm-menu-action" type="button" data-new-commitment>New commitment</button></header>
       <div class="crm-desk-grid">
-        <section class="crm-desk-panel"><div class="crm-desk-panel-head"><div class="crm-desk-panel-title">Commitments</div><div class="crm-desk-panel-count">${model.commitments.length} open</div></div><div class="crm-desk-scroll crm-desk-commitments">
+        <section class="crm-desk-panel crm-menu-surface"><div class="crm-desk-panel-head"><div class="crm-desk-panel-title">Commitments</div><div class="crm-desk-panel-count">${model.commitments.length} open</div></div><div class="crm-desk-scroll crm-desk-commitments">
           ${overdue.length ? `<div class="crm-desk-divider">Overdue</div>${overdue.map(commitmentHTML).join("")}` : ""}
           ${today.length ? `<div class="crm-desk-divider">Today</div>${today.map(commitmentHTML).join("")}` : ""}
           ${next.length ? `<div class="crm-desk-divider">Next</div>${next.map(commitmentHTML).join("")}` : ""}
           ${!model.commitments.length ? `<div class="crm-desk-empty">No open commitments. Create one only when someone has genuinely promised a next action.</div>` : ""}
         </div></section>
-        <section class="crm-desk-panel"><div class="crm-desk-panel-head"><div class="crm-desk-panel-title">Work in motion</div><div class="crm-desk-panel-count">${model.flows.length} active</div></div><div class="crm-desk-scroll crm-desk-work-groups">
+        <section class="crm-desk-panel crm-menu-surface"><div class="crm-desk-panel-head"><div class="crm-desk-panel-title">Work in motion</div><div class="crm-desk-panel-count">${model.flows.length} active</div></div><div class="crm-desk-scroll crm-desk-work-groups">
           ${Object.entries(grouped).map(([key, flows]) => `<section><div class="crm-desk-work-head"><div class="crm-desk-work-name">${esc(workLabels[key])}</div><div class="crm-desk-work-count">${flows.length}</div></div>${flows.length ? `<div class="crm-desk-work-deck">${flows.slice(0, 8).map(workHTML).join("")}</div>` : `<div class="crm-desk-empty">No active ${esc(workLabels[key].toLowerCase())}.</div>`}</section>`).join("")}
         </div></section>
-        <section class="crm-desk-panel"><div class="crm-desk-panel-head"><div class="crm-desk-panel-title">What changed</div><div class="crm-desk-panel-count">latest</div></div><div class="crm-desk-scroll">${model.activities.length ? model.activities.slice(0, 35).map(activityHTML).join("") : `<div class="crm-desk-empty">Activity will appear here when calls, notes, meetings, and outcomes are recorded.</div>`}</div></section>
+        <section class="crm-desk-panel crm-menu-surface"><div class="crm-desk-panel-head"><div class="crm-desk-panel-title">What changed</div><div class="crm-desk-panel-count">latest</div></div><div class="crm-desk-scroll">${model.activities.length ? model.activities.slice(0, 35).map(activityHTML).join("") : `<div class="crm-desk-empty">Activity will appear here when calls, notes, meetings, and outcomes are recorded.</div>`}</div></section>
       </div>
-    </div><form class="crm-desk-composer" data-desk-composer hidden><input class="crm-desk-input" name="title" placeholder="What must happen?" required><input class="crm-desk-input" name="dueAt" type="datetime-local"><div class="crm-desk-composer-actions"><button class="crm-desk-new" type="button" data-cancel-new>Cancel</button><button class="crm-desk-new" type="submit">Create commitment</button></div></form>`;
+    </div><form class="crm-desk-composer crm-menu-surface" data-desk-composer hidden><input class="crm-desk-input crm-menu-input" name="title" placeholder="What must happen?" required><input class="crm-desk-input crm-menu-input" name="dueAt" type="datetime-local"><div class="crm-desk-composer-actions"><button class="crm-desk-new crm-menu-action" type="button" data-cancel-new>Cancel</button><button class="crm-desk-new crm-menu-action" type="submit">Create commitment</button></div></form>`;
   }
 
   async function refresh() { model = await load(); render(); }

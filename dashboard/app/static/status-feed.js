@@ -936,7 +936,8 @@ function initDashboardSearch() {
 async function startFeed() {
   const bridge = window.dashboard;
   if (!bridge) { console.warn("[status-feed] window.dashboard bridge unavailable — no live data."); return; }
-  initDashboardSearch();
+  // CRM record search owns the canonical top-bar dropdown in this application.
+  // The legacy circuit lookup remains dormant for the status-monitor build.
 
   // Viewer panels are transient — regenerated from live data each session. An
   // older build may have persisted them into the layout store, so they get

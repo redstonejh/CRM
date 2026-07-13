@@ -3,7 +3,7 @@
 // Boots BOTH apps through the harness (original repo on 3896/3897, CRM on
 // 3898/3899), navigates the CRM to its Tickets surface, and compares the
 // computed anatomy of the ticket/card faces shared with the reference. The
-// surrounding interface intentionally follows the CRM config-menu contract,
+// surrounding interface intentionally follows the account/background menu contract,
 // and bucket-to-bucket arrows are forbidden. Exits non-zero on any mismatch.
 'use strict';
 const fs = require('node:fs');

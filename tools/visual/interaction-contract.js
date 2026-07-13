@@ -31,7 +31,7 @@ async function main() {
 
   await activate('home');
   await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6, { timeout: 10000 });
-  await check('Non-card interface audit has complete config-menu coverage', () => {
+  await check('Non-card interface audit has complete canonical-menu coverage', () => {
     const audit = window.crmInterfaceParity?.audit?.();
     return {
       ok: !!audit && audit.surfaces > 0 && audit.actions > 0
@@ -40,26 +40,26 @@ async function main() {
       detail: audit ? `${audit.surfaces} surfaces / ${audit.actions} actions / ${audit.bucketArrows} arrows` : 'audit unavailable',
     };
   });
-  await check('Information shells use the config menu recipe exactly', () => {
+  await check('Information shells use the account/background recipe exactly', () => {
     const surface = document.querySelector('.crm-home-grid > .crm-home-bucket');
-    const reference = document.querySelector('.dashboard-search-popover');
+    const reference = document.querySelector('.auth-profile-menu');
     if (!surface || !reference) return false;
     const actual = getComputedStyle(surface);
     const expected = getComputedStyle(reference);
     return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'color']
       .every((property) => actual[property] === expected[property]);
   });
-  await check('Non-top buttons use the config menu item recipe exactly', () => {
+  await check('Non-top buttons use the account menu item recipe exactly', () => {
     const action = document.querySelector('.crm-home-control');
     const reference = document.querySelector('.auth-menu-item');
-    if (!action || !reference || !action.classList.contains('crm-config-action')) return false;
+    if (!action || !reference || !action.classList.contains('crm-menu-action')) return false;
     const actual = getComputedStyle(action);
     const expected = getComputedStyle(reference);
     const same = ['backgroundColor', 'borderTopWidth', 'borderRadius', 'color', 'fontSize', 'fontWeight', 'boxShadow', 'paddingLeft', 'paddingRight']
       .every((property) => actual[property] === expected[property]);
     return same
-      && [...document.querySelectorAll('.window-glass-control')].every((button) => !button.classList.contains('crm-config-action'))
-      && [...document.querySelectorAll('.tk-card, .tk-zcard')].every((card) => !card.classList.contains('crm-config-action') && !card.classList.contains('crm-config-surface'));
+      && [...document.querySelectorAll('.window-glass-control')].every((button) => !button.classList.contains('crm-menu-action'))
+      && [...document.querySelectorAll('.tk-card, .tk-zcard')].every((card) => !card.classList.contains('crm-menu-action') && !card.classList.contains('crm-menu-surface'));
   });
   await check('Home has six inert screenshot LODs and no live miniature trees', () => ({
     ok: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
@@ -292,10 +292,10 @@ async function main() {
     return ticket?.companyLabel || ticket?.title || '';
   });
   await page.keyboard.down('Control'); await page.keyboard.press('KeyK'); await page.keyboard.up('Control');
-  await page.waitForSelector('.crm-command-shade:not([hidden]) .crm-command-input', { timeout: 5000 });
-  await page.type('.crm-command-input', routedTicketTitle);
-  await page.waitForSelector('.crm-command-row[data-entity="tickets"]', { timeout: 5000 });
-  await page.click('.crm-command-row[data-entity="tickets"]');
+  await page.waitForSelector('#dashboard-search-popover:not([hidden]) .dashboard-search-input', { timeout: 5000 });
+  await page.type('.dashboard-search-input', routedTicketTitle);
+  await page.waitForSelector('.crm-search-result[data-entity="tickets"]', { timeout: 5000 });
+  await page.click('.crm-search-result[data-entity="tickets"]');
   await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail', { timeout: 5000 });
   await check('Ticket search results route to the reference guided screen, never the generic record panel', () => (
     !!document.querySelector('.ticket-detail-overlay:not([hidden]) .td-card .ticket-body')
@@ -317,22 +317,56 @@ async function main() {
     const details = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip, [data-crm-theater="calendar"] .fc-empty, [data-crm-theater="calendar"] .fc-day-detail')];
     const isLightweight = (element) => {
       const style = getComputedStyle(element);
-      return !element.classList.contains('crm-config-surface')
-        && !element.classList.contains('crm-config-item')
+      return !element.classList.contains('crm-menu-surface')
+        && !element.classList.contains('crm-menu-item')
         && (style.backdropFilter === 'none' || style.backdropFilter === '');
     };
     return days.length > 300 && days.every(isLightweight) && details.every(isLightweight);
   });
 
   await page.keyboard.down('Control'); await page.keyboard.press('KeyK'); await page.keyboard.up('Control');
-  await sleep(500);
-  await check('Search is a result list, never a mixed entity fan', () => ({
-    ok: !document.querySelector('.crm-command-shade[hidden]') && document.querySelectorAll('.crm-command-row').length > 0 && !document.querySelector('.crm-command .tk-card'),
-    detail: `${document.querySelectorAll('.crm-command-row').length} results`,
-  }));
+  await page.waitForSelector('#dashboard-search-popover:not([hidden]) .crm-search-result', { timeout: 5000 });
+  await check('Search consumes the canonical anchored menu, never an invented command palette', () => {
+    const search = document.querySelector('#dashboard-search-popover:not([hidden])');
+    const account = document.querySelector('.auth-profile-menu');
+    const background = document.querySelector('.bg-picker-pop');
+    const rows = [...document.querySelectorAll('.crm-search-result')];
+    if (!search || !account || !background || !rows.length) return false;
+    const properties = ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'rowGap'];
+    const actual = getComputedStyle(search);
+    const matches = (element) => {
+      const reference = getComputedStyle(element);
+      return properties.every((property) => actual[property] === reference[property]);
+    };
+    return !document.querySelector('.crm-command, .crm-command-shade, .crm-command-row')
+      && matches(account) && matches(background)
+      && rows.every((row) => row.classList.contains('auth-menu-item') && getComputedStyle(row).backgroundColor === 'rgba(0, 0, 0, 0)')
+      && !search.querySelector('.tk-card');
+  });
   await page.keyboard.press('Escape');
 
   await activate('desk');
+  await check('Desk consumes the account/background shell and item recipes', () => {
+    const referenceShell = document.querySelector('.auth-profile-menu');
+    const referenceItem = document.querySelector('.auth-profile-menu .auth-menu-item');
+    const panels = [...document.querySelectorAll('.crm-desk-panel')];
+    const actions = [...document.querySelectorAll('.crm-desk-work-card')];
+    if (!referenceShell || !referenceItem || !panels.length || !actions.length) return false;
+    const shellProperties = ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'rowGap'];
+    const itemProperties = ['backgroundColor', 'borderTopWidth', 'borderRadius', 'color', 'fontSize', 'fontWeight', 'boxShadow', 'paddingLeft', 'paddingRight'];
+    const differences = [];
+    const same = (element, reference, properties, label) => {
+      const actual = getComputedStyle(element); const expected = getComputedStyle(reference);
+      return properties.every((property) => {
+        if (actual[property] === expected[property]) return true;
+        differences.push(`${label}.${property}: ${actual[property]} != ${expected[property]}`);
+        return false;
+      });
+    };
+    panels.forEach((panel, index) => same(panel, referenceShell, shellProperties, `panel${index}`));
+    actions.forEach((action, index) => same(action, referenceItem, itemProperties, `action${index}`));
+    return { ok: differences.length === 0, detail: differences.slice(0, 6).join('; ') };
+  });
   await page.click('.crm-desk-work-card');
   await page.waitForSelector('.record-world-shell:not([hidden])');
   await check('A work card opens contextual identity, workflow, relationships, commitments, and activity', () => ({

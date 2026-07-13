@@ -602,9 +602,10 @@
         -webkit-mask: url("${USER_ICON}") center / contain no-repeat;
         mask: url("${USER_ICON}") center / contain no-repeat;
       }
-      /* ⭐ THE CANONICAL MENU (see DESIGN_SYSTEM.md §6). This + the search popover
-         (.dashboard-search-popover) are THE reference look the user means by "menu".
-         Account menu mirrors the "…" / search / background dropdowns EXACTLY:
+      /* ⭐ THE CANONICAL MENU (see DESIGN_SYSTEM.md §6). The account dropdown and
+         background picker are the only reference look the user means by "menu".
+         Search, Desk, and every other popover consume this recipe; they never
+         define it. The account menu mirrors the background dropdown EXACTLY:
          the same translucent popover shell + colour-only item hover (transparent
          background, text rgba .62 → white). Never a filled/blue hover. */
       .auth-profile-menu {
@@ -621,8 +622,8 @@
          hover is colour-only (transparent bg), so item padding draws NOTHING — it is
          pure invisible spacing. To make edge-gap == inter-gap (the user's hard rule),
          ALL vertical spacing lives in ONE place: the menu gap. Items/head carry NO
-         vertical padding. Edge gap = border(1) + padding-block(8) = 9 == gap(9).
-         Want looser/tighter? Change gap to N and padding-block to N-1, together. */
+         vertical padding. Both canonical references use padding-block(9) and gap(9).
+         Want looser/tighter? Change both references and this documented contract. */
       .auth-profile-head { display: flex; flex-direction: column; padding: 0 12px; }
       /* Match the menu items' size (0.95rem) — the name was smaller than the
          items below it. Bold still sets it apart as the header. */

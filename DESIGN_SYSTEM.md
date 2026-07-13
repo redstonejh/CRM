@@ -153,16 +153,16 @@ The only "button" with chrome is the **circular glass control** above
 ## 6. THIS IS HOW YOU MAKE A MENU / DROPDOWN (dashboard)
 
 > ### ⭐ THE CANONICAL MENU — read this first
-> **When the user says "menu" as a reference, they mean the SEARCH POPOVER and the ACCOUNT MENU.**
-> Their exact words: *"i love that styling and ALWAYS want it to be used when i refer to menu as a reference."*
-> Any new menu, dropdown, flyout, or popover in any future program must match these. They are the gold standard — do not invent a different menu look.
+> **When the user says "menu" as a reference, they mean the ACCOUNT DROPDOWN and the BACKGROUND PICKER.**
+> Search, Desk, ticket screens, and all other UI are consumers, never sources.
+> Any new menu, dropdown, flyout, or popover must match these two references exactly. Do not infer a new look from a consuming screen.
 
-The search popover, account menu, account submenu, Layout flyout, and the background picker **all share one byte-identical frosted-glass recipe.** It is verified identical across all of them (auth-ui.js even pins `.auth-submenu` as "byte-for-byte identical to `.auth-profile-menu`"). Copy this exactly:
+The account menu and background picker own one byte-identical frosted-glass recipe. Search, the account submenu, Layout flyout, and other menus copy it (auth-ui.js pins `.auth-submenu` as "byte-for-byte identical to `.auth-profile-menu`"). Copy this exactly:
 
 ```css
-/* THE MENU — search popover / account menu recipe (identical everywhere) */
+/* THE MENU — account dropdown / background picker recipe */
 .menu {
-  padding: 8px 6px;          /* account menu uses 9px 6px — both equal-gap valid (see rule 1) */
+  padding: 9px 6px;
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
   -webkit-backdrop-filter: blur(26px) saturate(140%);
@@ -173,17 +173,17 @@ The search popover, account menu, account submenu, Layout flyout, and the backgr
 }
 ```
 
-**The five live instances of this recipe (all identical — change one, change all):**
+**The two references and their live consumers:**
 
 | Instance | Selector | Where it's defined |
 |---|---|---|
-| **Search popover** ⭐ | `.dashboard-search-popover` (results: `.dashboard-search-results`) | `themes.css` (~3924) |
-| **Account menu** ⭐ | `.auth-profile-menu` (items: `.auth-menu-item`) | `auth-ui.js` injected `<style>` (~519) |
-| Account submenu | `.auth-submenu` | `auth-ui.js` (pinned identical to account menu) |
-| Background picker | `.bg-picker-pop` | `themes.css` (~4025) |
-| Company overflow | `.company-overflow-menu` | `themes.css` |
+| **Account menu** ⭐ reference | `.auth-profile-menu` (items: `.auth-menu-item`) | `auth-ui.js` injected `<style>` (~610) |
+| **Background picker** ⭐ reference | `.bg-picker-pop` | `themes.css` (~4034) |
+| Search popover (consumer) | `.dashboard-search-popover` (results reuse `.auth-menu-item`) | `themes.css` + `crm-record-search.js` |
+| Account submenu (consumer) | `.auth-submenu` | `auth-ui.js` (pinned identical to account menu) |
+| Company overflow (consumer) | `.company-overflow-menu` | `themes.css` |
 
-The two ⭐ rows are *the* reference. The rest just reuse it — they exist to prove the recipe is meant to be shared verbatim, not re-styled per menu.
+Only the two ⭐ rows are references. Every other row is tested against them and must never be used to justify a new style.
 
 **Menu items** (the row styling inside the menu) — flat, left-aligned, hover is colour-only:
 ```css
@@ -197,7 +197,7 @@ The two ⭐ rows are *the* reference. The rest just reuse it — they exist to p
 ```
 
 **Two hard rules** (the user enforces these):
-1. **Equal-gap spacing.** The rim (container `padding`) must equal the gap between items. Drive *all* vertical spacing from one number: `gap: 9px` + `padding-block: 8px` (8 + 1px border = 9 = gap). Put item spacing in the **gap**, never in item padding (hover is colour-only/transparent, so item padding would make rim ≠ gap). Items must be `flex-shrink: 0` or multi-line rows crush and overlap.
+1. **Equal-gap spacing.** The rim and item interval use `9px`: `gap: 9px` + `padding-block: 9px`. Put item spacing in the **gap**, never in item padding. Items must be `flex-shrink: 0` or multi-line rows crush and overlap.
 2. **No blue selection chrome.** Options are flat, colour/label only — the selected one is marked subtly (e.g. `.is-selected`, bold), never a blue pill/highlight.
 
 > GOTCHA: a `backdrop-filter` element nested inside another `backdrop-filter` element renders **flat** (Chromium ignores it). Portal submenus/flyouts out onto a non-filtered root (`document.body` / `.workspace-menu-overlay-layer`) and reuse the parent's exact recipe, or they won't match.
@@ -211,8 +211,9 @@ The two ⭐ rows are *the* reference. The rest just reuse it — they exist to p
 | Tokens (colours, radii, spacing, shadows, glass vars) | `dashboard/app/static/tokens.css` |
 | Base elements + pill buttons + forms | `dashboard/app/static/base.css` |
 | Panels, widget grid, charts/tables, glass surfaces, menus, top-bar controls | `dashboard/app/static/themes.css` + `dashboard-grid.css` |
-| **⭐ THE canonical menu — search popover** (`.dashboard-search-popover`) | `dashboard/app/static/themes.css` (~3924) |
-| **⭐ THE canonical menu — account menu** (`.auth-profile-menu`, `.auth-menu-item`) | `dashboard/app/static/auth-ui.js` (injected `<style>`, ~519) |
+| **⭐ Canonical menu reference — account** (`.auth-profile-menu`, `.auth-menu-item`) | `dashboard/app/static/auth-ui.js` (injected `<style>`, ~610) |
+| **⭐ Canonical menu reference — background** (`.bg-picker-pop`) | `dashboard/app/static/themes.css` (~4034) |
+| Search menu consumer | `dashboard/app/static/crm-record-search.js` + `.dashboard-search-popover` in `themes.css` |
 | Liquid-glass WebGL shader + which elements refract | `dashboard/app/static/liquid-glass-webgl.js` |
 | Tray popover surface (CSS acrylic) + tints + status buttons | `src/App.css` |
 | Native OS acrylic/vibrancy window | `electron/main.js` (popover `BrowserWindow`) |
@@ -224,6 +225,6 @@ The two ⭐ rows are *the* reference. The rest just reuse it — they exist to p
 - Use a **token** for any colour/radius/shadow it covers; don't hardcode.
 - Match the **material** to the surface (§1) — popover = OS acrylic; dashboard panel = liquid glass; menu = CSS glass.
 - Pick the **right status palette** for the context (§3) — they are not interchangeable.
-- Any **menu / dropdown / flyout / popover** copies **THE canonical menu** — the **search popover** + **account menu** recipe (§6), verbatim. It also follows the **equal-gap** rule and the **no-blue-selection** rule.
+- Any **menu / dropdown / flyout / popover** copies the **account dropdown + background picker** recipe (§6), verbatim. Search and Desk are never references. Follow the **equal-gap** and **no-blue-selection** rules.
 - Never nest `backdrop-filter` inside `backdrop-filter` — portal it out.
 - Dashboard has **no HMR**: reload the window and verify visually (CDP/Playwright), don't assume.

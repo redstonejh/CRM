@@ -134,13 +134,13 @@
       </div>
     </div>
   </details>
-  <button class="window-glass-control control-bar-search" type="button" aria-label="Search circuits" aria-expanded="false" aria-controls="dashboard-search-popover" title="Search circuits"></button>
+  <button class="window-glass-control control-bar-search" type="button" aria-label="Search CRM" aria-expanded="false" aria-controls="dashboard-search-popover" title="Search CRM"></button>
 </div>
-<!-- Search popover: type a name or IP; matching circuit tabs appear below and
-     clicking one navigates to it. Positioned under the search button by JS. -->
+<!-- CRM retrieval uses the existing anchored popover. Its shell and options
+     consume the account/background menu contract; Search is not a style source. -->
 <div class="dashboard-search-popover" id="dashboard-search-popover" hidden>
-  <input class="dashboard-search-input" type="text" placeholder="Search name or IP…" aria-label="Search circuits" autocomplete="off" spellcheck="false" />
-  <div class="dashboard-search-results" role="listbox" aria-label="Matching circuits"></div>
+  <input class="dashboard-search-input" type="search" placeholder="Find a person, company, deal, job, case, or invoice" aria-label="Search CRM records" autocomplete="off" spellcheck="false" />
+  <div class="dashboard-search-results" role="listbox" aria-label="CRM search results"></div>
 </div>
 <div class="window-control-cluster" aria-label="Window controls">
   <button class="window-glass-control window-minimize-control" type="button" aria-label="Minimize app" title="Minimize app"></button>

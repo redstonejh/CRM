@@ -8,7 +8,7 @@
     { key: "money", label: "Money" }, { key: "calendar", label: "Calendar" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "people-live-data-v7";
+  const HOME_PREVIEW_VERSION = "canonical-menu-consumers-v8";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();

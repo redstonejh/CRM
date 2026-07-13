@@ -1,41 +1,41 @@
 /*
  * Non-card interface parity
  * -------------------------
- * These are the literal values used by the ticket config screen and the
- * canonical account/search menus.  Runtime surfaces receive the semantic
- * classes below from interface-parity.js; this file is loaded last and uses
- * !important so module-local injected styles cannot quietly drift from them.
+ * These are the literal values used by the canonical account dropdown and
+ * background picker. Runtime surfaces receive the historical semantic class
+ * names below from interface-parity.js; Search, Desk, and ticket UI are never
+ * treated as visual sources.
  *
  * Card/ticket faces and the circular controls in the window's top corners are
  * never assigned these classes.
  */
 :root {
-  --crm-config-menu-background: linear-gradient(180deg, rgba(22, 26, 36, 0.62), rgba(12, 16, 24, 0.55));
-  --crm-config-menu-filter: blur(26px) saturate(140%);
-  --crm-config-menu-border: rgba(255, 255, 255, 0.22);
-  --crm-config-menu-highlight: rgba(255, 255, 255, 0.24);
-  --crm-config-menu-shadow: rgba(0, 0, 0, 0.4);
-  --crm-config-menu-copy: #ffffff;
-  --crm-config-menu-item-copy: rgba(255, 255, 255, 0.62);
-  --crm-config-menu-input-border: rgba(255, 255, 255, 0.18);
-  --crm-config-menu-input-background: rgba(255, 255, 255, 0.06);
+  --crm-menu-background: linear-gradient(180deg, rgba(22, 26, 36, 0.62), rgba(12, 16, 24, 0.55));
+  --crm-menu-filter: blur(26px) saturate(140%);
+  --crm-menu-border: rgba(255, 255, 255, 0.22);
+  --crm-menu-highlight: rgba(255, 255, 255, 0.24);
+  --crm-menu-shadow: rgba(0, 0, 0, 0.4);
+  --crm-menu-copy: #ffffff;
+  --crm-menu-item-copy: rgba(255, 255, 255, 0.62);
+  --crm-menu-input-border: rgba(255, 255, 255, 0.18);
+  --crm-menu-input-background: rgba(255, 255, 255, 0.06);
 }
 
-.crm-config-surface {
-  color: var(--crm-config-menu-copy) !important;
-  background: var(--crm-config-menu-background) !important;
-  -webkit-backdrop-filter: var(--crm-config-menu-filter) !important;
-  backdrop-filter: var(--crm-config-menu-filter) !important;
-  border: 1px solid var(--crm-config-menu-border) !important;
+.crm-menu-surface {
+  color: var(--crm-menu-copy) !important;
+  background: var(--crm-menu-background) !important;
+  -webkit-backdrop-filter: var(--crm-menu-filter) !important;
+  backdrop-filter: var(--crm-menu-filter) !important;
+  border: 1px solid var(--crm-menu-border) !important;
   border-radius: 14px !important;
   box-shadow:
-    inset 0 1px 0 var(--crm-config-menu-highlight),
-    0 18px 42px var(--crm-config-menu-shadow) !important;
+    inset 0 1px 0 var(--crm-menu-highlight),
+    0 18px 42px var(--crm-menu-shadow) !important;
 }
 
 /* Information rows use the menu's flat, borderless content treatment. */
-.crm-config-item {
-  color: var(--crm-config-menu-item-copy) !important;
+.crm-menu-item {
+  color: var(--crm-menu-item-copy) !important;
   background: transparent !important;
   border: 0 !important;
   border-radius: 8px !important;
@@ -43,7 +43,7 @@
 }
 
 /* Literal .auth-menu-item control recipe, without imposing a layout width. */
-.crm-config-action {
+.crm-menu-action {
   -webkit-appearance: none !important;
   appearance: none !important;
   border: 0 !important;
@@ -53,7 +53,7 @@
   margin: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  color: var(--crm-config-menu-item-copy) !important;
+  color: var(--crm-menu-item-copy) !important;
   font: inherit !important;
   font-size: 0.95rem !important;
   font-weight: 600 !important;
@@ -61,33 +61,33 @@
   transition: color 0.14s ease !important;
 }
 
-.crm-config-action:hover,
-.crm-config-action:focus-visible,
-.crm-config-action:active,
-.crm-config-action[aria-expanded="true"],
-.crm-config-action.is-selected,
-.crm-config-action.is-active {
-  color: var(--crm-config-menu-copy) !important;
+.crm-menu-action:hover,
+.crm-menu-action:focus-visible,
+.crm-menu-action:active,
+.crm-menu-action[aria-expanded="true"],
+.crm-menu-action.is-selected,
+.crm-menu-action.is-active {
+  color: var(--crm-menu-copy) !important;
   background: transparent !important;
   box-shadow: none !important;
   transform: none !important;
 }
 
-.crm-config-action:is(.td-danger, .tk-menu-danger, .confirm-dialog-danger, .auth-danger) {
+.crm-menu-action:is(.td-danger, .tk-menu-danger, .confirm-dialog-danger, .auth-danger) {
   color: rgba(255, 135, 135, 0.85) !important;
 }
 
-.crm-config-action:is(.td-danger, .tk-menu-danger, .confirm-dialog-danger, .auth-danger):hover {
+.crm-menu-action:is(.td-danger, .tk-menu-danger, .confirm-dialog-danger, .auth-danger):hover {
   color: #ff8a8a !important;
 }
 
-/* Literal text-entry recipe from the ticket configuration panel. */
-.crm-config-input {
+/* Neutral field treatment used inside consumers of the menu contract. */
+.crm-menu-input {
   box-sizing: border-box !important;
-  border: 1px solid var(--crm-config-menu-input-border) !important;
+  border: 1px solid var(--crm-menu-input-border) !important;
   border-radius: 9px !important;
-  background: var(--crm-config-menu-input-background) !important;
-  color: var(--crm-config-menu-copy) !important;
+  background: var(--crm-menu-input-background) !important;
+  color: var(--crm-menu-copy) !important;
   font: inherit !important;
   font-size: 0.85rem !important;
   padding: 7px 10px !important;
@@ -95,18 +95,13 @@
   box-shadow: none !important;
 }
 
-.crm-config-input:focus {
+.crm-menu-input:focus {
   border-color: rgba(255, 255, 255, 0.34) !important;
-  background: var(--crm-config-menu-input-background) !important;
+  background: var(--crm-menu-input-background) !important;
 }
 
-.crm-config-input::placeholder {
+.crm-menu-input::placeholder {
   color: rgba(255, 255, 255, 0.42) !important;
-}
-
-/* Remove module-specific blue/grey text drift from non-card information. */
-.crm-config-copy {
-  color: var(--crm-config-menu-copy) !important;
 }
 
 /*

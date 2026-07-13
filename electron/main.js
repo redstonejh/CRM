@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['desk', 'people', 'pipeline', 'jobs', 'money', 'calen
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'people-live-data-v7';
+const HOME_PREVIEW_VERSION = 'canonical-menu-consumers-v8';
 const homePreviewCache = new Map();
 let homePreviewQueue = Promise.resolve();
 let homePreviewRefreshTimer = null;

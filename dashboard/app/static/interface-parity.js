@@ -1,6 +1,6 @@
 // Applies one canonical visual contract to every non-card information surface.
-// The source of truth is the ticket configuration/account/search menu recipe;
-// this audit layer only assigns semantic classes and never invents a variant.
+// The account dropdown and background picker are the only source of truth.
+// Search, Desk, and every other non-card surface only consume that contract.
 (() => {
   "use strict";
 
@@ -24,7 +24,6 @@
     ".crm-home-window",
     ".crm-desk-panel",
     ".crm-desk-composer",
-    ".crm-command",
     ".record-world",
     ".fc-year-strip",
     ".fc-bucket",
@@ -48,7 +47,6 @@
     ".crm-desk-activity",
     ".crm-person-row",
     ".crm-company-thread-row",
-    ".crm-command-row",
     ".record-world-fact",
     ".record-world-related-row",
     ".record-world-flow",
@@ -74,12 +72,15 @@
     ".widget-card[data-widget-runtime-type='ticket']",
   ].join(",");
 
-  const REFERENCE_SELECTOR = [
-    ".ticket-detail",
-    ".dashboard-search-popover",
+  const DIRECT_MENU_SELECTOR = [
     ".auth-profile-menu",
     ".auth-submenu",
+    ".background-tone-popover",
+    ".dashboard-search-popover",
   ].join(",");
+
+  // Ticket/card behavior is preserved independently; it is not a menu source.
+  const PRESERVED_CARD_UI_SELECTOR = ".ticket-detail";
 
   const TOP_CIRCULAR_SELECTOR = ".window-glass-control, .auth-profile-button";
   const ACTION_SELECTOR = "button, [role='button']";
@@ -91,42 +92,32 @@
 
   const isElement = (node) => node?.nodeType === Node.ELEMENT_NODE;
   const inCardFace = (element) => !!element.closest(CARD_FACE_SELECTOR);
-  const inReference = (element) => !!element.closest(REFERENCE_SELECTOR);
+  const inDirectMenu = (element) => !!element.closest(DIRECT_MENU_SELECTOR);
+  const inPreservedCardUI = (element) => !!element.closest(PRESERVED_CARD_UI_SELECTOR);
   const isTopCircular = (element) => element.matches(TOP_CIRCULAR_SELECTOR) || !!element.closest(TOP_CIRCULAR_SELECTOR);
-  const hasDirectCopy = (element) => [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
-
   const classify = (element) => {
     if (!isElement(element)) return;
     const cardFace = inCardFace(element);
 
-    if (!cardFace && element.matches(SURFACE_SELECTOR)) element.classList.add("crm-config-surface");
+    if (!cardFace && element.matches(SURFACE_SELECTOR)) element.classList.add("crm-menu-surface");
 
     if (!cardFace && element.matches(ITEM_SELECTOR) && !element.matches(SURFACE_SELECTOR)) {
-      element.classList.add("crm-config-item");
+      element.classList.add("crm-menu-item");
     }
 
     if (
       !cardFace &&
-      !inReference(element) &&
+      !inDirectMenu(element) &&
+      !inPreservedCardUI(element) &&
       !isTopCircular(element) &&
       element.matches(ACTION_SELECTOR) &&
       !element.matches(SURFACE_SELECTOR)
     ) {
-      element.classList.add("crm-config-action");
+      element.classList.add("crm-menu-action");
     }
 
-    if (!cardFace && !inReference(element) && element.matches(INPUT_SELECTOR)) {
-      element.classList.add("crm-config-input");
-    }
-
-    if (
-      !cardFace &&
-      !inReference(element) &&
-      hasDirectCopy(element) &&
-      !element.closest(ACTION_SELECTOR) &&
-      !element.matches("input, textarea, select, option, script, style")
-    ) {
-      element.classList.add("crm-config-copy");
+    if (!cardFace && !inDirectMenu(element) && !inPreservedCardUI(element) && element.matches(INPUT_SELECTOR)) {
+      element.classList.add("crm-menu-input");
     }
   };
 
@@ -148,13 +139,14 @@
       const roots = [...pending];
       pending.clear();
       roots.forEach(scan);
-      document.documentElement.dataset.crmInterfaceParity = "config-menu";
+      document.documentElement.dataset.crmInterfaceParity = "canonical-menu";
     });
   };
 
   const eligibleAction = (element) => (
     !inCardFace(element) &&
-    !inReference(element) &&
+    !inDirectMenu(element) &&
+    !inPreservedCardUI(element) &&
     !isTopCircular(element) &&
     !element.matches(SURFACE_SELECTOR)
   );
@@ -166,10 +158,9 @@
     return {
       surfaces: surfaceCandidates.length,
       actions: actionCandidates.length,
-      items: document.querySelectorAll(".crm-config-item").length,
-      copy: document.querySelectorAll(".crm-config-copy").length,
-      missingSurfaces: surfaceCandidates.filter((element) => !element.classList.contains("crm-config-surface")),
-      missingActions: actionCandidates.filter((element) => !element.classList.contains("crm-config-action")),
+      items: document.querySelectorAll(".crm-menu-item").length,
+      missingSurfaces: surfaceCandidates.filter((element) => !element.classList.contains("crm-menu-surface")),
+      missingActions: actionCandidates.filter((element) => !element.classList.contains("crm-menu-action")),
       bucketArrows: document.querySelectorAll("svg.tk-flow, .tk-flow-shaft, .tk-flow-head").length,
     };
   };
@@ -184,7 +175,7 @@
   const start = () => {
     scan(document.body);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    document.documentElement.dataset.crmInterfaceParity = "config-menu";
+    document.documentElement.dataset.crmInterfaceParity = "canonical-menu";
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });

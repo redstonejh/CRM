@@ -8,7 +8,7 @@
     { key: "money", label: "Money" }, { key: "calendar", label: "Calendar" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "config-menu-no-flow-v1";
+  const HOME_PREVIEW_VERSION = "people-live-data-v7";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -415,8 +415,8 @@
     return window.crmHome;
   };
   const waitForModuleSettled = (key, timeoutMs = 1800) => new Promise((resolve) => {
-    const started = performance.now(); const theater = key === "people" ? "relationships" : key;
-    const selector = {desk:".crm-desk-frame",people:".crm-people-frame,.crm-company-list",pipeline:".tk-zone,.tk-deck",jobs:".tk-zone,.tk-deck",money:".tk-zone,.tk-deck",calendar:".fc-grid"}[key]||"*";
+    const started = performance.now(); const theater = key;
+    const selector = {desk:".crm-desk-frame",people:".tk-zone,.tk-card,.tk-zcard",pipeline:".tk-zone,.tk-deck",jobs:".tk-zone,.tk-deck",money:".tk-zone,.tk-deck",calendar:".fc-grid"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
       const next=source?.querySelector?.(selector)?`${source.childElementCount}:${source.querySelectorAll("*").length}`:"";
       stable=next&&next===last?stable+1:0;last=next;if(stable>=2||performance.now()-started>=timeoutMs)resolve();else requestAnimationFrame(tick)};requestAnimationFrame(tick);

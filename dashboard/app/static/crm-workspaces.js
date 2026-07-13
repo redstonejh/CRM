@@ -4,14 +4,14 @@
   const MODULES = [
     { key: "home", label: "Home", api: () => window.crmHome },
     { key: "desk", label: "Desk", api: () => window.crmDesk },
-    { key: "people", label: "People", api: () => window.crmPeopleRoom },
+    { key: "people", label: "People", api: () => window.peopleCards },
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
     { key: "jobs", label: "Jobs", api: () => window.jobPipeline },
     { key: "money", label: "Money", api: () => window.moneyPipeline },
     { key: "calendar", label: "Calendar", api: () => window.fractalCalendar },
     { key: "cases", label: "Cases", api: () => window.ticketStacks },
   ];
-  const THEATERS = { home:["home"],desk:["desk"],people:["relationships"],pipeline:["pipeline"],jobs:["jobs"],money:["money"],calendar:["calendar"],cases:["tickets"] };
+  const THEATERS = { home:["home"],desk:["desk"],people:["people"],pipeline:["pipeline"],jobs:["jobs"],money:["money"],calendar:["calendar"],cases:["tickets"] };
   const STORE_KEY = "crm-active-module-v3";
   let active = localStorage.getItem(STORE_KEY) || "home";
   let root = null;

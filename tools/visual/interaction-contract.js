@@ -170,11 +170,38 @@ async function main() {
   });
 
   await activate('people');
-  await check('People is a relationship room, not a ticket board', () => ({
-    ok: document.querySelectorAll('.crm-company-account').length === 3
-      && !document.querySelector('[data-crm-theater="relationships"] .tk-card'),
-    detail: `${document.querySelectorAll('.crm-company-account').length} company worlds`,
-  }));
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8
+    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 80, { timeout: 10000 });
+  await check('People are shared card objects grouped inside company buckets, never a pipeline', () => {
+    const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
+    const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
+    const cards = [...(theater?.querySelectorAll('.tk-zone .tk-zcard') || [])];
+    return {
+      ok: buckets.length === 8 && cards.length === 80
+        && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
+        && !theater.querySelector('svg.tk-flow, .tk-flow-shaft, .tk-flow-head, .tk-bars')
+        && [...theater.querySelectorAll('.tk-deck-left, .tk-empty-left')].every((element) => getComputedStyle(element).display === 'none')
+        && !document.querySelector('.crm-company-account, [data-crm-theater="relationships"]'),
+      detail: `${cards.length} people cards / ${buckets.length} company buckets`,
+    };
+  });
+  await check('People company buckets stay proportional to the shared card object', () => {
+    const buckets = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')];
+    return buckets.length === 8 && buckets.every((bucket) => {
+      const { width, height } = bucket.getBoundingClientRect();
+      return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
+    });
+  });
+  await page.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); });
+  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 8, { timeout: 10000 });
+  await check('Company-dive buckets use the same ticket-like proportions', () => {
+    const buckets = [...document.querySelectorAll('.crm-company-bucket')];
+    return buckets.length === 8 && buckets.every((bucket) => {
+      const { width, height } = bucket.getBoundingClientRect();
+      return width >= 180 && width <= 270 && height >= 280 && height <= 410 && width / height >= .55 && width / height <= .85;
+    });
+  });
+  await page.evaluate(() => window.crmCompanyDive.setActive(false));
 
   const workflowRooms = { pipeline: 4, jobs: 4, money: 3 };
   for (const [key, zones] of Object.entries(workflowRooms)) {
@@ -189,6 +216,20 @@ async function main() {
       const action = document.querySelector('[data-crm-theater]:not([hidden]) .tk-create-action');
       return !!action && action.textContent.trim().length > 3 && !action.querySelector('svg');
     });
+    await check(`${key} keeps stack-control logic mounted but hides its physical chrome`, () => {
+      const room = document.querySelector('[data-crm-theater]:not([hidden])');
+      const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+      return controls.some((element) => element.matches('.tk-stack-btn'))
+        && controls.some((element) => element.matches('.tk-deck-trash'))
+        && controls.every((element) => getComputedStyle(element).display === 'none');
+    });
+    await check(`${key} buckets stay proportional to a ticket`, () => {
+      const buckets = [...document.querySelectorAll('[data-crm-theater]:not([hidden]) .tk-zone')];
+      return buckets.length > 0 && buckets.every((bucket) => {
+        const { width, height } = bucket.getBoundingClientRect();
+        return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
+      });
+    });
     await check(`${key} has no arrows in its bucket system`, () => !document.querySelector('[data-crm-theater]:not([hidden]) svg.tk-flow, [data-crm-theater]:not([hidden]) .tk-flow-shaft, [data-crm-theater]:not([hidden]) .tk-flow-head'));
   }
 
@@ -200,6 +241,20 @@ async function main() {
       && !window.ticketStacks?.contract,
     detail: `${document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-zone').length} reference zones`,
   }));
+  await check('Cases keeps stack-control logic mounted but hides its physical chrome', () => {
+    const room = document.querySelector('[data-crm-theater="tickets"]:not([hidden])');
+    const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+    return controls.some((element) => element.matches('.tk-stack-btn[aria-label="Create a ticket"]'))
+      && controls.some((element) => element.matches('.tk-deck-trash'))
+      && controls.every((element) => getComputedStyle(element).display === 'none');
+  });
+  await check('Cases buckets stay proportional to a ticket', () => {
+    const buckets = [...document.querySelectorAll('[data-crm-theater="tickets"] .tk-zone')];
+    return buckets.length === 3 && buckets.every((bucket) => {
+      const { width, height } = bucket.getBoundingClientRect();
+      return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
+    });
+  });
   await check('Cases has no arrows in its bucket system', () => !document.querySelector('[data-crm-theater="tickets"] svg.tk-flow, [data-crm-theater="tickets"] .tk-flow-shaft, [data-crm-theater="tickets"] .tk-flow-head'));
   const ticketCard = '[data-crm-theater="tickets"]:not([hidden]) .tk-card';
   await page.waitForSelector(ticketCard, { timeout: 10000 });
@@ -256,6 +311,17 @@ async function main() {
   await check('Calendar is fed only by commitments', () => {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
     return chips.length > 0 && chips.every((chip) => chip.dataset.type === 'commitment');
+  });
+  await check('Calendar day cells and chips retain their lightweight native renderer', () => {
+    const days = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-day')];
+    const details = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip, [data-crm-theater="calendar"] .fc-empty, [data-crm-theater="calendar"] .fc-day-detail')];
+    const isLightweight = (element) => {
+      const style = getComputedStyle(element);
+      return !element.classList.contains('crm-config-surface')
+        && !element.classList.contains('crm-config-item')
+        && (style.backdropFilter === 'none' || style.backdropFilter === '');
+    };
+    return days.length > 300 && days.every(isLightweight) && details.every(isLightweight);
   });
 
   await page.keyboard.down('Control'); await page.keyboard.press('KeyK'); await page.keyboard.up('Control');

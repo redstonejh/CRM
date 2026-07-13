@@ -57,7 +57,7 @@ async function main() {
     controls: document.querySelectorAll('.window-control-cluster .window-glass-control').length,
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'config-menu-no-flow-v1' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'people-live-data-v7' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => !item.glass.backdrop.includes('blur(26px)')
@@ -92,7 +92,7 @@ async function main() {
   }
 
   const rooms = [
-    {key:'desk',theater:'desk',content:'.crm-desk-panel',expected:3}, {key:'people',theater:'relationships',content:'.crm-company-account',expected:3},
+    {key:'desk',theater:'desk',content:'.crm-desk-panel',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
     {key:'pipeline',theater:'pipeline',content:'.tk-zone',expected:4}, {key:'jobs',theater:'jobs',content:'.tk-zone',expected:4},
     {key:'money',theater:'money',content:'.tk-zone',expected:3}, {key:'calendar',theater:'calendar',content:'.fc-month',expected:12},
   ];
@@ -108,12 +108,19 @@ async function main() {
     await page.screenshot({path:path.join(out,`transition-${room.key}.png`)});
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key,room.key,{timeout:10000}); await sleep(650);
     await page.mouse.move(1,1); await sleep(80);
-    const state=await page.evaluate(async(config)=>{const theater=document.querySelector(`[data-crm-theater="${config.theater}"]`);const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===config.key);const signature={module:document.body.dataset.crmModule||'',text:String(theater?.innerText||'').replace(/\s+/g,' ').trim(),elements:theater?.querySelectorAll('*').length||0,calendarYear:window.fractalCalendar?.year?.()||null};return{visible:!!theater&&!theater.hidden,count:theater?.querySelectorAll(config.content).length||0,arrows:theater?.querySelectorAll('svg.tk-flow,.tk-flow-shaft,.tk-flow-head').length||0,signature,previewSignature:preview?.layoutSignature||null,exactSrc:preview?.exactSrc||'',veil:document.querySelectorAll('.crm-transit-veil').length,invalid:[...(theater?.querySelectorAll('*')||[])].filter((n)=>/NaN|Infinity/.test(getComputedStyle(n).transform)).length}},room);
+    const state=await page.evaluate(async(config)=>{
+      const theater=document.querySelector(`[data-crm-theater="${config.theater}"]`);
+      const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===config.key);
+      const signature={module:document.body.dataset.crmModule||'',text:String(theater?.innerText||'').replace(/\s+/g,' ').trim(),elements:theater?.querySelectorAll('*').length||0,calendarYear:window.fractalCalendar?.year?.()||null};
+      const bucketGeometry=[...(theater?.querySelectorAll('.tk-zone')||[])].map((bucket)=>{const rect=bucket.getBoundingClientRect();return{width:rect.width,height:rect.height,ratio:rect.width/rect.height}});
+      return{visible:!!theater&&!theater.hidden,count:theater?.querySelectorAll(config.content).length||0,arrows:theater?.querySelectorAll('svg.tk-flow,.tk-flow-shaft,.tk-flow-head').length||0,bucketGeometry,signature,previewSignature:preview?.layoutSignature||null,exactSrc:preview?.exactSrc||'',veil:document.querySelectorAll('.crm-transit-veil').length,invalid:[...(theater?.querySelectorAll('*')||[])].filter((n)=>/NaN|Infinity/.test(getComputedStyle(n).transform)).length};
+    },room);
     const liveBuffer=await page.screenshot({path:path.join(out,`room-${room.key}.png`)});
     const exactBuffer=Buffer.from(state.exactSrc.split(',')[1]||'','base64');
     const pixelMae=imageDifference(exactBuffer,liveBuffer,{left:50,right:1230,top:105,bottom:755});
     const probe=await page.evaluate(()=>window.__fps);
-    if(!state.visible||state.count!==room.expected||state.arrows||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.fps<40)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
+    const badBucket=state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
+    if(!state.visible||state.count!==room.expected||state.arrows||badBucket||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.fps<40)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
     await page.evaluate(()=>window.crmDeskTransit.driveTo('home')); await page.waitForFunction(readyHome,null,{timeout:15000});
     await page.waitForFunction(({key,before})=>(window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0)>before,{key:room.key,before},{timeout:30000});
     transitions.push({key:room.key,mid,pixelMae,fps:probe.fps,signatureMatches:true});

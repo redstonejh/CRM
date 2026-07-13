@@ -29,7 +29,7 @@ const PROBES = [
 ];
 
 // Structural counts. Arrows are explicitly zero for every bucket system; the
-// remaining reference mechanics and card inventory stay intact.
+// physical stack controls remain mounted for their mechanics but render hidden.
 const STRUCTURE = [
   { name: 'stage zones', selector: '.tk-zone', min: 3, max: 3 },
   { name: 'corner decks', selector: '.tk-deck-left, .tk-deck-right', min: 2, max: 2 },
@@ -65,7 +65,15 @@ async function sample(page, rootSelector = '') {
     }
     const counts = {};
     for (const item of structure) counts[item.name] = root.querySelectorAll(item.selector).length;
-    return { styles, counts };
+    const physicalControls = [...root.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+    return {
+      styles,
+      counts,
+      physicalControls: {
+        mounted: physicalControls.length,
+        visible: physicalControls.filter((element) => getComputedStyle(element).display !== 'none').length,
+      },
+    };
   }, { probes: PROBES, structure: STRUCTURE, rootSelector });
 }
 
@@ -120,6 +128,8 @@ async function main() {
     const ok = got >= item.min && got <= item.max;
     report(ok ? ' ok ' : 'FAIL', `structure: ${item.name} — expected ${item.min === item.max ? item.min : `${item.min}..${item.max}`}, got ${got}`);
   }
+  report(actual.physicalControls.mounted > 0 && actual.physicalControls.visible === 0 ? ' ok ' : 'FAIL',
+    `physical stack chrome — ${actual.physicalControls.mounted} controls mounted, ${actual.physicalControls.visible} visible`);
   for (const probe of PROBES) {
     const want = expected.styles[probe.name];
     const got = actual.styles[probe.name];
@@ -131,7 +141,7 @@ async function main() {
     }
   }
   const anyStyleOk = PROBES.every((p) => !expected.styles[p.name] || actual.styles[p.name]);
-  if (anyStyleOk && !failures) console.log('\nFactory check PASSED: ticket/card faces match the reference and bucket arrows are absent.');
+  if (anyStyleOk && !failures) console.log('\nFactory check PASSED: ticket/card faces match the reference, bucket arrows are absent, and stack-control mechanics remain mounted behind hidden chrome.');
   else console.log(`\nFactory check: ${failures} mismatch(es).`);
 
   await browser.close();

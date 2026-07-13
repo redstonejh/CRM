@@ -77,9 +77,10 @@ const HOME_PREVIEW_KEYS = ['desk', 'people', 'pipeline', 'jobs', 'money', 'calen
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'config-menu-no-flow-v1';
+const HOME_PREVIEW_VERSION = 'people-live-data-v7';
 const homePreviewCache = new Map();
 let homePreviewQueue = Promise.resolve();
+let homePreviewRefreshTimer = null;
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —
@@ -326,6 +327,14 @@ function capturePreviewKeys(keys, label = 'refresh') {
     return requested.length === 1 ? homePreviewCache.get(requested[0]) || null : null;
   });
   return homePreviewQueue;
+}
+
+function scheduleHomePreviewRefresh(label = 'store change', delay = 700) {
+  clearTimeout(homePreviewRefreshTimer);
+  homePreviewRefreshTimer = setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    capturePreviewKeys(HOME_PREVIEW_KEYS, label);
+  }, delay);
 }
 
 function storePayload(entity, options = {}) {
@@ -600,7 +609,12 @@ app.whenReady().then(() => {
   // the same Postgres/API store seam.
   initTickets({
     url: settings.apiUrl,
-    onChange: () => { broadcastTickets(); broadcastStore(); refreshTray(); },
+    onChange: () => {
+      broadcastTickets();
+      broadcastStore();
+      refreshTray();
+      scheduleHomePreviewRefresh('live data change');
+    },
   });
 
   tray = new Tray(icons.grey);

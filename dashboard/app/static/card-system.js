@@ -47,6 +47,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
   const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
   const bucketSummary = typeof config.bucketSummary === "function" ? config.bucketSummary : null;
+  const zoneColumns = Number.isFinite(Number(config.zoneColumns)) && Number(config.zoneColumns) > 0
+    ? Math.max(1, Math.floor(Number(config.zoneColumns)))
+    : 0;
+  const reserveStackSpace = config.reserveStackSpace !== false;
   const resolvedPulse = config.resolvedPulse === true;
   const autoFanOncePerDayKey = String(config.autoFanOncePerDayKey || "");
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
@@ -106,12 +110,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // zone is assigned that stage (persisted by id); unassigned tickets live in the corner
   // stacks (the inbox). cssEsc guards attribute selectors built from ticket ids.
   const cssEsc = (window.CSS && CSS.escape) ? (s) => CSS.escape(s) : (s) => String(s).replace(/["\\\]]/g, "\\$&");
-  const STAGES = Array.isArray(config.stages) ? config.stages : [
+  let STAGES = Array.isArray(config.stages) ? config.stages : [
     { key: "triage", label: "Triage" },
     { key: "investigation", label: "Investigation" },
     { key: "resolution", label: "Resolution" },
   ];
-  const STAGE_KEYS = STAGES.map((s) => s.key);
+  let STAGE_KEYS = STAGES.map((s) => s.key);
   const zonesEnabled = !deckOnly && config.zonesEnabled !== false && STAGE_KEYS.length > 0;
   // BLUEPRINT A3 — the dealt hand: a deck with fanStyle "hand" fans into a
   // shallow ARC held around the centre of the screen (slightly overlapping
@@ -2620,28 +2624,39 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return { left: r.left, colW, gap, cols };
   };
   const ZONE_TOP = 64;        // fixed gap below the round nav buttons
-  // Three compact buckets — each just wide enough for one full ticket card — spread across the
-  // dashboard grid's extent with EQUAL empty space between them (and at both ends). Vertically
-  // they fill from just under the nav buttons down to a MARGIN above the corner stacks.
+  // Compact buckets — each just large enough for one full ticket card — spread across the
+  // dashboard grid's extent with equal space between them. Their height stays near the card's
+  // own proportions; grouped views may wrap across multiple centered rows.
   const layoutZones = () => {
     if (!zonesEnabled) return;
     if (!zonesRoot) return;
-    const zTop = ZONE_TOP, zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
+    const zTop = ZONE_TOP;
+    const zBottom = reserveStackSpace ? CARD_H + MARGIN * 2 : 72;
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
     const region = g
       ? { left: g.left, width: g.colW * g.cols + g.gap * (g.cols - 1) }
       : { left: MARGIN, width: window.innerWidth - MARGIN * 2 };
-    const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (n + 1)) / n);  // one full card + room for the scrollbar
-    const gap = (region.width - bucketW * n) / (n + 1);          // equal gap incl. both ends
+    const columns = Math.min(n, zoneColumns || n);
+    const rows = Math.ceil(n / columns);
+    const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (columns + 1)) / columns);  // one full card + room for the scrollbar
+    const gap = (region.width - bucketW * columns) / (columns + 1);          // equal gap incl. both ends
+    const rowGap = rows > 1 ? 8 : 0;
+    const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
+    const bucketH = Math.max(180, Math.min(CARD_H + 80, (availableH - rowGap * (rows - 1)) / rows));
+    const blockH = bucketH * rows + rowGap * (rows - 1);
+    const startTop = zTop + Math.max(0, (availableH - blockH) / 2);
     const lefts = [];
     STAGES.forEach((s, i) => {
-      const left = region.left + gap * (i + 1) + bucketW * i;
+      const column = i % columns;
+      const row = Math.floor(i / columns);
+      const left = region.left + gap * (column + 1) + bucketW * column;
       lefts.push(left);
       const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;
-      panel.style.top = `${zTop}px`;                            // fixed panels position themselves now
-      panel.style.bottom = `${zBottom}px`;
+      panel.style.top = `${Math.round(startTop + row * (bucketH + rowGap))}px`; // fixed panels position themselves now
+      panel.style.bottom = "auto";
+      panel.style.height = `${Math.round(bucketH)}px`;
       panel.style.width = `${Math.round(bucketW)}px`;
       panel.style.left = `${Math.round(left)}px`;
       // Slide the header's bars left so they sit directly above the CENTRED ticket cards' bars (which are
@@ -3354,6 +3369,35 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
   publicApi = {
     reload: load,
+    // Grouped furniture (People's company buckets) can arrive after the card
+    // instance when the API reconnects. Replace the bucket definitions in
+    // place so a transient empty company read never freezes the surface into
+    // a single "Unassigned" bucket for the lifetime of the renderer.
+    setStages: (nextStages, nextStageFields = null) => {
+      const normalized = Array.isArray(nextStages)
+        ? nextStages.map((stage) => ({ key: String(stage?.key || ""), label: String(stage?.label || stage?.key || "") })).filter((stage) => stage.key)
+        : [];
+      if (!zonesEnabled || !normalized.length) return publicApi;
+      const unchanged = normalized.length === STAGES.length
+        && normalized.every((stage, index) => stage.key === STAGES[index]?.key && stage.label === STAGES[index]?.label);
+      if (nextStageFields && typeof nextStageFields === "object") {
+        Object.keys(STAGE_FIELDS).forEach((key) => { delete STAGE_FIELDS[key]; });
+        Object.assign(STAGE_FIELDS, nextStageFields);
+      }
+      if (unchanged) return publicApi;
+      Object.values(zoneScroll).forEach((state) => {
+        if (state?.raf) cancelAnimationFrame(state.raf);
+        if (state?.releaseT) clearTimeout(state.releaseT);
+      });
+      zonesRoot?.remove();
+      zonesRoot = null;
+      [zoneBody, zoneTrack, zoneScroll].forEach((map) => Object.keys(map).forEach((key) => { delete map[key]; }));
+      STAGES = normalized;
+      STAGE_KEYS = normalized.map((stage) => stage.key);
+      ensureZones();
+      render();
+      return publicApi;
+    },
     fan: setFan,
     // Product-level contract used by the interaction audit. These semantics
     // are deliberately explicit: a company grouping is not a pipeline, and a

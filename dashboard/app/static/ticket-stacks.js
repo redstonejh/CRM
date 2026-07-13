@@ -2086,9 +2086,9 @@
     return { left: r.left, colW, gap, cols };
   };
   const ZONE_TOP = 64;        // fixed gap below the round nav buttons
-  // Three compact buckets — each just wide enough for one full ticket card — spread across the
-  // dashboard grid's extent with EQUAL empty space between them (and at both ends). Vertically
-  // they fill from just under the nav buttons down to a MARGIN above the corner stacks.
+  // Compact buckets — each just large enough for one full ticket card — spread across the
+  // dashboard grid's extent with equal space between them. Height follows the ticket's own
+  // proportions instead of stretching to fill the screen.
   const layoutZones = () => {
     if (!zonesRoot) return;
     const zTop = ZONE_TOP, zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
@@ -2099,14 +2099,18 @@
       : { left: MARGIN, width: window.innerWidth - MARGIN * 2 };
     const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (n + 1)) / n);  // one full card + room for the scrollbar
     const gap = (region.width - bucketW * n) / (n + 1);          // equal gap incl. both ends
+    const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
+    const bucketH = Math.max(180, Math.min(CARD_H + 80, availableH));
+    const startTop = zTop + Math.max(0, (availableH - bucketH) / 2);
     const lefts = [];
     STAGES.forEach((s, i) => {
       const left = region.left + gap * (i + 1) + bucketW * i;
       lefts.push(left);
       const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;
-      panel.style.top = `${zTop}px`;                            // fixed panels position themselves now
-      panel.style.bottom = `${zBottom}px`;
+      panel.style.top = `${Math.round(startTop)}px`;            // fixed panels position themselves now
+      panel.style.bottom = "auto";
+      panel.style.height = `${Math.round(bucketH)}px`;
       panel.style.width = `${Math.round(bucketW)}px`;
       panel.style.left = `${Math.round(left)}px`;
       // Slide the header's bars left so they sit directly above the CENTRED ticket cards' bars (which are

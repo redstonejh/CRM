@@ -109,6 +109,24 @@
   color: var(--crm-config-menu-copy) !important;
 }
 
+/*
+ * Keep stack mechanics mounted for future placement, but remove their
+ * physical chrome from the current rooms. The create/trash/fan handlers,
+ * deck state, and trashed cards all remain in the DOM and data model.
+ */
+.tk-arrow,
+.tk-stack-btn,
+.tk-deck-trash,
+.tk-empty-trash {
+  display: none !important;
+}
+
+/* People is company-grouped, so it has no out-of-bucket attention pile. */
+[data-crm-theater="people"] .tk-deck-left,
+[data-crm-theater="people"] .tk-empty-left {
+  display: none !important;
+}
+
 /* The only button-family exception requested: circular controls at the top. */
 .window-glass-control,
 .window-glass-control:hover,

@@ -24,6 +24,11 @@ function rosaDataset() {
     { id: 'co_harborlane', name: 'Harbor & Lane', title: 'Harbor & Lane', industry: 'Architecture', city: 'Portland' },
     { id: 'co_bluepeak', name: 'Bluepeak Logistics', title: 'Bluepeak Logistics', industry: 'Freight', city: 'Tacoma' },
     { id: 'co_foxglove', name: 'Foxglove Studio', title: 'Foxglove Studio', industry: 'Design', city: 'Seattle' },
+    { id: 'co_northstar', name: 'Northstar Foods', title: 'Northstar Foods', industry: 'Food distribution', city: 'Olympia' },
+    { id: 'co_aldercreek', name: 'Alder Creek Health', title: 'Alder Creek Health', industry: 'Healthcare', city: 'Bellevue' },
+    { id: 'co_cascade', name: 'Cascade Fieldworks', title: 'Cascade Fieldworks', industry: 'Environmental services', city: 'Bend' },
+    { id: 'co_meridian', name: 'Meridian Fabrication', title: 'Meridian Fabrication', industry: 'Manufacturing', city: 'Kent' },
+    { id: 'co_solace', name: 'Solace Property Group', title: 'Solace Property Group', industry: 'Property management', city: 'Spokane' },
   ];
   const contacts = [
     {
@@ -55,7 +60,72 @@ function rosaDataset() {
       lastTouchAt: iso(-6),
       description: 'Day-to-day technical contact for the mail migration.',
     },
+    {
+      id: 'ct_lena', name: 'Lena Ortiz', title: 'Lena Ortiz', client: 'Lena Ortiz',
+      company: 'Northstar Foods', companyId: 'co_northstar', role: 'Operations lead',
+      stage: 'prospects', state: 'open', priority: 'none',
+      lastTouchAt: iso(-5), nextTouchAt: day(3),
+      description: 'Coordinating warehouse connectivity across three locations.',
+    },
+    {
+      id: 'ct_priya', name: 'Priya Nair', title: 'Priya Nair', client: 'Priya Nair',
+      company: 'Alder Creek Health', companyId: 'co_aldercreek', role: 'Practice administrator',
+      stage: 'customers', state: 'open', priority: 'none',
+      lastTouchAt: iso(-1),
+      description: 'Owns scheduling systems and compliance coordination.',
+    },
+    {
+      id: 'ct_jonah', name: 'Jonah Brooks', title: 'Jonah Brooks', client: 'Jonah Brooks',
+      company: 'Cascade Fieldworks', companyId: 'co_cascade', role: 'Field programs director',
+      stage: 'partners', state: 'open', priority: 'none',
+      lastTouchAt: iso(-8), nextTouchAt: day(5),
+      description: 'Needs reliable field sync for remote survey crews.',
+    },
+    {
+      id: 'ct_naomi', name: 'Naomi Ellis', title: 'Naomi Ellis', client: 'Naomi Ellis',
+      company: 'Meridian Fabrication', companyId: 'co_meridian', role: 'Plant operations manager',
+      stage: 'prospects', state: 'open', priority: 'none',
+      lastTouchAt: iso(-4), nextTouchAt: day(4),
+      description: 'Coordinating the production-floor systems refresh.',
+    },
+    {
+      id: 'ct_owen', name: 'Owen Mercer', title: 'Owen Mercer', client: 'Owen Mercer',
+      company: 'Solace Property Group', companyId: 'co_solace', role: 'Portfolio director',
+      stage: 'prospects', state: 'open', priority: 'none',
+      lastTouchAt: iso(-7), nextTouchAt: day(6),
+      description: 'Standardizing tenant-service systems across the portfolio.',
+    },
   ];
+  // Keep every company visibly substantial: ten real card records per bucket.
+  // Existing named contacts remain canonical; deterministic supporting contacts
+  // fill each company to ten without copying card markup or inventing a second
+  // People representation.
+  const supportingFirstNames = [
+    'Avery', 'Maya', 'Theo', 'Nina', 'Elias', 'Cora', 'Julian', 'Zoe', 'Miles', 'Leah',
+    'Caleb', 'Amara', 'Finn', 'Elena', 'Rowan', 'Sofia', 'Micah', 'Talia', 'Nolan', 'Maeve',
+  ];
+  const supportingLastNames = ['Stone', 'Bennett', 'Navarro', 'Whitaker'];
+  const supportingRoles = [
+    'Account lead', 'Operations manager', 'Finance manager', 'IT administrator', 'Project coordinator',
+    'Office manager', 'Service director', 'Procurement lead', 'Program manager', 'Executive sponsor',
+  ];
+  companies.forEach((company, companyIndex) => {
+    const existing = contacts.filter((contact) => contact.companyId === company.id).length;
+    for (let slot = existing; slot < 10; slot += 1) {
+      const serial = companyIndex * 10 + slot;
+      const name = `${supportingFirstNames[serial % supportingFirstNames.length]} ${supportingLastNames[Math.floor(serial / supportingFirstNames.length)]}`;
+      contacts.push({
+        id: `ct_${company.id.replace(/^co_/, '')}_${slot + 1}`,
+        name, title: name, client: name,
+        company: company.name, companyId: company.id,
+        role: supportingRoles[(slot + companyIndex) % supportingRoles.length],
+        stage: 'customers', state: 'open', priority: 'none',
+        lastTouchAt: iso(-(2 + (serial % 18))),
+        ...(slot % 3 === 0 ? { nextTouchAt: day(4 + (slot % 5)) } : {}),
+        description: `Supports ${company.name}'s active account work and coordination.`,
+      });
+    }
+  });
   const deals = [
     {
       id: 'dl_bluepeak_onboarding', title: 'Bluepeak onboarding pilot', client: 'Bluepeak Logistics',

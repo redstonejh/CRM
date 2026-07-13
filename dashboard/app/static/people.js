@@ -62,24 +62,18 @@
   };
 
   const listRecords = (result) => Array.isArray(result) ? result : ((result && (result.records || result.tickets)) || []);
-  const initialize = async () => {
-    if (typeof window.createCrmCardDetail !== "function" || typeof window.createCrmCardSystem !== "function") {
-      console.error("[CRM] card factories are not loaded");
-      return;
-    }
+  let initialized = false;
+  let initializing = false;
+  let companySubscribed = false;
+  let retryTimer = 0;
+  let companies = [];
+  let companyByName = new Map();
+  let stageKeys = new Set();
 
-    // Census A2: company records, not relationship taxonomy, define the
-    // furniture. Contacts may still carry kind/stage as data, but it never
-    // determines which bucket exists or where a person is seated.
-    const [companyResult, contactResult, dealResult] = await Promise.all([
-      window.companies?.list?.({ includeDeleted: false }).catch?.(() => []),
-      contactSource.list().catch?.(() => []),
-      window.deals?.list?.({ includeDeleted: false }).catch?.(() => []),
-    ]);
-    const companies = listRecords(companyResult).filter((company) => company && !company.deletedAt);
-    const initialContacts = listRecords(contactResult).filter((contact) => contact && !contact.deletedAt);
-    const companyByName = new Map(companies.map((company) => [String(company.name || company.title || "").trim().toLowerCase(), company]));
-    const missingCompany = initialContacts.some((contact) => {
+  const companyModel = (nextCompanies, contacts = []) => {
+    companies = nextCompanies.filter((company) => company && !company.deletedAt);
+    companyByName = new Map(companies.map((company) => [String(company.name || company.title || "").trim().toLowerCase(), company]));
+    const missingCompany = contacts.some((contact) => {
       const id = String(valueOf(contact, "companyId") || "");
       const name = String(valueOf(contact, "company") || "").trim().toLowerCase();
       return !companies.some((company) => String(company.id) === id) && !companyByName.has(name);
@@ -89,28 +83,64 @@
       label: String(company.name || company.title || "Company"),
     }));
     if (missingCompany || !stages.length) stages.push({ key: "unassigned-company", label: "Unassigned company" });
-    const stageFields = Object.fromEntries(stages.map((stage) => [stage.key, companyFields]));
-    const stageKeys = new Set(stages.map((stage) => stage.key));
+    stageKeys = new Set(stages.map((stage) => stage.key));
+    return { stages, stageFields: Object.fromEntries(stages.map((stage) => [stage.key, companyFields])) };
+  };
+
+  const refreshCompanies = async (payload) => {
+    const nextCompanies = listRecords(payload).filter((company) => company && !company.deletedAt);
+    // Empty payloads are normal while the API is reconnecting. Never replace
+    // real company furniture with a transient Unassigned-only layout.
+    if (!nextCompanies.length) return;
+    if (!initialized) { initialize(nextCompanies); return; }
+    const contacts = listRecords(await contactSource.list().catch?.(() => []));
+    const model = companyModel(nextCompanies, contacts);
+    window.peopleCards?.setStages?.(model.stages, model.stageFields);
+  };
+
+  const subscribeCompanies = () => {
+    if (companySubscribed) return;
+    companySubscribed = true;
+    try { window.companies?.onChanged?.(refreshCompanies); } catch {}
+  };
+
+  const scheduleRetry = () => {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => initialize(), 900);
+  };
+
+  const initialize = async (readyCompanies = null) => {
+    if (initialized || initializing) return;
+    initializing = true;
+    if (typeof window.createCrmCardDetail !== "function" || typeof window.createCrmCardSystem !== "function") {
+      console.error("[CRM] card factories are not loaded");
+      initializing = false;
+      return;
+    }
+
+    // Census A2: company records, not relationship taxonomy, define the
+    // furniture. Contacts may still carry kind/stage as data, but it never
+    // determines which bucket exists or where a person is seated.
+    const [companyResult, contactResult] = await Promise.all([
+      readyCompanies || window.companies?.list?.({ includeDeleted: false }).catch?.(() => []),
+      contactSource.list().catch?.(() => []),
+    ]);
+    const companyRows = listRecords(companyResult).filter((company) => company && !company.deletedAt);
+    const initialContacts = listRecords(contactResult).filter((contact) => contact && !contact.deletedAt);
+    subscribeCompanies();
+    if (!companyRows.length) {
+      initializing = false;
+      scheduleRetry();
+      return;
+    }
+    clearTimeout(retryTimer);
+    const { stages, stageFields } = companyModel(companyRows, initialContacts);
     const companyStage = (contact) => {
       const id = String(valueOf(contact, "companyId") || "");
       if (stageKeys.has(id)) return id;
       const company = companyByName.get(String(valueOf(contact, "company") || "").trim().toLowerCase());
       return company ? String(company.id) : "unassigned-company";
     };
-    const openDealValue = new Map();
-    const recalculateDealValues = (records) => {
-      openDealValue.clear();
-      listRecords(records).forEach((deal) => {
-        if (!deal || deal.deletedAt || ["won", "lost"].includes(String(valueOf(deal, "state") || "").toLowerCase())) return;
-        const companyId = String(valueOf(deal, "companyId") || "unassigned-company");
-        const raw = valueOf(deal, "amount") ?? valueOf(deal, "value") ?? 0;
-        const amount = Number(String(raw).replace(/[^0-9.-]/g, "")) || 0;
-        openDealValue.set(companyId, (openDealValue.get(companyId) || 0) + amount);
-      });
-    };
-    recalculateDealValues(dealResult);
-    const money = (amount) => `$${Math.round(amount || 0).toLocaleString()}`;
-
   window.createCrmCardDetail({
     apiName: "contactDetail",
     source: contactSource,
@@ -207,7 +237,10 @@
     defaultIntensity: "none",
     intensityOf: () => "none",
     stalenessOf: (contact) => window.crmColdFront?.staleness?.(contact, "contacts") || 0,
-    attentionDeckFilter: (contact) => window.crmColdFront?.isTripped?.(contact, "contacts"),
+    // Every person belongs in their company bucket. Staleness may change the
+    // card's appearance, but it must never pull the person into a separate
+    // attention pile or turn this grouped view into a pipeline.
+    attentionDeckFilter: () => false,
     rightDeckEnabled: false,
     showProgressBars: false,
     showDateUnder: false,
@@ -218,8 +251,10 @@
         ? { companyId: company.id, company: company.name || company.title || "" }
         : { companyId: "", company: "" };
     },
-    bucketSummary: (stage, contacts) => `${money(openDealValue.get(stage.key) || 0)} · ${contacts.length} ${contacts.length === 1 ? "person" : "people"}`,
+    bucketSummary: (_stage, contacts) => `${contacts.length} ${contacts.length === 1 ? "person" : "people"}`,
     zoneGravity: true,   // BLUEPRINT A2: contacts rest on the bucket floor
+    zoneColumns: 4,
+    reserveStackSpace: false,
     leftDeckFilter: () => true,
     deckCopy: {
       leftFanAria: "Fan out contacts needing attention",
@@ -234,12 +269,8 @@
   });
 
   window.peopleCards.needsAttention = needsAttention;
-    try {
-      window.deals?.onChanged?.((payload) => {
-        recalculateDealValues(payload);
-        window.peopleCards?.reload?.();
-      });
-    } catch {}
+  initialized = true;
+  initializing = false;
   };
 
   initialize().catch((error) => console.error("[CRM] People company buckets failed", error));

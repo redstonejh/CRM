@@ -74,6 +74,10 @@ let previewWindow = null;
 let settings = loadSettings();
 const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
 const HOME_PREVIEW_KEYS = ['desk', 'people', 'pipeline', 'jobs', 'money', 'calendar'];
+// Bump whenever room chrome changes in a way that makes an old raster false.
+// The renderer refuses a different generation instead of briefly presenting
+// stale arrows, controls, or styling while replacement captures are prepared.
+const HOME_PREVIEW_VERSION = 'config-menu-no-flow-v1';
 const homePreviewCache = new Map();
 let homePreviewQueue = Promise.resolve();
 
@@ -288,7 +292,7 @@ function publishHomePreview(key, capture, layoutSignature) {
   if (!capture?.foreground || !capture?.exact) return null;
   const size = capture.exact.getSize();
   const preview = {
-    key, width: size.width, height: size.height, capturedAt: Date.now(),
+    key, version: HOME_PREVIEW_VERSION, width: size.width, height: size.height, capturedAt: Date.now(),
     foregroundSrc: capture.foreground.toDataURL(), exactSrc: capture.exact.toDataURL(),
     foregroundBounds: capture.bounds, layoutSignature,
   };

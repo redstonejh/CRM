@@ -209,11 +209,23 @@
   }
   const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 100); };
 
-  async function open(entity, id) {
+  async function openWorld(entity, id) {
     if (!root) mount();
     root.hidden = false;
     root.innerHTML = `<article class="record-world"><div class="record-world-empty" style="margin:auto">Loading record…</div></article>`;
     render(await load(entity, id));
+  }
+  const isTicketEntity = (entity) => ["ticket", "tickets", "case", "cases"].includes(String(entity || "").trim().toLowerCase());
+  async function open(entity, id, sourceEl) {
+    // The ticketing reference owns ticket presentation. `cases` is included for
+    // legacy links, but falls back to the CRM record world when the id is not a
+    // real ticket id.
+    if (isTicketEntity(entity) && window.ticketStacks?.open) {
+      const opened = await window.ticketStacks.open(id, sourceEl);
+      if (opened) { close(); return true; }
+    }
+    await openWorld(entity, id);
+    return true;
   }
   function close() { if (root) root.hidden = true; current = null; }
 
@@ -223,19 +235,20 @@
     root.className = "record-world-shell";
     root.hidden = true;
     document.body.appendChild(root);
-    // Existing card choreography keeps its proven deck/fan behavior, but every
-    // card now opens this contextual world instead of the legacy generic form.
-    [["contactDetail", "contacts"], ["dealDetail", "deals"], ["invoiceDetail", "invoices"], ["ticketDetail", "tickets"]].forEach(([name, entity]) => {
+    // CRM-native entity cards open the contextual record world. Tickets are
+    // intentionally excluded: their reference implementation owns a complete
+    // left-click flight/detail screen and right-click action system.
+    [["contactDetail", "contacts"], ["dealDetail", "deals"], ["invoiceDetail", "invoices"]].forEach(([name, entity]) => {
       const legacy = window[name];
       if (!legacy) return;
-      legacy.open = (record) => open(entity, record?.id);
+      legacy.open = (record) => openWorld(entity, record?.id);
       legacy.close = close;
       legacy.isOpen = () => !!root && !root.hidden;
     });
     root.addEventListener("click", async (event) => {
       if (event.target === root || event.target.closest("[data-record-close]")) return close();
       const related = event.target.closest("[data-related-entity]");
-      if (related) return open(related.dataset.relatedEntity, related.dataset.relatedId);
+      if (related) return open(related.dataset.relatedEntity, related.dataset.relatedId, related);
       const showCommitment = event.target.closest("[data-show-commitment]");
       if (showCommitment) { root.querySelector("[data-commitment-form]").hidden = false; root.querySelector("[data-commitment-form] input")?.focus(); return; }
       const showNote = event.target.closest("[data-show-note]");

@@ -207,7 +207,13 @@
         return refresh();
       }
       const target = event.target.closest("[data-record-entity][data-record-id]");
-      if (target) window.crmRecordWorld?.open?.(target.dataset.recordEntity, target.dataset.recordId);
+      if (target) window.crmRecordWorld?.open?.(target.dataset.recordEntity, target.dataset.recordId, target);
+    });
+    root.addEventListener("contextmenu", async (event) => {
+      const target = event.target.closest("[data-record-entity][data-record-id]");
+      if (!target || !["ticket", "tickets", "case", "cases"].includes(String(target.dataset.recordEntity || "").toLowerCase())) return;
+      event.preventDefault(); event.stopPropagation();
+      await window.ticketStacks?.contextMenu?.(target.dataset.recordId, target, event.clientX, event.clientY);
     });
     root.addEventListener("submit", async (event) => {
       event.preventDefault();

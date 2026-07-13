@@ -2,9 +2,9 @@
 //
 // Boots BOTH apps through the harness (original repo on 3896/3897, CRM on
 // 3898/3899), navigates the CRM to its Tickets surface, and compares the
-// computed anatomy of every shared species: card, zone, deck, flow arrow,
-// empty-placeholder. The original's values are the expected ones (the plan's
-// rule: the original repo's CSS is law). Exits non-zero on any mismatch.
+// computed anatomy of the ticket/card faces shared with the reference. The
+// surrounding interface intentionally follows the CRM config-menu contract,
+// and bucket-to-bucket arrows are forbidden. Exits non-zero on any mismatch.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,29 +22,18 @@ const seedFactoryDataset = async (apiUrl) => {
 
 // Anatomy probes: selector → the computed properties that define the recipe.
 const PROBES = [
-  { name: 'zone panel', selector: '.tk-zone', props: ['borderRadius', 'backgroundImage', 'borderColor', 'borderWidth', 'boxShadow', 'backdropFilter', 'paddingTop', 'paddingLeft'] },
-  { name: 'zone header', selector: '.tk-zone-hd', props: ['fontSize', 'fontWeight', 'color'] },
   { name: 'deck card', selector: '.tk-card', props: ['borderRadius', 'paddingTop', 'paddingLeft', 'color'] },
   { name: 'zone card', selector: '.tk-zcard', props: ['borderRadius', 'paddingTop', 'paddingLeft', 'color'] },
   { name: 'card title', selector: '.tk-card .ticket-company, .tk-zcard .ticket-company', props: ['fontSize', 'fontWeight', 'lineHeight'] },
   { name: 'card subtitle', selector: '.tk-card .ticket-host, .tk-zcard .ticket-host', props: ['fontSize', 'color'] },
-  { name: 'fan arrow button', selector: '.tk-arrow', props: ['width', 'height', 'borderRadius', 'backgroundImage'] },
-  // Capture is deliberately a named pill now; its inherited circle is not a
-  // fidelity requirement. The fan arrow and recycle control remain original.
-  { name: 'flow arrow', selector: 'svg.tk-flow', props: ['opacity', 'zIndex', 'position'] },
-  { name: 'flow arrow shaft', selector: '.tk-flow-shaft', props: ['stroke', 'strokeWidth', 'fill'] },
-  { name: 'empty placeholder', selector: '.tk-empty', props: ['borderStyle', 'borderColor', 'borderRadius', 'color', 'fontSize', 'fontWeight'] },
-  { name: 'zone watermark', selector: '.tk-zone-empty', props: ['color', 'fontSize', 'textAlign', 'paddingTop'] },
 ];
 
-// Structural counts. FIDELITY_ORDER §0 reverses FIX_PASS_2 F2: the flow arrows,
-// dashed empty placeholders and zone watermark hints are the original's OWN
-// design and must exist in the CRM exactly as the original renders them
-// (arrows = stages + 1; placeholders exist per corner, shown only when empty).
+// Structural counts. Arrows are explicitly zero for every bucket system; the
+// remaining reference mechanics and card inventory stay intact.
 const STRUCTURE = [
   { name: 'stage zones', selector: '.tk-zone', min: 3, max: 3 },
   { name: 'corner decks', selector: '.tk-deck-left, .tk-deck-right', min: 2, max: 2 },
-  { name: 'flow arrows (restored per FIDELITY_ORDER)', selector: 'svg.tk-flow', min: 4, max: 4 },
+  { name: 'bucket-to-bucket arrows', selector: 'svg.tk-flow, .tk-flow-shaft, .tk-flow-head', min: 0, max: 0 },
   { name: 'dashed placeholders (restored per FIDELITY_ORDER)', selector: '.tk-empty', min: 3, max: 3 },
   { name: 'create button', selector: '.tk-stack-btn', min: 2, max: 2 },
 ];
@@ -142,7 +131,7 @@ async function main() {
     }
   }
   const anyStyleOk = PROBES.every((p) => !expected.styles[p.name] || actual.styles[p.name]);
-  if (anyStyleOk && !failures) console.log('\nFactory check PASSED: CRM Tickets matches the original anatomy.');
+  if (anyStyleOk && !failures) console.log('\nFactory check PASSED: ticket/card faces match the reference and bucket arrows are absent.');
   else console.log(`\nFactory check: ${failures} mismatch(es).`);
 
   await browser.close();

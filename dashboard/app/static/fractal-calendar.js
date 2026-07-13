@@ -449,7 +449,7 @@
         commitment = (await window.crmDomain?.get?.("commitments", chip.dataset.id))?.record || null;
       } catch {}
       const link = commitment?.links?.[0];
-      if (link) window.crmRecordWorld?.open?.(link.entityType, link.recordId);
+      if (link) window.crmRecordWorld?.open?.(link.entityType, link.recordId, chip);
     }, true);
   };
 

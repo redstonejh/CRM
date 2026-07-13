@@ -37,9 +37,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const showProgressBars = config.showProgressBars != null
     ? config.showProgressBars !== false
     : (workflowKind === "progressive" || workflowKind === "lifecycle");
-  const showFlow = config.showFlow != null
-    ? config.showFlow !== false
-    : (workflowKind === "progressive" || workflowKind === "lifecycle");
+  // Bucket systems never render connective arrows. Stage order is expressed by
+  // the bucket layout and the card movement itself, not extra directional UI.
+  const showFlow = false;
   const showDateUnder = config.showDateUnder !== false;
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
@@ -329,7 +329,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let linkHighlightEl = null;
 
   // ONE owned root per instance. Everything this factory creates — stacks,
-  // scrim, zones, flow arrows, menus, drag flyers — lives inside it, so hiding
+  // scrim, zones, menus, drag flyers — lives inside it, so hiding
   // the theater hides the whole module in one move. (The old per-element
   // `hidden` toggles silently failed on .tk-zones: its author-level
   // `display: contents` overrode the UA [hidden] rule, which is exactly how
@@ -641,8 +641,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-deck.is-dimmed { opacity: 0.3; }   /* the idle stack while the other is fanned */
       /* Empty-stack placeholder: a subtle dashed bounding box in the closed pile's resting spot that says
          what lands where. JS (layout()) shows it only when that corner stack has no cards; sized to the card. */
-      /* Styled to READ like the .tk-flow pipeline arrows: the same light-blue body (#d2e3ff) and soft
-         blue glow, instead of the old near-invisible faint white. */
+      /* Empty-state labels retain the workflow's light-blue guidance treatment. */
       .tk-empty { position: absolute; bottom: ${MARGIN}px; box-sizing: border-box; pointer-events: none;
         border: 2px dashed rgba(210, 227, 255, 0.6); border-radius: ${RADIUS}px;
         display: flex; align-items: center; justify-content: center; text-align: center;
@@ -932,18 +931,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18), 0 0 0 rgba(234,179,8,0); }
       }
 
-      /* ── Glass flow arrows: stack → first bucket → … → last bucket → resolved stack. ─────────── */
-      /* Glass: shapes are drawn OPAQUE (so the shaft/head overlap flattens with no brighter seam),
-         then group-opacity on .tk-flow fades the whole thing uniformly translucent + a soft glow. */
-      .tk-flow { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 790; pointer-events: none; overflow: visible;
-        opacity: 0.6; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)) drop-shadow(0 0 6px rgba(150,195,255,0.55)); }
-      /* Each arrow's own SVG lifts above the scrim (3945, still below the stacks) when it's in focus —
-         sharp — and rests at 790 (below the scrim) when out, where the scrim blurs it, matching the
-         bucket it points at. So on-path arrows go sharp with the target, off-path ones stay blurred. */
-      .tk-flow.tk-cofocus { z-index: 3945; }
-      .tk-flow-shaft { fill: none; stroke: #d2e3ff; stroke-width: 4;
-        stroke-linecap: round; stroke-linejoin: round; }
-      .tk-flow-head { fill: #d2e3ff; stroke: none; }
       /* The round window/page controls at the top — AND their dropdowns (background/effects picker, the
          search popover) and the account button + its menu — stay in PERMANENT focus and take z-precedence
          over EVERYTHING: lifted above the DoF scrim (3900) and the whole ticket UI so nothing ever blurs
@@ -1361,23 +1348,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     applyBucketFocus();
   };
 
-  // ── Cursor-driven co-focus of the buckets (+ the flow arrows) while a stack is fanned ───────────────
-  // Moving the cursor UP off the fanned stack toward the buckets lifts them AND the flow arrows into
-  // focus alongside the stack; moving back down to the stack — or toward the +/bin buttons — drops them
+  // ── Cursor-driven co-focus of the buckets while a stack is fanned ───────────────────────────────────
+  // Moving the cursor UP off the fanned stack toward the buckets lifts them into focus alongside the
+  // stack; moving back down to the stack — or toward the +/bin buttons — drops them
   // back out. Focus is a clean z-flip across the scrim, PER bucket: a sharp bucket lifts above the scrim
   // (.tk-sharp), an out-of-focus one rests below it and the scrim blurs it — always the crisp scrim blur,
   // never a filter. Gaps between fanned cards count as "on the stack", so hovering one doesn't pull them in.
   let bucketsFocused = false;
   const setBucketSharp = (fn) => STAGES.forEach((s, i) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-sharp", fn(i)));
-  const setArrowSharp = (fn) => flowSvgs.forEach((svg, i) => svg.classList.toggle("tk-cofocus", fn(i)));   // per-arrow lift across the scrim
   const applyBucketFocus = () => {
     if (!zonesEnabled) return;
     if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
-    // Co-focus: lift ALL buckets/arrows above the scrim (sharp) ONLY while the cursor is drifting up to
+    // Co-focus: lift ALL buckets above the scrim (sharp) ONLY while the cursor is drifting up to
     // co-focus them; otherwise leave them below it so the SCRIM blurs them — the crisp un-fanned-bin look.
     const sharp = DECK_SIDES.some((s) => fanned[s]) && bucketsFocused;
     setBucketSharp(() => sharp);
-    setArrowSharp(() => sharp);
   };
   const setBucketsFocus = (on) => { if (on !== bucketsFocused) { bucketsFocused = on; applyBucketFocus(); } };
   const deckCardsRect = (side) => {
@@ -2302,7 +2287,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     }
   };
 
-  const cardEl = (t, side) => {
+  // The visual card object is also used outside a deck (for example, a compact
+  // hand on Home). Keep its construction in one place so those surfaces get
+  // the exact face contract, paint, dimensions and typography used here.
+  const cardObject = (t) => {
     const card = document.createElement("div");
     // NOT a .widget-card (the runtime renders the grid ticket into EVERY .widget-card, which
     // is what overwrote these with "Willits Scaling"). .tk-card replicates the frame; the
@@ -2314,6 +2302,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     applyCardPaint(card, t);
     card.innerHTML = cardInner(t);
     card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');   // viewport-edge scroll shadow (clipped to this card)
+    return card;
+  };
+
+  const cardEl = (t, side) => {
+    const card = cardObject(t);
     wireCard(card, t, side);
     card.tabIndex = 0;
     card.setAttribute("role", "button");
@@ -2613,63 +2606,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
   };
 
-  // ── Glass flow arrows ─────────────────────────────────────────────────────────
-  // A stylized translucent line through the pipeline: left (inbox) stack → first bucket, an arrow
-  // between each bucket, then last bucket → right (resolved) stack. Drawn as one SVG overlay,
-  // each arrow a glowing glass body with a bright core + a glassy arrowhead.
-  let flowSvgs = [], flowShafts = [], flowHeads = [];
-  const ensureFlow = () => {
-    if (!showFlow || flowSvgs.length) return;
-    ensureStyles();
-    const arrows = STAGES.length + 1;
-    // ONE full-viewport SVG per arrow (a stroked shaft + a SOLID triangle head), so every segment can
-    // cross the DoF scrim on its OWN — an on-path arrow lifts above it (sharp), an off-path one rests
-    // below it (scrim-blurred) — exactly how the buckets behave. They never overlap, so their z-order
-    // among themselves is irrelevant. They live in the THEATER so they hide with the surface.
-    for (let i = 0; i < arrows; i++) {
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `<svg class="tk-flow" xmlns="http://www.w3.org/2000/svg"><path class="tk-flow-shaft"></path><path class="tk-flow-head"></path></svg>`;
-      const svg = wrap.firstElementChild;
-      theater.appendChild(svg);
-      flowSvgs.push(svg);
-      flowShafts.push(svg.querySelector(".tk-flow-shaft"));
-      flowHeads.push(svg.querySelector(".tk-flow-head"));
-    }
-  };
-  const HEAD_LEN = 20, HEAD_HALF = 9, CORNER = 46;
-  // A solid arrowhead whose BASE CENTRE is where the shaft stops; the shaft's round cap just
-  // reaches the base, so the line enters the head's centre and nothing crosses into/past it.
-  // dx,dy = unit travel direction at the tip; r = rounder.
-  const arrowHead = (ex, ey, dx, dy, r) => {
-    const bx = ex - HEAD_LEN * dx, by = ey - HEAD_LEN * dy;             // base centre
-    const sx = ex - (HEAD_LEN - 5) * dx, sy = ey - (HEAD_LEN - 5) * dy; // shaft overlaps 5px INTO the head (no gap)
-    const px = -dy * HEAD_HALF, py = dx * HEAD_HALF;                    // half-width perpendicular
-    return { sx, sy, d: `M${r(bx + px)},${r(by + py)} L${r(ex)},${r(ey)} L${r(bx - px)},${r(by - py)} Z` };
-  };
-  // lefts: bucket left xs; bw: bucket width; topY/botY: bucket bounds. Each stack connector is a
-  // straight run + ONE rounded corner so the line reaches the head dead-straight and centred.
-  const drawFlow = (lefts, bw, topY, botY) => {
-    if (!showFlow) return;
-    ensureFlow();
-    const n = lefts.length, r = Math.round, midY = r(topY + (botY - topY) / 2);
-    const cardTop = window.innerHeight - CARD_H - MARGIN, offStack = r(cardTop - MARGIN);
-    const leftX = MARGIN + 26, rightX = window.innerWidth - (MARGIN + 26);   // mirror of leftX
-    const shafts = [], heads = [];
-    // 1 — rise from the inbox, early rounded corner, long HORIZONTAL run dead-centre into the first bucket.
-    { const ex = lefts[0] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
-      shafts.push(`M${leftX},${offStack} L${leftX},${midY + CORNER} Q${leftX},${midY} ${leftX + CORNER},${midY} L${r(h.sx)},${midY}`);
-      heads.push(h.d); }
-    // 2 — straight trail across each gap into the next bucket (head points right).
-    for (let i = 0; i < n - 1; i++) { const ex = lefts[i + 1] - MARGIN, h = arrowHead(ex, midY, 1, 0, r);
-      shafts.push(`M${r(lefts[i] + bw + MARGIN)},${midY} L${r(h.sx)},${midY}`); heads.push(h.d); }
-    // 3 — MIRROR of the left: leave the last bucket, early rounded corner, long VERTICAL run dead-centre
-    //     down into the resolved stack (head points down).
-    { const h = arrowHead(rightX, offStack, 0, 1, r);
-      shafts.push(`M${r(lefts[n - 1] + bw + MARGIN)},${midY} L${r(rightX - CORNER)},${midY} Q${r(rightX)},${midY} ${r(rightX)},${midY + CORNER} L${r(rightX)},${r(h.sy)}`);
-      heads.push(h.d); }
-    shafts.forEach((d, i) => flowShafts[i]?.setAttribute("d", d));
-    heads.forEach((d, i) => flowHeads[i]?.setAttribute("d", d));
-  };
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {
     const grid = document.querySelector(".dashboard-layout-grid");
@@ -2733,7 +2669,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                    // 8px bar centred there, kept inside the bucket
       }
     });
-    drawFlow(lefts, bucketW, ZONE_TOP, window.innerHeight - (CARD_H + MARGIN * 2));
     // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does
     // the same via updateDeckEdges() at the end of layout(). Without the re-clamp a bucket scrolled to
     // the bottom stays pinned there after the window grows past being scrollable (no way back up).
@@ -2944,26 +2879,18 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   // Depth-of-field for a drag OUT of a fanned stack: bring ONLY the buckets this ticket may legally land
   // in (per canAdvance) into focus — they lift ABOVE the scrim (sharp); the rest rest below it and the
-  // scrim blurs them cleanly. Each on-path arrow lifts above the scrim (sharp) too, the off-path ones
-  // rest below it (scrim-blurred) — so every arrow's blur MATCHES its bucket and none morph or vanish.
-  // Chain nodes are [inbox, …buckets…, resolved]; arrow k joins node k→k+1, so the on-path segments are
-  // the run [min,max) between the stack's node and a reachable bucket's node.
+  // scrim blurs them cleanly.
   const focusDropTargets = (from, t) => {
     if (!zonesEnabled) return;
-    const fromNode = from < 0 ? 0 : from + 1;
-    const liveArrows = new Set();
     setBucketSharp((i) => {
       const ok = canAdvance(from, i, t);
-      if (ok) { const to = i + 1, lo = Math.min(fromNode, to), hi = Math.max(fromNode, to); for (let a = lo; a < hi; a++) liveArrows.add(a); }
       return ok;
     });
-    setArrowSharp((i) => liveArrows.has(i));   // on-path arrows lift sharp; the rest stay scrim-blurred
   };
   const clearDropFocus = () => {
     if (!zonesEnabled) return;
     hoverPrev = null;     // a drag just ended → let the next hover re-preview from scratch
     setBucketSharp(() => false);
-    setArrowSharp(() => false);
     applyBucketFocus();   // hand focus back to the normal (cursor-driven) co-focus
   };
 
@@ -3442,6 +3369,28 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     create: openCreate,
     openCreate,
     previewState: (kind) => showSystemState(kind === "loading" ? "loading" : kind === "error" ? "error" : null),
+    // Return the established card object for a surface that owns its own
+    // layout. It deliberately omits deck dragging/reordering; every visual
+    // and face-detail concern still comes from this factory.
+    createCard: (record, options = {}) => {
+      ensureStyles();
+      const card = cardObject(record);
+      const open = (event) => {
+        if (event?.type === "click" && event.button !== 0) return;
+        if (typeof options.onOpen === "function") options.onOpen(record, card, event);
+        else detail?.open?.(record, card);
+      };
+      card.tabIndex = options.tabIndex == null ? 0 : Number(options.tabIndex);
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", options.ariaLabel || `${titleOf(record)} — open ${widgetTitle.toLowerCase()}`);
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault(); open(event);
+      });
+      requestAnimationFrame(() => { if (card.isConnected) fitCardFields(card); });
+      return card;
+    },
     // Home captures the real full-viewport theater at lifecycle boundaries.
     // An inactive factory normally skips render() entirely, so lay it out once
     // synchronously and hide it again before the browser has a paint chance.

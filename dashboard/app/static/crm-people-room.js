@@ -8,7 +8,7 @@
   function styles() {
     if (document.getElementById("crm-people-room-styles")) return;
     const s = document.createElement("style"); s.id = "crm-people-room-styles"; s.textContent = `
-      .crm-people-room{position:fixed;inset:0;z-index:840;color:rgba(244,247,252,.92);-webkit-app-region:no-drag}.crm-people-room[hidden]{display:none}
+      .crm-people-room{position:fixed;inset:0;z-index:840;color:rgba(244,247,252,.92)}.crm-people-room[hidden]{display:none}
       .crm-people-frame{position:absolute;inset:54px 56px 90px;max-width:1480px;margin:auto;display:grid;grid-template-rows:auto minmax(0,1fr)}
       .crm-people-head{display:flex;align-items:flex-end;justify-content:space-between;padding:0 2px 20px}.crm-people-title{font:650 18px system-ui;letter-spacing:-.015em}.crm-people-sub{margin-top:5px;font-size:11px;color:rgba(216,225,239,.45)}
       .crm-people-search{width:250px;height:34px;box-sizing:border-box;padding:0 11px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(13,18,25,.45);color:#fff;outline:none;font:11px system-ui}

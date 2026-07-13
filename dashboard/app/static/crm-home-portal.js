@@ -18,7 +18,7 @@
   function styles() {
     if (document.getElementById("crm-home-portal-styles")) return;
     const style = document.createElement("style"); style.id = "crm-home-portal-styles"; style.textContent = `
-      .crm-home-portal{position:fixed;inset:0;z-index:842;color:rgba(244,247,252,.93);-webkit-app-region:no-drag;overflow:hidden}.crm-home-portal[hidden]{display:none}
+      .crm-home-portal{position:fixed;inset:0;z-index:842;color:rgba(244,247,252,.93);overflow:hidden}.crm-home-portal[hidden]{display:none}
       .crm-home-portal-grid{position:absolute;inset:60px 70px 88px;max-width:1420px;margin:auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:13px}
       .crm-home-window{position:relative;min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;padding:0;color:inherit;text-align:left;cursor:pointer;border:1px solid rgba(255,255,255,.12);border-radius:19px;background:linear-gradient(155deg,rgba(26,32,42,.72),rgba(10,14,21,.65));backdrop-filter:blur(25px) saturate(120%);box-shadow:inset 0 1px rgba(255,255,255,.1),0 20px 50px rgba(0,0,0,.23);transition:border-color .16s,box-shadow .16s,transform .16s}
       .crm-home-window:hover{transform:translateY(-2px);border-color:rgba(157,194,245,.28);box-shadow:inset 0 1px rgba(255,255,255,.13),0 25px 58px rgba(0,0,0,.3),0 0 28px rgba(73,128,205,.09)}

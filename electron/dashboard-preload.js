@@ -151,3 +151,31 @@ contextBridge.exposeInMainWorld('dashboardWindowControls', {
   minimize: () => ipcRenderer.invoke('dashboard-window:minimize'),
   close: () => ipcRenderer.invoke('dashboard-window:close'),
 });
+contextBridge.exposeInMainWorld('crmHomePreviews', {
+  isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
+  list: () => ipcRenderer.invoke('home-preview:list'),
+  capture: (key) => ipcRenderer.invoke('home-preview:capture', { key }),
+  onChanged: (cb) => ipcRenderer.on('home-preview:changed', (_event, preview) => cb(preview)),
+});
+
+// Bind the immutable frameless-window buttons before application hydration.
+// Capture phase makes these handlers authoritative even if a renderer runtime
+// is rebuilt or goes stale after repeated camera navigation.
+if (!new URLSearchParams(location.search).has('crmPreviewWorker')) {
+  const installShellControls = () => {
+    [
+      ['.window-refresh-control', 'dashboard-window:reload'],
+      ['.window-minimize-control', 'dashboard-window:minimize'],
+      ['.window-close-control', 'dashboard-window:close'],
+    ].forEach(([selector, channel]) => {
+      const control = document.querySelector(selector);
+      if (!control || control.dataset.preloadBound === 'true') return;
+      control.dataset.preloadBound = 'true';
+      control.addEventListener('click', (event) => {
+        event.preventDefault(); event.stopImmediatePropagation(); ipcRenderer.invoke(channel);
+      }, true);
+    });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installShellControls, { once: true });
+  else installShellControls();
+}

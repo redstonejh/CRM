@@ -30,19 +30,37 @@ async function main() {
   const activate = async (key) => { await page.evaluate((value) => window.crmWorkspaces.setActive(value), key); await sleep(700); };
 
   await activate('home');
-  await page.waitForFunction(() => document.querySelectorAll('.crm-home-window').length === 6, { timeout: 10000 });
-  await check('Home has six settled, data-bearing live thumbnails', () => ({
-    ok: document.querySelectorAll('.crm-home-window').length === 6
-      && [...document.querySelectorAll('.crm-home-window-body')].every((body) => body.children.length > 0)
-      && !document.querySelector('.crm-home-portal .crm-home-preview-state'),
-    detail: `${document.querySelectorAll('.crm-home-window').length}/6 ready`,
+  await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6, { timeout: 10000 });
+  await check('Home has six inert screenshot LODs and no live miniature trees', () => ({
+    ok: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
+      && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
+    detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/6 surfaces`,
   }));
-  await check('Home thumbnails expose the six intended rooms', () => ['desk','people','pipeline','jobs','money','calendar'].every((key) => document.querySelector(`[data-home-room="${key}"]`)));
-  await page.click('[data-home-room="desk"]');
+  await check('Home thumbnails expose the six intended rooms', () => ['desk','people','pipeline','jobs','money','calendar'].every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`)));
+  await page.click('.crm-home-bucket[data-module="desk"]');
   await sleep(100);
-  await check('Home-to-room handoff is covered by the expanding live pane', () => !!document.querySelector('.crm-home-flight'));
-  await sleep(500);
-  await check('Home pane lands directly on the destination without an intermediate label', () => document.body.dataset.crmModule === 'desk' && !document.querySelector('.crm-home-flight') && !document.querySelector('.crm-home-portal:not([hidden])'));
+  await check('Home-to-room handoff remains inside the original camera', () => document.body.dataset.crmModule === 'home'
+    && window.crmHomeCamera?.isTransitioning?.() && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
+  await check('Tile transition preserves the native title-bar drag region', () => {
+    const strip = document.querySelector('.app-window-drag-region');
+    const lid = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+    const x = Math.round(innerWidth * .5), y = 20;
+    const exclusions = [...document.querySelectorAll('*')].filter((node) => {
+      const style = getComputedStyle(node);
+      if (style.webkitAppRegion !== 'no-drag' || style.display === 'none' || style.visibility === 'hidden') return false;
+      const rect = node.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    });
+    return getComputedStyle(strip).webkitAppRegion === 'drag'
+      && getComputedStyle(lid).webkitAppRegion !== 'no-drag'
+      && exclusions.length === 0;
+  });
+  await sleep(650);
+  await check('Home camera lands directly on the destination', () => document.body.dataset.crmModule === 'desk' && !document.querySelector('.crm-transit-veil'));
+  await check('Tile room does not exclude the title-bar drag region', () => {
+    const room = document.querySelector('.crm-desk-surface:not([hidden])');
+    return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
+  });
   await page.waitForFunction(() => document.querySelectorAll('.crm-desk-commitment').length >= 4, { timeout: 10000 });
   await check('Desk merges due work, live workflows, and activity', () => ({
     ok: document.querySelectorAll('.crm-desk-commitment').length >= 4
@@ -52,6 +70,22 @@ async function main() {
   }));
   await check('Desk has explicit stage indicators, not stage labels alone', () => document.querySelectorAll('.crm-desk-stagebar i.is-on').length >= 5);
   await check('Retired Home, Today, and Reports theaters do not own the stage', () => ![...document.querySelectorAll('[data-crm-theater="home"],[data-crm-theater="today"],[data-crm-theater="reports"]')].some((el) => !el.hidden));
+
+  await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
+  await sleep(650);
+  await check('Returning Home restores an uncontested title-bar drag region', () => {
+    const x = Math.round(innerWidth * .5), y = 20;
+    const strip = document.querySelector('.app-window-drag-region');
+    const exclusions = [...document.querySelectorAll('*')].filter((node) => {
+      const style = getComputedStyle(node);
+      if (style.webkitAppRegion !== 'no-drag' || style.display === 'none' || style.visibility === 'hidden') return false;
+      const rect = node.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    });
+    return document.body.dataset.crmModule === 'home'
+      && getComputedStyle(strip).webkitAppRegion === 'drag'
+      && exclusions.length === 0;
+  });
 
   await activate('people');
   await check('People is a relationship room, not a ticket board', () => ({

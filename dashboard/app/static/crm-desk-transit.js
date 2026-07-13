@@ -6,9 +6,7 @@
 // setActive remain the instant commit primitive, called only at choreography
 // boundaries (and at boot/restore, which is not navigation).
 (() => {
-  const MORPH_MS = 460;             // the house morph — fractal-camera's own default
-  const SETTLE_MS = MORPH_MS + 80;  // morph + the camera's transitionend fallback slack
-  const LID_FADE_MS = 180;          // the lid unfrosts off the revealed module
+  const TRANSIT_Z = "2500";        // below the untouched native drag strip/chrome
 
   let busy = false;
   let queued = null;
@@ -20,8 +18,7 @@
     style.textContent = `
       /* The veil carries the fully-dived bucket lid for one beat while the
          destination theater takes the stage beneath its frost, then fades. */
-      .crm-transit-veil { position: fixed; inset: 0; z-index: 4500; pointer-events: none;
-        opacity: 1; transition: opacity ${LID_FADE_MS}ms ease; }
+      .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none; }
     `;
     document.head.appendChild(style);
   };
@@ -53,19 +50,12 @@
     // destination has completed its own render. Because both share the same
     // coordinates, the only visible release is the acrylic material itself.
     try { await window.crmHome?.waitForModuleSettled?.(key); } catch {}
-    if (veil) {
-      requestAnimationFrame(() => { veil.style.opacity = "0"; });
-      setTimeout(() => {
-        veil.remove();
-        cam?.rebuildRoot?.();                 // home camera rests at level 0, ready for the next dive
-        if (surface) surface.style.zIndex = "";
-        done();
-      }, LID_FADE_MS + 40);
-    } else {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      veil?.remove();
       cam?.rebuildRoot?.();
       if (surface) surface.style.zIndex = "";
       done();
-    }
+    }));
   };
 
   // Home (active, level 0) → module: play the home camera's own dive, commit at
@@ -75,7 +65,7 @@
     const bucket = bucketFor(key);
     if (!cam || !bucket) { commit(key); done(); return; }
     const surface = cam.surface();
-    if (surface) surface.style.zIndex = "4500";   // the lid must cover module chrome during the reveal
+    if (surface) surface.style.zIndex = TRANSIT_Z;
     if (expandFirst) {
       if (cam.level() > 0) cam.rebuildRoot();
       cam.expand(bucket);
@@ -86,22 +76,22 @@
   // Module → Home: seat the module's own bucket lid over the stage at full
   // size (jumpTo), commit Home behind its frost, then contract() flies the lid
   // back into its Home slot — the identical camera move, reversed.
-  const diveOut = async (fromKey, done) => {
+  const diveOut = (fromKey, done) => {
     const cam = camera();
     try { window.crmHome?.setActive?.(true); } catch {}
     if (!cam) { commit("home"); done(); return; }
-    try { await window.crmHome?.captureBaseline?.(fromKey, { mount: true }); } catch {}
     if (cam.level() > 0) cam.rebuildRoot();
     const bucket = bucketFor(fromKey);
     const surface = cam.surface();
     if (!bucket || !cam.jumpTo?.(bucket)) { commit("home"); done(); return; }
-    if (surface) surface.style.zIndex = "4500";
+    if (surface) surface.style.zIndex = TRANSIT_Z;
     commit("home");   // the module vanishes behind the full-screen lid, same frame
     requestAnimationFrame(() => {
       cam.back();     // 460ms house contract into the Home slot
       Promise.resolve(cam.whenSettled?.()).then(() => {
         if (surface) surface.style.zIndex = "";
         done();
+        setTimeout(() => { try { void window.crmHome?.captureBaseline?.(fromKey); } catch {} }, 180);
       });
     });
   };
@@ -137,7 +127,7 @@
     if (!ws || busy) { resolve(false); return; }
     busy = true;
     const surface = camera()?.surface?.();
-    if (surface) surface.style.zIndex = "4500";
+    if (surface) surface.style.zIndex = TRANSIT_Z;
     const done = () => {
       busy = false;
       resolve(true);
@@ -155,6 +145,7 @@
   const overlayOwnsKeys = (key) => {
     if (window.crmCompanyDive?.isActive?.()) return true;
     if (window.crmSearchDeck?.isOpen?.()) return true;
+    if (window.crmRecordWorld?.isOpen?.()) return true;
     if (document.querySelector(".ticket-detail-overlay:not([hidden]), .tk-menu")) return true;
     if (key === "Escape" && document.querySelector("section[data-crm-theater]:not([hidden]) .tk-stack-btn.is-active")) return true;
     return false;
@@ -168,7 +159,7 @@
     if (current === "home" || current === "calendar") return;   // home is root; calendar's camera owns its chain
     if (busy || overlayOwnsKeys(event.key)) return;
     driveTo("home");
-  });
+  }, true);
 
   window.crmDeskTransit = {
     driveTo,

@@ -3,10 +3,11 @@
 // This is the shared Electron shell with monitoring ingestion fully removed.
 // CRM records live behind the Postgres API in server/; the legacy ticket bridge
 // remains as a compatibility adapter while the card system is generalized.
-import { app, BrowserWindow, Tray, Menu, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import squirrelStartup from 'electron-squirrel-startup';
+import pngjs from 'pngjs';
 import { icons } from './icons';
 import auth from './auth.js';
 import {
@@ -20,6 +21,7 @@ import {
   storeConnectionState, storeConnectionInfo, storeHealth, reportSummary,
   listDomain, getDomain, createDomain, updateDomain, deleteDomain,
 } from './store.js';
+const { PNG } = pngjs;
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
 if (squirrelStartup) app.quit();
@@ -68,8 +70,12 @@ function normalizeApiUrl(value) {
 
 let tray = null;
 let mainWindow = null;
+let previewWindow = null;
 let settings = loadSettings();
 const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
+const HOME_PREVIEW_KEYS = ['desk', 'people', 'pipeline', 'jobs', 'money', 'calendar'];
+const homePreviewCache = new Map();
+let homePreviewQueue = Promise.resolve();
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —
@@ -126,6 +132,7 @@ function createMainWindow() {
     mainWindow.webContents.send('tickets:changed', ticketsPayload());
     mainWindow.webContents.send('tickets:connection', ticketConnectionState());
     broadcastStore();
+    setTimeout(() => capturePreviewKeys(HOME_PREVIEW_KEYS, 'startup'), 250);
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -164,6 +171,157 @@ function broadcastTickets() {
 
 function broadcastTicketConnection(state) {
   openWindows().forEach((w) => w.webContents.send('tickets:connection', state));
+}
+
+function foregroundFromMattes(blackImage, whiteImage) {
+  if (!blackImage || !whiteImage || blackImage.isEmpty() || whiteImage.isEmpty()) return null;
+  const size = blackImage.getSize();
+  const whiteSize = whiteImage.getSize();
+  if (size.width !== whiteSize.width || size.height !== whiteSize.height) return null;
+  const black = blackImage.toBitmap();
+  const white = whiteImage.toBitmap();
+  if (black.length !== white.length || black.length !== size.width * size.height * 4) return null;
+  const png = new PNG({ width: size.width, height: size.height });
+  const output = png.data;
+  let minX = size.width, minY = size.height, maxX = -1, maxY = -1;
+  for (let index = 0; index < black.length; index += 4) {
+    const deltaB = Math.max(0, white[index] - black[index]);
+    const deltaG = Math.max(0, white[index + 1] - black[index + 1]);
+    const deltaR = Math.max(0, white[index + 2] - black[index + 2]);
+    const alpha = Math.max(0, Math.min(255, 255 - Math.round((deltaB + deltaG + deltaR) / 3)));
+    if (alpha <= 2) {
+      output[index] = 0; output[index + 1] = 0; output[index + 2] = 0; output[index + 3] = 0;
+      continue;
+    }
+    output[index] = Math.min(255, Math.round(black[index + 2] * 255 / alpha));
+    output[index + 1] = Math.min(255, Math.round(black[index + 1] * 255 / alpha));
+    output[index + 2] = Math.min(255, Math.round(black[index] * 255 / alpha));
+    output[index + 3] = alpha;
+    if (alpha > 12) {
+      const pixel = index / 4;
+      const x = pixel % size.width;
+      const y = Math.floor(pixel / size.width);
+      minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+  }
+  const image = nativeImage.createFromBuffer(PNG.sync.write(png));
+  const bounds = maxX >= minX && maxY >= minY
+    ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+    : { x: 0, y: 0, width: size.width, height: size.height };
+  return { image, bounds };
+}
+
+async function prepareCapture(win, matte = null) {
+  const css = `
+    *,*::before,*::after { animation:none !important; transition:none !important; }
+    .window-control-cluster,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
+    .crm-module-switch,.db-loading { display:none !important; }
+    ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
+      background:${matte} !important; background-color:${matte} !important; }
+      html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
+  `;
+  await win.webContents.executeJavaScript(`(() => {
+    window.__crmPreviewClasses ||= {
+      htmlPhoto: document.documentElement.classList.contains('has-photo-background'),
+      bodyPhoto: document.body.classList.contains('has-photo-background'),
+      webgl: document.body.classList.contains('webgl-glass-on'),
+    };
+    document.activeElement?.blur?.();
+    const original = window.__crmPreviewClasses;
+    const matte = ${JSON.stringify(matte)};
+    document.documentElement.classList.toggle('has-photo-background', !matte && original.htmlPhoto);
+    document.body.classList.toggle('has-photo-background', !matte && original.bodyPhoto);
+    document.body.classList.toggle('webgl-glass-on', !matte && original.webgl);
+    let style = document.getElementById('crm-preview-capture-style');
+    if (!style) { style = document.createElement('style'); style.id = 'crm-preview-capture-style'; document.head.appendChild(style); }
+    style.textContent = ${JSON.stringify(css)};
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 60))));
+  })()`, true);
+  try { win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1, movementX: 0, movementY: 0 }); } catch {}
+  win.webContents.invalidate();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+}
+
+async function captureRoom(win) {
+  await prepareCapture(win, null);
+  const exact = await win.webContents.capturePage();
+  await prepareCapture(win, '#000000');
+  const black = await win.webContents.capturePage();
+  await prepareCapture(win, '#ffffff');
+  const white = await win.webContents.capturePage();
+  const foreground = foregroundFromMattes(black, white);
+  if (!foreground || exact.isEmpty()) return null;
+  return { exact, foreground: foreground.image, bounds: foreground.bounds };
+}
+
+function waitForRenderer(win, expression, timeoutMs = 30000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const poll = async () => {
+      if (!win || win.isDestroyed()) { reject(new Error('Preview renderer closed')); return; }
+      try { if (await win.webContents.executeJavaScript(expression, true)) { resolve(); return; } } catch {}
+      if (Date.now() - started >= timeoutMs) { reject(new Error('Preview renderer timed out')); return; }
+      setTimeout(poll, 50);
+    };
+    poll();
+  });
+}
+
+async function createPreviewWindow() {
+  if (previewWindow && !previewWindow.isDestroyed()) return previewWindow;
+  const bounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentBounds() : { width: 1280, height: 860 };
+  previewWindow = new BrowserWindow({
+    width: bounds.width, height: bounds.height, show: false, frame: false,
+    backgroundColor: '#10141c', paintWhenInitiallyHidden: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'dashboard-preload.js'), nodeIntegration: false, contextIsolation: true,
+      sandbox: false, offscreen: true, backgroundThrottling: false,
+    },
+  });
+  previewWindow.on('closed', () => { previewWindow = null; });
+  await previewWindow.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } });
+  await waitForRenderer(previewWindow, `!document.documentElement.hasAttribute('data-dashboard-booting') && !!window.crmWorkspaces`);
+  return previewWindow;
+}
+
+function publishHomePreview(key, capture, layoutSignature) {
+  if (!capture?.foreground || !capture?.exact) return null;
+  const size = capture.exact.getSize();
+  const preview = {
+    key, width: size.width, height: size.height, capturedAt: Date.now(),
+    foregroundSrc: capture.foreground.toDataURL(), exactSrc: capture.exact.toDataURL(),
+    foregroundBounds: capture.bounds, layoutSignature,
+  };
+  homePreviewCache.set(key, preview);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:changed', preview);
+  return preview;
+}
+
+function capturePreviewKeys(keys, label = 'refresh') {
+  const requested = keys.filter((key) => HOME_PREVIEW_KEYS.includes(key));
+  homePreviewQueue = homePreviewQueue.then(async () => {
+    let worker;
+    try {
+      worker = await createPreviewWindow();
+      for (const key of requested) {
+        await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive(${JSON.stringify(key)})`, true);
+        await waitForRenderer(worker, `document.body.dataset.crmModule === ${JSON.stringify(key)} && !!document.querySelector('[data-crm-theater]:not([hidden])')`);
+        await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
+        const layoutSignature = await worker.webContents.executeJavaScript(`(() => {
+          const theater = document.querySelector('[data-crm-theater]:not([hidden])');
+          return { module: document.body.dataset.crmModule || '', text: String(theater?.innerText || '').replace(/\\s+/g,' ').trim(),
+            elements: theater?.querySelectorAll('*').length || 0, calendarYear: window.fractalCalendar?.year?.() || null };
+        })()`, true);
+        publishHomePreview(key, await captureRoom(worker), layoutSignature);
+      }
+    } catch (error) {
+      console.error(`[home-preview] ${label} capture failed:`, error?.message || error);
+    } finally {
+      if (worker && !worker.isDestroyed()) worker.destroy();
+    }
+    return requested.length === 1 ? homePreviewCache.get(requested[0]) || null : null;
+  });
+  return homePreviewQueue;
 }
 
 function storePayload(entity, options = {}) {
@@ -306,6 +464,15 @@ function isMainSender(e) {
 ipcMain.handle('dashboard-window:reload', (e) => { if (isMainSender(e)) mainWindow.webContents.reload(); return { ok: true }; });
 ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });
 ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
+ipcMain.handle('home-preview:list', (event) => {
+  if (!isMainSender(event)) return { ok: false, previews: [] };
+  return { ok: true, previews: [...homePreviewCache.values()] };
+});
+ipcMain.handle('home-preview:capture', async (event, { key } = {}) => {
+  if (!isMainSender(event) || !HOME_PREVIEW_KEYS.includes(key)) return { ok: false, error: 'Invalid preview key' };
+  const preview = await capturePreviewKeys([key], 'room refresh');
+  return preview ? { ok: true, preview } : { ok: false, error: 'Preview capture failed' };
+});
 ipcMain.handle('dashboard:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });
 ipcMain.handle('dashboard:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
 

@@ -12,7 +12,7 @@ export default defineConfig({
   // all npm packages by default. noExternal forces ws to be inlined into the
   // bundle so the packaged app has the API change-stream client available.
   ssr: {
-    noExternal: ['ws'],
+    noExternal: ['ws', 'pngjs'],
   },
   build: {
     rollupOptions: {

@@ -7,6 +7,10 @@
     const maxLevel = Number.isFinite(config.maxLevel) ? config.maxLevel : 2;
     const ease = config.ease || "cubic-bezier(.22, 1, .26, 1)";
     const morphMs = Number(config.morphMs) || 460;
+    const expandFadeMs = Number.isFinite(Number(config.expandFadeMs)) ? Number(config.expandFadeMs) : 140;
+    const belowFadeMs = Number.isFinite(Number(config.belowFadeMs)) ? Number(config.belowFadeMs) : morphMs;
+    const contractFadeMs = Number.isFinite(Number(config.contractFadeMs)) ? Number(config.contractFadeMs) : Math.round(morphMs * .35);
+    const contractFadeDelay = Math.max(0, morphMs - contractFadeMs);
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -178,10 +182,10 @@
       const dive = `translate(${(E.x - below.offsetLeft - source.x * kx).toFixed(2)}px, ${(E.y - below.offsetTop - source.y * ky).toFixed(2)}px) scale(${kx.toFixed(4)}, ${ky.toFixed(4)})`;
       void expander.offsetWidth;
       requestAnimationFrame(() => {
-        expander.style.transition = `transform ${morphMs}ms ${ease}, opacity 140ms ease`;
+        expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
         expander.style.transform = "none";
         expander.style.opacity = "1";
-        below.style.transition = `transform ${morphMs}ms ${ease}, opacity ${morphMs}ms ease`;
+        below.style.transition = `transform ${morphMs}ms ${ease}, opacity ${belowFadeMs}ms ease`;
         below.style.transform = dive;
         below.style.opacity = "0";
       });
@@ -232,7 +236,7 @@
       below.style.zIndex = "5";
       below.style.pointerEvents = "auto";
       below.style.transform = dive;
-      below.style.opacity = "1";
+      below.style.opacity = config.contractFadeMs != null ? "0" : "1";
       below.style.visibility = "";
       expander.style.transition = "none";
       expander.style.zIndex = "4";
@@ -254,9 +258,12 @@
       void below.offsetWidth;
       requestAnimationFrame(() => {
         if (seq !== transitionSeq) return;
-        below.style.transition = `transform ${morphMs}ms ${ease}`;
+        below.style.transition = config.contractFadeMs != null
+          ? `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`
+          : `transform ${morphMs}ms ${ease}`;
         below.style.transform = "none";
-        expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${Math.round(morphMs * 0.35)}ms ease ${Math.round(morphMs * 0.65)}ms`;
+        below.style.opacity = "1";
+        expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`;
         expander.style.transform = `translate(${(rx - E.x).toFixed(2)}px, ${(ry - E.y).toFixed(2)}px) scale(${(sourceRect.w / E.w).toFixed(5)}, ${(sourceRect.h / E.h).toFixed(5)})`;
         expander.style.opacity = "0";
       });
@@ -282,6 +289,7 @@
       ensure();
       dropWarm();
       const expander = buildExpander(target);
+      config.prepareJump?.(expander, target, ctx());
       srcSel[level] = config.sourceSelector?.(target, ctx()) || "";
       Object.assign(expander.style, { zIndex: "5", pointerEvents: "auto", transition: "none", opacity: "1", transform: "none" });
       surface.appendChild(expander);

@@ -35,7 +35,9 @@
     const style = document.createElement("style");
     style.id = "crm-desk-styles";
     style.textContent = `
-      .crm-desk-surface { position:fixed; inset:0; z-index:835; color:rgba(243,247,253,.93); pointer-events:auto; -webkit-app-region:no-drag; overflow:hidden; }
+      /* Only the separate title-bar strip owns Electron app regions. Keeping
+         this full-window room neutral prevents it from excluding the strip. */
+      .crm-desk-surface { position:fixed; inset:0; z-index:835; color:rgba(243,247,253,.93); pointer-events:auto; overflow:hidden; }
       .crm-desk-surface[hidden] { display:none; }
       .crm-desk-frame { position:absolute; inset:54px 56px 90px; display:grid; grid-template-rows:auto minmax(0,1fr); max-width:1500px; margin:auto; }
       .crm-desk-head { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:0 2px 22px; }

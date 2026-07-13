@@ -31,11 +31,30 @@
   const STAGE_KEYS = STAGES.map((s) => s.key);
   const STAGE_STORE = "tk-ticket-stage";
   let stageMap = (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })();
+  const INITIAL_STAGE_STORE = "tk-ticket-initial-stage-v1";
+  let initializedStageIds = (() => { try { return new Set(JSON.parse(localStorage.getItem(INITIAL_STAGE_STORE) || "[]")); } catch { return new Set(); } })();
   const stageOf = (id) => (id && STAGE_KEYS.includes(stageMap[id]) ? stageMap[id] : null);
   const setStage = (id, stage) => {
     if (!id) return;
     if (stage && STAGE_KEYS.includes(stage)) stageMap[id] = stage; else delete stageMap[id];
     try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
+  };
+  // Demo/fixture records may request one initial board position. Apply it once
+  // per ticket, then leave the user's local drag state completely authoritative.
+  // In particular, moving a ticket back to the inbox must survive every reload.
+  const hydrateInitialStages = (records) => {
+    let stagesChanged = false, initializedChanged = false;
+    (records || []).forEach((ticket) => {
+      const id = String(ticket?.id || "");
+      const initialStage = String(ticket?.initialStage || "").toLowerCase();
+      if (!id || !STAGE_KEYS.includes(initialStage) || initializedStageIds.has(id)) return;
+      initializedStageIds.add(id); initializedChanged = true;
+      if (!stageOf(id)) { stageMap[id] = initialStage; stagesChanged = true; }
+    });
+    try {
+      if (stagesChanged) localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap));
+      if (initializedChanged) localStorage.setItem(INITIAL_STAGE_STORE, JSON.stringify([...initializedStageIds]));
+    } catch {}
   };
 
   // Per-stage card order = the vertical stacking order within a bucket. A ticket ENTERING a bucket
@@ -2540,6 +2559,7 @@
   const load = async () => {
     try { const r = await window.tickets?.list?.(); tickets = (r && r.tickets) || []; }
     catch { tickets = []; }
+    hydrateInitialStages(tickets);
     render();
     if (!subscribed) {
       subscribed = true;
@@ -2547,6 +2567,7 @@
       // (that detaches it → a copy snaps back to the stack). Defer the render until the panel closes.
       window.tickets?.onChanged?.((payload) => {
         tickets = (payload && payload.tickets) || [];
+        hydrateInitialStages(tickets);
         if (window.ticketDetail?.isOpen?.()) { pendingRender = true; return; }
         render();
       });

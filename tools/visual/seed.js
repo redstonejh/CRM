@@ -2,8 +2,8 @@
 //
 // A small, deliberately shaped book of business: companies, contacts (one of
 // them 24 days stale so the cold front is visible), deals across
-// lead/proposal/won, invoices across draft/sent-overdue/paid, tasks for today
-// and +2 days, one ticket, calendar items, and logged interactions. Dates are
+// lead/proposal/won, bills and invoices across their separate lifecycles, tasks for today
+// and +2 days, a fully occupied ticket board, calendar items, and interactions. Dates are
 // relative to "now" so the Today hand, aging buckets and staleness always
 // exercise the same code paths regardless of the wall clock.
 'use strict';
@@ -178,6 +178,70 @@ function rosaDataset() {
       description: 'Workstation refresh + NAS. Paid in full.',
     },
   ];
+  const bills = [
+    {
+      id: 'bill_net_0718', vendor: 'Northstar Fiber', reference: 'ACCT-48391',
+      state: 'upcoming', stage: 'upcoming', priority: 'upcoming', amount: 428.16,
+      dueDate: day(18), category: 'Internet', owner: 'rosa',
+      description: 'Primary office fiber and static IP service.',
+    },
+    {
+      id: 'bill_cloud_0722', vendor: 'Nimbus Cloud', reference: 'NC-2026-07',
+      state: 'upcoming', stage: 'upcoming', priority: 'upcoming', amount: 1186.42,
+      dueDate: day(22), category: 'Cloud hosting', owner: 'rosa',
+      description: 'Production compute, storage, and managed backups.',
+    },
+    {
+      id: 'bill_insurance_0728', vendor: 'Juniper Mutual', reference: 'POL-88210',
+      state: 'upcoming', stage: 'upcoming', priority: 'upcoming', amount: 764.00,
+      dueDate: day(28), category: 'Insurance', owner: 'rosa',
+      description: 'Monthly professional and general liability premium.',
+    },
+    {
+      id: 'bill_power_0702', vendor: 'City Electric', reference: 'ELEC-55018',
+      state: 'due', stage: 'due', priority: 'due', amount: 612.73,
+      dueDate: day(2), category: 'Utilities', owner: 'rosa',
+      description: 'Office and workshop electric service.',
+    },
+    {
+      id: 'bill_mobile_0704', vendor: 'Signal Mobile', reference: 'MOB-19044',
+      state: 'due', stage: 'due', priority: 'due', amount: 349.80,
+      dueDate: day(4), category: 'Phones', owner: 'rosa',
+      description: 'Team mobile lines and field data plans.',
+    },
+    {
+      id: 'bill_software_0706', vendor: 'LedgerWorks', reference: 'LW-7782',
+      state: 'due', stage: 'due', priority: 'due', amount: 239.00,
+      dueDate: day(6), category: 'Software', owner: 'rosa',
+      description: 'Accounting and expense management subscription.',
+    },
+    {
+      id: 'bill_courier_late', vendor: 'Arrow Courier', reference: 'AR-61809',
+      state: 'overdue', stage: 'overdue', priority: 'overdue', amount: 184.25,
+      dueDate: day(-3), category: 'Shipping', owner: 'rosa',
+      nextStep: 'Confirm the disputed after-hours surcharge and release payment.',
+      description: 'June parts deliveries and emergency pickup.',
+    },
+    {
+      id: 'bill_lease_late', vendor: 'Crescent Properties', reference: 'SUITE-204',
+      state: 'overdue', stage: 'overdue', priority: 'overdue', amount: 2850.00,
+      dueDate: day(-8), category: 'Rent', owner: 'rosa',
+      nextStep: 'Send payment confirmation to property management.',
+      description: 'Monthly office and workshop lease.',
+    },
+    {
+      id: 'bill_security_paid', vendor: 'Sentinel Alarm', reference: 'SA-22017',
+      state: 'paid', stage: 'paid', priority: 'paid', amount: 196.00,
+      dueDate: day(-12), paidAt: iso(-14), category: 'Security', owner: 'rosa',
+      description: 'Monitoring and access-control service.',
+    },
+    {
+      id: 'bill_cleaning_paid', vendor: 'Brightline Facilities', reference: 'BF-2091',
+      state: 'paid', stage: 'paid', priority: 'paid', amount: 325.00,
+      dueDate: day(-17), paidAt: iso(-18), category: 'Facilities', owner: 'rosa',
+      description: 'June office cleaning service.',
+    },
+  ];
   const tasks = [
     {
       id: 'tk_call_marta', title: 'Call Marta about the retainer', client: 'Call Marta about the retainer',
@@ -198,6 +262,94 @@ function rosaDataset() {
       incidentDate: day(-1), description: 'Outbound mail queue backing up since the weekend.',
     },
   ];
+  // Populate every native ticket destination with real ticket records. The
+  // board engine consumes `initialStage` only once; subsequent user movement
+  // remains local and authoritative, exactly like every manually placed card.
+  const ticketAccounts = companies.map((company) => ({
+    id: company.id,
+    label: company.name,
+    domain: `${company.id.replace(/^co_/, '')}.local`,
+  }));
+  const ticketLanes = {
+    inbox: [
+      ['mfa', 'MFA enrollment blocked', 'A new phone cannot complete authenticator enrollment.'],
+      ['printer', 'Dispatch printer offline', 'The shared dispatch queue stopped accepting jobs.'],
+      ['mailbox', 'Shared mailbox permissions', 'The finance team lost access after a role change.'],
+      ['backup', 'Backup job warning', 'The overnight backup completed with skipped files.'],
+      ['workstation', 'New starter workstation', 'A new hire needs their workstation and accounts prepared.'],
+      ['portal', 'Client portal login failure', 'Several users report rejected portal credentials.'],
+    ],
+    triage: [
+      ['wifi', 'Intermittent Wi-Fi drops', 'Warehouse handhelds disconnect near the loading bays.'],
+      ['export', 'Accounting export failing', 'The weekly accounting export exits without a file.'],
+      ['vpn', 'VPN disconnects', 'Remote staff lose the tunnel during long sessions.'],
+      ['audio', 'Conference room audio', 'The main room microphone is not detected.'],
+      ['storage', 'Storage threshold alert', 'Primary document storage crossed the warning threshold.'],
+      ['scanner', 'Document scanner unavailable', 'The front office scanner disappeared from the network.'],
+    ],
+    investigation: [
+      ['database', 'Database latency spikes', 'Order entry pauses during short database latency spikes.'],
+      ['sso', 'SSO redirect loop', 'Browser sign-in loops between the identity provider and app.'],
+      ['sync', 'Nightly sync incomplete', 'The inventory sync leaves a subset of records behind.'],
+      ['firewall', 'Firewall rule regression', 'A recent rule publish blocked a vendor endpoint.'],
+      ['voip', 'VoIP calls clipping', 'Outbound calls intermittently lose audio packets.'],
+      ['agent', 'Monitoring agent stale', 'Several endpoints stopped reporting current status.'],
+    ],
+    resolution: [
+      ['patch', 'Patch validation pending', 'The fix is deployed and awaiting user confirmation.'],
+      ['hotfix', 'Vendor hotfix staged', 'A vendor build is installed in the validation ring.'],
+      ['dns', 'DNS cutover ready', 'The corrected records are staged for final cutover.'],
+      ['switch', 'Replacement switch configured', 'The replacement is configured and ready to install.'],
+      ['policy', 'Access policy corrected', 'The corrected policy is live for the affected group.'],
+      ['restore', 'Restore verification', 'Recovered files are ready for the owner to verify.'],
+    ],
+    resolved: [
+      ['certificate', 'Certificate renewed', 'The renewed certificate is live and validated.'],
+      ['encryption', 'Laptop encryption restored', 'Encryption completed and recovery keys were escrowed.'],
+      ['spam', 'Spam rule corrected', 'Mail flow is normal after the transport rule correction.'],
+      ['camera', 'Camera feed recovered', 'The recorder and remote viewing feed are healthy again.'],
+      ['permissions', 'File share permissions repaired', 'Access was confirmed with the affected team.'],
+      ['battery', 'UPS battery replaced', 'The replacement battery passed its self-test.'],
+    ],
+  };
+  const severities = ['medium', 'high', 'low', 'critical'];
+  Object.entries(ticketLanes).forEach(([lane, scenarios], laneIndex) => {
+    scenarios.forEach(([service, title, description], index) => {
+      const account = ticketAccounts[(laneIndex * 2 + index) % ticketAccounts.length];
+      const severity = severities[(laneIndex + index) % severities.length];
+      const resolved = lane === 'resolved';
+      const staged = ['triage', 'investigation', 'resolution'].includes(lane);
+      tickets.push({
+        id: `tkt_demo_${lane}_${index + 1}`,
+        title,
+        companyLabel: account.label,
+        client: account.label,
+        companyId: account.id,
+        host: `${service}.${account.domain}`,
+        severity,
+        priority: severity,
+        state: resolved ? 'resolved' : (lane === 'investigation' || lane === 'resolution' ? 'claimed' : 'open'),
+        assignee: staged ? 'rosa' : null,
+        assignedBy: staged ? 'dispatch' : null,
+        claimedBy: lane === 'investigation' || lane === 'resolution' ? 'rosa' : null,
+        ...(staged ? { initialStage: lane } : {}),
+        ...(lane === 'investigation' || lane === 'resolution' ? {
+          investigation: 'Issue reproduced and the affected path isolated.',
+          fix: 'Corrective change applied in the validation environment.',
+        } : {}),
+        ...(lane === 'resolution' || resolved ? {
+          resolution: resolved ? 'Client confirmed normal operation.' : 'Validation checks pass; awaiting final confirmation.',
+          resolutionDate: day(resolved ? -(1 + index) : 0),
+          duration: `${1 + (index % 4)} hours`,
+          overtime: 'none',
+        } : {}),
+        ...(resolved ? { resolvedBy: 'rosa', resolvedAt: iso(-(1 + index), 16) } : {}),
+        incidentDate: day(-(1 + laneIndex * 2 + index)),
+        createdAt: iso(-(1 + laneIndex * 2 + index), 9 + (index % 7)),
+        description,
+      });
+    });
+  });
   const calendarItems = [
     { id: 'cal_marta_call', title: 'Marta — retainer call', date: day(0), at: iso(0, 14), kind: 'call', companyId: 'co_harborlane' },
     { id: 'cal_bluepeak_visit', title: 'Bluepeak depot walkthrough', date: day(2), at: iso(2, 9), kind: 'visit', companyId: 'co_bluepeak' },
@@ -214,7 +366,7 @@ function rosaDataset() {
       contactId: 'ct_iris', companyId: 'co_foxglove',
     },
   ];
-  return { companies, contacts, deals, invoices, tasks, tickets, calendarItems, interactions };
+  return { companies, contacts, deals, bills, invoices, tasks, tickets, calendarItems, interactions };
 }
 
 async function post(apiUrl, entity, fields) {
@@ -232,7 +384,7 @@ async function post(apiUrl, entity, fields) {
 // and seed base entities before anything that references them.
 async function seed(apiUrl = 'http://127.0.0.1:3899') {
   const data = rosaDataset();
-  const order = ['companies', 'contacts', 'deals', 'invoices', 'tasks', 'tickets', 'calendarItems', 'interactions'];
+  const order = ['companies', 'contacts', 'deals', 'bills', 'invoices', 'tasks', 'tickets', 'calendarItems', 'interactions'];
   const counts = {};
   for (const entity of order) {
     for (const fields of data[entity]) await post(apiUrl, entity, fields);

@@ -7,7 +7,7 @@
 import WebSocket from 'ws';
 
 const DEFAULT_API_URL = process.env.CRM_API_URL || 'http://127.0.0.1:3899';
-const ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions'];
+const ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions'];
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'history', 'version']);
 const CLOSED_STATES = new Set(['resolved', 'done', 'closed', 'complete', 'completed', 'cancelled', 'archived']);
 const DEAL_OUTCOME_STATES = new Set(['won', 'lost']);

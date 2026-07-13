@@ -7,7 +7,7 @@ const { WebSocket, WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.PORT || process.env.CRM_API_PORT || 3899);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/crm';
-const VALID_ENTITIES = new Set(['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'invoices', 'interactions']);
+const VALID_ENTITIES = new Set(['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions']);
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'updatedAt', 'version']);
 const REPORT_ENTITIES = [...VALID_ENTITIES];
 const CREATE_BODY_KEYS = new Set(['fields', 'actor', 'options']);

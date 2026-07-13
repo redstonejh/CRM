@@ -57,6 +57,7 @@
   const entitySources = [
     { type: "ticket", entity: "tickets" }, { type: "deal", entity: "deals" },
     { type: "contact", entity: "contacts" }, { type: "job", entity: "jobs" },
+    { type: "bill", entity: "bills" },
     { type: "invoice", entity: "invoices" },
   ];
 

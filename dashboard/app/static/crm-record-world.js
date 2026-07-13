@@ -11,10 +11,10 @@
   const records = (result) => result?.records || [];
   const meta = (record) => record?.meta && typeof record.meta === "object" ? record.meta : {};
   const value = (record, key) => record?.[key] ?? meta(record)[key];
-  const title = (record) => first(value(record, "name"), value(record, "title"), value(record, "client"), value(record, "number"), record?.companyLabel, record?.id, "Untitled");
+  const title = (record) => first(value(record, "name"), value(record, "title"), value(record, "vendor"), value(record, "client"), value(record, "number"), value(record, "reference"), record?.companyLabel, record?.id, "Untitled");
   const entityLabel = (entity) => ({
     contacts: "Person", companies: "Company", deals: "Deal", jobs: "Job", cases: "Case",
-    tickets: "Case", invoices: "Invoice", tasks: "Task", calendarItems: "Event",
+    tickets: "Case", bills: "Bill", invoices: "Invoice", tasks: "Task", calendarItems: "Event",
   }[entity] || "Record");
   const bridgeGet = async (entity, id) => {
     const result = await window.crmStore?.get?.(entity, id);
@@ -121,6 +121,7 @@
     sales: ["lead", "qualified", "proposal", "negotiation", "won"],
     jobs: ["intake", "planned", "active", "review", "complete"],
     money: ["draft", "sent", "overdue", "paid"],
+    bills: ["upcoming", "due", "overdue", "paid"],
     cases: ["new", "triage", "investigation", "resolution", "closed"],
   };
   const flowHTML = (flow) => {

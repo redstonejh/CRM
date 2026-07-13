@@ -5,7 +5,7 @@
 (() => {
   "use strict";
 
-  const entities = ["contacts", "companies", "deals", "jobs", "cases", "tickets", "invoices"];
+  const entities = ["contacts", "companies", "deals", "jobs", "cases", "tickets", "bills", "invoices"];
   const labels = {
     contacts: "Person",
     companies: "Company",
@@ -13,6 +13,7 @@
     jobs: "Job",
     cases: "Case",
     tickets: "Case",
+    bills: "Bill",
     invoices: "Invoice",
   };
 
@@ -31,7 +32,7 @@
     '"': "&quot;",
   }[char]));
   const first = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
-  const title = (record) => first(record.name, record.title, record.client, record.number, record.companyLabel, record.id, "Untitled");
+  const title = (record) => first(record.name, record.title, record.vendor, record.client, record.number, record.reference, record.companyLabel, record.id, "Untitled");
 
   function ensureLayoutStyles() {
     if (document.getElementById("crm-search-layout-styles")) return;
@@ -140,7 +141,7 @@
     root.setAttribute("role", "search");
     root.setAttribute("aria-label", "Search CRM records");
     root.innerHTML = `
-      <input class="dashboard-search-input" type="search" placeholder="Find a person, company, deal, job, case, or invoice" aria-label="Search CRM records" autocomplete="off" spellcheck="false">
+      <input class="dashboard-search-input" type="search" placeholder="Find a person, company, deal, job, case, bill, or invoice" aria-label="Search CRM records" autocomplete="off" spellcheck="false">
       <div class="dashboard-search-results" role="listbox" aria-label="CRM search results"></div>
     `;
     input = root.querySelector(".dashboard-search-input");

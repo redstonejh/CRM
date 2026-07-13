@@ -66,7 +66,18 @@ async function main() {
       && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
     detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/6 surfaces`,
   }));
-  await check('Home thumbnails expose the six intended rooms', () => ['desk','people','pipeline','jobs','money','calendar'].every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`)));
+  await check('Home uses focused Tickets, Bills, and Invoices rooms instead of broad placeholders', () => {
+    const keys = ['desk','people','cases','bills','invoices','calendar'];
+    const ticketTile = document.querySelector('.crm-home-bucket[data-module="cases"]');
+    const billTile = document.querySelector('.crm-home-bucket[data-module="bills"]');
+    const invoiceTile = document.querySelector('.crm-home-bucket[data-module="invoices"]');
+    return keys.every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`))
+      && !document.querySelector('.crm-home-bucket[data-module="pipeline"]')
+      && !document.querySelector('.crm-home-bucket[data-module="jobs"],.crm-home-bucket[data-module="money"]')
+      && ticketTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Tickets'
+      && billTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Bills'
+      && invoiceTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Invoices';
+  });
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0 && document.querySelectorAll('.crm-home-hand-card.tk-card').length > 0, { timeout: 10000 });
   await check('Home hand uses card-system card objects', () => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card')];
@@ -169,6 +180,15 @@ async function main() {
       && exclusions.length === 0;
   });
 
+  await page.click('.crm-home-bucket[data-module="cases"]');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'cases', { timeout: 5000 });
+  await check('The Tickets tile opens the existing ticketing screen', () => (
+    !!document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-zone')
+      && !document.querySelector('[data-crm-theater="pipeline"]:not([hidden])')
+  ));
+  await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home', { timeout: 5000 });
+
   await activate('people');
   await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8
     && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 80, { timeout: 10000 });
@@ -203,7 +223,7 @@ async function main() {
   });
   await page.evaluate(() => window.crmCompanyDive.setActive(false));
 
-  const workflowRooms = { pipeline: 4, jobs: 4, money: 3 };
+  const workflowRooms = { pipeline: 4, bills: 3, invoices: 3 };
   for (const [key, zones] of Object.entries(workflowRooms)) {
     await activate(key);
     await check(`${key} keeps bucket, progress, and depth choreography`, () => ({
@@ -231,31 +251,42 @@ async function main() {
       });
     });
     await check(`${key} has no arrows in its bucket system`, () => !document.querySelector('[data-crm-theater]:not([hidden]) svg.tk-flow, [data-crm-theater]:not([hidden]) .tk-flow-shaft, [data-crm-theater]:not([hidden]) .tk-flow-head'));
+    await check(`${key} has no pile caption floating through the canvas`, () => !document.querySelector('[data-crm-theater]:not([hidden]) .tk-deck-label'));
   }
 
   await activate('cases');
-  await check('Cases uses the ticket-reference screen and controls', () => ({
+  await check('Tickets uses the ticket-reference screen and controls', () => ({
     ok: document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-zone').length === 3
       && document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-bars').length > 0
       && !!document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-stack-btn[aria-label="Create a ticket"]')
       && !window.ticketStacks?.contract,
     detail: `${document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-zone').length} reference zones`,
   }));
-  await check('Cases keeps stack-control logic mounted but hides its physical chrome', () => {
+  await check('Every ticket stage and both corner stacks look occupied', () => {
+    const room = document.querySelector('[data-crm-theater="tickets"]:not([hidden])');
+    const stages = [...(room?.querySelectorAll('.tk-zone') || [])].map((zone) => zone.querySelectorAll('.tk-zcard').length);
+    const inbox = room?.querySelectorAll('.tk-deck-left .tk-card').length || 0;
+    const resolved = room?.querySelectorAll('.tk-deck-right .tk-card').length || 0;
+    return {
+      ok: stages.length === 3 && stages.every((count) => count >= 6) && inbox >= 6 && resolved >= 6,
+      detail: `stages ${stages.join('/')} · inbox ${inbox} · resolved ${resolved}`,
+    };
+  });
+  await check('Tickets keeps stack-control logic mounted but hides its physical chrome', () => {
     const room = document.querySelector('[data-crm-theater="tickets"]:not([hidden])');
     const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
     return controls.some((element) => element.matches('.tk-stack-btn[aria-label="Create a ticket"]'))
       && controls.some((element) => element.matches('.tk-deck-trash'))
       && controls.every((element) => getComputedStyle(element).display === 'none');
   });
-  await check('Cases buckets stay proportional to a ticket', () => {
+  await check('Tickets buckets stay proportional to a ticket', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="tickets"] .tk-zone')];
     return buckets.length === 3 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
   });
-  await check('Cases has no arrows in its bucket system', () => !document.querySelector('[data-crm-theater="tickets"] svg.tk-flow, [data-crm-theater="tickets"] .tk-flow-shaft, [data-crm-theater="tickets"] .tk-flow-head'));
+  await check('Tickets has no arrows in its bucket system', () => !document.querySelector('[data-crm-theater="tickets"] svg.tk-flow, [data-crm-theater="tickets"] .tk-flow-shaft, [data-crm-theater="tickets"] .tk-flow-head'));
   const ticketCard = '[data-crm-theater="tickets"]:not([hidden]) .tk-card';
   await page.waitForSelector(ticketCard, { timeout: 10000 });
   await page.click(ticketCard);
@@ -289,11 +320,9 @@ async function main() {
   const routedTicketTitle = await page.evaluate(async () => {
     const result = await window.tickets?.list?.();
     const ticket = result?.tickets?.[0];
-    return ticket?.companyLabel || ticket?.title || '';
+    return ticket?.title || ticket?.companyLabel || '';
   });
-  await page.keyboard.down('Control'); await page.keyboard.press('KeyK'); await page.keyboard.up('Control');
-  await page.waitForSelector('#dashboard-search-popover:not([hidden]) .dashboard-search-input', { timeout: 5000 });
-  await page.type('.dashboard-search-input', routedTicketTitle);
+  await page.evaluate((query) => window.crmSearchDeck.setQuery(query), routedTicketTitle);
   await page.waitForSelector('.crm-search-result[data-entity="tickets"]', { timeout: 5000 });
   await page.click('.crm-search-result[data-entity="tickets"]');
   await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail', { timeout: 5000 });

@@ -76,7 +76,7 @@ async function main() {
   assert('create returns the record', pre.status === 201 && pre.json.record.id === 'ws_pre');
   const client = await connectWs();
   const hello = await client.waitFor((m) => m.type === 'hello');
-  assert('hello announces the entity set on connect', !!hello && Array.isArray(hello.entities) && hello.entities.includes('deals'));
+  assert('hello announces the entity set on connect', !!hello && Array.isArray(hello.entities) && hello.entities.includes('deals') && hello.entities.includes('bills'));
   const replay = await api('GET', '/api/entities/deals?includeDeleted=true');
   assert('replay-on-connect: fresh list holds pre-connect records', replay.json.records.some((r) => r.id === 'ws_pre'));
 

@@ -57,7 +57,7 @@ async function main() {
     controls: document.querySelectorAll('.window-control-cluster .window-glass-control').length,
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'canonical-menu-consumers-v8' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'financial-split-clean-v12' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => !item.glass.backdrop.includes('blur(26px)')
@@ -74,7 +74,7 @@ async function main() {
   if (!syntheticDragMoved && process.env.CRM_ALLOW_SYNTHETIC_DRAG_MISS !== '1') throw new Error(`Native window drag did not move BrowserWindow: ${JSON.stringify({ dragStart, dragEnd, nativeDrag })}`);
   nativeDrag.syntheticMissAllowed = !syntheticDragMoved;
   await app.evaluate(({ BrowserWindow }, position) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setPosition(position[0], position[1]), dragStart);
-  const sameNodes = await page.evaluate(() => { const before=[...document.querySelectorAll('.crm-home-preview-foreground')]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll('.crm-home-preview-foreground')]; return before.length===6&&before.every((node,index)=>node===after[index]); });
+  const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length===6&&after.length===6&&before.every((node,index)=>node===after[index]); });
   if (!sameNodes) throw new Error('Home refresh recreated screenshot objects');
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);
   await page.screenshot({ path: path.join(out, '01-home.png') });
@@ -93,8 +93,8 @@ async function main() {
 
   const rooms = [
     {key:'desk',theater:'desk',content:'.crm-desk-panel',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
-    {key:'pipeline',theater:'pipeline',content:'.tk-zone',expected:4}, {key:'jobs',theater:'jobs',content:'.tk-zone',expected:4},
-    {key:'money',theater:'money',content:'.tk-zone',expected:3}, {key:'calendar',theater:'calendar',content:'.fc-month',expected:12},
+    {key:'cases',theater:'tickets',content:'.tk-zone',expected:3}, {key:'bills',theater:'bills',content:'.tk-zone',expected:3},
+    {key:'invoices',theater:'money',content:'.tk-zone',expected:3}, {key:'calendar',theater:'calendar',content:'.fc-month',expected:12},
   ];
   const transitions=[];
   for (const room of rooms) {

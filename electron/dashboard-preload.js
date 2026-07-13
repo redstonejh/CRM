@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('deals', entityBridge('deals'));
 contextBridge.exposeInMainWorld('contacts', entityBridge('contacts'));
 contextBridge.exposeInMainWorld('companies', entityBridge('companies'));
 contextBridge.exposeInMainWorld('tasks', entityBridge('tasks'));
+contextBridge.exposeInMainWorld('bills', entityBridge('bills'));
 contextBridge.exposeInMainWorld('invoices', entityBridge('invoices'));
 contextBridge.exposeInMainWorld('interactions', entityBridge('interactions'));
 

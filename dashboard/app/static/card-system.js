@@ -622,17 +622,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         transition: backdrop-filter .42s cubic-bezier(.4,0,.2,1), -webkit-backdrop-filter .42s cubic-bezier(.4,0,.2,1); }
       .tk-deck { position: absolute; bottom: 0; top: 0; width: 50%; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.2,.9,.3,1); }
       .tk-deck-left { left: 0; } .tk-deck-right, .tk-deck-trash { right: 0; }
-      .tk-deck-label { position: absolute; bottom: ${CARD_H + MARGIN + 8}px; z-index: 6; opacity: 0;
-        padding: 5px 9px; border-radius: 9px; pointer-events: none; white-space: nowrap;
-        color: rgba(255,255,255,.78); font-size: .72rem; font-weight: 800; letter-spacing: .02em;
-        background: linear-gradient(180deg, rgba(22,26,36,.66), rgba(12,16,24,.58));
-        border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(18px) saturate(135%);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 8px 20px rgba(0,0,0,.25);
-        transform: translateY(4px); transition: opacity .16s ease, transform .16s ease; }
-      .tk-deck-left .tk-deck-label { left: ${MARGIN}px; }
-      .tk-deck-right .tk-deck-label, .tk-deck-trash .tk-deck-label { right: ${MARGIN}px; }
-      .tk-deck:hover .tk-deck-label, .tk-deck:focus-within .tk-deck-label, .tk-deck.is-fanned .tk-deck-label {
-        opacity: 1; transform: translateY(0); }
       .tk-deck.is-fanned { pointer-events: auto; }
       .tk-deck.is-empty { display: none; }
       /* BLUEPRINT A3: the day's win condition — a quiet centred line once the
@@ -1217,10 +1206,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const track = document.createElement("div");   // holds the cards; scroll = ONE rigid transform on this
       track.className = "tk-track";
       box.appendChild(track);
-      const label = document.createElement("div");
-      label.className = "tk-deck-label";
-      label.textContent = side === "left" ? deckCopy.leftTitle : deckCopy.rightTitle;
-      box.appendChild(label);
       const arrow = document.createElement("button");
       arrow.className = "tk-arrow"; arrow.type = "button";
       arrow.setAttribute("aria-label", side === "left" ? deckCopy.leftFanAria : deckCopy.rightFanAria);
@@ -1263,7 +1248,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const box = document.createElement("div");
       box.className = "tk-deck tk-deck-trash";
       const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
-      const label = document.createElement("div"); label.className = "tk-deck-label"; label.textContent = deckCopy.trashTitle; box.appendChild(label);
       const arrow = document.createElement("button"); arrow.className = "tk-arrow"; arrow.type = "button";
       arrow.setAttribute("aria-label", deckCopy.trashFanAria);
       arrow.addEventListener("click", () => toggleFan("trash"));

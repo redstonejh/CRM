@@ -2,8 +2,8 @@
 (() => {
   const rooms = [
     { key: "desk", label: "Desk" }, { key: "people", label: "People" },
-    { key: "pipeline", label: "Pipeline" }, { key: "jobs", label: "Jobs" },
-    { key: "money", label: "Money" }, { key: "calendar", label: "Calendar" },
+    { key: "cases", label: "Tickets" }, { key: "bills", label: "Bills" },
+    { key: "invoices", label: "Invoices" }, { key: "calendar", label: "Calendar" },
   ];
   let root; let active = false; let timer = 0; let generation = 0;
   const esc = (v) => String(v ?? "").replace(/[&<>\"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -11,9 +11,9 @@
   const rows = (result) => result?.records || [];
   const title = (record) => first(record?.name, record?.title, record?.client, record?.number, record?.companyLabel, record?.id, "Untitled");
   const stages = {
-    pipeline: ["lead","qualified","proposal","negotiation"],
-    jobs: ["intake","planned","active","review"],
-    money: ["draft","sent","overdue"],
+    cases: ["triage","investigation","resolution"],
+    bills: ["upcoming","due","overdue"],
+    invoices: ["draft","sent","overdue"],
   };
   function styles() {
     if (document.getElementById("crm-home-portal-styles")) return;
@@ -33,21 +33,21 @@
     `; document.head.appendChild(style);
   }
   async function load() {
-    const [commitments, flows, companies, contacts, deals, jobs, invoices] = await Promise.all([
+    const [commitments, flows, companies, contacts, tickets, bills, invoices] = await Promise.all([
       window.crmDomain.list("commitments", { includeDeleted:false, limit:100 }),
       window.crmDomain.list("workflow-entries", { includeDeleted:false, limit:200 }),
       window.crmStore.list("companies", { includeDeleted:false }), window.crmStore.list("contacts", { includeDeleted:false }),
-      window.crmStore.list("deals", { includeDeleted:false }), window.crmStore.list("jobs", { includeDeleted:false }), window.crmStore.list("invoices", { includeDeleted:false }),
+      window.crmStore.list("tickets", { includeDeleted:false }), window.crmStore.list("bills", { includeDeleted:false }), window.crmStore.list("invoices", { includeDeleted:false }),
     ]);
-    const recordIndex = new Map([...rows(deals).map((r)=>[`deals:${r.id}`,r]),...rows(jobs).map((r)=>[`jobs:${r.id}`,r]),...rows(invoices).map((r)=>[`invoices:${r.id}`,r])]);
+    const recordIndex = new Map([...rows(tickets).map((r)=>[`tickets:${r.id}`,r]),...rows(bills).map((r)=>[`bills:${r.id}`,r]),...rows(invoices).map((r)=>[`invoices:${r.id}`,r])]);
     return { commitments:rows(commitments).filter((c)=>!["completed","cancelled","canceled"].includes(String(c.status).toLowerCase())), flows:rows(flows), companies:rows(companies), contacts:rows(contacts), recordIndex };
   }
-  const activeFlow = (key, model) => { const workflow=key==="pipeline"?"sales":key; return model.flows.filter((f)=>f.workflowKey===workflow&&!f.deletedAt&&(stages[key]||[]).includes(String(f.stage).toLowerCase())); };
+  const activeFlow = (key, model) => { const workflow=key==="cases"?"cases":key==="invoices"?"money":key; return model.flows.filter((f)=>f.workflowKey===workflow&&!f.deletedAt&&(stages[key]||[]).includes(String(f.stage).toLowerCase())); };
   const stagePreview = (key, model) => { const flow=activeFlow(key,model); const list=stages[key]; return `<div class="crm-home-stages">${list.map((stage,index)=>{const items=flow.filter((f)=>String(f.stage).toLowerCase()===stage);return `<div class="crm-home-stage"><div class="crm-home-stage-name">${esc(stage)}</div><div class="crm-home-stage-bar">${list.map((_,i)=>`<i class="${i<=index?"is-on":""}"></i>`).join("")}</div><div class="crm-home-stage-cards">${items.slice(0,3).map((item)=>`<div class="crm-home-stage-card">${esc(title(model.recordIndex.get(`${item.entityType}:${item.recordId}`)||{id:item.recordId}))}</div>`).join("")}</div></div>`}).join("")}</div>` };
   function preview(key, model) {
     if (key === "desk") { const items=[...model.commitments].sort((a,b)=>(Date.parse(a.dueAt||"")||9e15)-(Date.parse(b.dueAt||"")||9e15)).slice(0,5); return items.length?`<div class="crm-home-mini-list">${items.map((item)=>`<div class="crm-home-mini-row"><i class="crm-home-mini-dot${item.dueAt&&Date.parse(item.dueAt)<Date.now()?" is-late":""}"></i><span class="crm-home-mini-name">${esc(item.title)}</span><span class="crm-home-mini-meta">${item.dueAt?new Date(item.dueAt).toLocaleDateString([],{month:"short",day:"numeric"}):"open"}</span></div>`).join("")}</div>`:""; }
     if (key === "people") return `<div class="crm-home-companies">${model.companies.slice(0,6).map((company)=>{const people=model.contacts.filter((p)=>String(p.companyId||"")===String(company.id));return `<div class="crm-home-company"><div class="crm-home-company-name">${esc(title(company))}</div><div class="crm-home-company-people">${people.slice(0,3).map(()=>`<i class="crm-home-company-person"></i>`).join("")}</div></div>`}).join("")}</div>`;
-    if (["pipeline","jobs","money"].includes(key)) return stagePreview(key,model);
+    if (["cases","bills","invoices"].includes(key)) return stagePreview(key,model);
     const now=new Date();const y=now.getFullYear(),m=now.getMonth();const firstDay=new Date(y,m,1).getDay();const due=new Set(model.commitments.map((c)=>String(c.dueAt||"").slice(0,10)));return `<div class="crm-home-month">${Array.from({length:35},(_,i)=>{const day=i-firstDay+1;const valid=day>0&&day<=new Date(y,m+1,0).getDate();const iso=valid?`${y}-${String(m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`:"";return `<i class="crm-home-day${iso===new Date().toISOString().slice(0,10)?" is-today":""}${due.has(iso)?" has-due":""}" style="${valid?"":"visibility:hidden"}"></i>`}).join("")}</div>`;
   }
   function count(){return ""}

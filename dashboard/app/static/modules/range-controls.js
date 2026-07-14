@@ -18,7 +18,7 @@ export function bindInitialRangeControls(root = document) {
     });
     startInput?.addEventListener("change", () => {
       form.dataset.pickingRange = "end";
-      window.setTimeout(() => openPicker(endInput), 120);
+      openPicker(endInput);
     });
     endInput?.addEventListener("change", () => {
       const start = startInput?.value;

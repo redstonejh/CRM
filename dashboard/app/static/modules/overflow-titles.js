@@ -22,9 +22,23 @@ export function initializeOverflowTitles() {
   };
   
   let overflowTitleTimer;
+  let overflowTitleIdle;
+  const transitionIsBusy = () => !!window.crmDeskTransit?.isBusy?.()
+    || !!window.crmHomeCamera?.isTransitioning?.()
+    || !!document.querySelector(".crm-home-camera-moving");
   const scheduleOverflowTitles = () => {
     window.clearTimeout(overflowTitleTimer);
-    overflowTitleTimer = window.setTimeout(refreshOverflowTitles, 80);
+    if (overflowTitleIdle && "cancelIdleCallback" in window) window.cancelIdleCallback(overflowTitleIdle);
+    overflowTitleTimer = window.setTimeout(() => {
+      if (transitionIsBusy()) { scheduleOverflowTitles(); return; }
+      if ("requestIdleCallback" in window) {
+        overflowTitleIdle = window.requestIdleCallback(() => {
+          overflowTitleIdle = 0;
+          if (transitionIsBusy()) scheduleOverflowTitles();
+          else refreshOverflowTitles();
+        }, { timeout: 350 });
+      } else refreshOverflowTitles();
+    }, 80);
   };
   refreshOverflowTitles();
   window.addEventListener("load", scheduleOverflowTitles);

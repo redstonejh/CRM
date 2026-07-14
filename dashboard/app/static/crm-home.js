@@ -20,6 +20,8 @@
   let priorityUsername = "";
   let handRefreshTimer = 0;
   let handRefreshGeneration = 0;
+  let activeRefreshPending = false;
+  const recycledExpanders = new Map();
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -37,10 +39,10 @@
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
       .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
         will-change:transform;backface-visibility:hidden}
-      .crm-home-grid{position:absolute;display:grid;pointer-events:auto;
+      .crm-home-grid{position:absolute;display:grid;pointer-events:auto;will-change:transform;contain:layout style paint;
         grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:16px}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
-        cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;
+        cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
         background:linear-gradient(180deg,rgba(22,26,36,.34),rgba(12,16,24,.28));
         -webkit-backdrop-filter:blur(28px) saturate(140%);backdrop-filter:blur(28px) saturate(140%);
         box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.18),0 18px 42px rgba(0,0,0,.28);
@@ -383,16 +385,25 @@
   };
   const buildExpander = (target) => {
     const module = MODULES.find(({ key }) => key === target?.dataset?.module) || MODULES[0];
-    const bucket = document.createElement("div"); bucket.className = "crm-home-bucket crm-home-expander";
-    bucket.dataset.module = module.key; bucket.innerHTML = bucketHTML(module);
+    const bucket = recycledExpanders.get(module.key) || document.createElement("div");
+    recycledExpanders.delete(module.key);
+    bucket.className = "crm-home-bucket crm-home-expander";
+    bucket.dataset.module = module.key;
+    if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
     mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true);
     return bucket;
+  };
+  const recycleExpander = (key, expander) => {
+    if (!expander || !MODULES.some((module) => module.key === key)) return;
+    expander.remove();
+    expander.className = "crm-home-bucket crm-home-expander";
+    recycledExpanders.set(key, expander);
   };
 
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
-    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
+    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareJump:(expander)=>expander.classList.add("is-unwrapping"),
     onTransitionStart:(direction,context)=>{
@@ -416,11 +427,26 @@
   }, true);
 
   const setActive = (on) => {
-    subscribe(); camera.setActive(on);
-    if (on) { mountAll(); requestPreviews(false); refreshPriorityHand(); }
+    subscribe();
+    const changed = camera.isActive() !== !!on;
+    if (changed) camera.setActive(on);
+    if (on) {
+      mountAll();
+      if (window.crmDeskTransit?.isBusy?.()) activeRefreshPending = true;
+      else { activeRefreshPending = false; requestPreviews(false); refreshPriorityHand(); }
+    }
     else { clearTimeout(handRefreshTimer); handRefreshGeneration += 1; }
     return window.crmHome;
   };
+  document.addEventListener("crm:desk-transit-settled", (event) => {
+    if (!activeRefreshPending || event.detail?.key !== "home" || !camera?.isActive?.()) return;
+    activeRefreshPending = false;
+    requestAnimationFrame(() => {
+      if (!camera?.isActive?.() || window.crmDeskTransit?.isBusy?.()) { activeRefreshPending = true; return; }
+      requestPreviews(false);
+      refreshPriorityHand();
+    });
+  });
   const waitForModuleSettled = (key, timeoutMs = 1800) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
     const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
@@ -428,13 +454,19 @@
       const next=source?.querySelector?.(selector)?`${source.childElementCount}:${source.querySelectorAll("*").length}`:"";
       stable=next&&next===last?stable+1:0;last=next;if(stable>=2||performance.now()-started>=timeoutMs)resolve();else requestAnimationFrame(tick)};requestAnimationFrame(tick);
   });
+  const waitForModuleReady = (key) => new Promise((resolve) => {
+    const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
+    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
+    if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
+  });
   const captureBaseline = async (key) => {
     if (window.crmHomePreviews?.isCaptureWorker) return previews.get(key)||null;
     try { const result=await window.crmHomePreviews?.capture?.(key); if(result?.preview)acceptPreview(result.preview); } catch {}
     return previews.get(key)||null;
   };
   window.addEventListener("resize",()=>camera?.layout?.());
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false)},captureBaseline,waitForModuleSettled,
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false)},captureBaseline,waitForModuleSettled,waitForModuleReady,recycleExpander,
     previewStatus:()=>MODULES.map(({key})=>({key,state:previews.has(key)?"ready":"waiting",version:previews.get(key)?.version||null,capturedAt:previews.get(key)?.capturedAt||0,layoutSignature:previews.get(key)?.layoutSignature||null})),
     handStatus:()=>({count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)})};
 })();

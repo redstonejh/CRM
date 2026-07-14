@@ -21,6 +21,13 @@
       /* The veil carries the fully-dived bucket lid for one beat while the
          destination theater takes the stage beneath its frost, then fades. */
       .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none; }
+      /* A destination appears behind the camera lid in its final visual state.
+         Its own entrance transitions must not restart shadows or geometry when
+         the lid is removed one frame later. */
+      html.crm-transit-materializing [data-crm-theater]:not([hidden]),
+      html.crm-transit-materializing [data-crm-theater]:not([hidden]) * {
+        animation: none !important; transition: none !important; scroll-behavior: auto !important;
+      }
     `;
     document.head.appendChild(style);
   };
@@ -47,17 +54,23 @@
       veil.appendChild(lid);   // adopt the lid out of the camera so the theater toggle can't hide it
       document.body.appendChild(veil);
     }
+    document.documentElement.classList.add("crm-transit-materializing");
     commit(key);
-    // Keep the settled full-viewport baseline over the theater until the real
-    // destination has completed its own render. Because both share the same
-    // coordinates, the only visible release is the acrylic material itself.
-    try { await window.crmHome?.waitForModuleSettled?.(key); } catch {}
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    // Release on the first paint-ready frame. There is no post-animation dwell:
+    // the moving lid is replaced directly by the fully materialized theater.
+    try {
+      if (window.crmHome?.waitForModuleReady) await window.crmHome.waitForModuleReady(key);
+      else await window.crmHome?.waitForModuleSettled?.(key);
+    } catch {}
+    requestAnimationFrame(() => {
       veil?.remove();
-      cam?.rebuildRoot?.();
+      if (cam?.restoreRoot) cam.restoreRoot();
+      else cam?.rebuildRoot?.();
+      try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
       if (surface) surface.style.zIndex = "";
+      document.documentElement.classList.remove("crm-transit-materializing");
       done();
-    }));
+    });
   };
 
   // Home (active, level 0) → module: play the home camera's own dive, commit at
@@ -108,6 +121,7 @@
     const done = () => {
       busy = false;
       resolve(true);
+      document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
       const next = queued;
       queued = null;
       if (next) driveTo(next.key).then(next.resolve);
@@ -133,6 +147,7 @@
     const done = () => {
       busy = false;
       resolve(true);
+      document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
       const next = queued;
       queued = null;
       if (next) driveTo(next.key).then(next.resolve);

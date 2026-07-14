@@ -12,6 +12,8 @@
     const contractFadeMs = Number.isFinite(Number(config.contractFadeMs)) ? Number(config.contractFadeMs) : Math.round(morphMs * .35);
     const contractFadeDelay = Math.max(0, morphMs - contractFadeMs);
     const keepBelowVisible = config.keepBelowVisibleDuringTransition === true;
+    const precomposeTransitions = config.precomposeTransitions === true;
+    const lockInputDuringTransitions = config.lockInputDuringTransitions === true;
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -86,7 +88,7 @@
       el.addEventListener("transitionend", onEnd);
     };
     const transitionFrame = (fn) => requestAnimationFrame(() => {
-      if (config.precomposeTransitions === true) requestAnimationFrame(fn);
+      if (precomposeTransitions) requestAnimationFrame(fn);
       else fn();
     });
     const ensure = () => {
@@ -185,7 +187,10 @@
       const kx = E.w / source.w;
       const ky = E.h / source.h;
       const dive = `translate(${(E.x - below.offsetLeft - source.x * kx).toFixed(2)}px, ${(E.y - below.offsetTop - source.y * ky).toFixed(2)}px) scale(${kx.toFixed(4)}, ${ky.toFixed(4)})`;
-      void expander.offsetWidth;
+      // A second animation frame commits the start styles without forcing a
+      // synchronous layout. Cameras without precomposition retain the legacy
+      // flush because their transition begins on the next frame.
+      if (!precomposeTransitions) void expander.offsetWidth;
       transitionFrame(() => {
         expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
         expander.style.transform = "none";
@@ -240,9 +245,13 @@
       const rx = below.offsetLeft + sourceRect.x;
       const ry = below.offsetTop + sourceRect.y;
       below.style.transition = "none";
-      below.style.zIndex = "5";
-      below.style.pointerEvents = "auto";
-      below.style.transform = dive;
+      // Precomposed cameras get one covered frame at their native scale before
+      // the zoomed start transform is applied. The full-screen expander hides
+      // that preparation, while Chromium can retain a viewport-scale texture
+      // instead of first rasterizing the root at a very large zoom scale.
+      below.style.zIndex = precomposeTransitions ? "3" : "5";
+      below.style.pointerEvents = lockInputDuringTransitions ? "none" : "auto";
+      below.style.transform = precomposeTransitions ? "none" : dive;
       below.style.opacity = keepBelowVisible ? "1" : (config.contractFadeMs != null ? "0" : "1");
       below.style.visibility = "";
       expander.style.transition = "none";
@@ -262,8 +271,8 @@
         settleWaiters();
       });
       config.onTransitionStart?.("contract", ctx());
-      void below.offsetWidth;
-      transitionFrame(() => {
+      if (!precomposeTransitions) void below.offsetWidth;
+      const beginTransition = () => {
         if (seq !== transitionSeq) return;
         below.style.transition = keepBelowVisible
           ? `transform ${morphMs}ms ${ease}`
@@ -275,7 +284,14 @@
         expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`;
         expander.style.transform = `translate(${(rx - E.x).toFixed(2)}px, ${(ry - E.y).toFixed(2)}px) scale(${(sourceRect.w / E.w).toFixed(5)}, ${(sourceRect.h / E.h).toFixed(5)})`;
         expander.style.opacity = "0";
+      };
+      if (precomposeTransitions) requestAnimationFrame(() => {
+        if (seq !== transitionSeq) return;
+        below.style.zIndex = "5";
+        below.style.transform = dive;
+        requestAnimationFrame(beginTransition);
       });
+      else transitionFrame(beginTransition);
       afterTransform(expander, () => {
         if (seq !== transitionSeq) {
           expander.remove();
@@ -283,6 +299,7 @@
         }
         commit();
         below.style.zIndex = "";
+        below.style.pointerEvents = "";
         expander.remove();
       });
     };
@@ -325,6 +342,28 @@
       surface.dataset.level = "0";
       layout();
       config.onLevelChange?.(ctx());
+    };
+    // Restore the already-rendered root after an adopted transition lid has
+    // been removed. This avoids throwing away decoded images and compositor
+    // layers merely to return the camera to level zero.
+    const restoreRoot = () => {
+      ensure();
+      dropWarm();
+      transitionSeq += 1;
+      const root = layers[0];
+      layers.slice(1).forEach((el) => el?.remove?.());
+      if (!root) { rebuildRoot(); return; }
+      [...surface.children].forEach((child) => { if (child !== root) child.remove(); });
+      Object.assign(root.style, {
+        zIndex: "", pointerEvents: "", transition: "none", visibility: "",
+        transform: "none", opacity: "1",
+      });
+      layers = [root];
+      level = 0;
+      transitioning = false;
+      surface.dataset.level = "0";
+      config.onLevelChange?.(ctx());
+      settleWaiters();
     };
     const refresh = () => {
       if (!surface) return;
@@ -384,6 +423,7 @@
       whenSettled,
       refresh,
       rebuildRoot,
+      restoreRoot,
       dropWarm,
       layout,
     };

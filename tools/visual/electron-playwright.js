@@ -6,6 +6,7 @@ const { _electron: electron } = require('playwright');
 const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MOTION_TARGET = { minFps: 65, maxP95Ms: 55, maxFrameMs: 110, maxOver34Ms: 3 };
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
   && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
@@ -20,6 +21,51 @@ async function frameRate(page, duration = 1200) {
     const tick = (now) => { frames += 1; if (now - started >= ms) resolve(frames * 1000 / (now - started)); else requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
   }), duration);
+}
+
+async function startMotionProbe(page, label, duration = 560) {
+  await page.evaluate(({ probeLabel, durationMs }) => {
+    window.__crmMotionProbes ||= {};
+    const probe = { label: probeLabel, durationMs, startedAt: performance.now(), deltas: [], done: false };
+    probe.promise = new Promise((resolve) => {
+      let previous = probe.startedAt;
+      const tick = (now) => {
+        probe.deltas.push(now - previous);
+        previous = now;
+        if (now - probe.startedAt < durationMs) requestAnimationFrame(tick);
+        else {
+          const sorted = [...probe.deltas].sort((a, b) => a - b);
+          const percentile = (value) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * value) - 1))] || 0;
+          probe.result = {
+            label: probeLabel,
+            durationMs: now - probe.startedAt,
+            frames: probe.deltas.length,
+            fps: probe.deltas.length * 1000 / (now - probe.startedAt),
+            p95Ms: percentile(.95),
+            p99Ms: percentile(.99),
+            maxMs: sorted.at(-1) || 0,
+            over25Ms: probe.deltas.filter((delta) => delta > 25).length,
+            over34Ms: probe.deltas.filter((delta) => delta > 34).length,
+          };
+          probe.done = true;
+          resolve(probe.result);
+        }
+      };
+      requestAnimationFrame(tick);
+    });
+    window.__crmMotionProbes[probeLabel] = probe;
+  }, { probeLabel: label, durationMs: duration });
+}
+
+async function finishMotionProbe(page, label) {
+  return page.evaluate((probeLabel) => window.__crmMotionProbes?.[probeLabel]?.promise, label);
+}
+
+function assertMotion(label, probe) {
+  if (!probe || probe.fps < MOTION_TARGET.minFps || probe.p95Ms > MOTION_TARGET.maxP95Ms
+    || probe.maxMs > MOTION_TARGET.maxFrameMs || probe.over34Ms > MOTION_TARGET.maxOver34Ms) {
+    throw new Error(`${label} missed motion budget ${JSON.stringify({ target: MOTION_TARGET, probe })}`);
+  }
 }
 
 function imageDifference(exactBuffer, liveBuffer, region) {
@@ -79,6 +125,28 @@ async function main() {
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);
   await page.screenshot({ path: path.join(out, '01-home.png') });
 
+  const instantControls = await page.evaluate(() => {
+    const measure = (activate, reacted) => {
+      const started = performance.now(); activate();
+      return { elapsedMs: performance.now() - started, reacted: !!reacted() };
+    };
+    const background = document.querySelector('.background-tone-menu');
+    background.open = false;
+    const backgroundMenu = measure(() => background.querySelector('summary').click(), () => background.open);
+    background.open = false;
+    const profile = document.querySelector('.auth-profile-cluster');
+    profile?.classList.remove('open');
+    const accountMenu = measure(() => profile?.querySelector('.auth-profile-button')?.click(), () => profile?.classList.contains('open'));
+    profile?.classList.remove('open');
+    window.crmSearchDeck?.close?.();
+    const search = measure(() => document.querySelector('.control-bar-search')?.click(), () => window.crmSearchDeck?.isOpen?.());
+    window.crmSearchDeck?.close?.();
+    return { backgroundMenu, accountMenu, search };
+  });
+  if (Object.values(instantControls).some((control) => !control.reacted || control.elapsedMs > 32)) {
+    throw new Error(`A top-level control did not react in the originating frame: ${JSON.stringify(instantControls)}`);
+  }
+
   const domainProbe = await page.evaluate(async () => { try { await window.crmDomain.list('commitments', { limit:1 }); return true; } catch { return false; } });
   if (!domainProbe) throw new Error('domain:list is not handled');
 
@@ -101,8 +169,11 @@ async function main() {
     const before = await page.evaluate((key)=>window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0,room.key);
     const selector=`.crm-home-grid > .crm-home-bucket[data-module="${room.key}"]`;
     await page.hover(selector); await sleep(160);
-    await page.evaluate(() => { const p=window.__fps={start:performance.now(),frames:0,fps:0}; const tick=(now)=>{p.frames+=1;if(now-p.start<1100)requestAnimationFrame(tick);else p.fps=p.frames*1000/(now-p.start)};requestAnimationFrame(tick); const motion=window.__transitionFps={start:performance.now(),frames:0,fps:0};const motionTick=(now)=>{motion.frames+=1;if(now-motion.start<520)requestAnimationFrame(motionTick);else motion.fps=motion.frames*1000/(now-motion.start)};requestAnimationFrame(motionTick); });
-    await page.click(selector); await sleep(100);
+    await page.evaluate(() => { const p=window.__fps={start:performance.now(),frames:0,fps:0}; const tick=(now)=>{p.frames+=1;if(now-p.start<1100)requestAnimationFrame(tick);else p.fps=p.frames*1000/(now-p.start)};requestAnimationFrame(tick); });
+    await startMotionProbe(page, `in-${room.key}`);
+    const inboundReaction=await page.$eval(selector,(bucket)=>{const started=performance.now();bucket.click();return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),transitioning:window.crmHomeCamera?.isTransitioning?.()}});
+    if(!inboundReaction.busy||!inboundReaction.transitioning||inboundReaction.elapsedMs>50)throw new Error(`${room.key} click did not start its camera move immediately: ${JSON.stringify(inboundReaction)}`);
+    await sleep(100);
     const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(surface?.querySelectorAll('.crm-home-title-glass')||[])];return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-moving')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
     const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===2&&mid.rect&&mid.rect.width>=300;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
@@ -120,12 +191,18 @@ async function main() {
     const liveBuffer=await page.screenshot({path:path.join(out,`room-${room.key}.png`)});
     const exactBuffer=Buffer.from(state.exactSrc.split(',')[1]||'','base64');
     const pixelMae=imageDifference(exactBuffer,liveBuffer,{left:50,right:1230,top:105,bottom:755});
-    const probe=await page.evaluate(()=>({settled:window.__fps,transition:window.__transitionFps}));
+    const probe={settled:await page.evaluate(()=>window.__fps),transition:await finishMotionProbe(page,`in-${room.key}`)};
+    assertMotion(`${room.key} inbound`,probe.transition);
     const badBucket=state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
     if(!state.visible||state.count!==room.expected||state.arrows||badBucket||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.settled.fps<40||probe.transition.fps<45)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
-    await page.evaluate(()=>window.crmDeskTransit.driveTo('home')); await page.waitForFunction(readyHome,null,{timeout:15000});
+    await startMotionProbe(page,`out-${room.key}`);
+    const outboundReaction=await page.evaluate(()=>{const started=performance.now();window.__homeDrive=window.crmDeskTransit.driveTo('home');return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),level:window.crmHomeCamera?.level?.(),module:document.body.dataset.crmModule}});
+    if(!outboundReaction.busy||outboundReaction.level!==1||outboundReaction.module!=='home'||outboundReaction.elapsedMs>50)throw new Error(`${room.key} Home click did not start its camera move immediately: ${JSON.stringify(outboundReaction)}`);
+    await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
+    const outbound=await finishMotionProbe(page,`out-${room.key}`);
+    assertMotion(`${room.key} outbound`,outbound);
     await page.waitForFunction(({key,before})=>(window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0)>before,{key:room.key,before},{timeout:30000});
-    transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,transitionFps:probe.transition.fps,signatureMatches:true});
+    transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundReaction,outboundReaction,signatureMatches:true});
   }
   await page.evaluate(()=>window.crmWorkspaces.setActive('people'));
   await page.waitForFunction(()=>!!document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]'),null,{timeout:10000});
@@ -153,7 +230,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,domainProbe,transitions,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,instantControls,domainProbe,transitions,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
 }

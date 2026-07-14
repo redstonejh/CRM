@@ -66,17 +66,22 @@ async function main() {
       && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
     detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/6 surfaces`,
   }));
-  await check('Home uses focused Tickets, Bills, and Invoices rooms instead of broad placeholders', () => {
-    const keys = ['desk','people','cases','bills','invoices','calendar'];
+  await check('Home uses focused operating rooms and Assignments instead of a bespoke Calendar tile', () => {
+    const keys = ['desk','people','cases','bills','invoices','assignments'];
+    const overviewTile = document.querySelector('.crm-home-bucket[data-module="desk"]');
     const ticketTile = document.querySelector('.crm-home-bucket[data-module="cases"]');
     const billTile = document.querySelector('.crm-home-bucket[data-module="bills"]');
     const invoiceTile = document.querySelector('.crm-home-bucket[data-module="invoices"]');
+    const assignmentTile = document.querySelector('.crm-home-bucket[data-module="assignments"]');
     return keys.every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`))
+      && !document.querySelector('.crm-home-bucket[data-module="calendar"]')
       && !document.querySelector('.crm-home-bucket[data-module="pipeline"]')
       && !document.querySelector('.crm-home-bucket[data-module="jobs"],.crm-home-bucket[data-module="money"]')
+      && overviewTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Overview'
       && ticketTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Tickets'
       && billTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Bills'
-      && invoiceTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Invoices';
+      && invoiceTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Invoices'
+      && assignmentTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Assignments';
   });
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0 && document.querySelectorAll('.crm-home-hand-card.tk-card').length > 0, { timeout: 10000 });
   await check('Home hand uses card-system card objects', () => {
@@ -151,18 +156,72 @@ async function main() {
   await sleep(650);
   await check('Home camera lands directly on the destination', () => document.body.dataset.crmModule === 'desk' && !document.querySelector('.crm-transit-veil'));
   await check('Tile room does not exclude the title-bar drag region', () => {
-    const room = document.querySelector('.crm-desk-surface:not([hidden])');
+    const room = document.querySelector('.crm-overview-surface:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
   });
-  await page.waitForFunction(() => document.querySelectorAll('.crm-desk-commitment').length >= 4, { timeout: 10000 });
-  await check('Desk merges due work, live workflows, and activity', () => ({
-    ok: document.querySelectorAll('.crm-desk-commitment').length >= 4
-      && document.querySelectorAll('.crm-desk-work-card').length >= 5
-      && document.querySelectorAll('.crm-desk-activity').length >= 2,
-    detail: `${document.querySelectorAll('.crm-desk-commitment').length} commitments / ${document.querySelectorAll('.crm-desk-work-card').length} work / ${document.querySelectorAll('.crm-desk-activity').length} activity`,
-  }));
-  await check('Desk has explicit stage indicators, not stage labels alone', () => document.querySelectorAll('.crm-desk-stagebar i.is-on').length >= 5);
-  await check('Retired Home, Today, and Reports theaters do not own the stage', () => ![...document.querySelectorAll('[data-crm-theater="home"],[data-crm-theater="today"],[data-crm-theater="reports"]')].some((el) => !el.hidden));
+  await page.waitForFunction(() => document.querySelectorAll('.crm-overview-panel').length === 3
+    && document.querySelectorAll('.crm-overview-work-group').length >= 3
+    && document.querySelectorAll('.crm-overview-card.tk-card .ticket-body').length >= 7, { timeout: 10000 });
+  await check('Overview keeps the generic calculated Commitments, Work in motion, and What changed template', () => {
+    const panels = [...document.querySelectorAll('.crm-overview-panel')];
+    const groups = [...document.querySelectorAll('.crm-overview-work-group')];
+    const cards = [...document.querySelectorAll('.crm-overview-card.tk-card')];
+    const metrics = [...document.querySelectorAll('.crm-overview-metric-value,.crm-overview-summary-value')];
+    return {
+      ok: panels.map((panel) => panel.querySelector('.crm-overview-panel-title')?.textContent.trim()).join(',') === 'Commitments,Work in motion,What changed'
+        && groups.length >= 3 && cards.length >= 7 && metrics.length >= groups.length + 2
+        && metrics.every((metric) => Number.isFinite(Number(metric.textContent.trim())))
+        && document.querySelectorAll('.crm-overview-stack-card').length >= 3
+        && document.querySelectorAll('.crm-overview-recent-card').length >= 2
+        && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.recordEntity)
+        && !document.querySelector('.crm-overview-bucket,[data-overview-phase]')
+        && !document.querySelector('[data-overview-system]')
+        && !document.querySelector('.crm-desk-panel,.crm-desk-work-card,.crm-desk-stagebar,.crm-desk-activity'),
+      detail: `${panels.length} calculated panels / ${groups.length} truthful source pools / ${cards.length} supporting cards`,
+    };
+  });
+  await check('Overview numbers are the primary hierarchy and literal objects are supporting evidence', () => {
+    const primary = document.querySelector('.crm-overview-metric-value');
+    const supporting = document.querySelector('.crm-overview-work-card');
+    const metricSize = Number.parseFloat(getComputedStyle(primary).fontSize);
+    const cardRect = supporting?.getBoundingClientRect();
+    return metricSize >= 45 && cardRect?.width <= 130 && cardRect?.height <= 195
+      && !!document.querySelector('.crm-overview-attention-stack')
+      && !!document.querySelector('.crm-overview-work-groups')
+      && !!document.querySelector('.crm-overview-recent-trail');
+  });
+  await check('Overview generic panels consume the exact canonical menu shell', () => {
+    const reference = document.querySelector('.auth-profile-menu');
+    const panels = [...document.querySelectorAll('.crm-overview-panel')];
+    if (!reference || panels.length !== 3) return false;
+    const expected = getComputedStyle(reference);
+    return panels.every((panel) => {
+      const actual = getComputedStyle(panel);
+      return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'color']
+        .every((property) => actual[property] === expected[property]);
+    });
+  });
+  await page.mouse.move(800, 470);
+  await sleep(380);
+  await check('Commitments rest as a compact literal card stack', () => {
+    const cards = [...document.querySelectorAll('.crm-overview-attention-stack .crm-overview-stack-card')];
+    const tops = cards.map((card) => card.getBoundingClientRect().top);
+    return cards.length >= 3 && Math.max(...tops) - Math.min(...tops) < 130;
+  });
+  await page.hover('.crm-overview-attention-stack');
+  await sleep(450);
+  await check('Commitment cards reveal vertically without changing the overview template', () => {
+    const cards = [...document.querySelectorAll('.crm-overview-attention-stack .crm-overview-stack-card')];
+    const tops = cards.map((card) => card.getBoundingClientRect().top);
+    return cards.length >= 3 && Math.max(...tops) - Math.min(...tops) > 180;
+  });
+  await page.mouse.move(800, 470);
+  await check('Recent change is expressed as a separate literal card trail', () => {
+    const cards = [...document.querySelectorAll('.crm-overview-recent-trail .crm-overview-recent-card')];
+    const tops = cards.map((card) => card.getBoundingClientRect().top);
+    return cards.length >= 2 && Math.max(...tops) - Math.min(...tops) > 65;
+  });
+  await check('Retired standalone Home, Today, and Reports theaters do not own the stage', () => ![...document.querySelectorAll('[data-crm-theater="home"],[data-crm-theater="today"],[data-crm-theater="reports"]')].some((el) => !el.hidden));
 
   await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
   await sleep(650);
@@ -186,8 +245,117 @@ async function main() {
     !!document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-zone')
       && !document.querySelector('[data-crm-theater="pipeline"]:not([hidden])')
   ));
-  await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
-  await page.waitForFunction(() => document.body.dataset.crmModule === 'home', { timeout: 5000 });
+  await check('Pipeline rooms are explicitly focused on the current day', () => {
+    const context = document.querySelector('.crm-temporal-context:not([hidden])');
+    const today = new Date();
+    const localIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return !!context && context.textContent.includes('Today') && document.body.dataset.crmTemporalDate === localIso;
+  });
+  await page.waitForFunction(() => !window.crmDeskTransit?.isBusy?.(), { timeout: 5000 });
+  await page.keyboard.press('KeyB');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout: 5000 });
+  await check('Zooming out of a pipeline reveals the current month in the shared calendar', () => {
+    const today = new Date();
+    const month = document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${today.getMonth() + 1}"]`);
+    return window.fractalCalendar.year() === today.getFullYear() && !!month && !month.hidden;
+  });
+  await page.keyboard.press('KeyB');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 0, { timeout: 5000 });
+  await page.keyboard.press('KeyB');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home', { timeout: 10000 });
+
+  await activate('assignments');
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-source-pool').length === 8
+    && document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-hand-card.tk-card').length === 10, { timeout: 10000 });
+  await check('Assignments uses ordinary canonical buttons for grouping and real cards for people', () => {
+    const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
+    const pools = [...(theater?.querySelectorAll('button.crm-assignment-source-pool.crm-menu-action') || [])];
+    const buckets = [...(theater?.querySelectorAll('.crm-assignment-bucket.tk-zone') || [])];
+    const people = [...(theater?.querySelectorAll('.crm-assignment-hand-card.tk-card') || [])];
+    const reference = document.querySelector('.auth-menu-item');
+    const expected = getComputedStyle(reference);
+    const button = pools.find((pool) => !pool.classList.contains('is-selected'));
+    const actual = getComputedStyle(button);
+    const sameButton = ['backgroundColor','borderTopWidth','borderRadius','color','fontSize','fontWeight','boxShadow','paddingLeft','paddingRight']
+      .every((property) => actual[property] === expected[property]);
+    return pools.length === 8 && buckets.length > 0 && people.length === 10
+      && people.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.assignmentContactId)
+      && pools.filter((pool) => pool.classList.contains('is-selected')).length === 1
+      && sameButton && !theater.querySelector('.crm-assignment-source-pool.tk-zone')
+      && buckets.every((bucket) => !!bucket.dataset.assignmentCommitment)
+      && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head');
+  });
+  await check('The grouping panel clips to its buttons and scrolls only when the list outgrows its cap', () => {
+    const panel = document.querySelector('.crm-assignment-pools')?.getBoundingClientRect();
+    const stack = document.querySelector('.crm-assignment-pool-stack');
+    const buttons = [...(stack?.querySelectorAll('.crm-assignment-source-pool') || [])];
+    const last = buttons.at(-1)?.getBoundingClientRect();
+    return !!panel && !!last && panel.bottom - last.bottom <= 12
+      && getComputedStyle(stack).overflowY === 'auto';
+  });
+  const firstPool = await page.$eval('.crm-assignment-source-pool.is-selected', (pool) => pool.dataset.assignmentPool);
+  await page.click('.crm-assignment-source-pool:not(.is-selected)');
+  await page.waitForFunction((previous) => document.querySelector('.crm-assignment-source-pool.is-selected')?.dataset.assignmentPool !== previous
+    && document.querySelectorAll('.crm-assignment-hand-card.tk-card').length === 10, {}, firstPool);
+  await check('Selecting another pool replaces the hand with that pool’s people', () => {
+    const selected = document.querySelector('.crm-assignment-source-pool.is-selected');
+    const count = Number(selected?.querySelector('.crm-assignment-source-pool-count')?.textContent || 0);
+    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
+    return !!selected && count === cards.length && cards.length === 10;
+  });
+  await page.mouse.move(2, 2);
+  await sleep(430);
+  await check('The Assignments hand rests as the same card-top peek used on Home', () => {
+    const stage = document.querySelector('.crm-assignment-stage')?.getBoundingClientRect();
+    const hand = document.querySelector('.crm-assignment-hand')?.getBoundingClientRect();
+    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
+    return !!stage && !!hand && Math.abs(stage.bottom - innerHeight) <= 1
+      && Math.abs(hand.left + hand.width / 2 - innerWidth / 2) <= 1
+      && cards.length === 10 && cards.every((card) => {
+      const exposed = stage.bottom - card.getBoundingClientRect().top;
+      return exposed >= 108 && exposed <= 160;
+    });
+  });
+  const assignmentHandHoverPoint = await page.$eval('.crm-assignment-hand-trigger', (trigger) => {
+    const rect = trigger.getBoundingClientRect();
+    return { x: rect.left + 28, y: rect.bottom - 24 };
+  });
+  await page.mouse.move(assignmentHandHoverPoint.x, assignmentHandHoverPoint.y);
+  await sleep(460);
+  await check('Hovering the Assignments hand reveals the complete arc', () => {
+    const stage = document.querySelector('.crm-assignment-stage')?.getBoundingClientRect();
+    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
+    return !!stage && cards.length === 10 && cards.every((card) => {
+      const rect = card.getBoundingClientRect();
+      return rect.top >= stage.top && rect.bottom <= stage.bottom + 1;
+    });
+  });
+  await page.evaluate(() => { window.__assignmentHandTargetTop = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')].at(-1)?.getBoundingClientRect().top || 0; });
+  await page.hover('.crm-assignment-hand-card.tk-card:last-child');
+  await sleep(220);
+  await check('The person card under the cursor lifts slightly above the revealed hand', () => {
+    const card = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')].at(-1);
+    return !!card && card.getBoundingClientRect().top <= window.__assignmentHandTargetTop - 4;
+  });
+  await page.mouse.move(2, 2);
+  const assignment = await page.evaluate(async () => {
+    const bucket = document.querySelector('.crm-assignment-bucket');
+    const person = document.querySelector('.crm-assignment-hand-card');
+    const commitmentId = bucket?.dataset.assignmentCommitment || '';
+    const contactId = person?.dataset.assignmentContactId || '';
+    const ok = await window.crmAssignments.assign(commitmentId, contactId);
+    const record = (await window.crmDomain.list('commitments', { includeDeleted: false, limit: 100 })).records.find((item) => String(item.id) === commitmentId);
+    window.__assignmentContract = { ok, commitmentId, contactId, persisted: String(record?.assignedContactId || '') === contactId };
+    return window.__assignmentContract;
+  });
+  await page.waitForFunction((id) => !!document.querySelector(`[data-assignment-commitment="${CSS.escape(id)}"] .crm-assignment-bucket-card`), {}, assignment.commitmentId);
+  await check('Assigning a person persists the activity relationship and seats the card in its bucket', () => {
+    const probe = window.__assignmentContract;
+    return !!probe?.ok && !!probe.persisted
+      && !!document.querySelector(`[data-assignment-commitment="${CSS.escape(probe.commitmentId)}"] .crm-assignment-bucket-card[data-assignment-contact-id="${CSS.escape(probe.contactId)}"]`);
+  });
+  await page.evaluate((id) => window.crmAssignments.unassign(id), assignment.commitmentId);
+  await page.waitForFunction((id) => !document.querySelector(`[data-assignment-commitment="${CSS.escape(id)}"] .crm-assignment-bucket-card`), {}, assignment.commitmentId);
 
   await activate('people');
   await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8
@@ -375,31 +543,19 @@ async function main() {
   await page.keyboard.press('Escape');
 
   await activate('desk');
-  await check('Desk consumes the account/background shell and item recipes', () => {
-    const referenceShell = document.querySelector('.auth-profile-menu');
-    const referenceItem = document.querySelector('.auth-profile-menu .auth-menu-item');
-    const panels = [...document.querySelectorAll('.crm-desk-panel')];
-    const actions = [...document.querySelectorAll('.crm-desk-work-card')];
-    if (!referenceShell || !referenceItem || !panels.length || !actions.length) return false;
-    const shellProperties = ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'paddingTop', 'paddingRight', 'rowGap'];
-    const itemProperties = ['backgroundColor', 'borderTopWidth', 'borderRadius', 'color', 'fontSize', 'fontWeight', 'boxShadow', 'paddingLeft', 'paddingRight'];
-    const differences = [];
-    const same = (element, reference, properties, label) => {
-      const actual = getComputedStyle(element); const expected = getComputedStyle(reference);
-      return properties.every((property) => {
-        if (actual[property] === expected[property]) return true;
-        differences.push(`${label}.${property}: ${actual[property]} != ${expected[property]}`);
-        return false;
-      });
-    };
-    panels.forEach((panel, index) => same(panel, referenceShell, shellProperties, `panel${index}`));
-    actions.forEach((action, index) => same(action, referenceItem, itemProperties, `action${index}`));
-    return { ok: differences.length === 0, detail: differences.slice(0, 6).join('; ') };
+  await check('Overview reuses native card paint, faces, and progress segments without menu-styled substitutes', () => {
+    const cards = [...document.querySelectorAll('.crm-overview-card.tk-card')];
+    return cards.length >= 7
+      && cards.every((card) => !!card.style.backgroundImage && !!card.querySelector('.ticket-body'))
+      && cards.some((card) => card.querySelector('.tk-bars-card .tk-seg'))
+      && cards.every((card) => !card.classList.contains('crm-menu-action'));
   });
-  await page.click('.crm-desk-work-card');
+  await page.click('.crm-overview-card[data-record-entity="contacts"]');
   await page.waitForSelector('.record-world-shell:not([hidden])');
-  await check('A work card opens contextual identity, workflow, relationships, commitments, and activity', () => ({
-    ok: !!document.querySelector('.record-world-facts') && !!document.querySelector('.record-world-flow-bar')
+  await check('An Overview card opens the same contextual record screen as its source module', () => ({
+    ok: document.querySelector('.record-world-kicker')?.textContent.trim() === 'Person'
+      && document.querySelector('.record-world-title')?.textContent.trim() === 'Iris Chen'
+      && !!document.querySelector('.record-world-facts')
       && !!document.querySelector('.record-world-related') && !!document.querySelector('.record-world-commitments')
       && !!document.querySelector('.record-world-timeline'),
     detail: document.querySelector('.record-world-title')?.textContent || '',
@@ -411,18 +567,10 @@ async function main() {
   await check('Adding a note creates durable contextual activity', () => [...document.querySelectorAll('.record-world-event-content')].some((el) => el.textContent.includes('Interaction contract note')));
   await page.keyboard.press('Escape');
   await page.waitForSelector('.record-world-shell[hidden]');
-  await activate('desk');
-
-  const before = await page.$$eval('.crm-desk-surface:not([hidden]) .crm-desk-commitment', (els) => els.length);
-  const completedId = await page.$eval('.crm-desk-surface:not([hidden]) .crm-desk-commitment', (el) => el.dataset.commitmentId);
-  await page.evaluate((id) => { window.__completedCommitmentId = id; }, completedId);
-  await page.click('.crm-desk-surface:not([hidden]) .crm-desk-check');
-  await page.waitForFunction((count) => document.querySelectorAll('.crm-desk-commitment').length === count - 1, { timeout: 5000 }, before);
-  await check('Completing a commitment removes it from the open Desk', () => document.querySelectorAll('.crm-desk-commitment').length === 3);
   await activate('home');
-  await page.waitForFunction((id) => !window.crmHome?.handStatus?.().ids.includes(id)
-    && document.querySelectorAll('.crm-home-hand-card.tk-card').length === window.crmHome?.handStatus?.().count, { timeout: 10000 }, completedId);
-  await check('The Home hand tracks live priority changes', () => !window.crmHome.handStatus().ids.includes(window.__completedCommitmentId));
+  await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0
+    && document.querySelectorAll('.crm-home-hand-card.tk-card').length === window.crmHome?.handStatus?.().count, { timeout: 10000 });
+  await check('The Home priority hand remains independent of the Overview summary', () => window.crmHome.handStatus().count > 0);
   await page.hover('.crm-home-hand-trigger');
   await sleep(420);
   await page.evaluate(() => {

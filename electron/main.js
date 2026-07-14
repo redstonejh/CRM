@@ -73,11 +73,11 @@ let mainWindow = null;
 let previewWindow = null;
 let settings = loadSettings();
 const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions'];
-const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'bills', 'invoices', 'calendar'];
+const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'bills', 'invoices', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'financial-split-clean-v12';
+const HOME_PREVIEW_VERSION = 'assignment-centered-hand-v22';
 const homePreviewCache = new Map();
 let homePreviewQueue = Promise.resolve();
 let homePreviewRefreshTimer = null;

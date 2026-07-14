@@ -6,6 +6,8 @@
 // setActive remain the instant commit primitive, called only at choreography
 // boundaries (and at boot/restore, which is not navigation).
 (() => {
+  const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "money", "bills", "invoices", "cases"]);
+  let temporalContext = null;
   const TRANSIT_Z = "2500";        // below the untouched native drag strip/chrome
 
   let busy = false;
@@ -150,6 +152,35 @@
     if (key === "Escape" && document.querySelector("section[data-crm-theater]:not([hidden]) .tk-stack-btn.is-active")) return true;
     return false;
   };
+  const today = () => {
+    const date = window.__CRM_NOW__ ? new Date(window.__CRM_NOW__) : new Date();
+    return Number.isFinite(date.getTime()) ? date : new Date();
+  };
+  const localDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const syncTemporalContext = (key = document.body.dataset.crmModule || "home") => {
+    if (!temporalContext) {
+      const style = document.createElement("style");
+      style.textContent = `.crm-temporal-context{position:fixed;left:50%;top:61px;z-index:4450;transform:translateX(-50%);pointer-events:none;text-align:center;color:rgba(255,255,255,.62);font:600 11px/1.35 system-ui;letter-spacing:.025em}.crm-temporal-context strong{display:block;color:#fff;font-size:13px}`;
+      document.head.appendChild(style);
+      temporalContext = document.createElement("div");
+      temporalContext.className = "crm-temporal-context crm-menu-item";
+      document.body.appendChild(temporalContext);
+    }
+    const on = TEMPORAL_MODULES.has(key);
+    temporalContext.hidden = !on;
+    if (on) {
+      const date = today();
+      temporalContext.innerHTML = `<strong>Today · ${date.toLocaleDateString([], { month: "long", day: "numeric" })}</strong>B or Escape zooms out to the month`;
+      document.body.dataset.crmTemporalDate = localDateKey(date);
+    } else delete document.body.dataset.crmTemporalDate;
+  };
+  const zoomOutToCalendar = (fromKey = document.body.dataset.crmModule || "") => {
+    if (!TEMPORAL_MODULES.has(fromKey)) return false;
+    window.crmWorkspaces?.setActive?.("calendar");
+    requestAnimationFrame(() => window.fractalCalendar?.openMonthFor?.(today()));
+    return true;
+  };
+  document.addEventListener("crm:theater-switch", (event) => syncTemporalContext(event.detail?.key));
   document.addEventListener("keydown", (event) => {
     if (event.key !== "b" && event.key !== "B" && event.key !== "Escape") return;
     if (event.defaultPrevented) return;
@@ -158,12 +189,24 @@
     const current = document.body.dataset.crmModule || "home";
     if (current === "home" || current === "calendar") return;   // home is root; calendar's camera owns its chain
     if (busy || overlayOwnsKeys(event.key)) return;
+    if (TEMPORAL_MODULES.has(current)) {
+      // Calendar becomes active synchronously. Consume this originating key so
+      // its own camera does not also interpret it as a second zoom-out step.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      zoomOutToCalendar(current);
+      return;
+    }
     driveTo("home");
   }, true);
 
   window.crmDeskTransit = {
     driveTo,
     adoptDive,
+    zoomOutToCalendar,
+    temporalModules: () => [...TEMPORAL_MODULES],
     isBusy: () => busy,
   };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => syncTemporalContext(), { once: true });
+  else syncTemporalContext();
 })();

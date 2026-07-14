@@ -2648,6 +2648,34 @@
     reload: load,
     open: openTicket,
     contextMenu: openContextMenu,
+    // Return the canonical ticket card face for aggregate surfaces that own
+    // their layout. No deck drag/reorder behavior is attached here.
+    createCard: (ticket, options = {}) => {
+      ensureStyles();
+      const card = document.createElement("div");
+      card.className = "tk-card tk-card-ticket";
+      card.dataset.id = ticket?.id || "";
+      card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
+      card.style.backgroundColor = baseColor();
+      card.style.backgroundImage = cardBg(ticket);
+      card.innerHTML = cardInner(ticket);
+      card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade"></div>');
+      const open = (event) => {
+        if (event?.type === "click" && event.button !== 0) return;
+        if (typeof options.onOpen === "function") options.onOpen(ticket, card, event);
+        else openTicket(ticket, card);
+      };
+      card.tabIndex = options.tabIndex == null ? 0 : Number(options.tabIndex);
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", options.ariaLabel || `${titleOf(ticket)} — open ticket`);
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault(); open(event);
+      });
+      requestAnimationFrame(() => { if (card.isConnected) fitCardFields(card); });
+      return card;
+    },
     setActive: (on) => {
       const visible = active = !!on;
       if (theater) theater.hidden = !visible;

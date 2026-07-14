@@ -1,9 +1,9 @@
 // crm-home-portal.js — six live, semantic windows into the operating rooms.
 (() => {
   const rooms = [
-    { key: "desk", label: "Desk" }, { key: "people", label: "People" },
+    { key: "desk", label: "Overview" }, { key: "people", label: "People" },
     { key: "cases", label: "Tickets" }, { key: "bills", label: "Bills" },
-    { key: "invoices", label: "Invoices" }, { key: "calendar", label: "Calendar" },
+    { key: "invoices", label: "Invoices" }, { key: "assignments", label: "Assignments" },
   ];
   let root; let active = false; let timer = 0; let generation = 0;
   const esc = (v) => String(v ?? "").replace(/[&<>\"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
@@ -48,6 +48,7 @@
     if (key === "desk") { const items=[...model.commitments].sort((a,b)=>(Date.parse(a.dueAt||"")||9e15)-(Date.parse(b.dueAt||"")||9e15)).slice(0,5); return items.length?`<div class="crm-home-mini-list">${items.map((item)=>`<div class="crm-home-mini-row"><i class="crm-home-mini-dot${item.dueAt&&Date.parse(item.dueAt)<Date.now()?" is-late":""}"></i><span class="crm-home-mini-name">${esc(item.title)}</span><span class="crm-home-mini-meta">${item.dueAt?new Date(item.dueAt).toLocaleDateString([],{month:"short",day:"numeric"}):"open"}</span></div>`).join("")}</div>`:""; }
     if (key === "people") return `<div class="crm-home-companies">${model.companies.slice(0,6).map((company)=>{const people=model.contacts.filter((p)=>String(p.companyId||"")===String(company.id));return `<div class="crm-home-company"><div class="crm-home-company-name">${esc(title(company))}</div><div class="crm-home-company-people">${people.slice(0,3).map(()=>`<i class="crm-home-company-person"></i>`).join("")}</div></div>`}).join("")}</div>`;
     if (["cases","bills","invoices"].includes(key)) return stagePreview(key,model);
+    if (key === "assignments") return `<div class="crm-home-companies">${model.commitments.slice(0,6).map((item)=>{const assigned=model.contacts.filter((person)=>String(person.id)===String(item.assignedContactId||"")||String(person.name||"").toLowerCase()===String(item.assignee||"").toLowerCase());return `<div class="crm-home-company"><div class="crm-home-company-name">${esc(item.title)}</div><div class="crm-home-company-people">${assigned.map(()=>`<i class="crm-home-company-person"></i>`).join("")}</div></div>`}).join("")}</div>`;
     const now=new Date();const y=now.getFullYear(),m=now.getMonth();const firstDay=new Date(y,m,1).getDay();const due=new Set(model.commitments.map((c)=>String(c.dueAt||"").slice(0,10)));return `<div class="crm-home-month">${Array.from({length:35},(_,i)=>{const day=i-firstDay+1;const valid=day>0&&day<=new Date(y,m+1,0).getDate();const iso=valid?`${y}-${String(m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`:"";return `<i class="crm-home-day${iso===new Date().toISOString().slice(0,10)?" is-today":""}${due.has(iso)?" has-due":""}" style="${valid?"":"visibility:hidden"}"></i>`}).join("")}</div>`;
   }
   function count(){return ""}

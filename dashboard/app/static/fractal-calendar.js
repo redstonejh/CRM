@@ -333,6 +333,20 @@
     loadScheduled({ refresh: true });
   };
   const shiftYear = (delta) => setYear(currentYear + delta);
+  const openMonthFor = (value = new Date()) => {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return false;
+    const year = date.getFullYear();
+    if (currentYear !== year) {
+      currentYear = year;
+      localStorage.setItem(YEAR_STORE, String(currentYear));
+    }
+    camera.rebuildRoot();
+    const month = camera.layers()[0]?.querySelector(`.fc-month[data-month="${date.getMonth() + 1}"]`);
+    const opened = camera.jumpTo(month);
+    loadScheduled({ refresh: true });
+    return opened;
+  };
 
   const loadScheduled = async ({ refresh = false } = {}) => {
     const next = new Map();
@@ -537,6 +551,7 @@
     setYear,
     nextYear: () => shiftYear(1),
     previousYear: () => shiftYear(-1),
+    openMonthFor,
     level: () => camera.level(),
     back: () => camera.back(),
     refresh: () => loadScheduled({ refresh: true }),

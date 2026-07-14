@@ -3,12 +3,12 @@
   if (typeof window.createFractalCamera !== "function") return;
 
   const MODULES = [
-    { key: "desk", label: "Desk" }, { key: "people", label: "People" },
+    { key: "desk", label: "Overview" }, { key: "people", label: "People" },
     { key: "cases", label: "Tickets" }, { key: "bills", label: "Bills" },
-    { key: "invoices", label: "Invoices" }, { key: "calendar", label: "Calendar" },
+    { key: "invoices", label: "Invoices" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "financial-split-clean-v12";
+  const HOME_PREVIEW_VERSION = "assignment-centered-hand-v22";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -416,7 +416,7 @@
   };
   const waitForModuleSettled = (key, timeoutMs = 1800) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
-    const selector = {desk:".crm-desk-frame",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",calendar:".fc-grid"}[key]||"*";
+    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
       const next=source?.querySelector?.(selector)?`${source.childElementCount}:${source.querySelectorAll("*").length}`:"";
       stable=next&&next===last?stable+1:0;last=next;if(stable>=2||performance.now()-started>=timeoutMs)resolve();else requestAnimationFrame(tick)};requestAnimationFrame(tick);

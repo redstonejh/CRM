@@ -3,17 +3,18 @@
 (() => {
   const MODULES = [
     { key: "home", label: "Home", api: () => window.crmHome },
-    { key: "desk", label: "Desk", api: () => window.crmDesk },
+    { key: "desk", label: "Overview", api: () => window.crmDesk },
     { key: "people", label: "People", api: () => window.peopleCards },
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
     { key: "jobs", label: "Jobs", api: () => window.jobPipeline },
     { key: "money", label: "Money", api: () => window.moneyPipeline },
     { key: "bills", label: "Bills", api: () => window.billPipeline },
     { key: "invoices", label: "Invoices", api: () => window.moneyPipeline },
+    { key: "assignments", label: "Assignments", api: () => window.crmAssignments },
     { key: "calendar", label: "Calendar", api: () => window.fractalCalendar },
     { key: "cases", label: "Tickets", api: () => window.ticketStacks },
   ];
-  const THEATERS = { home:["home"],desk:["desk"],people:["people"],pipeline:["pipeline"],jobs:["jobs"],money:["money"],bills:["bills"],invoices:["money"],calendar:["calendar"],cases:["tickets"] };
+  const THEATERS = { home:["home"],desk:["desk"],people:["people"],pipeline:["pipeline"],jobs:["jobs"],money:["money"],bills:["bills"],invoices:["money"],assignments:["assignments"],calendar:["calendar"],cases:["tickets"] };
   const STORE_KEY = "crm-active-module-v3";
   let active = localStorage.getItem(STORE_KEY) || "home";
   let root = null;

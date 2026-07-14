@@ -35,7 +35,8 @@
     style.id = "crm-home-styles";
     style.textContent = `
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
-      .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0}
+      .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
+        will-change:transform;backface-visibility:hidden}
       .crm-home-grid{position:absolute;display:grid;pointer-events:auto;
         grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:16px}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
@@ -55,7 +56,7 @@
       .crm-home-preview-state{position:absolute;inset:0;display:grid;place-items:center;font-size:.68rem;font-weight:760;
         letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.38)}
       .crm-home-preview-image{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;
-        user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center}
+        user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
       /* Home owns six inert raster layers, so a small foreground-only filter is
          cheaper than blurring live room DOM or adding another backdrop pass. */
       .crm-home-preview-foreground{filter:blur(1.25px);transition:filter .18s ease}
@@ -83,7 +84,11 @@
          native app-region map or its temporary rectangle can cancel (and on
          Windows, outlive) the persistent title-bar drag strip. */
       .crm-home-expander{position:absolute;z-index:5;pointer-events:none;transform-origin:0 0;
-        background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
+        background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
+        will-change:transform,opacity;backface-visibility:hidden}
+      .crm-home-surface.crm-home-camera-moving .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-bucket,
+      .crm-home-surface.crm-home-camera-moving .crm-home-preview-foreground{transition:none!important}
       .crm-home-expander .crm-home-title-glass{display:none}.crm-home-expander .crm-home-preview{opacity:1}
       .crm-home-preview-exact{opacity:0;transform:none}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transition:transform 460ms cubic-bezier(.22,1,.26,1),opacity 120ms ease 330ms}
@@ -387,13 +392,15 @@
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
-    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
+    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareJump:(expander)=>expander.classList.add("is-unwrapping"),
     onTransitionStart:(direction,context)=>{
+      context.surface?.classList.add("crm-home-camera-moving");
       const expander=[...(context.surface?.querySelectorAll(".crm-home-expander:not(.crm-home-warm)")||[])].pop();
       if(expander)requestAnimationFrame(()=>expander.classList.toggle("is-unwrapping",direction==="expand"));
     },
+    onTransitionEnd:(_direction,context)=>context.surface?.classList.remove("crm-home-camera-moving"),
     onLevelChange:(context)=>{if(context.active&&context.level===0)mountAll()},
   });
 

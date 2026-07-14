@@ -47,6 +47,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
   const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
   const bucketSummary = typeof config.bucketSummary === "function" ? config.bucketSummary : null;
+  const contextActionSource = config.contextActions;
+  const contextActionsFor = (record) => {
+    const actions = typeof contextActionSource === "function" ? contextActionSource(record) : contextActionSource;
+    return (Array.isArray(actions) ? actions : []).filter((action) => {
+      if (!action || typeof action.run !== "function" || !String(action.label || "").trim()) return false;
+      try { return typeof action.when !== "function" || action.when(record) !== false; } catch { return false; }
+    });
+  };
   const zoneColumns = Number.isFinite(Number(config.zoneColumns)) && Number(config.zoneColumns) > 0
     ? Math.max(1, Math.floor(Number(config.zoneColumns)))
     : 0;
@@ -967,11 +975,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const showTicketMenu = (t, card, x, y) => {
     hideTicketMenu();
     const trashed = isDeleted(t.id);
+    const customActions = contextActionsFor(t);
     const m = document.createElement("div");
     m.className = "tk-menu";
     // State-aware items: a live ticket can be MOVED TO TRASH (reversible); a trashed one can be
     // RESTORED or DELETED PERMANENTLY (the only truly destructive action → the lone red item).
-    m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
+    m.innerHTML = customActions.map((action, index) => `<button class="tk-menu-item" data-act="custom-${index}">${esc(action.label)}</button>`).join("") +
+      `<button class="tk-menu-item" data-act="edit">edit</button>` +
       `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
       `<button class="tk-menu-item" data-act="activity">activity</button>` +
       (trashEnabled && trashed
@@ -985,6 +995,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;
     const on = (act, fn) => { const b = m.querySelector(`[data-act="${act}"]`); if (b) b.onclick = () => { hideTicketMenu(); fn(); }; };
+    customActions.forEach((action, index) => on(`custom-${index}`, () => Promise.resolve(action.run(t, card)).catch((error) => console.error("[CRM] context action failed", error))));
     on("edit", () => detail?.open(t, card));
     on("appearance", () => showAppearanceMenu(t, x, y));
     on("activity", () => showActivityMenu(t, x, y));
@@ -3416,6 +3427,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault(); open(event);
       });
+      wireContextMenu(card, record);
       requestAnimationFrame(() => { if (card.isConnected) fitCardFields(card); });
       return card;
     },

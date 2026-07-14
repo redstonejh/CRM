@@ -356,12 +356,46 @@ function rosaDataset() {
   ];
   const interactions = [
     {
-      id: 'ix_marta_call', kind: 'call', at: iso(-1, 15),
+      id: 'ix_marta_email_recap', kind: 'email', direction: 'outbound', at: iso(-21, 10),
+      subject: 'Managed services proposal recap',
+      note: 'Sent the revised scope, quarterly on-site cadence, and the support response matrix.',
+      contactId: 'ct_marta', dealId: 'dl_harborlane_retainer', companyId: 'co_harborlane',
+    },
+    {
+      id: 'ix_marta_message_question', kind: 'message', direction: 'inbound', at: iso(-13, 16),
+      note: 'Marta asked whether the quarterly visit can include a short staff security workshop.',
+      contactId: 'ct_marta', dealId: 'dl_harborlane_retainer', companyId: 'co_harborlane',
+    },
+    {
+      id: 'ix_marta_meeting_scope', kind: 'meeting', direction: 'outbound', at: iso(-7, 13),
+      subject: 'Scope review',
+      note: 'Reviewed coverage, escalation ownership, and the first ninety-day rollout with Marta and Bill.',
+      contactId: 'ct_marta', dealId: 'dl_harborlane_retainer', companyId: 'co_harborlane',
+    },
+    {
+      id: 'ix_marta_email_legal', kind: 'email', direction: 'inbound', at: iso(-3, 9),
+      subject: 'Contract wording',
+      note: 'Budget is approved. Legal asked for clearer language around after-hours escalation.',
+      contactId: 'ct_marta', dealId: 'dl_harborlane_retainer', companyId: 'co_harborlane',
+    },
+    {
+      id: 'ix_marta_call', kind: 'call', direction: 'outbound', at: iso(-1, 15),
       note: 'Marta reviewed the proposal; wants the on-site quarterly language firmed up.',
       contactId: 'ct_marta', dealId: 'dl_harborlane_retainer', companyId: 'co_harborlane',
     },
     {
-      id: 'ix_iris_note', kind: 'note', at: iso(-2, 11),
+      id: 'ix_iris_rollout_call', kind: 'call', direction: 'outbound', at: iso(-17, 14),
+      note: 'Checked the NAS rollout and confirmed the remaining workstation migration window.',
+      contactId: 'ct_iris', companyId: 'co_foxglove',
+    },
+    {
+      id: 'ix_iris_email_result', kind: 'email', direction: 'inbound', at: iso(-9, 10),
+      subject: 'NAS performance',
+      note: 'Iris reported that large project transfers are substantially faster and the team is happy.',
+      contactId: 'ct_iris', companyId: 'co_foxglove',
+    },
+    {
+      id: 'ix_iris_note', kind: 'note', direction: 'internal', at: iso(-2, 11),
       note: 'Iris happy with the NAS throughput. Ask for a reference in August.',
       contactId: 'ct_iris', companyId: 'co_foxglove',
     },

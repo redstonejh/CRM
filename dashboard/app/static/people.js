@@ -207,6 +207,10 @@
     face: contactFace,
     source: contactSource,
     detail: window.contactDetail,
+    contextActions: [{
+      label: "view conversation history",
+      run: (contact, sourceCard) => window.crmPersonHistory?.open?.(contact.id, sourceCard),
+    }],
     widgetType: "contact",
     widgetTitle: "Contact",
     widgetCardClass: "ticket-widget-card contact-widget-card",

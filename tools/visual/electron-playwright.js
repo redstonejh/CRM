@@ -101,12 +101,12 @@ async function main() {
     const before = await page.evaluate((key)=>window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0,room.key);
     const selector=`.crm-home-grid > .crm-home-bucket[data-module="${room.key}"]`;
     await page.hover(selector); await sleep(160);
-    await page.evaluate(() => { const p=window.__fps={start:performance.now(),frames:0,fps:0}; const tick=(now)=>{p.frames+=1;if(now-p.start<1100)requestAnimationFrame(tick);else p.fps=p.frames*1000/(now-p.start)};requestAnimationFrame(tick); });
+    await page.evaluate(() => { const p=window.__fps={start:performance.now(),frames:0,fps:0}; const tick=(now)=>{p.frames+=1;if(now-p.start<1100)requestAnimationFrame(tick);else p.fps=p.frames*1000/(now-p.start)};requestAnimationFrame(tick); const motion=window.__transitionFps={start:performance.now(),frames:0,fps:0};const motionTick=(now)=>{motion.frames+=1;if(now-motion.start<520)requestAnimationFrame(motionTick);else motion.fps=motion.frames*1000/(now-motion.start)};requestAnimationFrame(motionTick); });
     await page.click(selector); await sleep(100);
-    const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const drag=document.querySelector('.app-window-drag-region');return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
+    const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(surface?.querySelectorAll('.crm-home-title-glass')||[])];return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-moving')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
     const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===2&&mid.rect&&mid.rect.width>=300;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
-    if((!inFlight&&!alreadyLanded)||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
+    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.neighborOpacity<.99||!mid.titlesHidden||!mid.rootComposited))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
     await page.screenshot({path:path.join(out,`transition-${room.key}.png`)});
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key,room.key,{timeout:10000}); await sleep(650);
     await page.mouse.move(1,1); await sleep(80);
@@ -120,13 +120,23 @@ async function main() {
     const liveBuffer=await page.screenshot({path:path.join(out,`room-${room.key}.png`)});
     const exactBuffer=Buffer.from(state.exactSrc.split(',')[1]||'','base64');
     const pixelMae=imageDifference(exactBuffer,liveBuffer,{left:50,right:1230,top:105,bottom:755});
-    const probe=await page.evaluate(()=>window.__fps);
+    const probe=await page.evaluate(()=>({settled:window.__fps,transition:window.__transitionFps}));
     const badBucket=state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
-    if(!state.visible||state.count!==room.expected||state.arrows||badBucket||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.fps<40)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
+    if(!state.visible||state.count!==room.expected||state.arrows||badBucket||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.settled.fps<40||probe.transition.fps<45)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
     await page.evaluate(()=>window.crmDeskTransit.driveTo('home')); await page.waitForFunction(readyHome,null,{timeout:15000});
     await page.waitForFunction(({key,before})=>(window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0)>before,{key:room.key,before},{timeout:30000});
-    transitions.push({key:room.key,mid,pixelMae,fps:probe.fps,signatureMatches:true});
+    transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,transitionFps:probe.transition.fps,signatureMatches:true});
   }
+  await page.evaluate(()=>window.crmWorkspaces.setActive('people'));
+  await page.waitForFunction(()=>!!document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]'),null,{timeout:10000});
+  await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]',(card)=>{const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+20,clientY:r.top+20,button:2}))});
+  await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
+  await page.waitForSelector('.crm-person-history-shell:not([hidden]) .crm-person-history',{timeout:10000});await sleep(250);
+  const personHistory=await page.evaluate(()=>{const shell=document.querySelector('.crm-person-history-shell:not([hidden])');const panel=shell?.querySelector('.crm-person-history');const body=panel?.querySelector('.crm-person-history-body');const thread=panel?.querySelector('.crm-person-history-thread');const composer=panel?.querySelector('.crm-person-history-composer');const rect=panel?.getBoundingClientRect();const composerRect=composer?.getBoundingClientRect();const tint=getComputedStyle(document.querySelector('.crm-module-switch'),'::after');return{title:panel?.querySelector('.crm-person-history-title')?.textContent.trim(),events:panel?.querySelectorAll('.crm-person-history-event').length||0,filters:panel?.querySelectorAll('[data-history-filter]').length||0,composer:!!composer,canonical:panel?.classList.contains('crm-menu-surface')||false,inBounds:!!rect&&rect.left>=0&&rect.top>=0&&rect.right<=innerWidth&&rect.bottom<=innerHeight,composerInBounds:!!composerRect&&composerRect.bottom<=rect.bottom+1,noHorizontalOverflow:!!body&&!!thread&&body.scrollWidth<=body.clientWidth+1&&thread.scrollWidth<=thread.clientWidth+1,tinted:tint.backgroundImage.includes('rgba(13, 35, 72')&&tint.boxShadow!=='none'}});
+  if(personHistory.title!=='Marta Reyes'||personHistory.events<6||personHistory.filters!==5||!personHistory.composer||!personHistory.canonical||!personHistory.inBounds||!personHistory.composerInBounds||!personHistory.noHorizontalOverflow||!personHistory.tinted)throw new Error(`Person history native layout broken: ${JSON.stringify(personHistory)}`);
+  await page.screenshot({path:path.join(out,'person-history.png')});
+  await page.click('[data-person-history-close]');
+  await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:15000});
   const settledFps=await frameRate(page); if(settledFps<45)throw new Error(`Settled Home FPS ${settledFps}`);
   await sleep(100); const windows=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).length); if(windows!==1)throw new Error(`${windows} BrowserWindows remain`);
   const finalChrome=await page.evaluate(()=>{const drag=document.querySelector('.app-window-drag-region');return{drag:getComputedStyle(drag).webkitAppRegion,top:document.elementsFromPoint(520,20)[0]===drag,controls:document.querySelectorAll('.window-control-cluster .window-glass-control').length}});
@@ -143,7 +153,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,domainProbe,transitions,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,domainProbe,transitions,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
 }

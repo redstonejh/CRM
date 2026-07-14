@@ -11,6 +11,7 @@
     const belowFadeMs = Number.isFinite(Number(config.belowFadeMs)) ? Number(config.belowFadeMs) : morphMs;
     const contractFadeMs = Number.isFinite(Number(config.contractFadeMs)) ? Number(config.contractFadeMs) : Math.round(morphMs * .35);
     const contractFadeDelay = Math.max(0, morphMs - contractFadeMs);
+    const keepBelowVisible = config.keepBelowVisibleDuringTransition === true;
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -84,6 +85,10 @@
       const fallback = setTimeout(finish, morphMs + 35);
       el.addEventListener("transitionend", onEnd);
     };
+    const transitionFrame = (fn) => requestAnimationFrame(() => {
+      if (config.precomposeTransitions === true) requestAnimationFrame(fn);
+      else fn();
+    });
     const ensure = () => {
       if (surface) return;
       config.ensureStyles?.(ctx());
@@ -181,13 +186,15 @@
       const ky = E.h / source.h;
       const dive = `translate(${(E.x - below.offsetLeft - source.x * kx).toFixed(2)}px, ${(E.y - below.offsetTop - source.y * ky).toFixed(2)}px) scale(${kx.toFixed(4)}, ${ky.toFixed(4)})`;
       void expander.offsetWidth;
-      requestAnimationFrame(() => {
+      transitionFrame(() => {
         expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
         expander.style.transform = "none";
         expander.style.opacity = "1";
-        below.style.transition = `transform ${morphMs}ms ${ease}, opacity ${belowFadeMs}ms ease`;
+        below.style.transition = keepBelowVisible
+          ? `transform ${morphMs}ms ${ease}`
+          : `transform ${morphMs}ms ${ease}, opacity ${belowFadeMs}ms ease`;
         below.style.transform = dive;
-        below.style.opacity = "0";
+        below.style.opacity = keepBelowVisible ? "1" : "0";
       });
       const oldLevel = level;
       const commit = once(() => {
@@ -236,7 +243,7 @@
       below.style.zIndex = "5";
       below.style.pointerEvents = "auto";
       below.style.transform = dive;
-      below.style.opacity = config.contractFadeMs != null ? "0" : "1";
+      below.style.opacity = keepBelowVisible ? "1" : (config.contractFadeMs != null ? "0" : "1");
       below.style.visibility = "";
       expander.style.transition = "none";
       expander.style.zIndex = "4";
@@ -256,11 +263,13 @@
       });
       config.onTransitionStart?.("contract", ctx());
       void below.offsetWidth;
-      requestAnimationFrame(() => {
+      transitionFrame(() => {
         if (seq !== transitionSeq) return;
-        below.style.transition = config.contractFadeMs != null
-          ? `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`
-          : `transform ${morphMs}ms ${ease}`;
+        below.style.transition = keepBelowVisible
+          ? `transform ${morphMs}ms ${ease}`
+          : (config.contractFadeMs != null
+            ? `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`
+            : `transform ${morphMs}ms ${ease}`);
         below.style.transform = "none";
         below.style.opacity = "1";
         expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`;

@@ -61,6 +61,13 @@ async function main() {
       && [...document.querySelectorAll('.window-glass-control')].every((button) => !button.classList.contains('crm-menu-action'))
       && [...document.querySelectorAll('.tk-card, .tk-zcard')].every((card) => !card.classList.contains('crm-menu-action') && !card.classList.contains('crm-menu-surface'));
   });
+  await check('The Home control has a darker tinted glass backing', () => {
+    const switcher = document.querySelector('.crm-module-switch');
+    const tint = getComputedStyle(switcher, '::after');
+    return tint.content !== 'none' && tint.backgroundImage !== 'none'
+      && tint.backgroundImage.includes('rgba(13, 35, 72')
+      && tint.boxShadow !== 'none' && tint.backdropFilter.includes('blur');
+  });
   await check('Home has six inert screenshot LODs and no live miniature trees', () => ({
     ok: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
       && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
@@ -135,10 +142,40 @@ async function main() {
     return !!foreground && !!title && getComputedStyle(foreground).filter === 'none' && Number(getComputedStyle(title).opacity) <= .3;
   });
   await page.evaluate(() => document.querySelectorAll('[data-interaction-style-probe]').forEach((probe) => probe.remove()));
+  await page.evaluate(() => {
+    const selected = document.querySelector('.crm-home-bucket[data-module="desk"]')?.getBoundingClientRect();
+    const neighbor = document.querySelector('.crm-home-bucket[data-module="people"]')?.getBoundingClientRect();
+    window.__homeSpatialRelation = selected && neighbor ? {
+      dx: (neighbor.left - selected.left) / selected.width,
+      dy: (neighbor.top - selected.top) / selected.height,
+      wr: neighbor.width / selected.width,
+      hr: neighbor.height / selected.height,
+    } : null;
+  });
   await page.click('.crm-home-bucket[data-module="desk"]');
   await sleep(100);
   await check('Home-to-room handoff remains inside the original camera', () => document.body.dataset.crmModule === 'home'
     && window.crmHomeCamera?.isTransitioning?.() && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
+  await check('Neighbor tiles retain their spatial relationship throughout the dive-in', () => {
+    const root = window.crmHomeCamera?.layers?.()[0];
+    const selected = root?.querySelector('.crm-home-bucket[data-module="desk"]')?.getBoundingClientRect();
+    const neighbor = root?.querySelector('.crm-home-bucket[data-module="people"]')?.getBoundingClientRect();
+    const before = window.__homeSpatialRelation;
+    if (!root || !selected || !neighbor || !before || Number(getComputedStyle(root).opacity) < .99) return false;
+    const now = {
+      dx: (neighbor.left - selected.left) / selected.width,
+      dy: (neighbor.top - selected.top) / selected.height,
+      wr: neighbor.width / selected.width,
+      hr: neighbor.height / selected.height,
+    };
+    return Object.keys(now).every((key) => Math.abs(now[key] - before[key]) < .02);
+  });
+  await check('Home tile titles stay out of the camera animation', () => {
+    const surface = window.crmHomeCamera?.surface?.();
+    const titles = [...(surface?.querySelectorAll('.crm-home-title-glass') || [])];
+    return surface?.classList.contains('crm-home-camera-moving') && titles.length > 0
+      && titles.every((title) => getComputedStyle(title).visibility === 'hidden' && Number(getComputedStyle(title).opacity) === 0);
+  });
   await check('Tile transition preserves the native title-bar drag region', () => {
     const strip = document.querySelector('.app-window-drag-region');
     const lid = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
@@ -223,8 +260,30 @@ async function main() {
   });
   await check('Retired standalone Home, Today, and Reports theaters do not own the stage', () => ![...document.querySelectorAll('[data-crm-theater="home"],[data-crm-theater="today"],[data-crm-theater="reports"]')].some((el) => !el.hidden));
 
-  await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
-  await sleep(650);
+  await page.evaluate(() => { void window.crmDeskTransit.driveTo('home'); });
+  await sleep(100);
+  await check('Neighbor tiles retain their spatial relationship throughout the dive-out', () => {
+    const root = window.crmHomeCamera?.layers?.()[0];
+    const selected = root?.querySelector('.crm-home-bucket[data-module="desk"]')?.getBoundingClientRect();
+    const neighbor = root?.querySelector('.crm-home-bucket[data-module="people"]')?.getBoundingClientRect();
+    const before = window.__homeSpatialRelation;
+    if (!root || !selected || !neighbor || !before || Number(getComputedStyle(root).opacity) < .99) return false;
+    const now = {
+      dx: (neighbor.left - selected.left) / selected.width,
+      dy: (neighbor.top - selected.top) / selected.height,
+      wr: neighbor.width / selected.width,
+      hr: neighbor.height / selected.height,
+    };
+    return Object.keys(now).every((key) => Math.abs(now[key] - before[key]) < .02);
+  });
+  await check('Home tile titles stay hidden throughout the return animation', () => {
+    const surface = window.crmHomeCamera?.surface?.();
+    const titles = [...(surface?.querySelectorAll('.crm-home-title-glass') || [])];
+    return surface?.classList.contains('crm-home-camera-moving') && titles.length > 0
+      && titles.every((title) => getComputedStyle(title).visibility === 'hidden' && Number(getComputedStyle(title).opacity) === 0);
+  });
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.(), { timeout: 10000 });
+  await sleep(100);
   await check('Returning Home restores an uncontested title-bar drag region', () => {
     const x = Math.round(innerWidth * .5), y = 20;
     const strip = document.querySelector('.app-window-drag-region');
@@ -337,6 +396,33 @@ async function main() {
     const card = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')].at(-1);
     return !!card && card.getBoundingClientRect().top <= window.__assignmentHandTargetTop - 4;
   });
+  const homeDeadzonePoint = await page.$eval('.crm-home-control-deadzone', (deadzone) => {
+    const rect = deadzone.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + 16 };
+  });
+  await page.mouse.move(homeDeadzonePoint.x, homeDeadzonePoint.y);
+  await sleep(430);
+  await check('The Home route is a deadzone for hand and ticket hover reactions', () => {
+    const deadzone = document.querySelector('.crm-home-control-deadzone');
+    const control = document.querySelector('.crm-home-control');
+    const hand = document.querySelector('.crm-assignment-hand');
+    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
+    const deadzoneRect = deadzone?.getBoundingClientRect();
+    const controlRect = control?.getBoundingClientRect();
+    if (!deadzoneRect || !controlRect || !hand || cards.length === 0) return false;
+    const routeX = deadzoneRect.left + deadzoneRect.width / 2;
+    const routeY = deadzoneRect.top + 16;
+    const buttonX = controlRect.left + controlRect.width / 2;
+    const buttonY = controlRect.top + controlRect.height / 2;
+    const routeHit = document.elementFromPoint(routeX, routeY);
+    const buttonHit = document.elementFromPoint(buttonX, buttonY);
+    return routeHit === deadzone && (buttonHit === control || control.contains(buttonHit))
+      && deadzoneRect.top <= controlRect.top - 80 && !hand.matches(':hover')
+      && cards.every((card) => {
+        const exposed = innerHeight - card.getBoundingClientRect().top;
+        return exposed >= 108 && exposed <= 160;
+      });
+  });
   await page.mouse.move(2, 2);
   const assignment = await page.evaluate(async () => {
     const bucket = document.querySelector('.crm-assignment-bucket');
@@ -390,6 +476,47 @@ async function main() {
     });
   });
   await page.evaluate(() => window.crmCompanyDive.setActive(false));
+
+  await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]', (card) => {
+    const rect = card.getBoundingClientRect();
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 20, clientY: rect.top + 20, button: 2 }));
+  });
+  await page.waitForSelector('.tk-menu .tk-menu-item[data-act^="custom-"]', { timeout: 5000 });
+  await sleep(80);
+  await check('Right-clicking a person offers conversation history in the canonical card menu', () => {
+    const menu = document.querySelector('.tk-menu');
+    const action = menu?.querySelector('.tk-menu-item[data-act^="custom-"]');
+    return !!menu && menu.classList.contains('crm-menu-surface') && !!action
+      && action.textContent.trim().toLowerCase() === 'view conversation history';
+  });
+  await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
+  await page.waitForSelector('.crm-person-history-shell:not([hidden]) .crm-person-history', { timeout: 10000 });
+  await check('Person history opens a real cross-channel interaction thread', () => {
+    const history = document.querySelector('.crm-person-history-shell:not([hidden]) .crm-person-history');
+    const events = [...(history?.querySelectorAll('.crm-person-history-event') || [])];
+    const filters = [...(history?.querySelectorAll('[data-history-filter]') || [])];
+    return !!history && history.classList.contains('crm-menu-surface')
+      && history.querySelector('.crm-person-history-title')?.textContent.trim() === 'Marta Reyes'
+      && events.length >= 6 && new Set(events.map((event) => event.dataset.historyKind)).size >= 4
+      && filters.length === 5 && !!history.querySelector('[data-person-history-composer] textarea')
+      && !!history.querySelector('.crm-person-history-summary.crm-menu-item');
+  });
+  const historyCountBefore = await page.$$eval('.crm-person-history-event', (events) => events.length);
+  await page.select('[data-person-history-composer] select[name="kind"]', 'message');
+  await page.select('[data-person-history-composer] select[name="direction"]', 'inbound');
+  await page.type('[data-person-history-composer] textarea', 'Marta confirmed the escalation wording works for legal.');
+  await page.click('[data-person-history-composer] button[type="submit"]');
+  await page.waitForFunction((before) => document.querySelectorAll('.crm-person-history-event').length > before
+    && [...document.querySelectorAll('.crm-person-history-event-content')].some((node) => node.textContent.includes('escalation wording works for legal')), {}, historyCountBefore);
+  await check('Logging a conversation persists it and advances the person timeline', async () => {
+    const result = await window.crmStore.list('interactions', { includeDeleted: false });
+    const interaction = (result.records || []).find((item) => String(item.contactId) === 'ct_marta'
+      && String(item.note || '').includes('escalation wording works for legal'));
+    const lastTouch = Number(document.querySelector('.crm-person-history-stat:nth-child(2) .crm-person-history-stat-value')?.textContent === 'just now');
+    return !!interaction && interaction.kind === 'message' && interaction.direction === 'inbound' && lastTouch === 1;
+  });
+  await page.click('[data-person-history-close]');
+  await page.waitForFunction(() => !window.crmPersonHistory?.isOpen?.(), { timeout: 5000 });
 
   const workflowRooms = { pipeline: 4, bills: 3, invoices: 3 };
   for (const [key, zones] of Object.entries(workflowRooms)) {
@@ -550,11 +677,16 @@ async function main() {
       && cards.some((card) => card.querySelector('.tk-bars-card .tk-seg'))
       && cards.every((card) => !card.classList.contains('crm-menu-action'));
   });
-  await page.click('.crm-overview-card[data-record-entity="contacts"]');
+  await page.$eval('.crm-overview-card[data-record-entity="contacts"]', async (card) => {
+    const result = await window.crmStore.get('contacts', card.dataset.recordId);
+    const person = result?.record || {};
+    window.__overviewExpectedPerson = person.name || person.title || person.client || person.id;
+    card.click();
+  });
   await page.waitForSelector('.record-world-shell:not([hidden])');
   await check('An Overview card opens the same contextual record screen as its source module', () => ({
     ok: document.querySelector('.record-world-kicker')?.textContent.trim() === 'Person'
-      && document.querySelector('.record-world-title')?.textContent.trim() === 'Iris Chen'
+      && document.querySelector('.record-world-title')?.textContent.trim() === window.__overviewExpectedPerson
       && !!document.querySelector('.record-world-facts')
       && !!document.querySelector('.record-world-related') && !!document.querySelector('.record-world-commitments')
       && !!document.querySelector('.record-world-timeline'),

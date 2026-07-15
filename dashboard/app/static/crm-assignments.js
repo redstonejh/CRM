@@ -29,7 +29,7 @@
       .crm-assignment-head{display:flex;align-items:center;padding:0 12px}.crm-assignment-title{font-size:.95rem;font-weight:700}
       .crm-assignment-pools-head{height:38px;flex:0 0 38px;box-sizing:border-box}
       .crm-assignment-pool-stack{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}
-      .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:42px;display:flex;align-items:center;gap:10px;text-align:left}
+      .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:38px;display:flex;align-items:center;gap:10px;text-align:left}
       .crm-assignment-source-pool-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-assignment-stage{position:relative;min-width:0;min-height:0;overflow:visible}
       .crm-assignment-grid{position:absolute;left:0;right:0;top:22px;height:336px;display:grid;grid-template-columns:repeat(4,202px);gap:var(--crm-object-gap,18px);place-content:start center}

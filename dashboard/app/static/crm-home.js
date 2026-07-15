@@ -149,7 +149,11 @@
       .crm-home-expander .crm-home-preview-exact{opacity:1}
       .crm-home-expander.is-unwrapping .crm-home-preview-foreground{transform:none;opacity:0}
       .crm-home-expander.is-unwrapping .crm-home-preview-exact{transform:none;opacity:1}
-      .crm-home-warm .crm-home-preview-exact{opacity:.001!important;will-change:transform,opacity}
+      /* The warm expander itself is already at .001 opacity. Attenuating its
+         image a second time let Chromium cull the texture and upload it on the
+         first animated frame. Keep the child opaque inside the imperceptible
+         parent so hover genuinely precomposes the exact room lid. */
+      .crm-home-warm .crm-home-preview-exact{opacity:1!important;transform:translateZ(0);will-change:transform,opacity}
       .crm-home-surface.crm-home-motion-priming .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
         display:block;opacity:.001;transform:translateZ(0)}
       .crm-home-warm,.crm-home-warm *{pointer-events:none!important}

@@ -32,26 +32,29 @@
     style.id = "crm-overview-styles";
     style.textContent = `
       .crm-overview-surface{position:fixed;inset:0;z-index:835;color:#fff;pointer-events:auto;overflow:hidden}.crm-overview-surface[hidden]{display:none}
-      .crm-overview-frame{position:absolute;inset:70px 64px 78px;max-width:1380px;margin:auto;display:grid;grid-template-rows:36px 188px minmax(0,1fr);gap:10px;min-height:0}
+      .crm-overview-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1380px;margin:auto;display:grid;grid-template-rows:30px auto minmax(0,1fr);row-gap:14px;min-height:0}
       .crm-overview-head{display:flex;align-items:center;padding:0 3px}.crm-overview-title{font-size:.95rem;font-weight:700}
-      .crm-overview-project-shelf{min-width:0;min-height:0;display:grid;grid-template-rows:27px minmax(0,1fr)}
+      .crm-overview-project-shelf{min-width:0;min-height:0;display:grid;grid-template-rows:26px 148px}
       .crm-overview-section-head{display:flex;align-items:center;gap:12px;padding:0 3px}.crm-overview-section-title{font-size:.72rem;font-weight:680;color:rgba(255,255,255,.82);text-shadow:0 1px 8px rgba(0,0,0,.72)}
       .crm-overview-project-list{min-width:0;min-height:0;display:flex;align-items:flex-start;gap:12px;overflow-x:auto;overflow-y:hidden;padding:2px 2px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.17) transparent}
-      .crm-overview-project{appearance:none;position:relative;flex:0 0 248px;height:146px;box-sizing:border-box;overflow:hidden;padding:0;text-align:left;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:linear-gradient(155deg,rgba(21,31,43,.78),rgba(11,18,27,.72));-webkit-backdrop-filter:blur(16px) saturate(125%);backdrop-filter:blur(16px) saturate(125%);color:rgba(255,255,255,.82);box-shadow:inset 0 1px rgba(255,255,255,.12),0 14px 26px -20px rgba(0,0,0,.9);cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease}
+      .crm-overview-project-shelf.is-empty{grid-template-columns:auto minmax(0,1fr);grid-template-rows:30px;align-items:center;column-gap:10px}
+      .crm-overview-project-shelf.is-empty .crm-overview-project-list{display:block;overflow:hidden;padding:0}
+      .crm-overview-project-shelf.is-empty .crm-overview-empty{min-height:0;height:30px;display:flex;align-items:center;justify-content:flex-start;padding:0 2px}
+      .crm-overview-project{appearance:none;position:relative;flex:0 0 238px;height:142px;box-sizing:border-box;overflow:hidden;padding:0;text-align:left;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:linear-gradient(155deg,rgba(21,31,43,.78),rgba(11,18,27,.72));-webkit-backdrop-filter:blur(16px) saturate(125%);backdrop-filter:blur(16px) saturate(125%);color:rgba(255,255,255,.82);box-shadow:inset 0 1px rgba(255,255,255,.12),0 14px 26px -20px rgba(0,0,0,.9);cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease}
       .crm-overview-project:hover,.crm-overview-project:focus-visible{outline:0;border-color:rgba(173,205,246,.28);box-shadow:inset 0 1px rgba(255,255,255,.15),0 16px 28px -20px rgba(0,0,0,.9)}
       .crm-overview-project-name{position:absolute;z-index:2;left:13px;right:13px;bottom:12px;font-size:.72rem;font-weight:680;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .crm-overview-mini-world{position:absolute;inset:12px 12px 38px;display:flex;gap:6px;padding:7px;border-radius:9px;background:rgba(255,255,255,.018);overflow:hidden}
       .crm-overview-mini-lane{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px;padding:5px;border-radius:6px;background:rgba(255,255,255,.022)}.crm-overview-mini-lane:before{content:"";height:2px;border-radius:3px;background:rgba(195,218,248,.24)}
       .crm-overview-mini-card{display:block;height:10px;border-radius:4px;background:linear-gradient(90deg,rgba(117,165,230,.19),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.025)}.crm-overview-mini-card:nth-child(3n){width:72%}
-      .crm-overview-lower{min-width:0;min-height:0;display:grid;grid-template-columns:minmax(650px,1fr) minmax(230px,280px);gap:clamp(28px,3vw,44px);padding:8px 3px 0;overflow:hidden}
+      .crm-overview-lower{min-width:0;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,310px);gap:clamp(34px,3.3vw,44px);height:min(410px,100%);align-self:center;padding:0 3px;overflow:hidden}
       .crm-overview-ticket-section,.crm-overview-recent{min-width:0;min-height:0;display:grid;grid-template-rows:30px minmax(0,1fr)}
-      .crm-overview-tickets{min-width:0;min-height:0;display:flex;align-items:flex-start;gap:18px;overflow-x:auto;overflow-y:hidden;padding:6px 2px 16px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.17) transparent}
+      .crm-overview-tickets{min-width:0;min-height:0;display:flex;align-items:flex-start;gap:20px;overflow-x:auto;overflow-y:hidden;padding:6px 2px 16px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.17) transparent}
       .crm-overview-ticket.tk-card{position:relative!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 165px!important;width:165px!important;height:249px!important;margin:0!important;transform:none!important;cursor:pointer}
-      .crm-overview-update-list{position:relative;min-height:0;overflow-y:auto;display:grid;align-content:start;padding:4px 0 12px 16px;border-left:1px solid rgba(255,255,255,.1);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.17) transparent;text-shadow:0 1px 8px rgba(0,0,0,.9)}
-      .crm-overview-update{position:relative;min-height:48px;padding:8px 38px 8px 10px;color:rgba(255,255,255,.76)}.crm-overview-update:before{content:"";position:absolute;left:-19px;top:14px;width:4px;height:4px;border-radius:50%;background:rgba(143,183,236,.62)}
-      .crm-overview-update-title{font-size:.68rem;font-weight:640;line-height:1.35}.crm-overview-update-context{margin-top:5px;color:rgba(255,255,255,.45);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-update-time{position:absolute;right:2px;top:8px;color:rgba(255,255,255,.38);font-size:9px}
+      .crm-overview-update-list{position:relative;min-height:0;overflow-y:auto;display:grid;align-content:start;gap:2px;padding:4px 0 12px 16px;border-left:1px solid rgba(255,255,255,.1);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.17) transparent;text-shadow:0 1px 8px rgba(0,0,0,.9)}
+      .crm-overview-update{position:relative;min-height:54px;padding:9px 38px 9px 10px;color:rgba(255,255,255,.78)}.crm-overview-update:before{content:"";position:absolute;left:-19px;top:16px;width:4px;height:4px;border-radius:50%;background:rgba(143,183,236,.62)}
+      .crm-overview-update-title{font-size:.71rem;font-weight:650;line-height:1.38}.crm-overview-update-context{margin-top:5px;color:rgba(255,255,255,.45);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-update-time{position:absolute;right:2px;top:9px;color:rgba(255,255,255,.38);font-size:9px}
       .crm-overview-empty{min-height:80px;display:grid;place-items:center;color:rgba(255,255,255,.28);font-size:.66rem}
-      @media(max-width:1080px){.crm-overview-frame{inset:64px 24px 78px}.crm-overview-lower{grid-template-columns:minmax(590px,1fr) 230px;gap:22px}.crm-overview-project{flex-basis:224px}.crm-overview-tickets{gap:12px}}
+      @media(max-width:1080px){.crm-overview-lower{grid-template-columns:minmax(0,1fr) 250px;gap:24px}.crm-overview-project{flex-basis:224px}.crm-overview-tickets{gap:12px}}
     `;
     document.head.appendChild(style);
   }
@@ -90,7 +93,7 @@
     if (!root || !model) return;
     root.innerHTML = `<div class="crm-overview-frame">
       <header class="crm-overview-head"><div class="crm-overview-title">Overview</div></header>
-      <section class="crm-overview-project-shelf"><header class="crm-overview-section-head"><span class="crm-overview-section-title">Projects</span></header>
+      <section class="crm-overview-project-shelf${model.projects.length ? "" : " is-empty"}"><header class="crm-overview-section-head"><span class="crm-overview-section-title">Projects</span></header>
         <div class="crm-overview-project-list">${model.projects.length ? model.projects.map((project) => `<button type="button" class="crm-overview-project" data-overview-project="${esc(project.id)}"><span class="crm-overview-project-name">${esc(project.title)}</span>${miniWorld(project)}</button>`).join("") : '<div class="crm-overview-empty">No projects</div>'}</div></section>
       <section class="crm-overview-lower"><section class="crm-overview-ticket-section"><header class="crm-overview-section-head"><span class="crm-overview-section-title">Tickets</span></header><div class="crm-overview-tickets"></div></section>
         <section class="crm-overview-recent"><header class="crm-overview-section-head"><span class="crm-overview-section-title">Recent</span></header><div class="crm-overview-update-list">${model.updates.length ? model.updates.map((update) => `<div class="crm-overview-update"><div class="crm-overview-update-title">${esc(update.title)}</div>${update.context ? `<div class="crm-overview-update-context">${esc(update.context)}</div>` : ""}<time class="crm-overview-update-time">${esc(relativeTime(update.updatedAt))}</time></div>`).join("") : '<div class="crm-overview-empty">No recent activity</div>'}</div></section>

@@ -64,18 +64,19 @@
     style.id = "crm-planner-styles";
     style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
-      .crm-planner-frame{position:absolute;inset:72px 62px 78px;max-width:1380px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:28px;min-height:0}
-      .crm-planner-projects{align-self:start;max-height:calc(100vh - 168px);box-sizing:border-box;padding:6px;display:grid;grid-template-rows:38px minmax(0,1fr);overflow:hidden}
+      .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1380px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:var(--crm-section-gap,28px);min-height:0}
+      .crm-planner-projects{align-self:start;max-height:calc(100vh - var(--crm-canvas-top,78px) - var(--crm-canvas-bottom,78px));box-sizing:border-box;padding:6px;display:grid;grid-template-rows:40px minmax(0,1fr);overflow:hidden}
       .crm-planner-projects-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 7px 0 10px}
       .crm-planner-projects-title{font-size:.78rem;font-weight:680}.crm-planner-new-project.crm-menu-action{width:29px;height:29px;padding:0!important;font-size:17px!important}
       .crm-planner-project-list{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}
+      .crm-planner-project-list:empty::after{content:"No projects";padding:9px 10px 12px;color:rgba(255,255,255,.3);font-size:.66rem}
       .crm-planner-project.crm-menu-action{position:relative;width:100%;min-height:39px;padding:0 10px!important;text-align:left;font-size:.7rem!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .crm-planner-project.is-selected:before{content:"";position:absolute;left:3px;top:12px;width:3px;height:15px;border-radius:2px;background:rgba(166,202,249,.72)}
-      .crm-planner-stage{min-width:0;min-height:0;display:grid;grid-template-rows:50px minmax(0,1fr);gap:8px}
+      .crm-planner-stage{min-width:0;min-height:0;display:grid;grid-template-rows:42px minmax(0,1fr);gap:12px}
       .crm-planner-topline{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 4px}
       .crm-planner-heading{min-width:0;font-size:.95rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .crm-planner-head-actions{display:flex;align-items:center;gap:2px}.crm-planner-text-action.crm-menu-action{height:30px;font-size:.67rem!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
-      .crm-planner-buckets{min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:18px;overflow-x:auto;overflow-y:hidden;padding:18px 12px 28px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .crm-planner-buckets{min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:var(--crm-object-gap,18px);overflow-x:auto;overflow-y:hidden;padding:clamp(30px,5.5vh,48px) 12px 28px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
       .crm-planner-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 220px;width:220px;height:360px;box-sizing:border-box;padding:12px 14px 12px;overflow:hidden;transition:width .16s ease,flex-basis .16s ease,height .16s ease}
       .crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-hd-r{right:4px;top:6px}
       .crm-planner-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:7px;padding:4px 2px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
@@ -84,10 +85,10 @@
       .crm-planner-card-title{display:block;font-size:.72rem;font-weight:680;line-height:1.28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:block;margin-top:7px;color:rgba(255,255,255,.48);font-size:9px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .crm-planner-add-card.crm-menu-action{flex:0 0 29px;width:100%;height:29px;text-align:left;padding-left:4px!important;font-size:.64rem!important;color:rgba(255,255,255,.32)!important}.crm-planner-add-card:hover{color:#fff!important}
       .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:184px;width:184px;height:304px}.crm-planner-card.crm-object-small{scale:1!important;width:138px;min-height:62px;padding:10px 11px}.crm-planner-card.crm-object-small .crm-planner-card-note{display:none}
-      .crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:.66rem}.crm-planner-world-empty{margin:auto;width:180px;height:90px}
+      .crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:.66rem}
       .crm-planner-popover{position:fixed;z-index:9300;width:min(264px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:.72rem;font-weight:700;color:#fff}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:.72rem!important}
       .crm-planner-context{position:fixed;z-index:9310;width:158px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:.7rem!important}
-      @media(max-width:1050px){.crm-planner-frame{inset:64px 24px 78px;grid-template-columns:184px minmax(0,1fr);gap:16px}.crm-planner-buckets{justify-content:flex-start;padding-inline:8px}}
+      @media(max-width:1050px){.crm-planner-frame{grid-template-columns:184px minmax(0,1fr);gap:16px}.crm-planner-buckets{justify-content:flex-start;padding-inline:8px}}
     `;
     document.head.appendChild(style);
   }
@@ -102,7 +103,7 @@
         <header class="tk-zone-hd"><span class="tk-zone-title">${esc(bucket.title)}</span><span class="tk-zone-hd-r tk-bars" aria-hidden="true"><i class="tk-seg g"></i><i class="tk-seg"></i><i class="tk-seg"></i></span></header>
         <div class="crm-planner-card-list">${bucket.cards.length ? bucket.cards.map((card) => `<button type="button" class="crm-planner-card" data-planner-card="${esc(card.id)}"><span class="crm-planner-card-title">${esc(card.title)}</span>${card.note ? `<span class="crm-planner-card-note">${esc(card.note)}</span>` : ""}</button>`).join("") : '<div class="crm-planner-empty">No items</div>'}</div>
         <button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add item</button>
-      </section>`).join("") : '<div class="crm-planner-empty crm-planner-world-empty">No projects</div>'}</div></section>
+      </section>`).join("") : ""}</div></section>
     </div>`;
   }
 

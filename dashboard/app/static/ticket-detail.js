@@ -376,7 +376,7 @@
     wrap.style.top = `${targetTop + cardH / 2}px`;
     wrap.style.transform = "translateY(-50%)";
     panel = document.createElement("div");
-    panel.className = "ticket-detail";
+    panel.className = "ticket-detail crm-menu-surface";
     panel.style.height = `${Math.round(cardH)}px`;   // same vertical height as the ticket card
     wrap.appendChild(panel);
     overlay.appendChild(wrap);
@@ -414,7 +414,7 @@
 
   const render = (t) => {
     if (!panel) return;
-    if (!t) { panel.innerHTML = `<div class="td-empty">Ticket not found.</div>`; wire(null); return; }
+    if (!t) { panel.innerHTML = `<div class="td-empty">Ticket not found.</div>`; wire(null); window.crmInterfaceParity?.scan?.(panel); return; }
     const created = t.createdAt ? new Date(t.createdAt) : null;
     const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
     const downMs = created ? endMs - created.getTime() : NaN;
@@ -453,6 +453,7 @@
 
       <div class="td-acts">${actions.join("")}</div>`;
     wire(t);
+    window.crmInterfaceParity?.scan?.(panel);
   };
 
   const refresh = async () => {

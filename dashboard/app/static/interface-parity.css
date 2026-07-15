@@ -129,3 +129,58 @@
 .window-glass-control:active {
   /* Deliberately empty: their established top-chrome rules remain authoritative. */
 }
+
+/*
+ * Detail/config surfaces are compact anchored menus. Their invisible click-away
+ * layers may cover the viewport, but they never tint or blur the workspace.
+ */
+.ticket-detail-overlay,
+.record-world-shell {
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.ticket-detail-overlay .td-scrim {
+  display: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.ticket-detail.crm-menu-surface {
+  max-width: min(300px, calc(100vw - 28px)) !important;
+  max-height: min(560px, calc(100vh - 92px)) !important;
+  padding: 10px 9px !important;
+  gap: 7px !important;
+}
+
+.ticket-detail .td-x.crm-menu-action {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  padding: 0 !important;
+  text-align: center !important;
+}
+
+.ticket-detail .td-acc-head.crm-menu-action {
+  min-height: 30px !important;
+  padding: 0 4px !important;
+  text-align: left !important;
+}
+
+.ticket-detail .td-prio-opt.crm-menu-action,
+.ticket-detail .td-touch-chip.crm-menu-action,
+.ticket-detail .td-save.crm-menu-action {
+  min-height: 28px !important;
+  padding: 0 4px !important;
+  font-size: .76rem !important;
+}
+
+.ticket-detail .td-act.crm-menu-action {
+  min-height: 32px !important;
+  padding: 0 4px !important;
+}
+
+.ticket-detail .td-edit.crm-menu-input {
+  min-height: 30px !important;
+}

@@ -631,7 +631,7 @@
     hideTicketMenu();
     const trashed = isDeleted(t.id);
     const m = document.createElement("div");
-    m.className = "tk-menu";
+    m.className = "tk-menu crm-menu-surface";
     // State-aware items: a live ticket can be MOVED TO TRASH (reversible); a trashed one can be
     // RESTORED or DELETED PERMANENTLY (the only truly destructive action → the lone red item).
     m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
@@ -641,6 +641,7 @@
         ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
           `<button class="tk-menu-item tk-menu-danger" data-act="purge">delete permanently</button>`
         : `<button class="tk-menu-item" data-act="trash">move to trash</button>`);
+    window.crmInterfaceParity?.scan?.(m);
     document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
@@ -669,11 +670,12 @@
     hideTicketMenu();
     const cur = metaOf(t.id).color || "";
     const m = document.createElement("div");
-    m.className = "tk-menu";
+    m.className = "tk-menu crm-menu-surface";
     m.innerHTML =
       `<div class="tk-swatches">${TICKET_COLORS.map((c) =>
         `<button class="tk-swatch${c === cur ? " is-active" : ""}" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join("")}</div>` +
       `<button class="tk-menu-item tk-menu-check" data-act="match"><span class="tk-tick">${cur ? "" : "&#10003;"}</span><span>match severity</span></button>`;
+    window.crmInterfaceParity?.scan?.(m);
     document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
@@ -699,11 +701,12 @@
       ...((metaOf(t.id).activity || []).map((a) => ({ at: a.at || 0, text: a.text || "", by: "" }))),
     ].filter((e) => e.text).sort((a, b) => b.at - a.at);
     const m = document.createElement("div");
-    m.className = "tk-menu tk-activity";
+    m.className = "tk-menu tk-activity crm-menu-surface";
     m.innerHTML = `<div class="tk-act-hd">Activity — ${esc(titleOf(t))}</div>` +
       (entries.length
         ? entries.map((e) => `<div class="tk-act-row"><span class="tk-act-when">${esc(when(e.at))}</span><span class="tk-act-text">${esc(e.text)}${e.by ? ` <span class="tk-act-by">— ${esc(e.by)}</span>` : ""}</span></div>`).join("")
         : `<div class="tk-act-row tk-act-none">No activity yet</div>`);
+    window.crmInterfaceParity?.scan?.(m);
     document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;

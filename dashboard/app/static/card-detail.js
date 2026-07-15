@@ -424,7 +424,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     wrap.style.top = `${targetTop + cardH / 2}px`;
     wrap.style.transform = "translateY(-50%)";
     panel = document.createElement("div");
-    panel.className = "ticket-detail";
+    panel.className = "ticket-detail crm-menu-surface";
     panel.style.height = `${Math.round(cardH)}px`;   // same vertical height as the ticket card
     wrap.appendChild(panel);
     overlay.appendChild(wrap);
@@ -560,7 +560,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     if (!panel) return;
     currentRecord = t || null;
     nextTouchPromptOpen = false;
-    if (!t) { panel.innerHTML = `<div class="td-empty">${esc(notFoundText)}</div>`; wire(null); return; }
+    if (!t) { panel.innerHTML = `<div class="td-empty">${esc(notFoundText)}</div>`; wire(null); window.crmInterfaceParity?.scan?.(panel); return; }
     // Lean config: ONLY the current bucket's fields, flat (no dropdowns) — each with its label + a *
     // (all are required to complete the stage), the question as the prompt, and "n/a" satisfies it.
     // No title/subtitle (set at creation, already on the card), no metadata / claim-resolve-delete.
@@ -582,6 +582,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       `<div class="td-msg" hidden></div>` +
       `<div class="td-save-row"><button class="td-save" data-act="save">save</button></div>`;
     wire(t);
+    window.crmInterfaceParity?.scan?.(panel);
   };
 
   const refresh = async () => {

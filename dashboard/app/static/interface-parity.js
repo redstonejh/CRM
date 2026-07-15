@@ -22,7 +22,7 @@
     ".tk-zone",
     ".crm-home-bucket",
     ".crm-home-window",
-    ".crm-overview-panel",
+    ".crm-overview-pocket",
     ".record-world",
     ".crm-person-history",
     ".fc-year-strip",
@@ -81,9 +81,6 @@
     ".dashboard-search-popover",
   ].join(",");
 
-  // Ticket/card behavior is preserved independently; it is not a menu source.
-  const PRESERVED_CARD_UI_SELECTOR = ".ticket-detail";
-
   const TOP_CIRCULAR_SELECTOR = ".window-glass-control, .auth-profile-button";
   const ACTION_SELECTOR = "button, [role='button']";
   const INPUT_SELECTOR = [
@@ -95,7 +92,6 @@
   const isElement = (node) => node?.nodeType === Node.ELEMENT_NODE;
   const inCardFace = (element) => !!element.closest(CARD_FACE_SELECTOR);
   const inDirectMenu = (element) => !!element.closest(DIRECT_MENU_SELECTOR);
-  const inPreservedCardUI = (element) => !!element.closest(PRESERVED_CARD_UI_SELECTOR);
   const isTopCircular = (element) => element.matches(TOP_CIRCULAR_SELECTOR) || !!element.closest(TOP_CIRCULAR_SELECTOR);
   const classify = (element) => {
     if (!isElement(element)) return;
@@ -110,7 +106,6 @@
     if (
       !cardFace &&
       !inDirectMenu(element) &&
-      !inPreservedCardUI(element) &&
       !isTopCircular(element) &&
       element.matches(ACTION_SELECTOR) &&
       !element.matches(SURFACE_SELECTOR)
@@ -118,7 +113,7 @@
       element.classList.add("crm-menu-action");
     }
 
-    if (!cardFace && !inDirectMenu(element) && !inPreservedCardUI(element) && element.matches(INPUT_SELECTOR)) {
+    if (!cardFace && !inDirectMenu(element) && element.matches(INPUT_SELECTOR)) {
       element.classList.add("crm-menu-input");
     }
   };
@@ -148,7 +143,6 @@
   const eligibleAction = (element) => (
     !inCardFace(element) &&
     !inDirectMenu(element) &&
-    !inPreservedCardUI(element) &&
     !isTopCircular(element) &&
     !element.matches(SURFACE_SELECTOR)
   );

@@ -41,78 +41,69 @@
     const style = document.createElement("style");
     style.id = "crm-record-world-styles";
     style.textContent = `
-      .record-world-shell { position:fixed; inset:0; z-index:7200; display:grid; place-items:center; padding:38px;
-        background:rgba(4,7,12,.48); backdrop-filter:blur(13px) saturate(112%); -webkit-app-region:no-drag; }
+      .record-world-shell { position:fixed; inset:0; z-index:7200; display:flex; align-items:flex-start; justify-content:flex-end; padding:62px 48px 84px;
+        background:transparent; backdrop-filter:none; -webkit-backdrop-filter:none; -webkit-app-region:no-drag; }
       .record-world-shell[hidden] { display:none; }
-      .record-world { width:min(1240px, calc(100vw - 76px)); height:min(760px, calc(100vh - 76px)); overflow:hidden;
-        display:grid; grid-template-rows:auto minmax(0,1fr); color:rgba(245,247,252,.94); border-radius:22px;
-        border:1px solid rgba(255,255,255,.16); background:linear-gradient(155deg,rgba(25,30,40,.94),rgba(10,14,21,.92));
-        box-shadow:inset 0 1px rgba(255,255,255,.13),0 34px 100px rgba(0,0,0,.52); }
-      .record-world-head { min-height:88px; display:flex; align-items:center; gap:18px; padding:17px 22px;
-        border-bottom:1px solid rgba(255,255,255,.09); }
-      .record-world-mark { width:42px; height:52px; border-radius:9px; flex:0 0 auto; position:relative;
-        background:linear-gradient(180deg,rgba(131,162,213,.4),rgba(70,91,126,.2)); border:1px solid rgba(177,204,246,.28); }
-      .record-world-mark:after { content:""; position:absolute; left:8px; right:8px; top:12px; height:1px;
-        background:rgba(220,233,255,.58); box-shadow:0 8px rgba(220,233,255,.28),0 16px rgba(220,233,255,.18); }
+      .record-world { width:min(390px, calc(100vw - 28px)); height:min(690px, calc(100vh - 146px)); overflow:hidden;
+        display:grid; grid-template-rows:auto minmax(0,1fr); color:rgba(245,247,252,.94); }
+      .record-world-head { min-height:62px; display:flex; align-items:center; gap:10px; padding:10px 10px 9px 14px; }
+      .record-world-mark { display:none; }
       .record-world-heading { min-width:0; flex:1; }
-      .record-world-kicker { font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(190,205,230,.52); }
-      .record-world-title { margin-top:4px; font:650 23px/1.15 system-ui,sans-serif; letter-spacing:-.018em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .record-world-subtitle { margin-top:5px; font-size:12px; color:rgba(220,227,239,.52); }
-      .record-world-close { width:34px; height:34px; border:0; border-radius:50%; color:rgba(240,245,255,.7); cursor:pointer;
-        background:rgba(255,255,255,.07); font-size:18px; }
-      .record-world-close:hover { background:rgba(255,255,255,.13); color:#fff; }
-      .record-world-body { min-height:0; display:grid; grid-template-columns:minmax(230px,.74fr) minmax(370px,1.28fr) minmax(280px,.92fr); }
-      .record-world-column { min-width:0; min-height:0; overflow:auto; padding:20px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
-      .record-world-column + .record-world-column { border-left:1px solid rgba(255,255,255,.085); }
-      .record-world-section + .record-world-section { margin-top:25px; }
-      .record-world-section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
-      .record-world-section-title { font-size:10px; font-weight:720; letter-spacing:.12em; text-transform:uppercase; color:rgba(177,199,233,.62); }
+      .record-world-kicker { font-size:8px; letter-spacing:.11em; text-transform:uppercase; color:rgba(190,205,230,.45); }
+      .record-world-title { margin-top:3px; font:680 15px/1.15 system-ui,sans-serif; letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .record-world-subtitle { margin-top:4px; font-size:9px; color:rgba(220,227,239,.4); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .record-world-close { width:30px; height:30px; min-width:30px; padding:0!important; color:rgba(240,245,255,.55); font-size:16px; }
+      .record-world-body { min-height:0; display:block; overflow-y:auto; overflow-x:hidden; padding:0 5px 10px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
+      .record-world-column { min-width:0; overflow:visible; padding:10px; }
+      .record-world-column + .record-world-column { border-top:1px solid rgba(255,255,255,.055); }
+      .record-world-section + .record-world-section { margin-top:17px; }
+      .record-world-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
+      .record-world-section-title { font-size:8px; font-weight:720; letter-spacing:.1em; text-transform:uppercase; color:rgba(177,199,233,.52); }
       .record-world-action { border:1px solid rgba(174,202,244,.2); background:rgba(137,174,228,.08); color:rgba(223,235,253,.76);
         border-radius:8px; padding:5px 8px; font:600 10px/1 system-ui; cursor:pointer; }
       .record-world-action:hover { background:rgba(137,174,228,.16); color:#fff; }
-      .record-world-facts { display:grid; gap:1px; border:1px solid rgba(255,255,255,.08); border-radius:12px; overflow:hidden; }
-      .record-world-fact { min-height:41px; display:grid; grid-template-columns:82px minmax(0,1fr); gap:10px; align-items:center; padding:7px 10px; background:rgba(255,255,255,.028); }
-      .record-world-fact-label { font-size:10px; color:rgba(217,225,239,.42); }
-      .record-world-fact-value { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .record-world-related { display:grid; gap:7px; }
-      .record-world-related-row { display:grid; grid-template-columns:32px minmax(0,1fr); gap:9px; align-items:center; width:100%;
-        border:0; padding:7px; text-align:left; color:inherit; border-radius:10px; background:rgba(255,255,255,.035); cursor:pointer; }
-      .record-world-related-row:hover { background:rgba(255,255,255,.075); }
-      .record-world-related-icon { width:30px; height:34px; border-radius:7px; background:rgba(139,169,212,.12); border:1px solid rgba(170,196,233,.13); }
-      .record-world-related-name { font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .record-world-related-kind { margin-top:2px; font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:rgba(213,223,238,.38); }
-      .record-world-flow { border-radius:12px; padding:12px; background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.075); }
-      .record-world-flow-top { display:flex; justify-content:space-between; font-size:11px; }
+      .record-world .crm-menu-action { min-height:30px!important; padding:0 7px!important; font-size:.68rem!important; }
+      .record-world .record-world-close.crm-menu-action { width:30px!important; min-width:30px!important; height:30px!important; padding:0!important; font-size:16px!important; }
+      .record-world-facts { display:grid; gap:1px; overflow:hidden; }
+      .record-world-fact { min-height:34px; display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; align-items:center; padding:5px 7px; }
+      .record-world-fact-label { font-size:9px; color:rgba(217,225,239,.38); }
+      .record-world-fact-value { font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .record-world-related { display:grid; gap:2px; }
+      .record-world-related-row { display:grid; grid-template-columns:24px minmax(0,1fr); gap:8px; align-items:center; width:100%; min-height:38px!important; padding:4px 7px!important; text-align:left!important; }
+      .record-world-related-icon { width:21px; height:25px; border-radius:6px; background:rgba(139,169,212,.1); border:1px solid rgba(170,196,233,.1); }
+      .record-world-related-name { font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .record-world-related-kind { margin-top:2px; font-size:7px; text-transform:uppercase; letter-spacing:.07em; color:rgba(213,223,238,.34); }
+      .record-world-flow { border-radius:8px; padding:8px; }
+      .record-world-flow-top { display:flex; justify-content:space-between; font-size:9px; }
       .record-world-flow-name { font-weight:650; text-transform:capitalize; }
       .record-world-flow-stage { color:rgba(213,227,249,.57); text-transform:capitalize; }
-      .record-world-flow-bar { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:4px; margin-top:10px; }
-      .record-world-flow-bar i { height:3px; border-radius:9px; background:rgba(255,255,255,.1); }
+      .record-world-flow-bar { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:3px; margin-top:7px; }
+      .record-world-flow-bar i { height:2px; border-radius:9px; background:rgba(255,255,255,.1); }
       .record-world-flow-bar i.is-on { background:rgba(137,179,240,.72); box-shadow:0 0 8px rgba(92,151,235,.25); }
-      .record-world-commitments { display:grid; gap:7px; }
-      .record-world-commitment { display:grid; grid-template-columns:18px minmax(0,1fr) auto; gap:9px; align-items:start; padding:10px;
-        border-radius:11px; background:rgba(255,255,255,.036); border:1px solid rgba(255,255,255,.07); }
+      .record-world-commitments { display:grid; gap:2px; }
+      .record-world-commitment { display:grid; grid-template-columns:17px minmax(0,1fr) auto; gap:8px; align-items:start; padding:8px; }
       .record-world-check { width:16px; height:16px; margin-top:1px; border:1px solid rgba(204,220,244,.36); border-radius:50%; background:transparent; cursor:pointer; }
       .record-world-check:hover { border-color:rgba(151,194,255,.86); background:rgba(113,170,249,.15); }
-      .record-world-commitment-title { font-size:12px; line-height:1.35; }
-      .record-world-commitment-meta { margin-top:4px; font-size:10px; color:rgba(216,225,240,.43); }
-      .record-world-due { font-size:10px; color:rgba(216,225,240,.52); white-space:nowrap; }
+      .record-world-commitment-title { font-size:10px; line-height:1.35; }
+      .record-world-commitment-meta { margin-top:3px; font-size:8px; color:rgba(216,225,240,.39); }
+      .record-world-due { font-size:8px; color:rgba(216,225,240,.45); white-space:nowrap; }
       .record-world-due.is-late { color:rgba(244,163,145,.82); }
-      .record-world-empty { padding:12px 2px; color:rgba(221,229,242,.38); font-size:11px; line-height:1.5; }
+      .record-world-empty { padding:9px 2px; color:rgba(221,229,242,.34); font-size:9px; line-height:1.45; }
       .record-world-timeline { position:relative; display:grid; gap:2px; }
-      .record-world-event { position:relative; padding:7px 4px 14px 21px; }
+      .record-world-event { position:relative; padding:6px 4px 10px 18px; }
       .record-world-event:before { content:""; position:absolute; left:5px; top:13px; width:5px; height:5px; border-radius:50%; background:rgba(155,185,229,.66); }
       .record-world-event:after { content:""; position:absolute; left:7px; top:20px; bottom:-3px; width:1px; background:rgba(255,255,255,.09); }
       .record-world-event:last-child:after { display:none; }
-      .record-world-event-meta { font-size:9px; color:rgba(211,222,239,.4); }
-      .record-world-event-content { margin-top:3px; font-size:11px; line-height:1.45; color:rgba(238,242,249,.77); }
-      .record-world-composer { display:grid; gap:8px; padding:10px; border-radius:12px; background:rgba(0,0,0,.13); }
+      .record-world-event-meta { font-size:8px; color:rgba(211,222,239,.36); }
+      .record-world-event-content { margin-top:3px; font-size:9px; line-height:1.4; color:rgba(238,242,249,.7); }
+      .record-world-composer { display:grid; gap:7px; padding:7px; }
       .record-world-composer[hidden] { display:none; }
       .record-world-input { box-sizing:border-box; width:100%; min-height:34px; border:1px solid rgba(255,255,255,.12); border-radius:8px;
         background:rgba(0,0,0,.18); color:#fff; padding:8px 9px; font:12px system-ui; outline:none; }
       textarea.record-world-input { resize:vertical; min-height:64px; }
       .record-world-input:focus { border-color:rgba(137,179,240,.55); }
       .record-world-composer-actions { display:flex; justify-content:flex-end; gap:6px; }
-      @media(max-width:920px){ .record-world { height:calc(100vh - 36px); width:calc(100vw - 36px); } .record-world-body{grid-template-columns:1fr 1.3fr}.record-world-column:last-child{display:none} }
+      @media(max-width:600px){.record-world-shell{padding:54px 14px 78px}.record-world{width:100%;height:calc(100vh - 132px)}}
     `;
     document.head.appendChild(style);
   }
@@ -171,12 +162,12 @@
     const r = data.record || { id: data.id };
     const openCommitments = data.commitments.filter((item) => !["completed", "cancelled", "canceled"].includes(String(item.status).toLowerCase()) && !item.deletedAt);
     const activity = [...data.activities].sort((a, b) => Date.parse(b.occurredAt || b.createdAt) - Date.parse(a.occurredAt || a.createdAt));
-    root.innerHTML = `<article class="record-world" role="dialog" aria-modal="true" aria-label="${esc(title(r))}">
+    root.innerHTML = `<article class="record-world crm-menu-surface" role="dialog" aria-modal="true" aria-label="${esc(title(r))}">
       <header class="record-world-head">
         <div class="record-world-mark" aria-hidden="true"></div>
         <div class="record-world-heading"><div class="record-world-kicker">${esc(entityLabel(data.entity))}</div><div class="record-world-title">${esc(title(r))}</div>
           <div class="record-world-subtitle">${esc(first(value(r, "description"), value(r, "role"), value(r, "company"), `${openCommitments.length} open commitments`))}</div></div>
-        <button class="record-world-close" type="button" data-record-close aria-label="Close">×</button>
+        <button class="record-world-close crm-menu-action" type="button" data-record-close aria-label="Close">×</button>
       </header>
       <div class="record-world-body">
         <div class="record-world-column">
@@ -202,6 +193,7 @@
         </div>
       </div>
     </article>`;
+    window.crmInterfaceParity?.scan?.(root);
   }
 
   async function refresh() {
@@ -213,7 +205,7 @@
   async function openWorld(entity, id) {
     if (!root) mount();
     root.hidden = false;
-    root.innerHTML = `<article class="record-world"><div class="record-world-empty" style="margin:auto">Loading record…</div></article>`;
+    root.innerHTML = `<article class="record-world crm-menu-surface"><div class="record-world-empty" style="margin:auto">Loading record…</div></article>`;
     render(await load(entity, id));
   }
   const isTicketEntity = (entity) => ["ticket", "tickets", "case", "cases"].includes(String(entity || "").trim().toLowerCase());

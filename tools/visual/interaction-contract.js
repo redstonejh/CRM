@@ -498,6 +498,23 @@ async function main() {
   await page.click('[data-person-history-close]');
   await page.waitForFunction(() => !window.crmPersonHistory?.isOpen?.(), { timeout: 5000 });
 
+  await page.evaluate(() => window.crmRecordWorld.open('contacts', 'ct_marta', document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]')));
+  await page.waitForSelector('.record-world-shell:not([hidden]) .record-world', { timeout: 5000 });
+  await check('Every non-ticket record opens as a compact canonical menu, never a full-screen invented console', () => {
+    const shell = document.querySelector('.record-world-shell:not([hidden])');
+    const panel = shell?.querySelector('.record-world');
+    const reference = document.querySelector('.auth-profile-menu');
+    if (!shell || !panel || !reference) return false;
+    const rect = panel.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const shellStyle = getComputedStyle(shell);
+    return panel.classList.contains('crm-menu-surface') && rect.width <= 410 && rect.height <= innerHeight - 120 && rect.left >= innerWidth - 470
+      && shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter)
+      && panel.querySelectorAll('.record-world-column').length === 3
+      && [...panel.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'))
+      && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
+  });
+  await page.click('[data-record-close]');
+  await page.waitForSelector('.record-world-shell[hidden]');
+
   await activate('money');
   await check('Money uses one vertical selector for Bills and Invoices', () => {
     const room = document.querySelector('[data-crm-theater="money-room"]');
@@ -586,13 +603,30 @@ async function main() {
       && !!document.querySelector('.ticket-detail .td-acts .td-act[data-act="delete"]')
       && !document.querySelector('.ticket-detail .td-field, .ticket-detail .td-save')
   ));
+  await check('Ticket detail is a compact canonical config menu with no full-screen visual scrim', () => {
+    const overlay = document.querySelector('.ticket-detail-overlay:not([hidden])');
+    const panel = overlay?.querySelector('.ticket-detail');
+    const scrim = overlay?.querySelector('.td-scrim');
+    const reference = document.querySelector('.auth-profile-menu');
+    if (!overlay || !panel || !reference) return false;
+    const rect = panel.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const overlayStyle = getComputedStyle(overlay);
+    return panel.classList.contains('crm-menu-surface') && rect.width <= 310 && rect.height <= 570
+      && overlayStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(overlayStyle.backdropFilter)
+      && (!scrim || getComputedStyle(scrim).display === 'none')
+      && [...panel.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'))
+      && [...panel.querySelectorAll('input,textarea,select')].every((input) => input.classList.contains('crm-menu-input'))
+      && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
+  });
   await page.keyboard.press('Escape');
   await sleep(520);
   await page.click(ticketCard, { button: 'right' });
   await page.waitForSelector('.tk-menu', { timeout: 5000 });
   await check('Right-click restores the complete ticket action menu', () => {
-    const actions = [...document.querySelectorAll('.tk-menu .tk-menu-item')].map((item) => item.textContent.trim().toLowerCase());
-    return ['edit', 'appearance', 'activity', 'move to trash'].every((label) => actions.includes(label));
+    const items = [...document.querySelectorAll('.tk-menu .tk-menu-item')];
+    const actions = items.map((item) => item.textContent.trim().toLowerCase());
+    return document.querySelector('.tk-menu')?.classList.contains('crm-menu-surface')
+      && items.every((item) => item.classList.contains('crm-menu-action'))
+      && ['edit', 'appearance', 'activity', 'move to trash'].every((label) => actions.includes(label));
   });
   await page.click('.tk-menu .tk-menu-item[data-act="edit"]');
   await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail', { timeout: 5000 });

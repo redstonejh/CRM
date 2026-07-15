@@ -21,7 +21,8 @@
     style.textContent = `
       /* The veil carries the fully-dived bucket lid for one beat while the
          destination theater takes the stage beneath its frost, then fades. */
-      .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none; }
+      .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none;
+        opacity: .999; transform: translateZ(0); will-change: opacity; contain: paint; }
       /* A destination appears behind the camera lid in its final visual state.
          Its own entrance transitions must not restart shadows or geometry when
          the lid is removed one frame later. */
@@ -84,21 +85,29 @@
     } catch {}
     if (settledState?.stable) window.crmHome?.noteModuleReady?.(key);
     const readyAt = performance.now();
-    requestAnimationFrame(() => {
+    // A fully opaque lid lets Chromium cull the live theater beneath it. The
+    // veil's .999 opacity keeps the picture visually exact while requiring the
+    // destination to composite. Give it one complete covered paint before the
+    // lid is retired, then keep entrance motion disabled for the first exposed
+    // paint. This is a handoff between already-painted layers, not a reveal that
+    // asks shadows and backdrop filters to instantiate on screen.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       const releaseAt = performance.now();
       veil?.remove();
       if (cam?.restoreRoot) cam.restoreRoot();
       else cam?.rebuildRoot?.();
       try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
       if (surface) surface.style.zIndex = "";
-      document.documentElement.classList.remove("crm-transit-materializing");
-      const doneAt = performance.now();
-      performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
-        commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
-        frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
-      if (performanceTimings.length > 24) performanceTimings.shift();
-      done();
-    });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.documentElement.classList.remove("crm-transit-materializing");
+        const doneAt = performance.now();
+        performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
+          commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
+          frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
+        if (performanceTimings.length > 24) performanceTimings.shift();
+        done();
+      }));
+    }));
   };
 
   // Home (active, level 0) → module: play the home camera's own dive, commit at

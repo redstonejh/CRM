@@ -28,6 +28,7 @@
   let factoryPrewarmRunning = false;
   let factoryPrewarmAttempts = 0;
   let factoryPrewarmAfter = 0;
+  let handoffSequence = 0;
   const prewarmedFactories = new Set();
   const recycledExpanders = new Map();
   const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "crmMoneyRoom", "crmPlanner", "crmAssignments"];
@@ -55,6 +56,12 @@
       .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint}
       .crm-home-surface.crm-home-camera-moving .crm-home-scene-backdrop{display:block}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{display:block}
+      /* At the contract endpoint the exact Home raster remains above the live
+         root for one complete paint. The real glass, previews, hand and shadows
+         can therefore rejoin the compositor while still covered, eliminating
+         the otherwise-visible one-frame materialization at rest. */
+      .crm-home-surface.crm-home-camera-handoff .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
+        display:block;z-index:30;opacity:1;transform:translateZ(0);will-change:opacity}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-scene-backdrop,
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{visibility:hidden}
       /* The verified raster carries the expensive previews, glass, hand and
@@ -661,8 +668,9 @@
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareJump:(expander)=>expander.classList.add("is-unwrapping"),
     onTransitionStart:(direction,context)=>{
+      handoffSequence += 1;
       factoryPrewarmAfter = Number.POSITIVE_INFINITY;
-      context.surface?.classList.remove("crm-home-motion-priming");
+      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff");
       syncMotionSnapshot(context.layers?.[0]);
       syncSceneBackdrop(context.layers?.[0]);
       context.surface?.classList.add("crm-home-camera-moving");
@@ -673,6 +681,13 @@
     },
     onTransitionEnd:(direction,context)=>{
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting");
+      const sequence = ++handoffSequence;
+      if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
+        context.surface?.classList.add("crm-home-camera-handoff");
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (sequence === handoffSequence) context.surface?.classList.remove("crm-home-camera-handoff");
+        }));
+      } else context.surface?.classList.remove("crm-home-camera-handoff");
       // After returning Home, use the next idle slice to prepare the next room.
       // Expanding leaves Home inactive, so its longer guard remains appropriate.
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);

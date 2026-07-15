@@ -2,7 +2,7 @@
 //
 // Boots the harness (real API on pg-mem + static dashboard + Rosa seed),
 // drives the workspace switch through window.crmWorkspaces, and writes one
-// 1600x1000 PNG per surface plus one with an open card-detail panel.
+// 1600x1000 PNG per user-facing surface plus one with an open card-detail panel.
 //
 // Usage:
 //   node tools/visual/shoot.js [outDir]      # forward cycle (default tools/visual/shots)
@@ -15,7 +15,7 @@ const puppeteer = require('puppeteer-core');
 
 const { start } = require('./harness.js');
 
-const WORKSPACES = ['home', 'desk', 'people', 'pipeline', 'jobs', 'money', 'calendar', 'cases'];
+const WORKSPACES = ['home', 'desk', 'people', 'cases', 'money', 'planner', 'assignments'];
 
 function chromePath() {
   const candidates = [
@@ -70,7 +70,7 @@ async function shootDetail(page, outDir) {
     return true;
   });
   await new Promise((r) => setTimeout(r, 1200));
-  const file = path.join(outDir, '09-detail.png');
+  const file = path.join(outDir, `${String(WORKSPACES.length + 1).padStart(2, '0')}-detail.png`);
   await page.screenshot({ path: file });
   console.log('[shoot]', path.relative(process.cwd(), file), opened ? '' : '(no card found — panel not opened)');
 }

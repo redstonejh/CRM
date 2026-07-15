@@ -7,6 +7,8 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
+const HOME_PREVIEW_VERSION = 'filtered-home-v30';
+const HOME_PREVIEW_REST_FILTER = 'blur(3.2px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
   && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
@@ -181,10 +183,10 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'filtered-home-v29' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
-  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes('blur(2.4px)') || item.titleOpacity < .9)) {
+  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER) || item.titleOpacity < .9)) {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
@@ -204,24 +206,24 @@ async function main() {
     const image = bucket?.querySelector('.crm-home-preview-foreground');
     const title = bucket?.querySelector('.crm-home-title-glass');
     const titleOpacity = Number(getComputedStyle(title).opacity);
-    return image?.complete && getComputedStyle(image).filter === 'blur(0px)'
-      && titleOpacity >= .35 && titleOpacity < .45;
+    return image?.complete && getComputedStyle(image).filter.includes('blur(0px)')
+      && titleOpacity >= .25 && titleOpacity < .35;
   });
   const hoveredTileState = await hoverTile.evaluate((bucket) => ({
     images: bucket.querySelectorAll('.crm-home-preview > img').length,
     titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
     previewFilter: getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter,
   }));
-  if (hoveredTileState.images !== 1 || hoveredTileState.previewFilter !== 'blur(0px)' || hoveredTileState.titleOpacity < .35 || hoveredTileState.titleOpacity >= .45) {
+  if (hoveredTileState.images !== 1 || !hoveredTileState.previewFilter.includes('blur(0px)') || hoveredTileState.titleOpacity < .25 || hoveredTileState.titleOpacity >= .35) {
     throw new Error(`Home tile hover reveal is broken: ${JSON.stringify(hoveredTileState)}`);
   }
   await page.mouse.move(2, 2);
-  await page.waitForFunction(() => {
+  await page.waitForFunction((restFilter) => {
     const bucket = document.querySelector('.crm-home-grid > .crm-home-bucket');
     return bucket?.querySelectorAll('.crm-home-preview > img').length === 1
-      && getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter === 'blur(2.4px)'
+      && getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter.includes(restFilter)
       && Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity) > .9;
-  });
+  }, HOME_PREVIEW_REST_FILTER);
   let nativeDrag;
   if (process.env.CRM_ALLOW_SYNTHETIC_DRAG_MISS === '1') {
     nativeDrag = { dx: 0, dy: 0, syntheticMissAllowed: true, skipped: true };

@@ -1,6 +1,6 @@
 // visual-diff.js — visual regression: current surfaces vs committed goldens.
 //
-// Shoots all 8 workspaces into a temp dir, then pixel-diffs each against
+// Shoots every user-facing workspace into a temp dir, then pixel-diffs each against
 // tools/visual/goldens/. A small threshold absorbs anti-aliasing and the
 // date text that legitimately drifts day to day; anything larger fails and
 // a *-diff.png is written next to the candidate for review.

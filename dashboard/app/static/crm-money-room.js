@@ -12,14 +12,13 @@
     style.id = "crm-money-room-styles";
     style.textContent = `
       .crm-money-room{position:fixed;inset:0;z-index:836;pointer-events:none;color:#fff}.crm-money-room[hidden]{display:none}
-      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:34px;top:132px;width:116px;
-        box-sizing:border-box;padding:7px 6px 6px;pointer-events:auto;overflow:hidden}
-      .crm-money-switcher-head{padding:5px 9px 7px;font:700 9px/1 system-ui;color:rgba(255,255,255,.36);letter-spacing:.14em;text-transform:uppercase}
+      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:34px;top:132px;width:94px;
+        box-sizing:border-box;padding:4px;pointer-events:auto;overflow:hidden}
       .crm-money-switcher-list{display:flex;flex-direction:column;gap:1px}
-      .crm-money-view.crm-menu-action{position:relative;width:100%;height:31px;text-align:left;padding-left:20px!important;font-size:.7rem!important;letter-spacing:.01em}
-      .crm-money-view::before{content:"";position:absolute;left:8px;top:9px;width:2px;height:13px;border-radius:2px;background:rgba(255,255,255,.13);transition:background .14s ease,box-shadow .14s ease}
-      .crm-money-view.is-selected::before{background:rgba(151,196,255,.9);box-shadow:0 0 9px rgba(91,151,236,.48)}
-      @media(max-width:1050px){.crm-money-switcher{left:18px;top:112px;width:108px}}
+      .crm-money-view.crm-menu-action{position:relative;width:100%;height:30px;text-align:left;padding-left:18px!important;font-size:.68rem!important;letter-spacing:0}
+      .crm-money-view::before{content:"";position:absolute;left:7px;top:13px;width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.16)}
+      .crm-money-view.is-selected::before{background:rgba(174,207,250,.86);box-shadow:0 0 7px rgba(91,151,236,.4)}
+      @media(max-width:1050px){.crm-money-switcher{left:18px;top:112px}}
     `;
     document.head.appendChild(style);
   };
@@ -32,7 +31,6 @@
     root.dataset.crmTheater = "money-room";
     root.hidden = true;
     root.innerHTML = `<aside class="crm-money-switcher crm-menu-surface" aria-label="Money view">
-      <div class="crm-money-switcher-head crm-menu-item">Money</div>
       <div class="crm-money-switcher-list">${VIEWS.map((view) => `<button type="button" class="crm-money-view crm-menu-action" data-money-view="${view.key}">${view.label}</button>`).join("")}</div>
     </aside><section class="crm-money-stage"></section>`;
     root.addEventListener("click", (event) => {

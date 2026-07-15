@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'money', 'planner', 'assig
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v30';
+const HOME_PREVIEW_VERSION = 'filtered-home-v31';
 const homePreviewCache = new Map();
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;

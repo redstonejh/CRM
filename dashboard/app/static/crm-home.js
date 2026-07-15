@@ -8,7 +8,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v30";
+  const HOME_PREVIEW_VERSION = "filtered-home-v31";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -76,22 +76,15 @@
          surfaces cannot also consume the menu's large floating shadow. That
          shadow overlaps into a single clipped rectangle around the grid. */
       .crm-home-bucket.crm-menu-surface{box-shadow:inset 0 1px 0 var(--crm-menu-highlight),0 14px 26px -16px rgba(0,0,0,.72)!important}
-      .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(55,82,120,.28),rgba(20,31,48,.24));
-        box-shadow:inset 0 0 0 1px rgba(153,190,240,.34),inset 0 1px rgba(255,255,255,.16),0 16px 30px -18px rgba(0,0,0,.72)}
-      .crm-home-title-glass{position:absolute;z-index:4;left:16px;bottom:15px;width:max-content;max-width:calc(100% - 32px);
-        box-sizing:border-box;padding:8px 10px;text-align:left;pointer-events:none;contain:layout style;opacity:.96;
-        border:1px solid rgba(255,255,255,.12);border-radius:9px;background:linear-gradient(180deg,rgba(17,23,33,.72),rgba(10,15,23,.65));
-        box-shadow:inset 0 1px rgba(255,255,255,.11),0 8px 22px -13px rgba(0,0,0,.82);
-        transition:opacity .18s ease,transform .18s ease;display:flex;align-items:center;gap:8px}
-      .crm-home-title{font:650 clamp(10px,2.8cqh,13px)/1 system-ui;letter-spacing:.12em;text-transform:uppercase;
-        max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(241,246,253,.88);
-        text-shadow:0 1px 0 rgba(0,0,0,.7),0 2px 8px rgba(0,0,0,.34)}
-      .crm-home-loading-spinner{display:block;width:9px;height:9px;box-sizing:border-box;border-radius:50%;flex:0 0 auto;
-        border:1.5px solid rgba(220,232,248,.22);border-top-color:rgba(238,246,255,.82);will-change:transform;
-        animation:crm-home-loading-spin .72s linear infinite}
-      .crm-home-bucket[data-preview-ready="true"] .crm-home-loading-spinner{display:none}
-      @keyframes crm-home-loading-spin{to{transform:rotate(360deg)}}
-      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-title-glass{opacity:.3;transform:translateY(2px)}
+      .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(40,55,76,.27),rgba(18,26,38,.23));
+        box-shadow:inset 0 0 0 1px rgba(166,196,236,.27),inset 0 1px rgba(255,255,255,.15),0 14px 26px -16px rgba(0,0,0,.72)}
+      .crm-home-title-glass{position:absolute;z-index:4;left:17px;bottom:16px;max-width:calc(100% - 34px);
+        padding:0;text-align:left;pointer-events:none;contain:layout style;opacity:.92;background:none;border:0;box-shadow:none;
+        transition:opacity .16s ease;display:block}
+      .crm-home-title{font:620 clamp(11px,2.9cqh,13px)/1.1 system-ui;letter-spacing:.015em;
+        max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(246,249,253,.91);
+        text-shadow:0 1px 2px rgba(0,0,0,.92),0 3px 12px rgba(0,0,0,.72)}
+      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-title-glass{opacity:.28}
       .crm-home-preview{position:absolute;inset:0;z-index:1;overflow:hidden;contain:paint;border-radius:inherit;color:rgba(255,255,255,.62)}
       .crm-home-preview-state{position:absolute;inset:0;display:grid;place-items:center;font-size:.68rem;font-weight:760;
         letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.38)}
@@ -99,8 +92,8 @@
         user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
       /* Each tile is one inert raster. A small GPU filter provides the resting
          depth cue and is the only visual property released on hover. */
-      .crm-home-preview-foreground{filter:blur(3.2px) saturate(.8) brightness(.74);transition:filter .2s ease}
-      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-preview-foreground{filter:blur(0) saturate(1) brightness(.92)}
+      .crm-home-preview-foreground{filter:blur(1.8px) saturate(.9) brightness(.82);transition:filter .18s ease}
+      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-preview-foreground{filter:blur(0) saturate(.96) brightness(.9)}
       /* These are the card system's real .tk-card objects. Home contributes
          only the held-hand geometry and compositor-friendly reveal motion. */
       .crm-home-priority-hand{position:absolute;z-index:9;left:0;right:0;bottom:0;height:var(--home-hand-reserve,280px);
@@ -159,7 +152,7 @@
 
   const bucketHTML = (module) => `
     <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-label="Loading preview"></div>
-    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div><span class="crm-home-loading-spinner" aria-hidden="true"></span></div>`;
+    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div>`;
 
   const farShift = (preview) => {
     const bounds = preview?.foregroundBounds;

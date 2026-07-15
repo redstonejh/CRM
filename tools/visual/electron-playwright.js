@@ -7,8 +7,8 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v30';
-const HOME_PREVIEW_REST_FILTER = 'blur(3.2px)';
+const HOME_PREVIEW_VERSION = 'filtered-home-v31';
+const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
   && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
@@ -207,14 +207,14 @@ async function main() {
     const title = bucket?.querySelector('.crm-home-title-glass');
     const titleOpacity = Number(getComputedStyle(title).opacity);
     return image?.complete && getComputedStyle(image).filter.includes('blur(0px)')
-      && titleOpacity >= .25 && titleOpacity < .35;
+      && titleOpacity >= .23 && titleOpacity < .33;
   });
   const hoveredTileState = await hoverTile.evaluate((bucket) => ({
     images: bucket.querySelectorAll('.crm-home-preview > img').length,
     titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
     previewFilter: getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter,
   }));
-  if (hoveredTileState.images !== 1 || !hoveredTileState.previewFilter.includes('blur(0px)') || hoveredTileState.titleOpacity < .25 || hoveredTileState.titleOpacity >= .35) {
+  if (hoveredTileState.images !== 1 || !hoveredTileState.previewFilter.includes('blur(0px)') || hoveredTileState.titleOpacity < .23 || hoveredTileState.titleOpacity >= .33) {
     throw new Error(`Home tile hover reveal is broken: ${JSON.stringify(hoveredTileState)}`);
   }
   await page.mouse.move(2, 2);

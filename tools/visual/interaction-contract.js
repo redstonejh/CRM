@@ -136,8 +136,8 @@ async function main() {
     const images = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')];
     return images.length === 6 && images.every((image) => {
       const filter = getComputedStyle(image).filter;
-      return image.dataset.previewVariant === 'filtered' && filter.includes('blur(3.2px)')
-        && filter.includes('saturate(0.8)') && filter.includes('brightness(0.74)');
+      return image.dataset.previewVariant === 'filtered' && filter.includes('blur(1.8px)')
+        && filter.includes('saturate(0.9)') && filter.includes('brightness(0.82)');
     })
       && !document.querySelector('.crm-home-grid .crm-home-preview-sharp');
   });
@@ -149,9 +149,9 @@ async function main() {
     const title = tile?.querySelector('.crm-home-title-glass');
     const filter = foreground && getComputedStyle(foreground).filter;
     const titleStyle = title && getComputedStyle(title);
-    return !!foreground && !!title && filter.includes('blur(0px)') && filter.includes('saturate(1)')
-      && !tile.querySelector('.crm-home-preview-sharp') && Number(titleStyle.opacity) >= .25 && Number(titleStyle.opacity) < .35
-      && titleStyle.left === '16px' && titleStyle.bottom === '15px';
+    return !!foreground && !!title && filter.includes('blur(0px)') && filter.includes('saturate(0.96)')
+      && !tile.querySelector('.crm-home-preview-sharp') && Number(titleStyle.opacity) >= .23 && Number(titleStyle.opacity) < .33
+      && titleStyle.left === '17px' && titleStyle.bottom === '16px';
   });
   await page.evaluate(() => document.querySelectorAll('[data-interaction-style-probe]').forEach((probe) => probe.remove()));
   await page.evaluate(() => {

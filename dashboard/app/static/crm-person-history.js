@@ -160,22 +160,19 @@
 
   function placeHistory() {
     const panel = root?.querySelector(".crm-person-history");
-    if (!panel) return;
-    requestAnimationFrame(() => {
-      if (!panel.isConnected || root.hidden) return;
-      const bounds = panel.getBoundingClientRect();
-      const edge = 14; const topEdge = 62; const bottomEdge = 76; const gap = 10;
-      let left = innerWidth - bounds.width - 42;
-      let top = topEdge;
-      if (anchorRect) {
-        const right = anchorRect.right + gap;
-        const leftSide = anchorRect.left - gap - bounds.width;
-        left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
-        top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
-      }
-      panel.style.left = `${Math.round(left)}px`;
-      panel.style.top = `${Math.round(top)}px`;
-    });
+    if (!panel?.isConnected || root.hidden) return;
+    const bounds = panel.getBoundingClientRect();
+    const edge = 14; const topEdge = 62; const bottomEdge = 76; const gap = 10;
+    let left = innerWidth - bounds.width - 42;
+    let top = topEdge;
+    if (anchorRect) {
+      const right = anchorRect.right + gap;
+      const leftSide = anchorRect.left - gap - bounds.width;
+      left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
+      top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
+    }
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
   }
   async function open(id, sourceElement = null) {
     if (!root) mount();
@@ -184,11 +181,23 @@
     const source = sourceElement?.getBoundingClientRect?.();
     anchorRect = source ? { left: source.left, right: source.right, top: source.top, bottom: source.bottom } : null;
     returnFocus = sourceElement?.isConnected ? sourceElement : document.activeElement;
-    root.hidden = false;
-    root.innerHTML = '<article class="crm-person-history crm-menu-surface"><div class="crm-person-history-empty">Loading…</div></article>';
-    placeHistory();
-    try { await refresh(); return true; } catch (error) {
+    // Do not instantiate a placeholder menu and then replace its size and
+    // contents in view. Load while the shell is absent; the anchored surface
+    // enters once, with its final thread and final geometry.
+    root.hidden = true;
+    root.replaceChildren();
+    try {
+      const generation = currentId;
+      const loaded = await load(generation);
+      if (currentId !== generation) return false;
+      current = loaded;
+      render();
+      root.hidden = false;
+      placeHistory();
+      return true;
+    } catch (error) {
       root.innerHTML = `<article class="crm-person-history crm-menu-surface"><div class="crm-person-history-empty">${esc(error?.message || "Conversation history unavailable")}</div></article>`;
+      root.hidden = false;
       placeHistory();
       return false;
     }

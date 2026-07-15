@@ -88,22 +88,19 @@
 
   function placeWorld() {
     const panel = root?.querySelector(".record-world");
-    if (!panel) return;
-    requestAnimationFrame(() => {
-      if (!panel.isConnected || root.hidden) return;
-      const bounds = panel.getBoundingClientRect();
-      const edge = 14; const topEdge = 62; const bottomEdge = 76; const gap = 10;
-      let left = innerWidth - bounds.width - 42;
-      let top = topEdge;
-      if (anchorRect) {
-        const right = anchorRect.right + gap;
-        const leftSide = anchorRect.left - gap - bounds.width;
-        left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
-        top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
-      }
-      panel.style.left = `${Math.round(left)}px`;
-      panel.style.top = `${Math.round(top)}px`;
-    });
+    if (!panel?.isConnected || root.hidden) return;
+    const bounds = panel.getBoundingClientRect();
+    const edge = 14; const topEdge = 62; const bottomEdge = 76; const gap = 10;
+    let left = innerWidth - bounds.width - 42;
+    let top = topEdge;
+    if (anchorRect) {
+      const right = anchorRect.right + gap;
+      const leftSide = anchorRect.left - gap - bounds.width;
+      left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
+      top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
+    }
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
   }
 
   async function openWorld(entity, id, sourceElement) {
@@ -111,10 +108,14 @@
     const source = sourceElement?.getBoundingClientRect?.();
     anchorRect = source ? { left: source.left, right: source.right, top: source.top, bottom: source.bottom } : null;
     returnFocus = sourceElement?.isConnected ? sourceElement : document.activeElement;
+    // Build the complete menu while absent. Showing a loading shell first
+    // changes both its size and anchor one frame later.
+    root.hidden = true;
+    root.replaceChildren();
+    const record = await getRecord(entity, id);
+    render({ entity, id, record });
     root.hidden = false;
-    root.innerHTML = '<article class="record-world crm-menu-surface"><div class="record-world-empty">Loading…</div></article>';
     placeWorld();
-    render({ entity, id, record: await getRecord(entity, id) });
     return true;
   }
   async function open(entity, id, sourceElement) {

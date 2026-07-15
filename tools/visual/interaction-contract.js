@@ -535,21 +535,29 @@ async function main() {
     if (!shell || !panel || !source || !reference) return false;
     const rect = panel.getBoundingClientRect(); const sourceRect = source.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const shellStyle = getComputedStyle(shell);
     const adjacent = Math.abs(rect.left - sourceRect.right) <= 12 || Math.abs(sourceRect.left - rect.right) <= 12;
-    return panel.classList.contains('crm-menu-surface') && rect.width <= 330 && rect.height <= 530 && adjacent
+    return panel.classList.contains('crm-menu-surface') && rect.width <= 300 && rect.height <= 420 && adjacent
       && shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter)
-      && panel.querySelectorAll('.record-world-column').length === 1 && panel.querySelectorAll('.record-world-fold').length === 3
-      && panel.querySelectorAll('.record-world-fold[open]').length === 0
+      && panel.querySelectorAll('.record-world-fact').length > 0 && panel.querySelectorAll('.record-world-fact').length <= 4
+      && panel.querySelectorAll('.record-world-actions > button').length === 3
+      && panel.querySelectorAll('.record-world-editor:not([hidden])').length === 0
+      && !panel.querySelector('details,.record-world-fold,.record-world-flow,.record-world-timeline,.record-world-section')
       && [...panel.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'))
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
   });
-  await page.click('.record-world-fold:nth-of-type(3) > summary');
-  await check('Generic record sections disclose in place instead of opening another screen', () => (
-    document.querySelectorAll('.record-world-fold[open]').length === 1
-      && document.querySelector('.record-world-fold[open] .record-world-timeline')
-      && document.querySelector('.record-world').getBoundingClientRect().height <= 530
+  await page.click('[data-record-compose="note"]');
+  await check('A record action reveals one small inline editor inside the same menu', () => (
+    document.querySelectorAll('.record-world-editor:not([hidden])').length === 1
+      && !!document.querySelector('.record-world-editor:not([hidden]) textarea.crm-menu-input')
+      && document.querySelector('.record-world').getBoundingClientRect().height <= 420
+      && !document.querySelector('.record-world-shell details,.record-world-shell .record-world-flow')
   ));
-  await page.click('[data-record-close]');
+  await page.type('[data-record-editor="note"] textarea', 'Compact record menu note');
+  await page.click('[data-record-editor="note"] button[type="submit"]');
   await page.waitForSelector('.record-world-shell[hidden]');
+  await check('The compact record menu still persists its real action', async () => {
+    const result = await window.crmDomain.list('activities', { entityType: 'contacts', recordId: 'ct_marta', includeDeleted: false });
+    return (result.records || []).some((item) => String(item.content || '').includes('Compact record menu note'));
+  });
 
   await activate('money');
   await check('Money uses one vertical selector for Bills and Invoices', () => {

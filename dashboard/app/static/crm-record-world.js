@@ -1,284 +1,198 @@
-// crm-record-world.js — contextual truth for any CRM record.
+// crm-record-world.js — a compact, source-anchored record menu.
 (() => {
   let root = null;
   let current = null;
-  let refreshTimer = 0;
   let anchorRect = null;
+  let returnFocus = null;
 
-  const esc = (value) => String(value ?? "").replace(/[&<>\"]/g, (char) => ({
+  const esc = (value) => String(value ?? "").replace(/[&<>\"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
-  }[char]));
-  const first = (...values) => values.map((v) => String(v ?? "").trim()).find(Boolean) || "";
-  const records = (result) => result?.records || [];
+  }[character]));
+  const first = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
   const meta = (record) => record?.meta && typeof record.meta === "object" ? record.meta : {};
   const value = (record, key) => record?.[key] ?? meta(record)[key];
-  const title = (record) => first(value(record, "name"), value(record, "title"), value(record, "vendor"), value(record, "client"), value(record, "number"), value(record, "reference"), record?.companyLabel, record?.id, "Untitled");
+  const title = (record) => first(
+    value(record, "name"), value(record, "title"), value(record, "vendor"), value(record, "client"),
+    value(record, "number"), value(record, "reference"), record?.companyLabel, record?.id, "Untitled",
+  );
   const entityLabel = (entity) => ({
     contacts: "Person", companies: "Company", deals: "Deal", jobs: "Job", cases: "Case",
-    tickets: "Case", bills: "Bill", invoices: "Invoice", tasks: "Task", calendarItems: "Event",
+    tickets: "Ticket", bills: "Bill", invoices: "Invoice", tasks: "Task", calendarItems: "Event",
   }[entity] || "Record");
-  const bridgeGet = async (entity, id) => {
-    const result = await window.crmStore?.get?.(entity, id);
-    return result?.record || null;
-  };
-  const when = (raw) => {
-    const date = new Date(raw);
-    if (!Number.isFinite(date.getTime())) return "";
-    return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  };
-  const relativeDue = (raw) => {
-    const ms = Date.parse(raw || "");
-    if (!Number.isFinite(ms)) return "No date";
-    const days = Math.round((ms - Date.now()) / 86400000);
-    if (days < -1) return `${Math.abs(days)}d overdue`;
-    if (days === -1) return "Yesterday";
-    if (days === 0) return "Today";
-    if (days === 1) return "Tomorrow";
-    return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
-  };
+  const getRecord = async (entity, id) => (await window.crmStore?.get?.(entity, id))?.record || null;
+  const isTicketEntity = (entity) => ["ticket", "tickets", "case", "cases"].includes(String(entity || "").trim().toLowerCase());
 
   function ensureStyles() {
     if (document.getElementById("crm-record-world-styles")) return;
     const style = document.createElement("style");
     style.id = "crm-record-world-styles";
     style.textContent = `
-      .record-world-shell { position:fixed; inset:0; z-index:7200; display:block; padding:0;
-        background:transparent; backdrop-filter:none; -webkit-backdrop-filter:none; -webkit-app-region:no-drag; }
-      .record-world-shell[hidden] { display:none; }
-      .record-world { position:fixed; width:min(322px,calc(100vw - 28px)); max-height:min(530px,calc(100vh - 118px)); overflow:hidden;
-        display:grid; grid-template-rows:auto minmax(0,1fr); color:rgba(245,247,252,.94); }
-      .record-world-head { min-height:56px; display:flex; align-items:center; gap:10px; padding:9px 9px 8px 13px; }
-      .record-world-mark { display:none; }
-      .record-world-heading { min-width:0; flex:1; }
-      .record-world-kicker { font-size:8px; letter-spacing:.11em; text-transform:uppercase; color:rgba(190,205,230,.45); }
-      .record-world-title { margin-top:3px; font:680 15px/1.15 system-ui,sans-serif; letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .record-world-subtitle { margin-top:4px; font-size:9px; color:rgba(220,227,239,.4); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .record-world-close { width:30px; height:30px; min-width:30px; padding:0!important; color:rgba(240,245,255,.55); font-size:16px; }
-      .record-world-body { min-height:0; max-height:min(464px,calc(100vh - 184px)); display:block; overflow-y:auto; overflow-x:hidden; padding:0 7px 9px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent; }
-      .record-world-column { min-width:0; overflow:visible; padding:8px 4px 3px; }
-      .record-world-section + .record-world-section { margin-top:8px; }
-      .record-world-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
-      .record-world-section-title { font-size:8px; font-weight:720; letter-spacing:.1em; text-transform:uppercase; color:rgba(177,199,233,.52); }
-      .record-world-fold{border-top:1px solid rgba(255,255,255,.06);padding-top:1px}.record-world-fold>summary{list-style:none;min-height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 7px;cursor:pointer;color:rgba(220,229,243,.52);font:650 10px/1 system-ui}.record-world-fold>summary::-webkit-details-marker{display:none}.record-world-fold>summary:after{content:"›";font-size:14px;color:rgba(255,255,255,.3);transition:rotate .14s ease}.record-world-fold[open]>summary{color:#fff}.record-world-fold[open]>summary:after{rotate:90deg}.record-world-fold-body{padding:4px 5px 8px}.record-world-fold-subhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 2px 6px;color:rgba(177,199,233,.46);font:700 8px/1 system-ui;letter-spacing:.09em;text-transform:uppercase}
-      .record-world-action { border:1px solid rgba(174,202,244,.2); background:rgba(137,174,228,.08); color:rgba(223,235,253,.76);
-        border-radius:8px; padding:5px 8px; font:600 10px/1 system-ui; cursor:pointer; }
-      .record-world-action:hover { background:rgba(137,174,228,.16); color:#fff; }
-      .record-world .crm-menu-action { min-height:30px!important; padding:0 7px!important; font-size:.68rem!important; }
-      .record-world .record-world-close.crm-menu-action { width:30px!important; min-width:30px!important; height:30px!important; padding:0!important; font-size:16px!important; }
-      .record-world-facts { display:grid; gap:1px; overflow:hidden; }
-      .record-world-fact { min-height:34px; display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; align-items:center; padding:5px 7px; }
-      .record-world-fact-label { font-size:9px; color:rgba(217,225,239,.38); }
-      .record-world-fact-value { font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .record-world-related { display:grid; gap:2px; }
-      .record-world-related-row { display:grid; grid-template-columns:24px minmax(0,1fr); gap:8px; align-items:center; width:100%; min-height:38px!important; padding:4px 7px!important; text-align:left!important; }
-      .record-world-related-icon { width:21px; height:25px; border-radius:6px; background:rgba(139,169,212,.1); border:1px solid rgba(170,196,233,.1); }
-      .record-world-related-name { font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .record-world-related-kind { margin-top:2px; font-size:7px; text-transform:uppercase; letter-spacing:.07em; color:rgba(213,223,238,.34); }
-      .record-world-flow { border-radius:8px; padding:8px; }
-      .record-world-flow-top { display:flex; justify-content:space-between; font-size:9px; }
-      .record-world-flow-name { font-weight:650; text-transform:capitalize; }
-      .record-world-flow-stage { color:rgba(213,227,249,.57); text-transform:capitalize; }
-      .record-world-flow-bar { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:3px; margin-top:7px; }
-      .record-world-flow-bar i { height:2px; border-radius:9px; background:rgba(255,255,255,.1); }
-      .record-world-flow-bar i.is-on { background:rgba(137,179,240,.72); box-shadow:0 0 8px rgba(92,151,235,.25); }
-      .record-world-commitments { display:grid; gap:2px; }
-      .record-world-commitment { display:grid; grid-template-columns:17px minmax(0,1fr) auto; gap:8px; align-items:start; padding:8px; }
-      .record-world-check { width:16px; height:16px; margin-top:1px; border:1px solid rgba(204,220,244,.36); border-radius:50%; background:transparent; cursor:pointer; }
-      .record-world-check:hover { border-color:rgba(151,194,255,.86); background:rgba(113,170,249,.15); }
-      .record-world-commitment-title { font-size:10px; line-height:1.35; }
-      .record-world-commitment-meta { margin-top:3px; font-size:8px; color:rgba(216,225,240,.39); }
-      .record-world-due { font-size:8px; color:rgba(216,225,240,.45); white-space:nowrap; }
-      .record-world-due.is-late { color:rgba(244,163,145,.82); }
-      .record-world-empty { padding:9px 2px; color:rgba(221,229,242,.34); font-size:9px; line-height:1.45; }
-      .record-world-timeline { position:relative; display:grid; gap:2px; }
-      .record-world-event { position:relative; padding:6px 4px 10px 18px; }
-      .record-world-event:before { content:""; position:absolute; left:5px; top:13px; width:5px; height:5px; border-radius:50%; background:rgba(155,185,229,.66); }
-      .record-world-event:after { content:""; position:absolute; left:7px; top:20px; bottom:-3px; width:1px; background:rgba(255,255,255,.09); }
-      .record-world-event:last-child:after { display:none; }
-      .record-world-event-meta { font-size:8px; color:rgba(211,222,239,.36); }
-      .record-world-event-content { margin-top:3px; font-size:9px; line-height:1.4; color:rgba(238,242,249,.7); }
-      .record-world-composer { display:grid; gap:7px; padding:7px; }
-      .record-world-composer[hidden] { display:none; }
-      .record-world-input { box-sizing:border-box; width:100%; min-height:34px; border:1px solid rgba(255,255,255,.12); border-radius:8px;
-        background:rgba(0,0,0,.18); color:#fff; padding:8px 9px; font:12px system-ui; outline:none; }
-      textarea.record-world-input { resize:vertical; min-height:64px; }
-      .record-world-input:focus { border-color:rgba(137,179,240,.55); }
-      .record-world-composer-actions { display:flex; justify-content:flex-end; gap:6px; }
+      .record-world-shell{position:fixed;inset:0;z-index:7200;display:block;background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;-webkit-app-region:no-drag}
+      .record-world-shell[hidden]{display:none}
+      .record-world{position:fixed;width:min(292px,calc(100vw - 28px));max-height:min(420px,calc(100vh - 118px));overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);color:#fff}
+      .record-world-head{min-height:52px;display:flex;align-items:center;gap:9px;padding:9px 9px 8px 12px}
+      .record-world-heading{min-width:0;flex:1}.record-world-kicker{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:rgba(210,222,240,.43)}
+      .record-world-title{margin-top:4px;font:680 14px/1.15 system-ui,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .record-world-close.crm-menu-action{width:28px!important;min-width:28px!important;height:28px!important;padding:0!important;text-align:center!important;font-size:16px!important}
+      .record-world-body{min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 7px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .record-world-facts{display:grid;gap:1px;padding:3px 0 6px}.record-world-fact{min-height:31px;display:grid;grid-template-columns:66px minmax(0,1fr);gap:8px;align-items:center;padding:4px 7px!important}
+      .record-world-fact-label{font-size:9px;color:rgba(217,225,239,.38)}.record-world-fact-value{font-size:10px;color:rgba(245,247,251,.76);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .record-world-actions{display:grid;gap:1px;padding-top:6px;border-top:1px solid rgba(255,255,255,.07)}
+      .record-world-action.crm-menu-action{width:100%;min-height:31px!important;padding:0 7px!important;text-align:left!important;font-size:.7rem!important}
+      .record-world-editor{display:grid;gap:7px;margin-top:6px;padding:7px!important}.record-world-editor[hidden]{display:none}
+      .record-world-editor textarea{min-height:58px;resize:vertical}.record-world-editor-actions{display:flex;justify-content:flex-end;gap:3px}
+      .record-world-editor-actions .crm-menu-action{min-height:28px!important;padding:0 7px!important;font-size:.68rem!important}
+      .record-world-empty{padding:18px 12px;color:rgba(221,229,242,.42);font-size:10px;line-height:1.45}
       @media(max-width:600px){.record-world{width:calc(100vw - 28px);max-height:calc(100vh - 112px)}}
     `;
     document.head.appendChild(style);
   }
 
-  const workflowStages = {
-    sales: ["lead", "qualified", "proposal", "negotiation", "won"],
-    jobs: ["intake", "planned", "active", "review", "complete"],
-    money: ["draft", "sent", "overdue", "paid"],
-    bills: ["upcoming", "due", "overdue", "paid"],
-    cases: ["new", "triage", "investigation", "resolution", "closed"],
+  const displayValue = (label, raw) => {
+    if (label !== "Due") return String(raw);
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? new Date(parsed).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : String(raw);
   };
-  const flowHTML = (flow) => {
-    const stages = workflowStages[flow.workflowKey] || [flow.stage];
-    const currentIndex = Math.max(0, stages.indexOf(String(flow.stage).toLowerCase()));
-    return `<div class="record-world-flow">
-      <div class="record-world-flow-top"><span class="record-world-flow-name">${esc(flow.workflowKey)}</span><span class="record-world-flow-stage">${esc(flow.stage)}</span></div>
-      <div class="record-world-flow-bar" aria-label="${esc(flow.stage)} stage">${stages.map((_, i) => `<i class="${i <= currentIndex ? "is-on" : ""}"></i>`).join("")}</div>
-    </div>`;
-  };
-
-  async function load(entity, id) {
-    const [record, relationships, commitments, activities, workflows] = await Promise.all([
-      bridgeGet(entity, id),
-      window.crmDomain.list("relationships", { relatedEntity: entity, relatedId: id }),
-      window.crmDomain.list("commitments", { entityType: entity, recordId: id }),
-      window.crmDomain.list("activities", { entityType: entity, recordId: id }),
-      window.crmDomain.list("workflow-entries", { entityType: entity, recordId: id }),
-    ]);
-    const relations = records(relationships);
-    const related = await Promise.all(relations.map(async (relation) => {
-      const fromCurrent = relation.fromEntity === entity && relation.fromId === id;
-      const targetEntity = fromCurrent ? relation.toEntity : relation.fromEntity;
-      const targetId = fromCurrent ? relation.toId : relation.fromId;
-      return { ...relation, targetEntity, targetId, target: await bridgeGet(targetEntity, targetId).catch(() => null) };
-    }));
-    const history = (Array.isArray(record?.history) ? record.history : []).map((item, index) => ({
-      id: `history-${index}`, kind: item.action || "change", occurredAt: item.at || record.updatedAt,
-      actor: item.by || "", content: first(item.detail, item.note, item.text, item.action),
-    })).filter((item) => item.content);
-    return { entity, id, record, relationships: related, commitments: records(commitments), activities: [...records(activities), ...history], workflows: records(workflows) };
-  }
-
   function factsHTML(record, entity) {
     const candidates = [
-      ["Role", value(record, "role")], ["Company", value(record, "company") || value(record, "companyName")],
-      ["Email", value(record, "email")], ["Phone", value(record, "phone")], ["Owner", value(record, "assignee") || value(record, "owner")],
-      ["Value", value(record, "amount") || value(record, "value")], ["State", value(record, "state") || value(record, "status")],
-      ["Due", value(record, "dueDate")], ["ID", record?.id],
-    ].filter(([, val]) => val !== undefined && val !== null && val !== "").slice(0, 7);
-    if (!candidates.length) candidates.push([entityLabel(entity), "No structured details yet"]);
-    return `<div class="record-world-facts">${candidates.map(([label, val]) => `<div class="record-world-fact"><span class="record-world-fact-label">${esc(label)}</span><span class="record-world-fact-value">${esc(val)}</span></div>`).join("")}</div>`;
+      ["Company", value(record, "company") || value(record, "companyName")],
+      ["Role", value(record, "role")],
+      ["Email", value(record, "email")],
+      ["Phone", value(record, "phone")],
+      ["Status", value(record, "state") || value(record, "status")],
+      ["Owner", value(record, "assignee") || value(record, "owner")],
+      ["Value", value(record, "amount") || value(record, "value")],
+      ["Due", value(record, "dueDate") || value(record, "dueAt")],
+    ].filter(([, fact]) => fact !== undefined && fact !== null && fact !== "").slice(0, 4);
+    if (!candidates.length) candidates.push([entityLabel(entity), record?.id || "No details"]);
+    return candidates.map(([label, fact]) => `<div class="record-world-fact crm-menu-item"><span class="record-world-fact-label">${esc(label)}</span><span class="record-world-fact-value" title="${esc(displayValue(label, fact))}">${esc(displayValue(label, fact))}</span></div>`).join("");
   }
 
   function render(data) {
     current = data;
-    const r = data.record || { id: data.id };
-    const openCommitments = data.commitments.filter((item) => !["completed", "cancelled", "canceled"].includes(String(item.status).toLowerCase()) && !item.deletedAt);
-    const activity = [...data.activities].sort((a, b) => Date.parse(b.occurredAt || b.createdAt) - Date.parse(a.occurredAt || a.createdAt));
-    root.innerHTML = `<article class="record-world crm-menu-surface" role="dialog" aria-modal="true" aria-label="${esc(title(r))}">
-      <header class="record-world-head">
-        <div class="record-world-mark" aria-hidden="true"></div>
-        <div class="record-world-heading"><div class="record-world-kicker">${esc(entityLabel(data.entity))}</div><div class="record-world-title">${esc(title(r))}</div>
-          <div class="record-world-subtitle">${esc(first(value(r, "description"), value(r, "role"), value(r, "company"), `${openCommitments.length} open commitments`))}</div></div>
-        <button class="record-world-close crm-menu-action" type="button" data-record-close aria-label="Close">×</button>
-      </header>
-      <div class="record-world-body"><div class="record-world-column">
-        <section class="record-world-section"><div class="record-world-section-head"><div class="record-world-section-title">Identity</div></div>${factsHTML(r, data.entity)}</section>
-        <details class="record-world-section record-world-fold"><summary>Relationships</summary><div class="record-world-fold-body"><div class="record-world-related">${data.relationships.length ? data.relationships.map((rel) => `<button class="record-world-related-row" type="button" data-related-entity="${esc(rel.targetEntity)}" data-related-id="${esc(rel.targetId)}"><span class="record-world-related-icon"></span><span><div class="record-world-related-name">${esc(title(rel.target || { id: rel.targetId }))}</div><div class="record-world-related-kind">${esc(rel.kind)}${rel.role ? ` · ${esc(rel.role)}` : ""}</div></span></button>`).join("") : `<div class="record-world-empty">No explicit relationships yet.</div>`}</div></div></details>
-        <details class="record-world-section record-world-fold"><summary>Work & commitments</summary><div class="record-world-fold-body"><div class="record-world-fold-subhead"><span>Active work</span></div>${data.workflows.length ? data.workflows.map(flowHTML).join("") : `<div class="record-world-empty">This record is not in an active workflow.</div>`}<div class="record-world-fold-subhead"><span>Commitments</span><button class="record-world-action" type="button" data-show-commitment>New</button></div><form class="record-world-composer" data-commitment-form hidden><input class="record-world-input" name="title" placeholder="What must happen?" required><input class="record-world-input" name="dueAt" type="datetime-local"><div class="record-world-composer-actions"><button class="record-world-action" type="button" data-cancel-composer>Cancel</button><button class="record-world-action" type="submit">Create</button></div></form><div class="record-world-commitments">${openCommitments.length ? openCommitments.map((item) => { const late = item.dueAt && Date.parse(item.dueAt) < Date.now(); return `<div class="record-world-commitment"><button class="record-world-check" type="button" data-complete-commitment="${esc(item.id)}" aria-label="Complete"></button><div><div class="record-world-commitment-title">${esc(item.title)}</div><div class="record-world-commitment-meta">${esc(first(item.kind, "commitment"))}${item.assignee ? ` · ${esc(item.assignee)}` : ""}</div></div><div class="record-world-due${late ? " is-late" : ""}">${esc(relativeDue(item.dueAt))}</div></div>`; }).join("") : `<div class="record-world-empty">Nothing is owed from this record.</div>`}</div></div></details>
-        <details class="record-world-section record-world-fold"><summary>Activity</summary><div class="record-world-fold-body"><div class="record-world-fold-subhead"><span>Recent</span><button class="record-world-action" type="button" data-show-note>Add note</button></div><form class="record-world-composer" data-note-form hidden><textarea class="record-world-input" name="content" placeholder="Record what happened" required></textarea><div class="record-world-composer-actions"><button class="record-world-action" type="button" data-cancel-composer>Cancel</button><button class="record-world-action" type="submit">Add</button></div></form><div class="record-world-timeline">${activity.length ? activity.map((item) => `<div class="record-world-event"><div class="record-world-event-meta">${esc(when(item.occurredAt || item.createdAt))}${item.actor ? ` · ${esc(item.actor)}` : ""}</div><div class="record-world-event-content">${esc(first(item.content, item.kind))}</div></div>`).join("") : `<div class="record-world-empty">No activity has been recorded.</div>`}</div></div></details>
-      </div>
-      </div>
-    </article>`;
+    const record = data.record || { id: data.id };
+    root.innerHTML = `<article class="record-world crm-menu-surface" role="dialog" aria-modal="false" aria-label="${esc(title(record))}">
+      <header class="record-world-head"><div class="record-world-heading"><div class="record-world-kicker">${esc(entityLabel(data.entity))}</div><div class="record-world-title">${esc(title(record))}</div></div><button class="record-world-close crm-menu-action" type="button" data-record-close aria-label="Close">×</button></header>
+      <div class="record-world-body"><div class="record-world-facts">${factsHTML(record, data.entity)}</div>
+        <div class="record-world-actions">
+          ${data.entity === "contacts" ? '<button class="record-world-action crm-menu-action" type="button" data-record-history>Conversation history</button>' : ""}
+          <button class="record-world-action crm-menu-action" type="button" data-record-compose="note">Add note</button>
+          <button class="record-world-action crm-menu-action" type="button" data-record-compose="follow-up">New follow-up</button>
+        </div>
+        <form class="record-world-editor crm-menu-item" data-record-editor="note" hidden><textarea class="crm-menu-input" name="content" placeholder="Add a note" aria-label="Note" required></textarea><div class="record-world-editor-actions"><button class="crm-menu-action" type="button" data-record-cancel>Cancel</button><button class="crm-menu-action" type="submit">Add</button></div></form>
+        <form class="record-world-editor crm-menu-item" data-record-editor="follow-up" hidden><input class="crm-menu-input" name="title" placeholder="Follow-up" aria-label="Follow-up" required><input class="crm-menu-input" name="dueAt" type="datetime-local" aria-label="Due date"><div class="record-world-editor-actions"><button class="crm-menu-action" type="button" data-record-cancel>Cancel</button><button class="crm-menu-action" type="submit">Create</button></div></form>
+      </div></article>`;
     window.crmInterfaceParity?.scan?.(root);
     placeWorld();
   }
 
-  async function refresh() {
-    if (!current) return;
-    render(await load(current.entity, current.id));
-  }
-  const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 100); };
-
   function placeWorld() {
-    const panel = root?.querySelector(".record-world"); if (!panel) return;
+    const panel = root?.querySelector(".record-world");
+    if (!panel) return;
     requestAnimationFrame(() => {
       if (!panel.isConnected || root.hidden) return;
       const bounds = panel.getBoundingClientRect();
-      const source = anchorRect;
-      const edge = 14, topEdge = 62, bottomEdge = 76, gap = 10;
+      const edge = 14; const topEdge = 62; const bottomEdge = 76; const gap = 10;
       let left = innerWidth - bounds.width - 42;
       let top = topEdge;
-      if (source) {
-        const right = source.right + gap;
-        const leftSide = source.left - gap - bounds.width;
-        left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, source.left));
-        top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, source.top));
+      if (anchorRect) {
+        const right = anchorRect.right + gap;
+        const leftSide = anchorRect.left - gap - bounds.width;
+        left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
+        top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
       }
-      panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`;
+      panel.style.left = `${Math.round(left)}px`;
+      panel.style.top = `${Math.round(top)}px`;
     });
   }
 
-  async function openWorld(entity, id, sourceEl) {
+  async function openWorld(entity, id, sourceElement) {
     if (!root) mount();
-    const source = sourceEl?.getBoundingClientRect?.();
-    anchorRect = source ? { left: source.left, right: source.right, top: source.top, bottom: source.bottom, width: source.width, height: source.height } : null;
+    const source = sourceElement?.getBoundingClientRect?.();
+    anchorRect = source ? { left: source.left, right: source.right, top: source.top, bottom: source.bottom } : null;
+    returnFocus = sourceElement?.isConnected ? sourceElement : document.activeElement;
     root.hidden = false;
-    root.innerHTML = `<article class="record-world crm-menu-surface"><div class="record-world-empty" style="margin:auto">Loading record…</div></article>`;
+    root.innerHTML = '<article class="record-world crm-menu-surface"><div class="record-world-empty">Loading…</div></article>';
     placeWorld();
-    render(await load(entity, id));
-  }
-  const isTicketEntity = (entity) => ["ticket", "tickets", "case", "cases"].includes(String(entity || "").trim().toLowerCase());
-  async function open(entity, id, sourceEl) {
-    // The ticketing reference owns ticket presentation. `cases` is included for
-    // legacy links, but falls back to the CRM record world when the id is not a
-    // real ticket id.
-    if (isTicketEntity(entity) && window.ticketStacks?.open) {
-      const opened = await window.ticketStacks.open(id, sourceEl);
-      if (opened) { close(); return true; }
-    }
-    await openWorld(entity, id, sourceEl);
+    render({ entity, id, record: await getRecord(entity, id) });
     return true;
   }
-  function close() { if (root) root.hidden = true; current = null; anchorRect = null; }
+  async function open(entity, id, sourceElement) {
+    if (isTicketEntity(entity) && window.ticketStacks?.open) {
+      const opened = await window.ticketStacks.open(id, sourceElement);
+      if (opened) { close(); return true; }
+    }
+    return openWorld(entity, id, sourceElement);
+  }
+  async function refresh() {
+    if (!current) return false;
+    render({ ...current, record: await getRecord(current.entity, current.id) });
+    return true;
+  }
+  function close() {
+    if (!root || root.hidden) return;
+    root.hidden = true;
+    current = null;
+    anchorRect = null;
+    if (returnFocus?.isConnected) returnFocus.focus?.({ preventScroll: true });
+    returnFocus = null;
+  }
 
   function mount() {
+    if (root) return root;
     ensureStyles();
     root = document.createElement("div");
     root.className = "record-world-shell";
     root.hidden = true;
     document.body.appendChild(root);
-    // CRM-native entity cards open the contextual record world. Tickets are
-    // intentionally excluded: their reference implementation owns a complete
-    // left-click flight/detail screen and right-click action system.
     [["contactDetail", "contacts"], ["dealDetail", "deals"], ["invoiceDetail", "invoices"]].forEach(([name, entity]) => {
       const legacy = window[name];
       if (!legacy) return;
-      legacy.open = (record, sourceEl) => openWorld(entity, record?.id, sourceEl);
+      legacy.open = (record, sourceElement) => openWorld(entity, record?.id, sourceElement);
       legacy.close = close;
       legacy.isOpen = () => !!root && !root.hidden;
     });
     root.addEventListener("click", async (event) => {
       if (event.target === root || event.target.closest("[data-record-close]")) return close();
-      const related = event.target.closest("[data-related-entity]");
-      if (related) return open(related.dataset.relatedEntity, related.dataset.relatedId, related);
-      const showCommitment = event.target.closest("[data-show-commitment]");
-      if (showCommitment) { root.querySelector("[data-commitment-form]").hidden = false; root.querySelector("[data-commitment-form] input")?.focus(); return; }
-      const showNote = event.target.closest("[data-show-note]");
-      if (showNote) { root.querySelector("[data-note-form]").hidden = false; root.querySelector("[data-note-form] textarea")?.focus(); return; }
-      if (event.target.closest("[data-cancel-composer]")) { event.target.closest("form").hidden = true; return; }
-      const complete = event.target.closest("[data-complete-commitment]");
-      if (complete) {
-        const item = current.commitments.find((c) => c.id === complete.dataset.completeCommitment);
-        await window.crmDomain.update("commitments", item.id, { status: "completed", completedAt: new Date().toISOString(), outcome: "Completed" }, item.version);
-        return refresh();
+      const history = event.target.closest("[data-record-history]");
+      if (history && current?.entity === "contacts") {
+        const pending = window.crmPersonHistory?.open?.(current.id, history);
+        close();
+        await pending;
+        return;
       }
+      const compose = event.target.closest("[data-record-compose]");
+      if (compose) {
+        root.querySelectorAll("[data-record-editor]").forEach((form) => { form.hidden = form.dataset.recordEditor !== compose.dataset.recordCompose; });
+        const form = root.querySelector(`[data-record-editor="${compose.dataset.recordCompose}"]`);
+        form?.querySelector("input,textarea")?.focus();
+        placeWorld();
+        return;
+      }
+      const cancel = event.target.closest("[data-record-cancel]");
+      if (cancel) { cancel.closest("form").hidden = true; placeWorld(); }
     });
     root.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (!current) return;
       const form = event.target;
-      const data = new FormData(form);
-      if (form.matches("[data-commitment-form]")) {
-        const dueRaw = String(data.get("dueAt") || "");
-        await window.crmDomain.create("commitments", { title: data.get("title"), kind: "follow-up", dueAt: dueRaw ? new Date(dueRaw).toISOString() : null, links: [{ entityType: current.entity, recordId: current.id }] });
-      } else if (form.matches("[data-note-form]")) {
-        await window.crmDomain.create("activities", { kind: "note", content: data.get("content"), occurredAt: new Date().toISOString(), links: [{ entityType: current.entity, recordId: current.id }] });
+      const fields = new FormData(form);
+      if (form.dataset.recordEditor === "note") {
+        const content = String(fields.get("content") || "").trim();
+        if (!content) return;
+        await window.crmDomain.create("activities", { kind: "note", content, occurredAt: new Date().toISOString(), links: [{ entityType: current.entity, recordId: current.id }] });
+      } else if (form.dataset.recordEditor === "follow-up") {
+        const followUp = String(fields.get("title") || "").trim();
+        if (!followUp) return;
+        const due = String(fields.get("dueAt") || "");
+        await window.crmDomain.create("commitments", { title: followUp, kind: "follow-up", dueAt: due ? new Date(due).toISOString() : null, links: [{ entityType: current.entity, recordId: current.id }] });
       }
-      await refresh();
+      close();
     });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !root.hidden) close(); });
-    try { window.crmDomain?.onChanged?.(() => { if (!root.hidden) scheduleRefresh(); }); } catch {}
+    return root;
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
-  else mount();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true }); else mount();
   window.crmRecordWorld = { open, close, isOpen: () => !!root && !root.hidden, refresh };
 })();

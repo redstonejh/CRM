@@ -142,7 +142,23 @@ async function main() {
   await page.waitForLoadState('load');
   await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting') && window.crmWorkspaces, null, { timeout: 30000 });
   await page.evaluate(() => window.crmWorkspaces.setActive('home'));
-  await page.waitForFunction(readyHome, null, { timeout: 60000 });
+  try { await page.waitForFunction(readyHome, null, { timeout: 60000 }); }
+  catch (error) {
+    const bootState = await page.evaluate(async () => ({
+      module: document.body.dataset.crmModule,
+      hidden: document.querySelector('.crm-home-surface')?.hidden,
+      buckets: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length,
+      hosts: [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].map((host) => ({
+        key: host.dataset.previewKey, children: host.children.length, state: host.dataset.previewState,
+        images: [...host.querySelectorAll('img')].map((image) => ({ complete: image.complete, width: image.naturalWidth, src: image.src.slice(0, 40) })),
+      })),
+      previewStatus: window.crmHome?.previewStatus?.().map(({ key, state, version }) => ({ key, state, version })),
+      motionStatus: window.crmHome?.motionStatus?.(),
+      currentMotionSignature: window.crmHome?.motionLayoutSignature?.(),
+      motionIpc: ((value) => value ? { ok:value.ok, error:value.error, snapshot:value.snapshot&&{ version:value.snapshot.version, capturedAt:value.snapshot.capturedAt, layoutSignature:value.snapshot.layoutSignature } } : null)(await window.crmHomePreviews?.motionSnapshot?.()),
+    }));
+    throw new Error(`Home readiness timed out: ${JSON.stringify({ bootState, errors, cause: error.message })}`);
+  }
   await sleep(150);
 
   const startup = await page.evaluate(() => ({
@@ -160,6 +176,7 @@ async function main() {
       hands: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand').length,
       cards: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand > .crm-home-hand-card').length,
       uniqueCards: new Set([...document.querySelectorAll('.crm-home-level > .crm-home-priority-hand > .crm-home-hand-card')].map((card) => card.dataset.priorityId)).size,
+      snapshots: document.querySelectorAll('.crm-home-level > .crm-home-motion-snapshot').length,
       snapshotDisplay: getComputedStyle(document.querySelector('.crm-home-level > .crm-home-motion-snapshot')).display,
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
@@ -171,7 +188,7 @@ async function main() {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
-    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.snapshotDisplay !== 'none') {
+    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.snapshots !== 1 || startup.homeLayers.snapshotDisplay !== 'none') {
     throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
   }
   if (startup.buckets.some((item) => !item.glass.backdrop.includes('blur(26px)')
@@ -271,10 +288,10 @@ async function main() {
     const inboundReaction=await page.$eval(selector,(bucket)=>{const started=performance.now();bucket.click();return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),transitioning:window.crmHomeCamera?.isTransitioning?.()}});
     if(!inboundReaction.busy||!inboundReaction.transitioning||inboundReaction.elapsedMs>50)throw new Error(`${room.key} click did not start its camera move immediately: ${JSON.stringify(inboundReaction)}`);
     await sleep(100);
-    const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(surface?.querySelectorAll('.crm-home-title-glass')||[])];const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-moving')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),snapshotActive:!!snapshot&&getComputedStyle(snapshot).display!=='none'&&getComputedStyle(root.querySelector(':scope>.crm-home-grid')).visibility==='hidden',rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
+    const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(root?.querySelectorAll('.crm-home-title-glass')||[])];const grid=root?.querySelector(':scope>.crm-home-grid');const hand=root?.querySelector(':scope>.crm-home-priority-hand');const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');const status=window.crmHome?.motionStatus?.();return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-expanding')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),motionComposite:!!snapshot&&getComputedStyle(snapshot).display!=='none'&&getComputedStyle(grid).visibility==='visible'&&getComputedStyle(grid.querySelector('.crm-home-preview')).visibility==='hidden'&&getComputedStyle(hand).visibility==='hidden',signatureMatches:status?.layoutSignature===window.crmHome?.motionLayoutSignature?.(),rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
     const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===1&&mid.rect&&mid.rect.width>=300;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
-    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.neighborOpacity<.99||!mid.titlesHidden||!mid.snapshotActive||!mid.rootComposited))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
+    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.neighborOpacity<.99||!mid.titlesHidden||!mid.motionComposite||!mid.signatureMatches||!mid.rootComposited))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
     await page.screenshot({path:path.join(out,`transition-${room.key}.png`)});
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key&&!window.crmDeskTransit?.isBusy?.()&&!document.querySelector('.crm-transit-veil'),room.key,{timeout:15000});
     await page.mouse.move(1,1); await sleep(80);
@@ -297,6 +314,9 @@ async function main() {
     await startMotionProbe(page,`out-${room.key}`);
     const outboundReaction=await page.evaluate(()=>{const started=performance.now();window.__homeDrive=window.crmDeskTransit.driveTo('home');return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),level:window.crmHomeCamera?.level?.(),module:document.body.dataset.crmModule}});
     if(!outboundReaction.busy||outboundReaction.level!==1||outboundReaction.module!=='home'||outboundReaction.elapsedMs>50)throw new Error(`${room.key} Home click did not start its camera move immediately: ${JSON.stringify(outboundReaction)}`);
+    await sleep(100);
+    const outboundMid=await page.evaluate(()=>{const surface=window.crmHomeCamera?.surface?.();const root=window.crmHomeCamera?.layers?.()[0];const expander=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const grid=root?.querySelector(':scope>.crm-home-grid');const hand=root?.querySelector(':scope>.crm-home-priority-hand');const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');const status=window.crmHome?.motionStatus?.();return{moving:window.crmHomeCamera?.isTransitioning?.(),motionComposite:!!snapshot&&getComputedStyle(snapshot).display!=='none'&&getComputedStyle(grid).visibility==='visible'&&getComputedStyle(grid.querySelector('.crm-home-preview')).visibility==='hidden'&&getComputedStyle(hand).visibility==='hidden',signatureMatches:status?.layoutSignature===window.crmHome?.motionLayoutSignature?.(),expanderAbove:!!expander&&!!root&&Number(getComputedStyle(expander).zIndex)>Number(getComputedStyle(root).zIndex),titlesVisible:[...(root?.querySelectorAll('.crm-home-title-glass')||[])].every((title)=>getComputedStyle(title).visibility==='visible'),contracting:surface?.classList.contains('crm-home-camera-contracting')}});
+    if(!outboundMid.moving||!outboundMid.motionComposite||!outboundMid.signatureMatches||!outboundMid.expanderAbove||!outboundMid.titlesVisible||!outboundMid.contracting)throw new Error(`${room.key} return composition diverged from resting Home: ${JSON.stringify(outboundMid)}`);
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outbound=await finishMotionProbe(page,`out-${room.key}`);
     assertMotion(`${room.key} outbound`,outbound);
@@ -304,7 +324,7 @@ async function main() {
     const after=await page.evaluate((key)=>window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0,room.key);
     if(outboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after returning Home: ${JSON.stringify(outboundStability)}`);
     if(after!==before)throw new Error(`${room.key} preview was replaced after returning Home: ${JSON.stringify({before,after})}`);
-    transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewPreserved:after===before});
+    transitions.push({key:room.key,mid,outboundMid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewPreserved:after===before});
   }
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   const unsettled=transitTimings.filter((item)=>item.settled===false);

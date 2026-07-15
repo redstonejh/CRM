@@ -309,23 +309,32 @@ function publishHomePreview(key, capture, layoutSignature) {
 
 async function captureHomeMotionSnapshot(worker) {
   homeMotionSnapshotError = null;
-  await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('home'); window.crmHome?.refresh?.()`, true);
+  await worker.webContents.executeJavaScript(`(async () => {
+    const captureStyle = document.getElementById('crm-preview-capture-style');
+    if (captureStyle) captureStyle.textContent = '';
+    const original = window.__crmPreviewClasses;
+    if (original) {
+      document.documentElement.classList.toggle('has-photo-background', original.htmlPhoto);
+      document.body.classList.toggle('has-photo-background', original.bodyPhoto);
+      document.body.classList.toggle('webgl-glass-on', original.webgl);
+    }
+    window.crmWorkspaces.setActive('home');
+    window.crmHome?.refresh?.();
+    await window.crmHome?.ensureHandReady?.();
+  })()`, true);
   await waitForRenderer(worker, `document.body.dataset.crmModule === 'home'
+    && window.crmHome?.handStatus?.().ready
     && window.crmHome?.previewStatus?.().every((item) => item.state === 'ready')`);
-  await worker.webContents.executeJavaScript(`Promise.all([...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')].map(async (image) => {
-    const sharp = image.dataset.sharpSrc;
-    if (!sharp || image.src === sharp) return;
-    image.src = sharp;
-    try { await image.decode(); } catch {}
-  }))`, true);
   await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
+  const layoutSignature = await worker.webContents.executeJavaScript(`window.crmHome?.motionLayoutSignature?.() || ''`, true);
+  if (!layoutSignature) throw new Error('Home motion layout signature unavailable');
   await prepareCapture(worker, null);
   const image = await worker.webContents.capturePage();
   if (!image || image.isEmpty()) return null;
   const size = image.getSize();
   homeMotionSnapshot = {
     version: HOME_PREVIEW_VERSION, width: size.width, height: size.height,
-    capturedAt: Date.now(), src: image.toDataURL(),
+    capturedAt: Date.now(), src: image.toDataURL(), layoutSignature,
   };
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:motion-changed', homeMotionSnapshot);
   return homeMotionSnapshot;

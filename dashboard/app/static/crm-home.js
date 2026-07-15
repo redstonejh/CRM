@@ -56,8 +56,14 @@
       .crm-home-surface.crm-home-camera-moving .crm-home-scene-backdrop{display:block}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{display:block}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-scene-backdrop,
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid,
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{visibility:hidden}
+      /* The verified raster carries the expensive previews, glass, hand and
+         shadows. Keep only the live title layer above it so expanding can
+         de-emphasize titles while contracting restores them continuously. */
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket{
+        background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket>.crm-home-preview{
+        visibility:hidden}
       .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style paint;
         grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:16px}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
@@ -115,17 +121,22 @@
          native app-region map or its temporary rectangle can cancel (and on
          Windows, outlive) the persistent title-bar drag strip. */
       .crm-home-expander{position:absolute;z-index:5;pointer-events:none;transform-origin:0 0;
-        background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
+        overflow:visible;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
         will-change:transform,opacity;backface-visibility:hidden}
-      .crm-home-surface.crm-home-camera-moving .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-bucket,
-      .crm-home-surface.crm-home-camera-moving .crm-home-preview-foreground{transition:none!important}
+      .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-bucket{transition:none!important}
+      /* Backdrop sampling is the only Home-root effect that cannot be scaled
+         at camera speed. The live geometry and every source/card shadow stay
+         present; the exact expander above the root carries the destination's
+         glass and shadows throughout the morph. */
       .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{
         -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
-      .crm-home-expander .crm-home-title-glass{display:none}.crm-home-expander .crm-home-preview{opacity:1}
+      .crm-home-expander .crm-home-title-glass{display:none}
+      .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
       .crm-home-preview-exact{opacity:0;transform:translateY(var(--far-shift-y,0%))}
-      .crm-home-expander .crm-home-preview-foreground{filter:none;transition:transform 460ms cubic-bezier(.22,1,.26,1),opacity 120ms ease 330ms}
-      .crm-home-expander .crm-home-preview-exact{transition:transform 460ms cubic-bezier(.22,1,.26,1),opacity 120ms ease 330ms}
+      .crm-home-expander .crm-home-preview-foreground,.crm-home-expander .crm-home-preview-exact{transition:transform 460ms cubic-bezier(.22,1,.26,1)}
+      .crm-home-expander .crm-home-preview-foreground{filter:none}
+      .crm-home-expander .crm-home-preview-exact{opacity:1}
       .crm-home-expander.is-unwrapping .crm-home-preview-foreground{transform:none;opacity:0}
       .crm-home-expander.is-unwrapping .crm-home-preview-exact{transform:none;opacity:1}
       .crm-home-warm .crm-home-preview-exact{opacity:.001!important;will-change:transform,opacity}
@@ -199,6 +210,24 @@
     if (camera?.isActive?.() && camera.level() === 0) mountPreview(preview.key);
     return true;
   };
+  const motionLayoutSignature = (root = camera?.layers?.()[0]) => {
+    if (!root) return "";
+    const rectOf = (node) => {
+      if (!node) return [];
+      return [node.offsetLeft, node.offsetTop, node.offsetWidth, node.offsetHeight];
+    };
+    const grid = root.querySelector(":scope > .crm-home-grid");
+    const hand = root.querySelector(":scope > .crm-home-priority-hand");
+    return JSON.stringify({
+      viewport: [innerWidth, innerHeight, devicePixelRatio],
+      grid: rectOf(grid),
+      buckets: [...(grid?.querySelectorAll(":scope > .crm-home-bucket") || [])].map((bucket) => [bucket.dataset.module, ...rectOf(bucket)]),
+      hand: rectOf(hand),
+      cards: [...(hand?.querySelectorAll(":scope > .crm-home-hand-card") || [])].map((card) => [
+        card.dataset.priorityId || "", ...rectOf(card), getComputedStyle(card).transform,
+      ]),
+    });
+  };
   const syncMotionSnapshot = (root = camera?.layers?.()[0]) => {
     if (!root) return;
     let image = root.querySelector(":scope > .crm-home-motion-snapshot");
@@ -206,13 +235,18 @@
       image = imageNode("crm-home-motion-snapshot", "");
       root.prepend(image);
     }
-    if (!motionSnapshot?.src) {
+    const signatureMatches = () => !!motionSnapshot?.layoutSignature
+      && motionSnapshot.layoutSignature === motionLayoutSignature(root);
+    if (!motionSnapshot?.src || !signatureMatches()) {
       root.dataset.motionSnapshotReady = "false";
       return;
     }
     const src = motionSnapshot.src;
     const ready = () => {
-      if (motionSnapshot?.src !== src || image.src !== src || image.naturalWidth <= 0) return;
+      if (motionSnapshot?.src !== src || image.src !== src || image.naturalWidth <= 0 || !signatureMatches()) {
+        root.dataset.motionSnapshotReady = "false";
+        return;
+      }
       root.dataset.motionSnapshotReady = "true";
       const surface = camera?.surface?.();
       if (surface && !surface.classList.contains("crm-home-motion-priming")) {
@@ -227,7 +261,7 @@
     } else if (image.complete) ready();
   };
   const acceptMotionSnapshot = (snapshot) => {
-    if (snapshot?.version !== HOME_PREVIEW_VERSION || !snapshot?.src) return false;
+    if (snapshot?.version !== HOME_PREVIEW_VERSION || !snapshot?.src || !snapshot?.layoutSignature) return false;
     motionSnapshot = snapshot;
     syncMotionSnapshot();
     return true;
@@ -412,7 +446,7 @@
       item.id, item.title, item.status, item.priority, item.dueAt, item.assignee, item.attentionLabel, item.context,
     ]));
     if (hand.dataset.renderSignature === renderSignature && hand.dataset.username === priorityUsername) {
-      layoutPriorityHand(hand); camera?.layout?.(); return;
+      layoutPriorityHand(hand); camera?.layout?.(); syncMotionSnapshot(); return;
     }
     hand.classList.add("is-seating");
     fillPriorityHand(hand);
@@ -421,6 +455,7 @@
     // one frame late after Home becomes visible.
     layoutPriorityHand(hand);
     camera?.layout?.();
+    syncMotionSnapshot();
     requestAnimationFrame(() => { if (hand.isConnected) hand.classList.remove("is-seating"); });
   };
   const refreshPriorityHand = async () => {
@@ -500,8 +535,8 @@
     if (subscribed) return;
     subscribed = true;
     try { window.crmHomePreviews?.onChanged?.(acceptPreview); } catch {}
-    if (window.crmHomePreviews?.isCaptureWorker) { requestPreviews(true); return; }
     try { window.crmHomePreviews?.onMotionSnapshotChanged?.(acceptMotionSnapshot); } catch {}
+    if (window.crmHomePreviews?.isCaptureWorker) { requestPreviews(true); refreshPriorityHand(); return; }
     try { window.crmDomain?.onChanged?.(scheduleHandRefresh); } catch {}
     try { window.auth?.onChanged?.(scheduleHandRefresh); } catch {}
     requestPreviews(true);
@@ -602,6 +637,9 @@
     bucket.className = "crm-home-bucket crm-home-expander";
     bucket.dataset.module = module.key;
     if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
+    // The exact room image carries stack/card shadows for every transition
+    // frame. One full-resolution layer avoids the redundant matte pass that
+    // previously cost a compositor frame while the root was also moving.
     mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true, true);
     return bucket;
   };
@@ -616,6 +654,7 @@
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
+    contractExpanderAbove:true,holdContractEndpointFrame:true,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareJump:(expander)=>expander.classList.add("is-unwrapping"),
     onTransitionStart:(direction,context)=>{
@@ -624,11 +663,13 @@
       syncMotionSnapshot(context.layers?.[0]);
       syncSceneBackdrop(context.layers?.[0]);
       context.surface?.classList.add("crm-home-camera-moving");
+      context.surface?.classList.toggle("crm-home-camera-expanding",direction==="expand");
+      context.surface?.classList.toggle("crm-home-camera-contracting",direction==="contract");
       const expander=[...(context.surface?.querySelectorAll(".crm-home-expander:not(.crm-home-warm)")||[])].pop();
       if(expander)requestAnimationFrame(()=>expander.classList.toggle("is-unwrapping",direction==="expand"));
     },
     onTransitionEnd:(direction,context)=>{
-      context.surface?.classList.remove("crm-home-camera-moving");
+      context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting");
       // After returning Home, use the next idle slice to prepare the next room.
       // Expanding leaves Home inactive, so its longer guard remains appropriate.
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);
@@ -712,10 +753,10 @@
     const apiName = FACTORY_API_BY_MODULE[key];
     if (apiName) prewarmedFactories.add(apiName);
   };
-  window.addEventListener("resize",()=>camera?.layout?.());
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false)},captureBaseline,waitForModuleSettled,waitForModuleReady,noteModuleReady,recycleExpander,
+  window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,noteModuleReady,recycleExpander,
     previewStatus:()=>MODULES.map(({key})=>({key,state:previews.has(key)?"ready":"waiting",version:previews.get(key)?.version||null,capturedAt:previews.get(key)?.capturedAt||0,layoutSignature:previews.get(key)?.layoutSignature||null})),
-    handStatus:()=>({count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
-    motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0}),
+    handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
+    ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};
 })();

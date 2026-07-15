@@ -14,6 +14,8 @@
     const keepBelowVisible = config.keepBelowVisibleDuringTransition === true;
     const precomposeTransitions = config.precomposeTransitions === true;
     const lockInputDuringTransitions = config.lockInputDuringTransitions === true;
+    const contractExpanderAbove = config.contractExpanderAbove === true;
+    const holdContractEndpointFrame = config.holdContractEndpointFrame === true;
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -255,7 +257,11 @@
       below.style.opacity = keepBelowVisible ? "1" : (config.contractFadeMs != null ? "0" : "1");
       below.style.visibility = "";
       expander.style.transition = "none";
-      expander.style.zIndex = "4";
+      // Some cameras use the expander as the exact destination image while
+      // the live root resolves underneath it. Keep that image above the root
+      // until its deliberate final fade instead of exposing an approximate
+      // root preview for the entire return trip.
+      expander.style.zIndex = contractExpanderAbove ? "6" : "4";
       expander.style.pointerEvents = "none";
       expander.style.opacity = "1";
       expander.classList.add(config.contractingClass || "fractal-camera-contracting");
@@ -297,10 +303,18 @@
           expander.remove();
           return;
         }
-        commit();
-        below.style.zIndex = "";
-        below.style.pointerEvents = "";
-        expander.remove();
+        const finish = () => {
+          if (seq !== transitionSeq) { expander.remove(); return; }
+          commit();
+          below.style.zIndex = "";
+          below.style.pointerEvents = "";
+          expander.remove();
+        };
+        // A same-task teardown can replace the last animated composition
+        // before Chromium paints its exact endpoint. Preserve one complete
+        // endpoint paint, then exchange it for the identical resting DOM.
+        if (holdContractEndpointFrame) requestAnimationFrame(() => requestAnimationFrame(finish));
+        else finish();
       });
     };
     const backToRoot = () => {

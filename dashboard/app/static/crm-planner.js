@@ -1,4 +1,4 @@
-// crm-planner.js — small, editable project worlds shared with Overview.
+// crm-planner.js — user-defined projects made from the app's ordinary buckets and cards.
 (() => {
   const STORE_KEY = "crm-planner-projects-v1";
   const SELECTED_KEY = "crm-planner-selected-v1";
@@ -17,54 +17,7 @@
     ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   const uid = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
   const nowIso = () => new Date().toISOString();
-  const seed = () => [
-    {
-      id: "project-client-launch", title: "Client launch", note: "A calm path from approval to release", updatedAt: "2026-07-14T18:20:00.000Z",
-      buckets: [
-        { id: "launch-shape", title: "Shape", cards: [
-          { id: "launch-brief", title: "Confirm the final brief", note: "Waiting on one stakeholder", updatedAt: "2026-07-14T18:20:00.000Z" },
-          { id: "launch-copy", title: "Tighten launch copy", note: "Voice pass is ready", updatedAt: "2026-07-13T16:10:00.000Z" },
-        ] },
-        { id: "launch-build", title: "Build", cards: [
-          { id: "launch-assets", title: "Package campaign assets", note: "12 of 15 approved", updatedAt: "2026-07-14T15:45:00.000Z" },
-          { id: "launch-qa", title: "Run release QA", note: "Desktop complete", updatedAt: "2026-07-12T11:00:00.000Z" },
-        ] },
-        { id: "launch-release", title: "Release", cards: [
-          { id: "launch-handoff", title: "Schedule handoff", note: "Thursday · 10:30", updatedAt: "2026-07-14T13:05:00.000Z" },
-        ] },
-      ],
-    },
-    {
-      id: "project-operations", title: "Operations reset", note: "Remove friction from the weekly rhythm", updatedAt: "2026-07-13T20:40:00.000Z",
-      buckets: [
-        { id: "ops-observe", title: "Observe", cards: [
-          { id: "ops-intake", title: "Map the intake path", note: "Three handoffs found", updatedAt: "2026-07-13T20:40:00.000Z" },
-        ] },
-        { id: "ops-improve", title: "Improve", cards: [
-          { id: "ops-template", title: "Simplify weekly template", note: "Draft ready for review", updatedAt: "2026-07-13T17:10:00.000Z" },
-          { id: "ops-rules", title: "Define escalation rules", note: "Needs owner", updatedAt: "2026-07-12T16:30:00.000Z" },
-        ] },
-        { id: "ops-keep", title: "Keep", cards: [
-          { id: "ops-notes", title: "Publish decision notes", note: "Every Friday", updatedAt: "2026-07-11T12:00:00.000Z" },
-        ] },
-      ],
-    },
-    {
-      id: "project-renewals", title: "Renewals", note: "Make every account decision visible", updatedAt: "2026-07-12T14:15:00.000Z",
-      buckets: [
-        { id: "renewals-next", title: "Next", cards: [
-          { id: "renewals-north", title: "Northwind review", note: "Usage notes attached", updatedAt: "2026-07-12T14:15:00.000Z" },
-          { id: "renewals-verde", title: "Verde scope", note: "Draft pricing", updatedAt: "2026-07-12T10:00:00.000Z" },
-        ] },
-        { id: "renewals-conversation", title: "Conversation", cards: [
-          { id: "renewals-orbit", title: "Orbit expansion", note: "Call on Wednesday", updatedAt: "2026-07-11T19:20:00.000Z" },
-        ] },
-        { id: "renewals-decided", title: "Decided", cards: [
-          { id: "renewals-cascade", title: "Cascade renewal", note: "Approved", updatedAt: "2026-07-10T15:10:00.000Z" },
-        ] },
-      ],
-    },
-  ];
+  const LEGACY_SEED_IDS = new Set(["project-client-launch", "project-operations", "project-renewals"]);
 
   const normalizeCard = (card = {}) => ({
     id: String(card.id || uid("card")), title: String(card.title || "Untitled item").trim() || "Untitled item",
@@ -82,8 +35,8 @@
   const read = () => {
     try {
       const parsed = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
-      projects = Array.isArray(parsed) && parsed.length ? parsed.map(normalizeProject) : seed();
-    } catch { projects = seed(); }
+      projects = Array.isArray(parsed) ? parsed.map(normalizeProject).filter((project) => !LEGACY_SEED_IDS.has(project.id)) : [];
+    } catch { projects = []; }
     selectedId = localStorage.getItem(SELECTED_KEY) || projects[0]?.id || "";
     if (!projects.some((project) => project.id === selectedId)) selectedId = projects[0]?.id || "";
   };
@@ -111,57 +64,45 @@
     style.id = "crm-planner-styles";
     style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
-      .crm-planner-frame{position:absolute;inset:62px 48px 78px;max-width:1460px;margin:auto;display:grid;grid-template-rows:76px minmax(0,1fr);gap:6px}
-      .crm-planner-topline{min-width:0;display:grid;grid-template-columns:minmax(220px,1fr) minmax(360px,620px) minmax(220px,1fr);align-items:center;gap:18px}
-      .crm-planner-heading-copy{min-width:0;padding-left:7px}.crm-planner-kicker{display:block;margin-bottom:5px;color:rgba(190,211,240,.38);font:700 8px/1 system-ui;letter-spacing:.16em;text-transform:uppercase}
-      .crm-planner-heading{font-size:1rem;font-weight:720;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-subheading{margin-top:6px;color:rgba(255,255,255,.36);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-planner-project-dock{min-width:0;height:50px;box-sizing:border-box;padding:5px;display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:3px;overflow:hidden}
-      .crm-planner-project-list{min-width:0;display:flex;align-items:stretch;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
-      .crm-planner-project.crm-menu-action{position:relative;flex:0 0 148px;height:38px;padding:5px 7px 5px 10px!important;display:grid;grid-template-columns:minmax(0,1fr) 43px;align-items:center;gap:7px;text-align:left;font-size:.69rem!important}
-      .crm-planner-project.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:1px;height:1px;border-radius:2px;background:rgba(151,196,255,.75);box-shadow:0 0 8px rgba(91,151,236,.42)}
-      .crm-planner-project-copy{min-width:0}.crm-planner-project-name{display:block;color:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-project-minimap{height:23px;display:flex;align-items:stretch;gap:2px;padding:2px;border-radius:5px;background:rgba(255,255,255,.018);border:1px solid rgba(255,255,255,.05);overflow:hidden}
-      .crm-project-minimap-column{min-width:0;flex:1;display:flex;flex-direction:column;gap:1.5px}.crm-project-minimap-column:before{content:"";height:2px;border-radius:3px;background:rgba(190,215,249,.25)}
-      .crm-project-minimap-card{display:block;height:3px;border-radius:2px;background:rgba(126,169,228,.22)}.crm-project-minimap-card:nth-child(3n){width:72%}
-      .crm-planner-icon{appearance:none;width:30px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;color:rgba(255,255,255,.44);cursor:pointer;display:grid;place-items:center;font:500 18px/1 system-ui;transition:color .14s ease}.crm-planner-icon:hover,.crm-planner-icon:focus-visible{color:#fff;outline:0}
-      .crm-planner-new-project{align-self:center;width:32px;height:32px}.crm-planner-head-actions{justify-self:end;display:flex;align-items:center;gap:3px}.crm-planner-text-action.crm-menu-action{height:31px;font-size:.68rem!important;padding:0 8px!important}.crm-planner-project-menu{width:31px!important;padding:0!important;font-size:15px!important;text-align:center}
-      .crm-planner-universe{position:relative;min-width:0;min-height:0;overflow:hidden}.crm-planner-universe:before{content:"";position:absolute;left:8%;right:8%;top:54px;height:1px;background:linear-gradient(90deg,transparent,rgba(177,207,247,.12) 15%,rgba(177,207,247,.12) 85%,transparent);pointer-events:none}
-      .crm-planner-buckets{position:absolute;inset:0;min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:clamp(20px,3.1vw,48px);overflow-x:auto;overflow-y:hidden;padding:30px 34px 34px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
-      .crm-planner-bucket{position:relative;flex:0 0 clamp(238px,21vw,282px);height:fit-content;min-height:238px;max-height:min(470px,calc(100vh - 238px));box-sizing:border-box;padding:10px;display:grid;grid-template-rows:33px minmax(140px,auto) 31px;overflow:hidden;transition:flex-basis .2s cubic-bezier(.22,1,.26,1),width .2s cubic-bezier(.22,1,.26,1)}
-      .crm-planner-bucket:nth-child(3n+2){margin-top:34px}.crm-planner-bucket:nth-child(3n){margin-top:14px}
-      .crm-planner-bucket:before{content:"";position:absolute;left:50%;top:-18px;width:5px;height:5px;border-radius:50%;transform:translateX(-50%);background:rgba(156,197,251,.58);box-shadow:0 0 12px rgba(87,148,230,.46)}
-      .crm-planner-bucket-head{display:flex;align-items:center;min-width:0;padding:0 35px 0 4px}.crm-planner-bucket-title{font-size:.73rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-planner-bucket-menu{position:absolute;right:8px;top:8px;width:30px;height:26px;display:flex;align-items:center;justify-content:center;gap:2px}.crm-planner-bucket-menu i{display:block;width:6px;height:2px;border-radius:2px;background:rgba(155,194,245,.42)}
-      .crm-planner-card-list{min-height:140px;max-height:346px;overflow-y:auto;display:grid;align-content:start;justify-items:stretch;gap:8px;padding:4px 2px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
-      .crm-planner-card{appearance:none;position:relative;width:100%;min-height:76px;box-sizing:border-box;padding:11px 12px;text-align:left;border:1px solid rgba(255,255,255,.085);border-radius:10px;background:linear-gradient(150deg,rgba(103,142,198,.2),rgba(50,70,101,.11));color:rgba(255,255,255,.88);box-shadow:inset 0 1px rgba(255,255,255,.055),0 12px 22px -18px rgba(0,0,0,.88);cursor:pointer;transition:width .18s ease,min-height .18s ease,border-color .14s ease,background .14s ease,translate .14s ease}
-      .crm-planner-bucket:nth-child(3n+2) .crm-planner-card{background:linear-gradient(150deg,rgba(123,112,159,.2),rgba(61,52,82,.11))}.crm-planner-bucket:nth-child(3n) .crm-planner-card{background:linear-gradient(150deg,rgba(137,126,89,.19),rgba(75,65,38,.1))}
-      .crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;border-color:rgba(169,202,245,.22);background:linear-gradient(150deg,rgba(112,155,214,.27),rgba(51,72,104,.14));translate:0 -1px}
-      .crm-planner-card-title{display:block;padding-right:10px;font-size:.71rem;font-weight:680;line-height:1.28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:block;margin-top:7px;color:rgba(255,255,255,.39);font-size:9px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-planner-add-card.crm-menu-action{width:100%;height:29px;text-align:left;padding-left:4px!important;font-size:.64rem!important;color:rgba(255,255,255,.3)!important}.crm-planner-add-card:hover{color:#fff!important}
-      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:198px;min-width:198px;min-height:218px;max-height:min(405px,calc(100vh - 265px))}.crm-planner-card.crm-object-small{scale:1!important;width:76%;min-height:55px;justify-self:center;padding:9px 10px}.crm-planner-card.crm-object-small .crm-planner-card-note{display:none}
-      .crm-planner-empty{height:100%;display:grid;place-items:center;padding:20px;text-align:center;color:rgba(255,255,255,.3);font-size:.66rem;line-height:1.45}.crm-planner-world-empty{margin:auto;width:240px;height:130px}
+      .crm-planner-frame{position:absolute;inset:72px 62px 78px;max-width:1380px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:28px;min-height:0}
+      .crm-planner-projects{align-self:start;max-height:calc(100vh - 168px);box-sizing:border-box;padding:6px;display:grid;grid-template-rows:38px minmax(0,1fr);overflow:hidden}
+      .crm-planner-projects-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 7px 0 10px}
+      .crm-planner-projects-title{font-size:.78rem;font-weight:680}.crm-planner-new-project.crm-menu-action{width:29px;height:29px;padding:0!important;font-size:17px!important}
+      .crm-planner-project-list{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}
+      .crm-planner-project.crm-menu-action{position:relative;width:100%;min-height:39px;padding:0 10px!important;text-align:left;font-size:.7rem!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-project.is-selected:before{content:"";position:absolute;left:3px;top:12px;width:3px;height:15px;border-radius:2px;background:rgba(166,202,249,.72)}
+      .crm-planner-stage{min-width:0;min-height:0;display:grid;grid-template-rows:50px minmax(0,1fr);gap:8px}
+      .crm-planner-topline{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 4px}
+      .crm-planner-heading{min-width:0;font-size:.95rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-head-actions{display:flex;align-items:center;gap:2px}.crm-planner-text-action.crm-menu-action{height:30px;font-size:.67rem!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
+      .crm-planner-buckets{min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:18px;overflow-x:auto;overflow-y:hidden;padding:18px 12px 28px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .crm-planner-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 220px;width:220px;height:360px;box-sizing:border-box;padding:12px 14px 12px;overflow:hidden;transition:width .16s ease,flex-basis .16s ease,height .16s ease}
+      .crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-hd-r{right:4px;top:6px}
+      .crm-planner-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:7px;padding:4px 2px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .crm-planner-card{appearance:none;position:relative;flex:0 0 auto;width:184px;min-height:82px;box-sizing:border-box;padding:12px 13px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.92),rgba(62,74,94,.9));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:pointer;transition:width .16s ease,min-height .16s ease,box-shadow .14s ease}
+      .crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.1),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
+      .crm-planner-card-title{display:block;font-size:.72rem;font-weight:680;line-height:1.28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:block;margin-top:7px;color:rgba(255,255,255,.48);font-size:9px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-add-card.crm-menu-action{flex:0 0 29px;width:100%;height:29px;text-align:left;padding-left:4px!important;font-size:.64rem!important;color:rgba(255,255,255,.32)!important}.crm-planner-add-card:hover{color:#fff!important}
+      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:184px;width:184px;height:304px}.crm-planner-card.crm-object-small{scale:1!important;width:138px;min-height:62px;padding:10px 11px}.crm-planner-card.crm-object-small .crm-planner-card-note{display:none}
+      .crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:.66rem}.crm-planner-world-empty{margin:auto;width:180px;height:90px}
       .crm-planner-popover{position:fixed;z-index:9300;width:min(264px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:.72rem;font-weight:700;color:#fff}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:.72rem!important}
       .crm-planner-context{position:fixed;z-index:9310;width:158px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:.7rem!important}
-      @media(max-width:1050px){.crm-planner-frame{inset:60px 24px 78px}.crm-planner-topline{grid-template-columns:minmax(180px,1fr) minmax(330px,500px) auto;gap:10px}.crm-planner-subheading{display:none}.crm-planner-project.crm-menu-action{flex-basis:132px}.crm-planner-buckets{justify-content:flex-start;padding-inline:24px}}
+      @media(max-width:1050px){.crm-planner-frame{inset:64px 24px 78px;grid-template-columns:184px minmax(0,1fr);gap:16px}.crm-planner-buckets{justify-content:flex-start;padding-inline:8px}}
     `;
     document.head.appendChild(style);
   }
 
-  const miniature = (project) => `<span class="crm-project-minimap" aria-hidden="true">${project.buckets.slice(0, 4).map((bucket) => `<span class="crm-project-minimap-column">${bucket.cards.slice(0, 4).map(() => '<i class="crm-project-minimap-card"></i>').join("")}</span>`).join("")}</span>`;
   function render() {
     if (!root) return;
     const project = selectedProject();
     root.innerHTML = `<div class="crm-planner-frame">
-      <header class="crm-planner-topline">
-        <div class="crm-planner-heading-copy"><span class="crm-planner-kicker">Planner</span><div class="crm-planner-heading">${esc(project?.title || "Projects")}</div><div class="crm-planner-subheading">${esc(project?.note || "Define a project with the buckets it actually needs.")}</div></div>
-        <nav class="crm-planner-project-dock crm-menu-surface" aria-label="Projects"><div class="crm-planner-project-list">${projects.map((item) => `<button type="button" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}"><span class="crm-planner-project-copy"><span class="crm-planner-project-name">${esc(item.title)}</span></span>${miniature(item)}</button>`).join("")}</div><button type="button" class="crm-planner-icon crm-planner-new-project" data-planner-action="new-project" aria-label="Create project">+</button></nav>
-        <div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-bucket">Add bucket</button>' : '<button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-project">New project</button>'}</div>
-      </header>
-      <section class="crm-planner-universe"><div class="crm-planner-buckets">${project ? project.buckets.map((bucket) => `<section class="crm-planner-bucket crm-menu-surface" data-planner-bucket="${esc(bucket.id)}">
-        <header class="crm-planner-bucket-head"><span class="crm-planner-bucket-title">${esc(bucket.title)}</span></header><button type="button" class="crm-planner-icon crm-planner-bucket-menu" data-planner-action="bucket-menu" aria-label="Options for ${esc(bucket.title)}"><i></i><i></i><i></i></button>
-        <div class="crm-planner-card-list">${bucket.cards.length ? bucket.cards.map((card) => `<button type="button" class="crm-planner-card" data-planner-card="${esc(card.id)}"><span class="crm-planner-card-title">${esc(card.title)}</span>${card.note ? `<span class="crm-planner-card-note">${esc(card.note)}</span>` : ""}</button>`).join("") : '<div class="crm-planner-empty">Ready for its first item.</div>'}</div>
+      <aside class="crm-planner-projects crm-menu-surface"><header class="crm-planner-projects-head crm-menu-item"><span class="crm-planner-projects-title">Projects</span><button type="button" class="crm-planner-new-project crm-menu-action" data-planner-action="new-project" aria-label="Create project">+</button></header><nav class="crm-planner-project-list" aria-label="Projects">${projects.map((item) => `<button type="button" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}">${esc(item.title)}</button>`).join("")}</nav></aside>
+      <section class="crm-planner-stage"><header class="crm-planner-topline"><div class="crm-planner-heading">${esc(project?.title || "Planner")}</div><div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-bucket">Add bucket</button>' : '<button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-project">New project</button>'}</div></header>
+      <div class="crm-planner-buckets">${project ? project.buckets.map((bucket) => `<section class="crm-planner-bucket tk-zone" data-planner-bucket="${esc(bucket.id)}">
+        <header class="tk-zone-hd"><span class="tk-zone-title">${esc(bucket.title)}</span><span class="tk-zone-hd-r tk-bars" aria-hidden="true"><i class="tk-seg g"></i><i class="tk-seg"></i><i class="tk-seg"></i></span></header>
+        <div class="crm-planner-card-list">${bucket.cards.length ? bucket.cards.map((card) => `<button type="button" class="crm-planner-card" data-planner-card="${esc(card.id)}"><span class="crm-planner-card-title">${esc(card.title)}</span>${card.note ? `<span class="crm-planner-card-note">${esc(card.note)}</span>` : ""}</button>`).join("") : '<div class="crm-planner-empty">No items</div>'}</div>
         <button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add item</button>
-      </section>`).join("") : '<div class="crm-planner-empty crm-planner-world-empty">Create a project to start shaping a plan.</div>'}</div></section>
+      </section>`).join("") : '<div class="crm-planner-empty crm-planner-world-empty">No projects</div>'}</div></section>
     </div>`;
   }
 
@@ -201,9 +142,7 @@
   }
 
   const createProject = (title, note = "") => {
-    const project = normalizeProject({ id: uid("project"), title, note, updatedAt: nowIso(), buckets: [
-      { id: uid("bucket"), title: "Ideas", cards: [] }, { id: uid("bucket"), title: "In progress", cards: [] }, { id: uid("bucket"), title: "Done", cards: [] },
-    ] });
+    const project = normalizeProject({ id: uid("project"), title, note, updatedAt: nowIso(), buckets: [] });
     projects.unshift(project); selectedId = project.id; publish("project-created"); return clone(project);
   };
   const createBucket = (projectId, title) => {
@@ -223,8 +162,7 @@
     const project = selectedProject(); if (!project) return;
     openMenu(anchor, [
       { label: "Rename", run: () => openEditor({ title: "Rename project", value: project.title, anchor, onSubmit: (value) => { project.title = value; touch(project); publish("project-renamed"); } }) },
-      { label: "Edit description", run: () => openEditor({ title: "Project description", value: project.note, placeholder: "A short purpose", anchor, onSubmit: (value) => { project.note = value; touch(project); publish("project-updated"); } }) },
-      { label: "Delete project", danger: true, run: () => { if (projects.length <= 1) return; projects = projects.filter((item) => item.id !== project.id); selectedId = projects[0]?.id || ""; publish("project-deleted"); } },
+      { label: "Delete project", danger: true, run: () => { projects = projects.filter((item) => item.id !== project.id); selectedId = projects[0]?.id || ""; publish("project-deleted"); } },
     ]);
   }
   function bucketMenu(bucket, anchor, x, y) {
@@ -255,7 +193,7 @@
       if (projectButton) { selectProject(projectButton.dataset.plannerProject); return; }
       const action = event.target.closest("[data-planner-action]"); if (!action) return;
       const project = selectedProject(); const bucketElement = action.closest("[data-planner-bucket]"); const bucket = bucketById(project, bucketElement?.dataset.plannerBucket);
-      if (action.dataset.plannerAction === "new-project") openEditor({ title: "New project", placeholder: "Project name", submit: "Create", anchor: action, onSubmit: (value) => createProject(value, "A custom project plan") });
+      if (action.dataset.plannerAction === "new-project") openEditor({ title: "New project", placeholder: "Project name", submit: "Create", anchor: action, onSubmit: (value) => createProject(value) });
       if (action.dataset.plannerAction === "project-menu") projectMenu(action);
       if (action.dataset.plannerAction === "new-bucket" && project) openEditor({ title: "New bucket", placeholder: "Bucket name", submit: "Create", anchor: action, onSubmit: (value) => createBucket(project.id, value) });
       if (action.dataset.plannerAction === "bucket-menu") bucketMenu(bucket, action);

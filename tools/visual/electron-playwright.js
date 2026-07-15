@@ -298,9 +298,9 @@ async function main() {
   }
 
   const rooms = [
-    {key:'desk',theater:'desk',content:'.crm-overview-project',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
+    {key:'desk',theater:'desk',content:'.crm-overview-project',expected:0}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
     {key:'cases',theater:'tickets',content:'.tk-zone',expected:3}, {key:'money',theater:'money-room',content:'[data-crm-subtheater="money"]:not([hidden]) .tk-zone',expected:3},
-    {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:3}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:4},
+    {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:0}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:4},
   ];
   const transitions=[];
   for (const room of rooms) {

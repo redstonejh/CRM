@@ -208,6 +208,15 @@ async function main() {
     const room = document.querySelector('.crm-overview-surface:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
   });
+  await page.evaluate(() => {
+    ['Project A', 'Project B', 'Project C'].forEach((title) => {
+      const project = window.crmPlanner.createProject(title);
+      ['One', 'Two', 'Three'].forEach((bucketTitle, index) => {
+        const bucket = window.crmPlanner.createBucket(project.id, bucketTitle);
+        if (index < 2) window.crmPlanner.createCard(project.id, bucket.id, `${title} item ${index + 1}`);
+      });
+    });
+  });
   await page.waitForFunction(() => document.querySelectorAll('.crm-overview-project').length >= 3
     && document.querySelectorAll('.crm-overview-mini-world').length >= 3
     && document.querySelectorAll('.crm-overview-ticket').length >= 4
@@ -781,12 +790,14 @@ async function main() {
   await page.keyboard.press('Escape');
 
   await activate('planner');
-  await check('Planner starts with editable project worlds and custom buckets', () => {
+  await check('Planner uses one established selector and aligned custom buckets', () => {
     const projects = [...document.querySelectorAll('.crm-planner-project')];
     const buckets = [...document.querySelectorAll('.crm-planner-bucket')];
     return projects.length >= 3 && buckets.length === 3
-      && projects.every((project) => !!project.querySelector('.crm-project-minimap'))
-      && buckets.every((bucket) => !!bucket.querySelector('.crm-planner-bucket-title'));
+      && !document.querySelector('.crm-project-minimap,.crm-planner-universe')
+      && projects.every((project) => !project.querySelector('*'))
+      && buckets.every((bucket) => bucket.classList.contains('tk-zone') && !!bucket.querySelector('.tk-zone-title'))
+      && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1;
   });
   await page.click('[data-planner-action="new-project"]');
   await page.type('.crm-planner-popover input[name="value"]', 'Interaction plan');
@@ -795,7 +806,7 @@ async function main() {
   await page.click('[data-planner-action="new-bucket"]');
   await page.type('.crm-planner-popover input[name="value"]', 'Review');
   await page.click('.crm-planner-popover button[type="submit"]');
-  await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
+  await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 1);
   await page.click('.crm-planner-bucket:last-child [data-planner-action="new-card"]');
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
   await page.click('.crm-planner-popover button[type="submit"]');
@@ -803,11 +814,11 @@ async function main() {
     const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
     const review = project?.buckets.find((bucket) => bucket.title === 'Review');
     const stored = JSON.parse(localStorage.getItem('crm-planner-projects-v1') || '[]');
-    return !!project && project.buckets.length === 4 && review?.cards.some((card) => card.title === 'Ship the polished flow')
+    return !!project && project.buckets.length === 1 && review?.cards.some((card) => card.title === 'Ship the polished flow')
       && stored.some((item) => item.id === project.id)
       && !!document.querySelector('.crm-planner-card');
   });
-  await page.click('.crm-planner-bucket:last-child [data-planner-action="bucket-menu"]');
+  await page.click('.crm-planner-bucket:last-child', { button: 'right' });
   await check('Planner edits use a compact canonical anchored menu', () => {
     const menu = document.querySelector('.crm-planner-context');
     const reference = document.querySelector('.auth-profile-menu');
@@ -850,7 +861,7 @@ async function main() {
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-overview-project-name')].some((element) => element.textContent.trim() === 'Interaction plan'));
   await check('Overview immediately reflects Planner projects as low-cost mini layouts', () => {
     const row = [...document.querySelectorAll('.crm-overview-project')].find((element) => element.querySelector('.crm-overview-project-name')?.textContent.trim() === 'Interaction plan');
-    return !!row && row.querySelectorAll('.crm-overview-mini-lane').length === 4 && !row.querySelector('.crm-planner-bucket,.tk-card');
+    return !!row && row.querySelectorAll('.crm-overview-mini-lane').length === 1 && !row.querySelector('.crm-planner-bucket,.tk-card');
   });
   await activate('home');
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0

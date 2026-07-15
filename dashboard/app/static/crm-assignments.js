@@ -26,18 +26,17 @@
       .crm-assignments-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-assignments-surface[hidden]{display:none}
       .crm-assignments-frame{position:absolute;inset:66px 54px 0;max-width:1450px;margin:auto;display:grid;grid-template-columns:235px minmax(0,1fr);gap:20px}
       .crm-assignment-pools{align-self:start;min-height:0;max-height:calc(100vh - 154px);display:flex;flex-direction:column;padding:9px 6px;overflow:hidden}
-      .crm-assignment-head{display:flex;align-items:center;justify-content:space-between;padding:0 12px}.crm-assignment-title{font-size:.95rem;font-weight:700}.crm-assignment-count{font-size:.78rem;color:rgba(255,255,255,.62)}
+      .crm-assignment-head{display:flex;align-items:center;padding:0 12px}.crm-assignment-title{font-size:.95rem;font-weight:700}
       .crm-assignment-pools-head{height:38px;flex:0 0 38px;box-sizing:border-box}
       .crm-assignment-pool-stack{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}
-      .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:46px;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left}
-      .crm-assignment-source-pool-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.crm-assignment-source-pool-count{flex:0 0 auto;color:inherit}
+      .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:46px;display:flex;align-items:center;gap:10px;text-align:left}
+      .crm-assignment-source-pool-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-assignment-stage{position:relative;min-width:0;min-height:0;overflow:visible}
       .crm-assignment-grid{position:absolute;left:0;right:0;top:23px;height:320px;display:grid;grid-template-columns:repeat(4,205px);gap:16px;place-content:start center}
       .crm-assignment-bucket.tk-zone{position:relative;inset:auto;width:205px;height:320px;box-sizing:border-box}
       .crm-assignment-bucket .tk-zone-body{min-height:0}.crm-assignment-bucket .tk-zone-track{position:relative;min-height:100%}
       .crm-assignment-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}
       .crm-assignment-bucket-card.tk-card{position:absolute!important;left:50%!important;right:auto!important;bottom:auto!important;top:0!important;width:170px!important;height:257px!important;margin:0!important;transform:translateX(-50%)!important;z-index:2;cursor:grab}
-      .crm-assignment-hand-label{position:fixed;left:50%;bottom:277px;z-index:2;min-width:190px;transform:translateX(-50%);text-align:center;pointer-events:none}
       .crm-assignment-hand{position:fixed;left:50%;bottom:0;width:min(790px,100%);height:278px;transform:translateX(-50%);overflow:visible;pointer-events:none}
       .crm-assignment-hand-trigger{position:absolute;z-index:1;left:50%;bottom:0;width:var(--assignment-hand-span,760px);height:92px;transform:translateX(-50%);pointer-events:auto}
       .crm-assignment-hand-card.tk-card{position:absolute!important;left:50%!important;right:auto!important;top:auto!important;bottom:52px!important;width:165px!important;height:249px!important;margin:0!important;z-index:var(--hand-z);cursor:grab;pointer-events:auto;
@@ -170,9 +169,9 @@
     const activities = model.commitments.slice(0, 4);
     root.innerHTML = `<div class="crm-assignments-frame">
       <aside class="crm-assignment-pools crm-menu-surface">
-        <div class="crm-assignment-head crm-assignment-pools-head crm-menu-item"><span class="crm-assignment-title">People pools</span><span class="crm-assignment-count">select one</span></div>
+        <div class="crm-assignment-head crm-assignment-pools-head crm-menu-item"><span class="crm-assignment-title">People pools</span></div>
         <div class="crm-assignment-pool-stack">${pools.map((pool) => `<button type="button" class="crm-assignment-source-pool crm-menu-action${pool.id === selectedPoolId ? " is-selected" : ""}" aria-pressed="${pool.id === selectedPoolId}" data-assignment-pool="${esc(pool.id)}">
-          <span class="crm-assignment-source-pool-name" title="${esc(pool.label)}">${esc(pool.label)}</span><span class="crm-assignment-source-pool-count">${pool.people.length}</span>
+          <span class="crm-assignment-source-pool-name" title="${esc(pool.label)}">${esc(pool.label)}</span>
         </button>`).join("")}</div>
       </aside>
       <section class="crm-assignment-stage">
@@ -184,7 +183,6 @@
           <div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div></div>
         </section>`;
       }).join("")}</div>
-        <div class="crm-assignment-hand-label crm-menu-item"><strong>${esc(selected?.label || "People")}</strong> · ${hand.length} ${hand.length === 1 ? "person" : "people"}</div>
         <div class="crm-assignment-hand" data-assignment-hand><div class="crm-assignment-hand-trigger" aria-hidden="true"></div></div>
       </section>
     </div>`;

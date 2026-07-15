@@ -349,6 +349,7 @@ async function main() {
       && pools.filter((pool) => pool.classList.contains('is-selected')).length === 1
       && sameButton && !theater.querySelector('.crm-assignment-source-pool.tk-zone')
       && buckets.every((bucket) => !!bucket.dataset.assignmentCommitment)
+      && !theater.querySelector('.crm-assignment-source-pool-count,.crm-assignment-count,.crm-assignment-hand-label')
       && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head');
   });
   await check('The grouping panel clips to its buttons and scrolls only when the list outgrows its cap', () => {
@@ -365,9 +366,8 @@ async function main() {
     && document.querySelectorAll('.crm-assignment-hand-card.tk-card').length === 10, {}, firstPool);
   await check('Selecting another pool replaces the hand with that pool’s people', () => {
     const selected = document.querySelector('.crm-assignment-source-pool.is-selected');
-    const count = Number(selected?.querySelector('.crm-assignment-source-pool-count')?.textContent || 0);
     const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
-    return !!selected && count === cards.length && cards.length === 10;
+    return !!selected && cards.length === 10 && !selected.querySelector('.crm-assignment-source-pool-count');
   });
   await page.mouse.move(2, 2);
   await sleep(430);

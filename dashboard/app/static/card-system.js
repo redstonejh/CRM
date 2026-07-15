@@ -2717,7 +2717,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
     ensureTheater().appendChild(zonesRoot);
     layoutZones();
-    requestAnimationFrame(layoutZones);              // re-measure once the grid has laid out
     window.addEventListener("resize", layoutZones);
   };
 
@@ -3458,9 +3457,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         return ensureTheater();
       }
       const wasActive = active;
-      active = true;
-      render();
-      active = wasActive;
+      // A baseline is also the transition's readiness probe. Reuse an already
+      // rendered, fingerprint-matched theater instead of rebuilding every
+      // card at the end of an otherwise smooth camera move.
+      if (renderDirty || dataFingerprint() !== renderedDataFingerprint || !theater?.querySelector?.(".tk-card,.tk-zone,.tk-deck")) {
+        active = true;
+        render();
+        active = wasActive;
+      }
       applyActiveVisibility();
       return ensureTheater();
     },

@@ -8,7 +8,7 @@
     { key: "invoices", label: "Invoices" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "preblurred-home-v23";
+  const HOME_PREVIEW_VERSION = "filtered-home-v27";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -20,6 +20,7 @@
   let priorityUsername = "";
   let handRefreshTimer = 0;
   let handRefreshGeneration = 0;
+  let handDirty = true;
   let activeRefreshPending = false;
   let motionSnapshot = null;
   let factoryPrewarmHandle = 0;
@@ -30,6 +31,7 @@
   const prewarmedFactories = new Set();
   const recycledExpanders = new Map();
   const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "billPipeline", "moneyPipeline", "crmAssignments"];
+  const FACTORY_API_BY_MODULE = { desk:"crmDesk", people:"peopleCards", cases:"ticketStacks", bills:"billPipeline", invoices:"moneyPipeline", assignments:"crmAssignments" };
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -48,7 +50,7 @@
       .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
         will-change:transform;backface-visibility:hidden}
       .crm-home-scene-backdrop{display:none;position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
-      .crm-home-motion-snapshot{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
+      .crm-home-motion-snapshot.crm-home-preview-image{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
         pointer-events:none;user-select:none;backface-visibility:hidden}
       .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint}
       .crm-home-surface.crm-home-camera-moving .crm-home-scene-backdrop{display:block}
@@ -66,27 +68,26 @@
         transition:box-shadow .18s ease,background .18s ease}
       .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(70,110,190,.34),rgba(40,70,130,.26));
         box-shadow:inset 0 0 0 1px rgba(125,180,255,.5),0 0 30px rgba(90,150,255,.42)}
-      .crm-home-title-glass{position:absolute;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);width:max-content;
-        max-width:80%;text-align:center;pointer-events:none;transition:opacity .18s ease;display:flex;flex-direction:column;align-items:center}
-      .crm-home-title{font:600 clamp(11px,3.2cqh,15px)/1.05 system-ui;letter-spacing:.14em;text-transform:uppercase;
-        color:rgba(226,234,246,.72);text-shadow:0 1px 0 rgba(255,255,255,.19),0 -1px 0 rgba(0,0,0,.78),0 2px 8px rgba(0,0,0,.24)}
+      .crm-home-title-glass{position:absolute;z-index:4;left:50%;top:50%;transform:translate3d(-50%,-50%,0);width:max-content;
+        max-width:80%;text-align:center;pointer-events:none;contain:layout style;opacity:.94;
+        transition:opacity .2s ease;display:flex;flex-direction:column;align-items:center}
+      .crm-home-title{font:650 clamp(11px,3.2cqh,15px)/1.05 system-ui;letter-spacing:.14em;text-transform:uppercase;
+        color:rgba(238,243,251,.86);text-shadow:0 1px 0 rgba(255,255,255,.2),0 -1px 0 rgba(0,0,0,.82),0 2px 10px rgba(0,0,0,.3)}
       .crm-home-loading-spinner{display:block;width:12px;height:12px;margin-top:10px;box-sizing:border-box;border-radius:50%;
         border:1.5px solid rgba(220,232,248,.22);border-top-color:rgba(238,246,255,.82);will-change:transform;
         animation:crm-home-loading-spin .72s linear infinite}
       .crm-home-bucket[data-preview-ready="true"] .crm-home-loading-spinner{display:none}
       @keyframes crm-home-loading-spin{to{transform:rotate(360deg)}}
-      .crm-home-bucket:hover .crm-home-title-glass{opacity:.28}
+      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-title-glass{opacity:.4}
       .crm-home-preview{position:absolute;inset:0;z-index:1;overflow:hidden;contain:paint;border-radius:inherit;color:rgba(255,255,255,.62)}
       .crm-home-preview-state{position:absolute;inset:0;display:grid;place-items:center;font-size:.68rem;font-weight:760;
         letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.38)}
       .crm-home-preview-image{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;
         user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
-      /* The resting softness is baked into the capture once. Hover adds one
-         sharp raster only for the tile under the pointer and crossfades it by
-         opacity, avoiding a live filter pass on all six tiles. */
-      .crm-home-preview-foreground{filter:none}
-      .crm-home-preview-sharp{opacity:0;filter:none;transition:opacity .16s ease}
-      .crm-home-preview-sharp.is-visible{opacity:1}
+      /* Each tile is one inert raster. A small GPU filter provides the resting
+         depth cue and is the only visual property released on hover. */
+      .crm-home-preview-foreground{filter:blur(2.4px);transition:filter .2s ease}
+      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-preview-foreground{filter:blur(0)}
       /* These are the card system's real .tk-card objects. Home contributes
          only the held-hand geometry and compositor-friendly reveal motion. */
       .crm-home-priority-hand{position:absolute;z-index:9;left:0;right:0;bottom:0;height:var(--home-hand-reserve,280px);
@@ -98,6 +99,7 @@
         pointer-events:auto;cursor:pointer;
         transform-origin:50% 108%;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-rest-y,180px)) rotate(var(--hand-rot,0deg));
         transition:transform .38s cubic-bezier(.22,1,.26,1),box-shadow .18s ease}
+      .crm-home-priority-hand.is-seating>.crm-home-hand-card.tk-card{transition:none}
       .crm-home-priority-hand:is(:hover,:focus-within)>.crm-home-hand-card.tk-card{
         transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-open-y,0px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.9)}
       .crm-home-priority-hand:is(:hover,:focus-within)>.crm-home-hand-card.tk-card:is(:hover,:focus-visible){z-index:1000;
@@ -105,7 +107,10 @@
         box-shadow:inset 0 0 0 9999px rgba(255,255,255,.12),inset 0 1px rgba(255,255,255,.34),0 22px 48px rgba(0,0,0,.44)}
       .crm-home-hand-empty{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);font-size:9px;letter-spacing:.1em;
         text-transform:uppercase;color:rgba(218,228,242,.25);white-space:nowrap}
-      @media(prefers-reduced-motion:reduce){.crm-home-priority-hand>.crm-home-hand-card.tk-card{transition-duration:.01ms}}
+      @media(prefers-reduced-motion:reduce){
+        .crm-home-priority-hand>.crm-home-hand-card.tk-card,
+        .crm-home-title-glass{transition-duration:.01ms}
+      }
       /* The transition lid is full-viewport. It must stay neutral in Electron's
          native app-region map or its temporary rectangle can cancel (and on
          Windows, outlive) the persistent title-bar drag strip. */
@@ -156,17 +161,14 @@
       foreground?.remove();
       foreground = null;
     } else if (!foreground) {
-      foreground = imageNode("crm-home-preview-foreground", preview.blurredForegroundSrc || preview.foregroundSrc);
+      foreground = imageNode("crm-home-preview-foreground", preview.foregroundSrc);
       host.replaceChildren(foreground);
     } else {
-      const restingSrc = preview.blurredForegroundSrc || preview.foregroundSrc;
-      if (foreground.src !== restingSrc) foreground.src = restingSrc;
+      if (foreground.src !== preview.foregroundSrc) foreground.src = preview.foregroundSrc;
     }
     if (foreground) {
-      foreground.dataset.previewVariant = preview.blurredForegroundSrc ? "preblurred" : "source";
-      foreground.dataset.sharpSrc = preview.foregroundSrc;
-      const sharp = host.querySelector(":scope > .crm-home-preview-sharp");
-      if (sharp && sharp.src !== preview.foregroundSrc) sharp.remove();
+      foreground.dataset.previewVariant = "filtered";
+      host.querySelector(":scope > .crm-home-preview-sharp")?.remove();
     }
     if (exact) {
       let full = host.querySelector(":scope > .crm-home-preview-exact");
@@ -185,26 +187,11 @@
   };
   const mountAll = () => MODULES.forEach(({ key }) => mountPreview(key));
   const revealSharpPreview = (bucket) => {
-    const host = bucket?.querySelector?.(":scope > .crm-home-preview");
-    const foreground = host?.querySelector?.(":scope > .crm-home-preview-foreground");
-    if (!host || !foreground) return;
-    let sharp = host.querySelector(":scope > .crm-home-preview-sharp");
-    if (!sharp) {
-      sharp = imageNode("crm-home-preview-sharp", foreground.dataset.sharpSrc || "");
-      host.appendChild(sharp);
-    }
-    const reveal = () => {
-      if (!bucket.matches(":hover") || !sharp.isConnected) return;
-      requestAnimationFrame(() => sharp.classList.add("is-visible"));
-    };
-    if (sharp.complete && sharp.naturalWidth > 0) reveal();
-    else sharp.decode?.().then(reveal).catch(reveal);
+    if (!bucket) return;
+    bucket.classList.add("is-preview-hovered");
   };
   const restSharpPreview = (bucket) => {
-    const sharp = bucket?.querySelector?.(":scope > .crm-home-preview > .crm-home-preview-sharp");
-    if (!sharp) return;
-    sharp.classList.remove("is-visible");
-    setTimeout(() => { if (sharp.isConnected && !bucket.matches(":hover")) sharp.remove(); }, 180);
+    if (!bucket?.matches(":focus-visible")) bucket?.classList?.remove("is-preview-hovered");
   };
   const acceptPreview = (preview) => {
     if (preview?.version !== HOME_PREVIEW_VERSION || !preview?.foregroundSrc || !preview?.exactSrc || !MODULES.some(({ key }) => key === preview.key)) return false;
@@ -384,7 +371,11 @@
   };
   const fillPriorityHand = (hand) => {
     if (!hand) return;
+    const renderSignature = JSON.stringify(priorityItems.map((item) => [
+      item.id, item.title, item.status, item.priority, item.dueAt, item.assignee, item.attentionLabel, item.context,
+    ]));
     hand.dataset.username = priorityUsername;
+    hand.dataset.renderSignature = renderSignature;
     hand.classList.toggle("is-empty", priorityItems.length === 0);
     hand.replaceChildren();
     if (!priorityItems.length) {
@@ -417,8 +408,20 @@
   };
   const renderPriorityHand = () => {
     const hand = camera?.layers?.()[0]?.querySelector?.(".crm-home-priority-hand"); if (!hand) return;
+    const renderSignature = JSON.stringify(priorityItems.map((item) => [
+      item.id, item.title, item.status, item.priority, item.dueAt, item.assignee, item.attentionLabel, item.context,
+    ]));
+    if (hand.dataset.renderSignature === renderSignature && hand.dataset.username === priorityUsername) {
+      layoutPriorityHand(hand); camera?.layout?.(); return;
+    }
+    hand.classList.add("is-seating");
     fillPriorityHand(hand);
-    requestAnimationFrame(() => { layoutPriorityHand(hand); camera?.layout?.(); });
+    // The hand is measured and seated in the same task that creates it. Its
+    // default CSS variables therefore never reach a paint and cannot fan out
+    // one frame late after Home becomes visible.
+    layoutPriorityHand(hand);
+    camera?.layout?.();
+    requestAnimationFrame(() => { if (hand.isConnected) hand.classList.remove("is-seating"); });
   };
   const refreshPriorityHand = async () => {
     if (!camera?.isActive?.() || !window.crmDomain?.list) return;
@@ -432,10 +435,16 @@
       if (generation !== handRefreshGeneration) return;
       priorityUsername = session?.user?.username || "";
       priorityItems = choosePriorityItems(mergePrioritySources(result?.records || [], todaySignals(summary)), priorityUsername);
+      handDirty = false;
       renderPriorityHand();
     } catch {}
   };
-  const scheduleHandRefresh = () => { clearTimeout(handRefreshTimer); handRefreshTimer = setTimeout(refreshPriorityHand, 120); };
+  const scheduleHandRefresh = () => {
+    handDirty = true;
+    clearTimeout(handRefreshTimer);
+    if (!camera?.isActive?.() || camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) return;
+    handRefreshTimer = setTimeout(refreshPriorityHand, 120);
+  };
   const canPrewarmFactory = () => !!camera?.isActive?.()
     && !camera?.isTransitioning?.()
     && !window.crmDeskTransit?.isBusy?.()
@@ -544,8 +553,17 @@
     MODULES.forEach((module) => {
       const bucket = document.createElement("button"); bucket.type = "button"; bucket.className = "crm-home-bucket";
       bucket.dataset.module = module.key; bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
-      bucket.addEventListener("pointerenter", () => revealSharpPreview(bucket));
-      bucket.addEventListener("pointerleave", () => restSharpPreview(bucket));
+      // Do not activate merely because a tile finishes loading beneath an
+      // already-stationary pointer. Actual pointer movement arms the reveal.
+      bucket.addEventListener("pointermove", () => {
+        if (!bucket.dataset.previewReady || bucket.classList.contains("is-preview-hovered")) return;
+        revealSharpPreview(bucket);
+      });
+      bucket.addEventListener("pointerleave", () => {
+        restSharpPreview(bucket);
+      });
+      bucket.addEventListener("focus", () => revealSharpPreview(bucket));
+      bucket.addEventListener("blur", () => restSharpPreview(bucket));
       grid.appendChild(bucket);
     });
     const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important things coming up");
@@ -555,8 +573,10 @@
     const surface = camera?.surface?.(); const grid = surface?.querySelector(".crm-home-grid"); const hand = surface?.querySelector(".crm-home-priority-hand"); if (!grid) return;
     const GAP = 16, OUTER = 16, full = expRect(); let controlsBottom = 42;
     document.querySelectorAll(".window-control-cluster").forEach((node) => { controlsBottom = Math.max(controlsBottom, node.getBoundingClientRect().bottom); });
-    const top = Math.round(controlsBottom + 12); const hasCards = !!hand?.querySelector(".crm-home-hand-card.tk-card");
-    const handReserve = hasCards ? Math.min(320, Math.max(254, innerWidth * .16 + 32)) : 72;
+    const top = Math.round(controlsBottom + 12);
+    // Home geometry must not depend on an asynchronous priority query. Keep
+    // the same hand reserve before, during, and after the cards arrive.
+    const handReserve = Math.min(320, Math.max(254, innerWidth * .16 + 32));
     hand?.style.setProperty("--home-hand-reserve", `${handReserve.toFixed(1)}px`);
     const area = { x: OUTER, y: top, w: full.w - 2 * OUTER, h: Math.max(220, full.h - top - OUTER - handReserve) };
     const aspect = innerWidth / innerHeight; let cellW = (area.w - 32) / 3; let cellH = cellW / aspect;
@@ -607,9 +627,11 @@
       const expander=[...(context.surface?.querySelectorAll(".crm-home-expander:not(.crm-home-warm)")||[])].pop();
       if(expander)requestAnimationFrame(()=>expander.classList.toggle("is-unwrapping",direction==="expand"));
     },
-    onTransitionEnd:(_direction,context)=>{
+    onTransitionEnd:(direction,context)=>{
       context.surface?.classList.remove("crm-home-camera-moving");
-      factoryPrewarmAfter = performance.now() + 250;
+      // After returning Home, use the next idle slice to prepare the next room.
+      // Expanding leaves Home inactive, so its longer guard remains appropriate.
+      factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);
       scheduleFactoryPrewarm();
     },
     onLevelChange:(context)=>{if(context.active&&context.level===0)mountAll()},
@@ -636,8 +658,12 @@
     if (on) {
       mountAll();
       scheduleFactoryPrewarm();
-      if (window.crmDeskTransit?.isBusy?.()) activeRefreshPending = true;
-      else { activeRefreshPending = false; requestPreviews(false); refreshPriorityHand(); }
+      if (window.crmDeskTransit?.isBusy?.()) activeRefreshPending = handDirty;
+      else {
+        activeRefreshPending = false;
+        requestPreviews(false);
+        if (handDirty) refreshPriorityHand();
+      }
     }
     else {
       clearTimeout(handRefreshTimer); handRefreshGeneration += 1;
@@ -651,20 +677,25 @@
     return window.crmHome;
   };
   document.addEventListener("crm:desk-transit-settled", (event) => {
-    if (!activeRefreshPending || event.detail?.key !== "home" || !camera?.isActive?.()) return;
+    if ((!activeRefreshPending && !handDirty) || event.detail?.key !== "home" || !camera?.isActive?.()) return;
     activeRefreshPending = false;
     requestAnimationFrame(() => {
       if (!camera?.isActive?.() || window.crmDeskTransit?.isBusy?.()) { activeRefreshPending = true; return; }
       requestPreviews(false);
-      refreshPriorityHand();
+      if (handDirty) refreshPriorityHand();
     });
   });
-  const waitForModuleSettled = (key, timeoutMs = 1800) => new Promise((resolve) => {
+  const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
     const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
-      const next=source?.querySelector?.(selector)?`${source.childElementCount}:${source.querySelectorAll("*").length}`:"";
-      stable=next&&next===last?stable+1:0;last=next;if(stable>=2||performance.now()-started>=timeoutMs)resolve();else requestAnimationFrame(tick)};requestAnimationFrame(tick);
+      const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
+      const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
+        node.dataset?.id||node.dataset?.recordId||node.dataset?.stage||node.dataset?.assignmentCommitment||node.className,
+        rect.x.toFixed(2),rect.y.toFixed(2),rect.width.toFixed(2),rect.height.toFixed(2),style.transform,style.opacity,
+      ].join(":")}).join("|");
+      const next=source?.querySelector?.(selector)?`${source.childElementCount}:${source.querySelectorAll("*").length}:${source.scrollWidth}:${source.scrollHeight}:${geometry}`:"";
+      stable=next&&next===last?stable+1:0;last=next;if(stable>=3||performance.now()-started>=timeoutMs)resolve({stable:stable>=3,signature:next});else requestAnimationFrame(tick)};requestAnimationFrame(tick);
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
     const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
@@ -677,8 +708,12 @@
     try { const result=await window.crmHomePreviews?.capture?.(key); if(result?.preview)acceptPreview(result.preview); } catch {}
     return previews.get(key)||null;
   };
+  const noteModuleReady = (key) => {
+    const apiName = FACTORY_API_BY_MODULE[key];
+    if (apiName) prewarmedFactories.add(apiName);
+  };
   window.addEventListener("resize",()=>camera?.layout?.());
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false)},captureBaseline,waitForModuleSettled,waitForModuleReady,recycleExpander,
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false)},captureBaseline,waitForModuleSettled,waitForModuleReady,noteModuleReady,recycleExpander,
     previewStatus:()=>MODULES.map(({key})=>({key,state:previews.has(key)?"ready":"waiting",version:previews.get(key)?.version||null,capturedAt:previews.get(key)?.capturedAt||0,layoutSignature:previews.get(key)?.layoutSignature||null})),
     handStatus:()=>({count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
     motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0}),

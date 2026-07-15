@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'bills', 'invoices', 'assi
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'preblurred-home-v23';
+const HOME_PREVIEW_VERSION = 'filtered-home-v27';
 const homePreviewCache = new Map();
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;
@@ -296,13 +296,9 @@ async function createPreviewWindow() {
 function publishHomePreview(key, capture, layoutSignature) {
   if (!capture?.foreground || !capture?.exact) return null;
   const size = capture.exact.getSize();
-  const sourceSize = capture.foreground.getSize();
-  const softened = capture.foreground
-    .resize({ width: Math.max(1, Math.round(sourceSize.width * 0.55)), height: Math.max(1, Math.round(sourceSize.height * 0.55)), quality: 'best' })
-    .resize({ width: sourceSize.width, height: sourceSize.height, quality: 'best' });
   const preview = {
     key, version: HOME_PREVIEW_VERSION, width: size.width, height: size.height, capturedAt: Date.now(),
-    foregroundSrc: capture.foreground.toDataURL(), blurredForegroundSrc: softened.toDataURL(), exactSrc: capture.exact.toDataURL(),
+    foregroundSrc: capture.foreground.toDataURL(), exactSrc: capture.exact.toDataURL(),
     foregroundBounds: capture.bounds, layoutSignature,
   };
   homePreviewCache.set(key, preview);

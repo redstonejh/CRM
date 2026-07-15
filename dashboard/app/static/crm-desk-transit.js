@@ -39,13 +39,21 @@
     const layer = camera()?.layers?.()[0];
     return layer?.querySelector?.(`.crm-home-bucket[data-module="${key}"]`) || null;
   };
+  const destinationFor = (key) => ({
+    desk: window.crmDesk,
+    people: window.peopleCards,
+    cases: window.ticketStacks,
+    bills: window.billPipeline,
+    invoices: window.moneyPipeline,
+    assignments: window.crmAssignments,
+  })[key];
 
   // The dive-in ending: the expanded lid keeps covering the stage while the
   // destination theater is committed beneath it, then unfrosts away. The swap
   // happens behind blur(28px) glass — continuous to the eye, never a cut.
   const finishDiveIn = async (key, done) => {
     const startedAt = performance.now();
-    const destinationApi = ({ people: window.peopleCards, bills: window.billPipeline, invoices: window.moneyPipeline })[key];
+    const destinationApi = destinationFor(key);
     const destinationState = destinationApi?.performanceState?.() || null;
     const homePrewarm = window.crmHome?.prewarmStatus?.() || null;
     const cam = camera();
@@ -60,15 +68,21 @@
       document.body.appendChild(veil);
     }
     document.documentElement.classList.add("crm-transit-materializing");
+    // Build the destination while the fully expanded lid still covers the
+    // viewport. This consumes async data and every factory's first layout
+    // before the destination can contribute a visible frame.
+    try { await destinationApi?.baseline?.({ canRender: () => true }); } catch {}
     const commitAt = performance.now();
     commit(key);
     const committedAt = performance.now();
-    // Release on the first paint-ready frame. There is no post-animation dwell:
-    // the moving lid is replaced directly by the fully materialized theater.
+    // Presence is not readiness: several card factories perform measured
+    // layout after inserting their nodes. Keep the lid in place until sampled
+    // geometry remains identical across consecutive frames.
+    let settledState = null;
     try {
-      if (window.crmHome?.waitForModuleReady) await window.crmHome.waitForModuleReady(key);
-      else await window.crmHome?.waitForModuleSettled?.(key);
+      settledState = await window.crmHome?.waitForModuleSettled?.(key);
     } catch {}
+    if (settledState?.stable) window.crmHome?.noteModuleReady?.(key);
     const readyAt = performance.now();
     requestAnimationFrame(() => {
       const releaseAt = performance.now();
@@ -79,7 +93,8 @@
       if (surface) surface.style.zIndex = "";
       document.documentElement.classList.remove("crm-transit-materializing");
       const doneAt = performance.now();
-      performanceTimings.push({ key, destinationState, homePrewarm, commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
+      performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
+        commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
         frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
       if (performanceTimings.length > 24) performanceTimings.shift();
       done();
@@ -119,7 +134,6 @@
       Promise.resolve(cam.whenSettled?.()).then(() => {
         if (surface) surface.style.zIndex = "";
         done();
-        setTimeout(() => { try { void window.crmHome?.captureBaseline?.(fromKey); } catch {} }, 180);
       });
     });
   };

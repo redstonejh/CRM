@@ -43,6 +43,7 @@
       .crm-assignment-hand-card.tk-card{position:absolute!important;left:50%!important;right:auto!important;top:auto!important;bottom:52px!important;width:165px!important;height:249px!important;margin:0!important;z-index:var(--hand-z);cursor:grab;pointer-events:auto;
         transform-origin:50% 108%;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-rest-y,180px)) rotate(var(--hand-rot,0deg));
         transition:transform .38s cubic-bezier(.22,1,.26,1),box-shadow .18s ease,opacity .18s ease;animation:crm-assignment-deal .34s cubic-bezier(.22,1,.26,1) backwards;animation-delay:var(--hand-delay)}
+      .crm-assignment-hand-card.crm-assignment-hand-seated{animation:none;transition:none}
       .crm-assignment-hand:is(:hover,:focus-within)>.crm-assignment-hand-card.tk-card{transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-open-y,0px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.9)}
       .crm-assignment-hand:is(:hover,:focus-within)>.crm-assignment-hand-card.tk-card:is(:hover,:focus-visible){z-index:1000;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(calc(var(--hand-open-y,0px) - 6px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.92);box-shadow:inset 0 0 0 9999px rgba(255,255,255,.12),inset 0 1px rgba(255,255,255,.34),0 22px 48px rgba(0,0,0,.44)}
       .crm-assignment-hand-card.is-dragging,.crm-assignment-bucket-card.is-dragging{opacity:.32}.crm-assignment-hand-card:active,.crm-assignment-bucket-card:active{cursor:grabbing}
@@ -90,6 +91,9 @@
       ariaLabel: `${nameOf(person)} — drag to assign`,
     });
     card.classList.add(commitment ? "crm-assignment-bucket-card" : "crm-assignment-hand-card");
+    if (!commitment && (root?.hidden || document.documentElement.classList.contains("crm-transit-materializing"))) {
+      card.classList.add("crm-assignment-hand-seated");
+    }
     card.dataset.assignmentContactId = person.id;
     if (commitment) card.dataset.assignmentCommitmentId = commitment.id;
     else {
@@ -186,7 +190,9 @@
     </div>`;
     const handNode = root.querySelector(".crm-assignment-hand");
     hand.forEach((person, index) => handNode.appendChild(personCard(person, index)));
-    requestAnimationFrame(() => layoutHand(handNode));
+    // Seat the fan before this render can paint. A deferred first layout made
+    // the cards briefly appear at their CSS defaults and then snap into place.
+    layoutHand(handNode);
     activities.forEach((activity) => {
       const assigned = assignedPerson(activity);
       if (assigned) root.querySelector(`[data-assignment-commitment="${selectorValue(activity.id)}"] .tk-zone-track`).appendChild(personCard(assigned, 0, activity));

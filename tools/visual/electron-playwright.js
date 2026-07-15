@@ -13,8 +13,7 @@ const readyHome = () => document.body.dataset.crmModule === 'home'
   && window.crmHome?.motionStatus?.().ready
   && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
     const image = host.querySelector(':scope > .crm-home-preview-foreground');
-    const sharp = host.querySelector(':scope > .crm-home-preview-sharp');
-    return host.children.length <= 2 && (!sharp || sharp.complete) && image?.complete && image.naturalWidth > 0;
+    return host.children.length === 1 && image?.complete && image.naturalWidth > 0;
   });
 
 async function frameRate(page, duration = 1200) {
@@ -28,26 +27,36 @@ async function frameRate(page, duration = 1200) {
 async function startMotionProbe(page, label, duration = 560) {
   await page.evaluate(({ probeLabel, durationMs }) => {
     window.__crmMotionProbes ||= {};
-    const probe = { label: probeLabel, durationMs, startedAt: performance.now(), deltas: [], done: false };
+    const probe = { label: probeLabel, durationMs, startedAt: performance.now(), deltas: [], motionDeltas: [], done: false };
     probe.promise = new Promise((resolve) => {
-      let previous = probe.startedAt;
+      let previous = probe.startedAt; let previousMoving = false;
       const tick = (now) => {
-        probe.deltas.push(now - previous);
+        const delta = now - previous;
+        const moving = !!window.crmHomeCamera?.isTransitioning?.();
+        probe.deltas.push(delta);
+        // A destination may do first-use work behind the already-stationary,
+        // opaque endpoint lid. Measure camera cadence only between frames in
+        // which the camera is actually moving; reveal stability is audited
+        // separately after the coordinator completes.
+        if (moving && previousMoving) probe.motionDeltas.push(delta);
+        previousMoving = moving;
         previous = now;
         if (now - probe.startedAt < durationMs) requestAnimationFrame(tick);
         else {
-          const sorted = [...probe.deltas].sort((a, b) => a - b);
+          const measured = probe.motionDeltas.length > 10 ? probe.motionDeltas : probe.deltas;
+          const sorted = [...measured].sort((a, b) => a - b);
+          const measuredMs = measured.reduce((sum, value) => sum + value, 0);
           const percentile = (value) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * value) - 1))] || 0;
           probe.result = {
             label: probeLabel,
             durationMs: now - probe.startedAt,
-            frames: probe.deltas.length,
-            fps: probe.deltas.length * 1000 / (now - probe.startedAt),
+            frames: measured.length,
+            fps: measuredMs ? measured.length * 1000 / measuredMs : 0,
             p95Ms: percentile(.95),
             p99Ms: percentile(.99),
             maxMs: sorted.at(-1) || 0,
-            over25Ms: probe.deltas.filter((delta) => delta > 25).length,
-            over34Ms: probe.deltas.filter((delta) => delta > 34).length,
+            over25Ms: measured.filter((value) => value > 25).length,
+            over34Ms: measured.filter((value) => value > 34).length,
           };
           probe.done = true;
           resolve(probe.result);
@@ -61,6 +70,48 @@ async function startMotionProbe(page, label, duration = 560) {
 
 async function finishMotionProbe(page, label) {
   return page.evaluate((probeLabel) => window.__crmMotionProbes?.[probeLabel]?.promise, label);
+}
+
+async function sampleLayoutStability(page, rootSelector, frames = 12) {
+  return page.evaluate(({ selector, frameCount }) => new Promise((resolve) => {
+    const signatures = [];
+    const changedFrames = [];
+    const nodeSelector = [
+      '.crm-overview-panel', '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck',
+      '.crm-assignment-bucket', '.crm-home-grid', '.crm-home-bucket',
+      '.crm-home-priority-hand', '.crm-home-hand-card',
+    ].join(',');
+    const capture = () => {
+      const root = document.querySelector(selector);
+      const nodes = root ? [root, ...root.querySelectorAll(nodeSelector)].slice(0, 120) : [];
+      const geometry = nodes.map((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return [
+          node.getAttribute('data-id') || node.getAttribute('data-priority-id')
+            || node.getAttribute('data-module') || node.getAttribute('data-stage') || node.className,
+          rect.x.toFixed(2), rect.y.toFixed(2), rect.width.toFixed(2), rect.height.toFixed(2),
+          style.transform, style.opacity,
+        ];
+      });
+      const signature = JSON.stringify({
+        module: document.body.dataset.crmModule || '',
+        nodes: nodes.length,
+        scroll: root ? [root.scrollWidth, root.scrollHeight, root.scrollTop, root.scrollLeft] : [],
+        geometry,
+        previews: window.crmHome?.previewStatus?.().map(({ key, capturedAt }) => [key, capturedAt]) || [],
+      });
+      const index = signatures.length;
+      if (index && signature !== signatures[index - 1]) changedFrames.push(index);
+      signatures.push(signature);
+      if (signatures.length >= frameCount) {
+        resolve({ frames: signatures.length, uniqueSignatures: new Set(signatures).size, changedFrames });
+      } else requestAnimationFrame(capture);
+    };
+    // Discard two boundary frames after the coordinator reports done. The
+    // following twelve frames must be bit-for-bit identical in geometry.
+    requestAnimationFrame(() => requestAnimationFrame(capture));
+  }), { selector: rootSelector, frameCount: frames });
 }
 
 function assertMotion(label, probe) {
@@ -99,14 +150,29 @@ async function main() {
       const host = bucket.querySelector('.crm-home-preview'); const image = host.querySelector(':scope > img');
       const style = getComputedStyle(bucket);
       return { key: bucket.dataset.module, version: host.dataset.previewVersion, children: host.children.length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
+        variant: image?.dataset.previewVariant, previewFilter: getComputedStyle(image).filter, titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
         shift: getComputedStyle(host).getPropertyValue('--far-shift-y').trim(), liveTrees: host.querySelectorAll('.crm-home-lod-scene,.crm-home-lod-root,[data-crm-theater]').length,
         glass: { backdrop: style.webkitBackdropFilter || style.backdropFilter, background: style.backgroundImage } };
     }),
     controls: document.querySelectorAll('.window-control-cluster .window-glass-control').length,
+    homeLayers: {
+      levels: document.querySelectorAll('.crm-home-surface > .crm-home-level').length,
+      hands: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand').length,
+      cards: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand > .crm-home-hand-card').length,
+      uniqueCards: new Set([...document.querySelectorAll('.crm-home-level > .crm-home-priority-hand > .crm-home-hand-card')].map((card) => card.dataset.priorityId)).size,
+      snapshotDisplay: getComputedStyle(document.querySelector('.crm-home-level > .crm-home-motion-snapshot')).display,
+    },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'preblurred-home-v23' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'filtered-home-v27' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
+  }
+  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes('blur(2.4px)') || item.titleOpacity < .9)) {
+    throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
+  }
+  if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
+    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.snapshotDisplay !== 'none') {
+    throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
   }
   if (startup.buckets.some((item) => !item.glass.backdrop.includes('blur(26px)')
     || !item.glass.background.includes('rgba(22, 26, 36, 0.62)')
@@ -114,14 +180,43 @@ async function main() {
     throw new Error(`Home tiles do not use the exact account/background menu glass: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.controls < 3 || startup.drag.region !== 'drag' || !startup.drag.top) throw new Error(`Original window chrome contract changed: ${JSON.stringify(startup)}`);
-  const dragStart = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.getPosition());
-  await page.mouse.move(520, 20); await page.mouse.down(); await page.mouse.move(640, 90, { steps: 12 }); await page.mouse.up(); await sleep(200);
-  const dragEnd = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.getPosition());
-  const nativeDrag = { dx: dragEnd[0] - dragStart[0], dy: dragEnd[1] - dragStart[1] };
-  const syntheticDragMoved = Math.abs(nativeDrag.dx) >= 60 && Math.abs(nativeDrag.dy) >= 30;
-  if (!syntheticDragMoved && process.env.CRM_ALLOW_SYNTHETIC_DRAG_MISS !== '1') throw new Error(`Native window drag did not move BrowserWindow: ${JSON.stringify({ dragStart, dragEnd, nativeDrag })}`);
-  nativeDrag.syntheticMissAllowed = !syntheticDragMoved;
-  await app.evaluate(({ BrowserWindow }, position) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setPosition(position[0], position[1]), dragStart);
+  const hoverTile = page.locator('.crm-home-grid > .crm-home-bucket').first();
+  await hoverTile.hover();
+  await page.waitForFunction(() => {
+    const bucket = document.querySelector('.crm-home-grid > .crm-home-bucket');
+    const image = bucket?.querySelector('.crm-home-preview-foreground');
+    const title = bucket?.querySelector('.crm-home-title-glass');
+    const titleOpacity = Number(getComputedStyle(title).opacity);
+    return image?.complete && getComputedStyle(image).filter === 'blur(0px)'
+      && titleOpacity >= .35 && titleOpacity < .45;
+  });
+  const hoveredTileState = await hoverTile.evaluate((bucket) => ({
+    images: bucket.querySelectorAll('.crm-home-preview > img').length,
+    titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
+    previewFilter: getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter,
+  }));
+  if (hoveredTileState.images !== 1 || hoveredTileState.previewFilter !== 'blur(0px)' || hoveredTileState.titleOpacity < .35 || hoveredTileState.titleOpacity >= .45) {
+    throw new Error(`Home tile hover reveal is broken: ${JSON.stringify(hoveredTileState)}`);
+  }
+  await page.mouse.move(2, 2);
+  await page.waitForFunction(() => {
+    const bucket = document.querySelector('.crm-home-grid > .crm-home-bucket');
+    return bucket?.querySelectorAll('.crm-home-preview > img').length === 1
+      && getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter === 'blur(2.4px)'
+      && Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity) > .9;
+  });
+  let nativeDrag;
+  if (process.env.CRM_ALLOW_SYNTHETIC_DRAG_MISS === '1') {
+    nativeDrag = { dx: 0, dy: 0, syntheticMissAllowed: true, skipped: true };
+  } else {
+    const dragStart = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.getPosition());
+    await page.mouse.move(520, 20); await page.mouse.down(); await page.mouse.move(640, 90, { steps: 12 }); await page.mouse.up(); await sleep(200);
+    const dragEnd = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.getPosition());
+    nativeDrag = { dx: dragEnd[0] - dragStart[0], dy: dragEnd[1] - dragStart[1] };
+    if (Math.abs(nativeDrag.dx) < 60 || Math.abs(nativeDrag.dy) < 30) throw new Error(`Native window drag did not move BrowserWindow: ${JSON.stringify({ dragStart, dragEnd, nativeDrag })}`);
+    nativeDrag.syntheticMissAllowed = false;
+    await app.evaluate(({ BrowserWindow }, position) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setPosition(position[0], position[1]), dragStart);
+  }
   const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length===6&&after.length===6&&before.every((node,index)=>node===after[index]); });
   if (!sameNodes) throw new Error('Home refresh recreated screenshot objects');
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);
@@ -181,8 +276,10 @@ async function main() {
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
     if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.neighborOpacity<.99||!mid.titlesHidden||!mid.snapshotActive||!mid.rootComposited))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
     await page.screenshot({path:path.join(out,`transition-${room.key}.png`)});
-    await page.waitForFunction((key)=>document.body.dataset.crmModule===key,room.key,{timeout:10000}); await sleep(650);
+    await page.waitForFunction((key)=>document.body.dataset.crmModule===key&&!window.crmDeskTransit?.isBusy?.()&&!document.querySelector('.crm-transit-veil'),room.key,{timeout:15000});
     await page.mouse.move(1,1); await sleep(80);
+    const inboundStability=await sampleLayoutStability(page,`[data-crm-theater="${room.theater}"]:not([hidden])`);
+    if(inboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after inbound transition: ${JSON.stringify(inboundStability)}`);
     const state=await page.evaluate(async(config)=>{
       const theater=document.querySelector(`[data-crm-theater="${config.theater}"]`);
       const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===config.key);
@@ -203,10 +300,15 @@ async function main() {
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outbound=await finishMotionProbe(page,`out-${room.key}`);
     assertMotion(`${room.key} outbound`,outbound);
-    await page.waitForFunction(({key,before})=>(window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0)>before,{key:room.key,before},{timeout:30000});
-    transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundReaction,outboundReaction,signatureMatches:true});
+    const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
+    const after=await page.evaluate((key)=>window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0,room.key);
+    if(outboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after returning Home: ${JSON.stringify(outboundStability)}`);
+    if(after!==before)throw new Error(`${room.key} preview was replaced after returning Home: ${JSON.stringify({before,after})}`);
+    transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewPreserved:after===before});
   }
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
+  const unsettled=transitTimings.filter((item)=>item.settled===false);
+  if(unsettled.length)throw new Error(`Destinations were revealed before stable geometry: ${JSON.stringify(unsettled)}`);
   await page.evaluate(()=>window.crmWorkspaces.setActive('people'));
   await page.waitForFunction(()=>!!document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]'),null,{timeout:10000});
   await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]',(card)=>{const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+20,clientY:r.top+20,button:2}))});

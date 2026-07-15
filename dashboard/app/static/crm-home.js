@@ -167,11 +167,12 @@
     const contentCenter = bounds.y + bounds.height / 2;
     return Math.max(-6, Math.min(6, (preview.height / 2 - contentCenter) / preview.height * 100));
   };
-  const imageNode = (className, src) => {
+  const imageNode = (className, src, decoding = "async") => {
     const image = document.createElement("img");
     image.className = `crm-home-preview-image ${className}`;
+    image.decoding = decoding;
     if (src) image.src = src;
-    image.alt = ""; image.draggable = false; image.decoding = "async";
+    image.alt = ""; image.draggable = false;
     return image;
   };
   const mountHost = (host, preview, exact = false, exactOnly = false) => {
@@ -193,7 +194,7 @@
     }
     if (exact) {
       let full = host.querySelector(":scope > .crm-home-preview-exact");
-      if (!full) { full = imageNode("crm-home-preview-exact", preview.exactSrc); host.appendChild(full); }
+      if (!full) { full = imageNode("crm-home-preview-exact", preview.exactSrc, "sync"); host.appendChild(full); }
       else if (full.src !== preview.exactSrc) full.src = preview.exactSrc;
     }
     host.dataset.previewState = "ready";

@@ -738,7 +738,10 @@
         node.dataset?.id||node.dataset?.recordId||node.dataset?.stage||node.dataset?.assignmentCommitment||node.className,
         rect.x.toFixed(2),rect.y.toFixed(2),rect.width.toFixed(2),rect.height.toFixed(2),style.transform,style.opacity,
       ].join(":")}).join("|");
-      const next=source?.querySelector?.(selector)?`${source.childElementCount}:${source.querySelectorAll("*").length}:${source.scrollWidth}:${source.scrollHeight}:${geometry}`:"";
+      // A room can be intentionally empty (notably a new Planner). Its own
+      // stable geometry is still a valid destination; requiring a child object
+      // held the reveal open until the timeout and made the handoff hitch.
+      const next=source?`${source.childElementCount}:${source.querySelectorAll("*").length}:${source.scrollWidth}:${source.scrollHeight}:${geometry}`:"";
       stable=next&&next===last?stable+1:0;last=next;if(stable>=3||performance.now()-started>=timeoutMs)resolve({stable:stable>=3,signature:next});else requestAnimationFrame(tick)};requestAnimationFrame(tick);
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {

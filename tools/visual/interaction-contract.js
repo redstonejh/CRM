@@ -498,17 +498,25 @@ async function main() {
   });
   await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
   await page.waitForSelector('.crm-person-history-shell:not([hidden]) .crm-person-history', { timeout: 10000 });
-  await check('Person history opens a real cross-channel interaction thread', () => {
+  await check('Conversation history is a compact anchored menu with a real cross-channel thread', () => {
     const history = document.querySelector('.crm-person-history-shell:not([hidden]) .crm-person-history');
+    const shell = history?.closest('.crm-person-history-shell');
+    const source = document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]');
     const events = [...(history?.querySelectorAll('.crm-person-history-event') || [])];
-    const filters = [...(history?.querySelectorAll('[data-history-filter]') || [])];
-    return !!history && history.classList.contains('crm-menu-surface')
+    if (!history || !shell || !source) return false;
+    const rect = history.getBoundingClientRect(); const sourceRect = source.getBoundingClientRect(); const shellStyle = getComputedStyle(shell);
+    const adjacent = Math.abs(rect.left - sourceRect.right) <= 12 || Math.abs(sourceRect.left - rect.right) <= 12;
+    return history.classList.contains('crm-menu-surface') && rect.width <= 370 && rect.height <= 540 && adjacent
       && history.querySelector('.crm-person-history-title')?.textContent.trim() === 'Marta Reyes'
       && events.length >= 6 && new Set(events.map((event) => event.dataset.historyKind)).size >= 4
-      && filters.length === 5 && !!history.querySelector('[data-person-history-composer] textarea')
-      && !!history.querySelector('.crm-person-history-summary.crm-menu-item');
+      && shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter)
+      && !!history.querySelector('[data-person-history-composer][hidden]')
+      && !history.querySelector('[data-history-filter],.crm-person-history-summary,.crm-person-history-sidebar,.crm-person-history-filters')
+      && [...history.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
   });
   const historyCountBefore = await page.$$eval('.crm-person-history-event', (events) => events.length);
+  await page.click('[data-person-history-compose]');
+  await page.waitForSelector('[data-person-history-composer]:not([hidden])');
   await page.select('[data-person-history-composer] select[name="kind"]', 'message');
   await page.select('[data-person-history-composer] select[name="direction"]', 'inbound');
   await page.type('[data-person-history-composer] textarea', 'Marta confirmed the escalation wording works for legal.');
@@ -519,8 +527,10 @@ async function main() {
     const result = await window.crmStore.list('interactions', { includeDeleted: false });
     const interaction = (result.records || []).find((item) => String(item.contactId) === 'ct_marta'
       && String(item.note || '').includes('escalation wording works for legal'));
-    const lastTouch = Number(document.querySelector('.crm-person-history-stat:nth-child(2) .crm-person-history-stat-value')?.textContent === 'just now');
-    return !!interaction && interaction.kind === 'message' && interaction.direction === 'inbound' && lastTouch === 1;
+    const newest = document.querySelector('.crm-person-history-event:first-child .crm-person-history-event-content')?.textContent || '';
+    return !!interaction && interaction.kind === 'message' && interaction.direction === 'inbound'
+      && newest.includes('escalation wording works for legal')
+      && !!document.querySelector('[data-person-history-composer][hidden]');
   });
   await page.click('[data-person-history-close]');
   await page.waitForFunction(() => !window.crmPersonHistory?.isOpen?.(), { timeout: 5000 });

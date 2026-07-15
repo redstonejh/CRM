@@ -12,15 +12,14 @@
     style.id = "crm-money-room-styles";
     style.textContent = `
       .crm-money-room{position:fixed;inset:0;z-index:836;pointer-events:none;color:#fff}.crm-money-room[hidden]{display:none}
-      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:54px;top:50%;width:176px;
-        transform:translateY(-50%);padding:8px 6px;pointer-events:auto;overflow:hidden}
-      .crm-money-switcher-head{padding:9px 12px 8px;font:700 .78rem/1 system-ui;color:rgba(255,255,255,.76);letter-spacing:.04em}
-      .crm-money-switcher-list{display:flex;flex-direction:column;gap:2px}
-      .crm-money-view.crm-menu-action{position:relative;width:100%;height:42px;text-align:left;padding-left:28px!important;font-size:.84rem!important}
-      .crm-money-view::before{content:"";position:absolute;left:12px;top:50%;width:5px;height:5px;border-radius:50%;
-        transform:translateY(-50%);background:rgba(255,255,255,.2)}
-      .crm-money-view.is-selected::before{background:rgba(142,190,255,.88);box-shadow:0 0 10px rgba(91,151,236,.6)}
-      @media(max-width:1050px){.crm-money-switcher{left:20px;width:154px}}
+      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:34px;top:132px;width:116px;
+        box-sizing:border-box;padding:7px 6px 6px;pointer-events:auto;overflow:hidden}
+      .crm-money-switcher-head{padding:5px 9px 7px;font:700 9px/1 system-ui;color:rgba(255,255,255,.36);letter-spacing:.14em;text-transform:uppercase}
+      .crm-money-switcher-list{display:flex;flex-direction:column;gap:1px}
+      .crm-money-view.crm-menu-action{position:relative;width:100%;height:31px;text-align:left;padding-left:20px!important;font-size:.7rem!important;letter-spacing:.01em}
+      .crm-money-view::before{content:"";position:absolute;left:8px;top:9px;width:2px;height:13px;border-radius:2px;background:rgba(255,255,255,.13);transition:background .14s ease,box-shadow .14s ease}
+      .crm-money-view.is-selected::before{background:rgba(151,196,255,.9);box-shadow:0 0 9px rgba(91,151,236,.48)}
+      @media(max-width:1050px){.crm-money-switcher{left:18px;top:112px;width:108px}}
     `;
     document.head.appendChild(style);
   };

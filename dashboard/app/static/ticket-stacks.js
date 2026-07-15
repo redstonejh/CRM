@@ -521,12 +521,11 @@
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
-      .tk-zone-hd { position:relative;display:block;min-width:0;padding:2px 48px 11px 4px;font-size:.9rem;font-weight:700;
-        line-height:1.25;letter-spacing:.01em;color:rgba(255,255,255,.85);white-space:nowrap;overflow:hidden;text-overflow:ellipsis }
+      .tk-zone-hd { position:relative;display:block;box-sizing:border-box;height:30px;min-width:0;padding:3px 44px 8px 4px;font-size:.82rem;font-weight:700;
+        line-height:1.1;letter-spacing:.005em;color:rgba(255,255,255,.84);white-space:nowrap;overflow:hidden;text-overflow:ellipsis }
       .tk-zone-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
-        background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
-      .tk-zone-hd-r{position:absolute;right:4px;top:5px;display:inline-flex;align-items:center;opacity:.58;pointer-events:none}
+      .tk-zone-count { display:none!important }
+      .tk-zone-hd-r{position:absolute;right:4px;top:6px;display:inline-flex;align-items:center;opacity:.46;pointer-events:none}
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
       .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }

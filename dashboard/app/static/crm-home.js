@@ -64,14 +64,18 @@
         background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket>.crm-home-preview{
         visibility:hidden}
-      .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style paint;
+      .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style;
         grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:16px}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
         cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
         background:linear-gradient(180deg,rgba(22,26,36,.34),rgba(12,16,24,.28));
         -webkit-backdrop-filter:blur(28px) saturate(140%);backdrop-filter:blur(28px) saturate(140%);
-        box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.18),0 18px 42px rgba(0,0,0,.28);
+        box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.18),0 14px 26px -16px rgba(0,0,0,.72);
         transition:box-shadow .18s ease,background .18s ease}
+      /* Home consumes the canonical glass material, but its six adjacent
+         surfaces cannot also consume the menu's large floating shadow. That
+         shadow overlaps into a single clipped rectangle around the grid. */
+      .crm-home-bucket.crm-menu-surface{box-shadow:inset 0 1px 0 var(--crm-menu-highlight),0 14px 26px -16px rgba(0,0,0,.72)!important}
       .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(70,110,190,.34),rgba(40,70,130,.26));
         box-shadow:inset 0 0 0 1px rgba(125,180,255,.5),0 0 30px rgba(90,150,255,.42)}
       .crm-home-title-glass{position:absolute;z-index:4;left:50%;top:50%;transform:translate3d(-50%,-50%,0);width:max-content;
@@ -124,7 +128,10 @@
         overflow:visible;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
         will-change:transform,opacity;backface-visibility:hidden}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-bucket{transition:none!important}
+      /* Freeze only the six resting tiles. The expander is also a
+         .crm-home-bucket; matching it here disabled the actual zoom. */
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3}
       /* Backdrop sampling is the only Home-root effect that cannot be scaled
          at camera speed. The live geometry and every source/card shadow stay
          present; the exact expander above the root carries the destination's

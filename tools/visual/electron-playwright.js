@@ -236,6 +236,28 @@ async function main() {
   }
   const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length===6&&after.length===6&&before.every((node,index)=>node===after[index]); });
   if (!sameNodes) throw new Error('Home refresh recreated screenshot objects');
+  const homeComposition = await page.evaluate(() => {
+    const grid = document.querySelector('.crm-home-grid');
+    const bucket = grid?.querySelector(':scope > .crm-home-bucket');
+    return { gridContain: getComputedStyle(grid).contain, bucketShadow: getComputedStyle(bucket).boxShadow };
+  });
+  if (homeComposition.gridContain.includes('paint') || /42px/.test(homeComposition.bucketShadow)) {
+    throw new Error(`Home shadows are still clipped or merged by the floating-menu shadow: ${JSON.stringify(homeComposition)}`);
+  }
+  await page.evaluate(() => {
+    const style = document.createElement('style'); style.id = 'crm-home-continuity-probe';
+    style.textContent = '*,*::before,*::after{animation:none!important;transition:none!important}.window-control-cluster,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,.crm-module-switch,.db-loading,.crm-home-title-glass{display:none!important}';
+    document.head.appendChild(style);
+  });
+  await sleep(40);
+  const liveHomeComposite = await page.screenshot();
+  const motionSnapshotResult = await page.evaluate(() => window.crmHomePreviews?.motionSnapshot?.());
+  await page.evaluate(() => document.getElementById('crm-home-continuity-probe')?.remove());
+  const motionSnapshotBuffer = Buffer.from(motionSnapshotResult?.snapshot?.src?.split(',')[1] || '', 'base64');
+  const homeCompositeMae = imageDifference(motionSnapshotBuffer, liveHomeComposite, { left:0, right:1280, top:0, bottom:860 });
+  if (!Number.isFinite(homeCompositeMae) || homeCompositeMae > 3) {
+    throw new Error(`Home transition raster diverges from the resting shadow/blur composition: ${homeCompositeMae}`);
+  }
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);
   await page.screenshot({ path: path.join(out, '01-home.png') });
 
@@ -285,9 +307,11 @@ async function main() {
     await page.hover(selector); await sleep(160);
     await page.evaluate(() => { const p=window.__fps={start:performance.now(),frames:0,fps:0}; const tick=(now)=>{p.frames+=1;if(now-p.start<1100)requestAnimationFrame(tick);else p.fps=p.frames*1000/(now-p.start)};requestAnimationFrame(tick); });
     await startMotionProbe(page, `in-${room.key}`);
-    const inboundReaction=await page.$eval(selector,(bucket)=>{const started=performance.now();bucket.click();return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),transitioning:window.crmHomeCamera?.isTransitioning?.()}});
-    if(!inboundReaction.busy||!inboundReaction.transitioning||inboundReaction.elapsedMs>50)throw new Error(`${room.key} click did not start its camera move immediately: ${JSON.stringify(inboundReaction)}`);
-    await sleep(100);
+    const inboundReaction=await page.$eval(selector,(bucket)=>new Promise((resolve)=>{const source=bucket.getBoundingClientRect();const started=performance.now();bucket.click();const immediate={elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),transitioning:window.crmHomeCamera?.isTransitioning?.()};const samples=[];const tick=()=>{const expander=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const rect=expander?.getBoundingClientRect();samples.push({width:rect?.width||0,height:rect?.height||0,duration:expander?getComputedStyle(expander).transitionDuration:''});if(samples.length<7&&window.crmHomeCamera?.isTransitioning?.())requestAnimationFrame(tick);else resolve({...immediate,sourceWidth:source.width,sourceHeight:source.height,samples})};requestAnimationFrame(tick)}));
+    const animatedSamples=inboundReaction.samples.filter((sample)=>sample.width>0);
+    const uniqueWidths=new Set(animatedSamples.map((sample)=>sample.width.toFixed(1))).size;
+    if(!inboundReaction.busy||!inboundReaction.transitioning||inboundReaction.elapsedMs>50||animatedSamples.length<3||uniqueWidths<3||animatedSamples.at(-1).width<=inboundReaction.sourceWidth+20||!animatedSamples.some((sample)=>sample.duration.includes('0.46s')))throw new Error(`${room.key} click did not visibly animate from its tile: ${JSON.stringify(inboundReaction)}`);
+    await sleep(30);
     const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(root?.querySelectorAll('.crm-home-title-glass')||[])];const grid=root?.querySelector(':scope>.crm-home-grid');const hand=root?.querySelector(':scope>.crm-home-priority-hand');const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');const status=window.crmHome?.motionStatus?.();return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-expanding')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),motionComposite:!!snapshot&&getComputedStyle(snapshot).display!=='none'&&getComputedStyle(grid).visibility==='visible'&&getComputedStyle(grid.querySelector('.crm-home-preview')).visibility==='hidden'&&getComputedStyle(hand).visibility==='hidden',signatureMatches:status?.layoutSignature===window.crmHome?.motionLayoutSignature?.(),rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
     const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===1&&mid.rect&&mid.rect.width>=300;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
@@ -355,7 +379,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,instantControls,domainProbe,transitions,transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeDrag,sameNodes,homeComposition,homeCompositeMae,homeFps,settledFps,instantControls,domainProbe,transitions,transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
 }

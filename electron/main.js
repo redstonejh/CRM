@@ -218,13 +218,14 @@ function foregroundFromMattes(blackImage, whiteImage) {
   return { image, bounds };
 }
 
-async function prepareCapture(win, matte = null) {
+async function prepareCapture(win, matte = null, options = {}) {
+  const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
   const css = `
     *,*::before,*::after { animation:none !important; transition:none !important; }
     .window-control-cluster,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
     .crm-module-switch,.db-loading { display:none !important; }
     .crm-home-title-glass { display:none !important; }
-    .crm-home-preview-foreground { filter:none !important; }
+    ${preserveHomePreviewFilter ? '' : '.crm-home-preview-foreground { filter:none !important; }'}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
@@ -328,7 +329,10 @@ async function captureHomeMotionSnapshot(worker) {
   await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
   const layoutSignature = await worker.webContents.executeJavaScript(`window.crmHome?.motionLayoutSignature?.() || ''`, true);
   if (!layoutSignature) throw new Error('Home motion layout signature unavailable');
-  await prepareCapture(worker, null);
+  // The transition raster must be visually identical to resting Home. Room
+  // mattes intentionally remove the preview blur; the Home motion composite
+  // must preserve it or the final exchange flashes from sharp back to blur.
+  await prepareCapture(worker, null, { preserveHomePreviewFilter: true });
   const image = await worker.webContents.capturePage();
   if (!image || image.isEmpty()) return null;
   const size = image.getSize();

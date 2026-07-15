@@ -521,15 +521,24 @@ async function main() {
   await check('Every non-ticket record opens as a compact canonical menu, never a full-screen invented console', () => {
     const shell = document.querySelector('.record-world-shell:not([hidden])');
     const panel = shell?.querySelector('.record-world');
+    const source = document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]');
     const reference = document.querySelector('.auth-profile-menu');
-    if (!shell || !panel || !reference) return false;
-    const rect = panel.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const shellStyle = getComputedStyle(shell);
-    return panel.classList.contains('crm-menu-surface') && rect.width <= 410 && rect.height <= innerHeight - 120 && rect.left >= innerWidth - 470
+    if (!shell || !panel || !source || !reference) return false;
+    const rect = panel.getBoundingClientRect(); const sourceRect = source.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const shellStyle = getComputedStyle(shell);
+    const adjacent = Math.abs(rect.left - sourceRect.right) <= 12 || Math.abs(sourceRect.left - rect.right) <= 12;
+    return panel.classList.contains('crm-menu-surface') && rect.width <= 330 && rect.height <= 530 && adjacent
       && shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter)
-      && panel.querySelectorAll('.record-world-column').length === 3
+      && panel.querySelectorAll('.record-world-column').length === 1 && panel.querySelectorAll('.record-world-fold').length === 3
+      && panel.querySelectorAll('.record-world-fold[open]').length === 0
       && [...panel.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'))
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
   });
+  await page.click('.record-world-fold:nth-of-type(3) > summary');
+  await check('Generic record sections disclose in place instead of opening another screen', () => (
+    document.querySelectorAll('.record-world-fold[open]').length === 1
+      && document.querySelector('.record-world-fold[open] .record-world-timeline')
+      && document.querySelector('.record-world').getBoundingClientRect().height <= 530
+  ));
   await page.click('[data-record-close]');
   await page.waitForSelector('.record-world-shell[hidden]');
 

@@ -12,13 +12,13 @@
     style.id = "crm-money-room-styles";
     style.textContent = `
       .crm-money-room{position:fixed;inset:0;z-index:836;pointer-events:none;color:#fff}.crm-money-room[hidden]{display:none}
-      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:34px;top:132px;width:94px;
+      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:max(18px,calc(var(--crm-canvas-x,64px) - 30px));top:132px;width:94px;
         box-sizing:border-box;padding:4px;pointer-events:auto;overflow:hidden}
       .crm-money-switcher-list{display:flex;flex-direction:column;gap:1px}
       .crm-money-view.crm-menu-action{position:relative;width:100%;height:30px;text-align:left;padding-left:18px!important;font-size:.68rem!important;letter-spacing:0}
       .crm-money-view::before{content:"";position:absolute;left:7px;top:13px;width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.16)}
       .crm-money-view.is-selected::before{background:rgba(174,207,250,.86);box-shadow:0 0 7px rgba(91,151,236,.4)}
-      @media(max-width:1050px){.crm-money-switcher{left:18px;top:112px}}
+      @media(max-width:1050px){.crm-money-switcher{top:124px}}
     `;
     document.head.appendChild(style);
   };

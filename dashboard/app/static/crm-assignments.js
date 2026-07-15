@@ -24,16 +24,16 @@
     style.id = "crm-assignments-styles";
     style.textContent = `
       .crm-assignments-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-assignments-surface[hidden]{display:none}
-      .crm-assignments-frame{position:absolute;inset:66px 54px 0;max-width:1450px;margin:auto;display:grid;grid-template-columns:235px minmax(0,1fr);gap:20px}
+      .crm-assignments-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) 0;max-width:1450px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:var(--crm-section-gap,28px)}
       .crm-assignment-pools{align-self:start;min-height:0;max-height:calc(100vh - 154px);display:flex;flex-direction:column;padding:9px 6px;overflow:hidden}
       .crm-assignment-head{display:flex;align-items:center;padding:0 12px}.crm-assignment-title{font-size:.95rem;font-weight:700}
       .crm-assignment-pools-head{height:38px;flex:0 0 38px;box-sizing:border-box}
       .crm-assignment-pool-stack{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}
-      .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:46px;display:flex;align-items:center;gap:10px;text-align:left}
+      .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:42px;display:flex;align-items:center;gap:10px;text-align:left}
       .crm-assignment-source-pool-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-assignment-stage{position:relative;min-width:0;min-height:0;overflow:visible}
-      .crm-assignment-grid{position:absolute;left:0;right:0;top:23px;height:320px;display:grid;grid-template-columns:repeat(4,205px);gap:16px;place-content:start center}
-      .crm-assignment-bucket.tk-zone{position:relative;inset:auto;width:205px;height:320px;box-sizing:border-box}
+      .crm-assignment-grid{position:absolute;left:0;right:0;top:22px;height:336px;display:grid;grid-template-columns:repeat(4,202px);gap:var(--crm-object-gap,18px);place-content:start center}
+      .crm-assignment-bucket.tk-zone{position:relative;inset:auto;width:202px;height:336px;box-sizing:border-box}
       .crm-assignment-bucket .tk-zone-body{min-height:0}.crm-assignment-bucket .tk-zone-track{position:relative;min-height:100%}
       .crm-assignment-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}
       .crm-assignment-bucket-card.tk-card{position:absolute!important;left:50%!important;right:auto!important;bottom:auto!important;top:0!important;width:170px!important;height:257px!important;margin:0!important;transform:translateX(-50%)!important;z-index:2;cursor:grab}
@@ -41,14 +41,13 @@
       .crm-assignment-hand-trigger{position:absolute;z-index:1;left:50%;bottom:0;width:var(--assignment-hand-span,760px);height:92px;transform:translateX(-50%);pointer-events:auto}
       .crm-assignment-hand-card.tk-card{position:absolute!important;left:50%!important;right:auto!important;top:auto!important;bottom:52px!important;width:165px!important;height:249px!important;margin:0!important;z-index:var(--hand-z);cursor:grab;pointer-events:auto;
         transform-origin:50% 108%;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-rest-y,180px)) rotate(var(--hand-rot,0deg));
-        transition:transform .38s cubic-bezier(.22,1,.26,1),box-shadow .18s ease,opacity .18s ease;animation:crm-assignment-deal .34s cubic-bezier(.22,1,.26,1) backwards;animation-delay:var(--hand-delay)}
+        transition:transform .38s cubic-bezier(.22,1,.26,1),box-shadow .18s ease,opacity .18s ease}
       .crm-assignment-hand-card.crm-assignment-hand-seated{animation:none;transition:none}
       .crm-assignment-hand:is(:hover,:focus-within)>.crm-assignment-hand-card.tk-card{transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-open-y,0px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.9)}
       .crm-assignment-hand:is(:hover,:focus-within)>.crm-assignment-hand-card.tk-card:is(:hover,:focus-visible){z-index:1000;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(calc(var(--hand-open-y,0px) - 6px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.92);box-shadow:inset 0 0 0 9999px rgba(255,255,255,.12),inset 0 1px rgba(255,255,255,.34),0 22px 48px rgba(0,0,0,.44)}
       .crm-assignment-hand-card.is-dragging,.crm-assignment-bucket-card.is-dragging{opacity:.32}.crm-assignment-hand-card:active,.crm-assignment-bucket-card:active{cursor:grabbing}
-      @keyframes crm-assignment-deal{from{opacity:0;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(calc(var(--hand-rest-y,180px) + 72px)) rotate(var(--hand-rot,0deg)) scale(.96)}to{opacity:1;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-rest-y,180px)) rotate(var(--hand-rot,0deg)) scale(1)}}
       @media(prefers-reduced-motion:reduce){.crm-assignment-hand-card.tk-card{transition-duration:.01ms;animation-duration:.01ms}}
-      @media(max-width:1250px){.crm-assignments-frame{inset:62px 24px 0;grid-template-columns:225px minmax(0,1fr);gap:12px}.crm-assignment-pools{max-height:calc(100vh - 146px)}.crm-assignment-grid{grid-template-columns:repeat(4,190px);gap:10px}.crm-assignment-bucket.tk-zone{width:190px}.crm-assignment-hand-card.tk-card{width:155px!important;height:234px!important}}
+      @media(max-width:1250px){.crm-assignments-frame{grid-template-columns:204px minmax(0,1fr);gap:16px}.crm-assignment-pools{max-height:calc(100vh - 146px)}.crm-assignment-grid{grid-template-columns:repeat(4,186px);gap:12px}.crm-assignment-bucket.tk-zone{width:186px}.crm-assignment-hand-card.tk-card{width:155px!important;height:234px!important}}
     `;
     document.head.appendChild(style);
   }

@@ -212,7 +212,7 @@
   const syncTemporalContext = (key = document.body.dataset.crmModule || "home") => {
     if (!temporalContext) {
       const style = document.createElement("style");
-      style.textContent = `.crm-temporal-context{position:fixed;left:50%;top:61px;z-index:4450;transform:translateX(-50%);pointer-events:none;text-align:center;color:rgba(255,255,255,.62);font:600 11px/1.35 system-ui;letter-spacing:.025em}.crm-temporal-context strong{display:block;color:#fff;font-size:13px}`;
+      style.textContent = `.crm-temporal-context{position:fixed;left:50%;top:64px;z-index:4450;transform:translateX(-50%);pointer-events:none;text-align:center;color:rgba(255,255,255,.68);font:650 11px/1.2 system-ui;letter-spacing:.018em;text-shadow:0 1px 8px rgba(0,0,0,.7)}.crm-temporal-context strong{color:rgba(255,255,255,.9);font:inherit}`;
       document.head.appendChild(style);
       temporalContext = document.createElement("div");
       temporalContext.className = "crm-temporal-context crm-menu-item";
@@ -222,7 +222,9 @@
     temporalContext.hidden = !on;
     if (on) {
       const date = today();
-      temporalContext.innerHTML = `<strong>Today · ${date.toLocaleDateString([], { month: "long", day: "numeric" })}</strong>B or Escape zooms out to the month`;
+      temporalContext.innerHTML = `<strong>Today · ${date.toLocaleDateString([], { month: "long", day: "numeric" })}</strong>`;
+      temporalContext.title = "B or Escape zooms out to the month";
+      temporalContext.setAttribute("aria-label", `${temporalContext.textContent}. B or Escape zooms out to the month.`);
       document.body.dataset.crmTemporalDate = localDateKey(date);
     } else delete document.body.dataset.crmTemporalDate;
   };

@@ -2109,13 +2109,14 @@
     const colW = (r.width - gap * (cols - 1)) / cols;
     return { left: r.left, colW, gap, cols };
   };
-  const ZONE_TOP = 64;        // fixed gap below the round nav buttons
   // Compact buckets — each just large enough for one full ticket card — spread across the
   // dashboard grid's extent with equal space between them. Height follows the ticket's own
   // proportions instead of stretching to fill the screen.
   const layoutZones = () => {
     if (!zonesRoot) return;
-    const zTop = ZONE_TOP, zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
+    const rootStyle = getComputedStyle(document.documentElement);
+    const zTop = parseFloat(rootStyle.getPropertyValue("--crm-canvas-top")) || 78;
+    const zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
     const region = g

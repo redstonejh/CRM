@@ -2623,15 +2623,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const colW = (r.width - gap * (cols - 1)) / cols;
     return { left: r.left, colW, gap, cols };
   };
-  const ZONE_TOP = 64;        // fixed gap below the round nav buttons
   // Compact buckets — each just large enough for one full ticket card — spread across the
   // dashboard grid's extent with equal space between them. Their height stays near the card's
   // own proportions; grouped views may wrap across multiple centered rows.
   const layoutZones = () => {
     if (!zonesEnabled) return;
     if (!zonesRoot) return;
-    const zTop = ZONE_TOP;
-    const zBottom = reserveStackSpace ? CARD_H + MARGIN * 2 : 72;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const metric = (name, fallback) => parseFloat(rootStyle.getPropertyValue(name)) || fallback;
+    const zTop = metric("--crm-canvas-top", 78);
+    const zBottom = reserveStackSpace ? CARD_H + MARGIN * 2 : metric("--crm-canvas-bottom", 78);
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
     const region = g
@@ -2641,7 +2642,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const rows = Math.ceil(n / columns);
     const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (columns + 1)) / columns);  // one full card + room for the scrollbar
     const gap = (region.width - bucketW * columns) / (columns + 1);          // equal gap incl. both ends
-    const rowGap = rows > 1 ? 8 : 0;
+    const rowGap = rows > 1 ? metric("--crm-object-gap", 18) : 0;
     const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
     const bucketH = Math.max(180, Math.min(CARD_H + 80, (availableH - rowGap * (rows - 1)) / rows));
     const blockH = bucketH * rows + rowGap * (rows - 1);

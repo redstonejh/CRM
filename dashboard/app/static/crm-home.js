@@ -72,7 +72,7 @@
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket>.crm-home-preview{
         visibility:hidden}
       .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style;
-        grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:16px}
+        grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
         cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
         background:linear-gradient(180deg,rgba(22,26,36,.34),rgba(12,16,24,.28));
@@ -616,17 +616,19 @@
   };
   const layout = ({ expRect }) => {
     const surface = camera?.surface?.(); const grid = surface?.querySelector(".crm-home-grid"); const hand = surface?.querySelector(".crm-home-priority-hand"); if (!grid) return;
-    const GAP = 16, OUTER = 16, full = expRect(); let controlsBottom = 42;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const metric = (name, fallback) => parseFloat(rootStyle.getPropertyValue(name)) || fallback;
+    const GAP = metric("--crm-object-gap", 18), OUTER = 18, full = expRect(); let controlsBottom = 42;
     document.querySelectorAll(".window-control-cluster").forEach((node) => { controlsBottom = Math.max(controlsBottom, node.getBoundingClientRect().bottom); });
-    const top = Math.round(controlsBottom + 12);
+    const top = Math.round(Math.max(controlsBottom + 14, metric("--crm-canvas-top", 78)));
     // Home geometry must not depend on an asynchronous priority query. Keep
     // the same hand reserve before, during, and after the cards arrive.
     const handReserve = Math.min(320, Math.max(254, innerWidth * .16 + 32));
     hand?.style.setProperty("--home-hand-reserve", `${handReserve.toFixed(1)}px`);
     const area = { x: OUTER, y: top, w: full.w - 2 * OUTER, h: Math.max(220, full.h - top - OUTER - handReserve) };
-    const aspect = innerWidth / innerHeight; let cellW = (area.w - 32) / 3; let cellH = cellW / aspect;
+    const aspect = innerWidth / innerHeight; let cellW = (area.w - GAP * 2) / 3; let cellH = cellW / aspect;
     if (2 * cellH + GAP > area.h) { cellH = (area.h - GAP) / 2; cellW = cellH * aspect; }
-    const gridW = 3 * cellW + 32, gridH = 2 * cellH + GAP;
+    const gridW = 3 * cellW + GAP * 2, gridH = 2 * cellH + GAP;
     Object.assign(grid.style, { left:`${area.x + (area.w-gridW)/2}px`, top:`${area.y + (area.h-gridH)/2}px`, width:`${gridW}px`, height:`${gridH}px` });
     surface.style.setProperty("--home-r", `${Math.min(64,Math.max(2,16/245*Math.min(cellW,cellH)*2)).toFixed(1)}px`);
     layoutPriorityHand(hand);

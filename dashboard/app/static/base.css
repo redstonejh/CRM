@@ -7,11 +7,27 @@ body {
 
 html {
   --page-background: linear-gradient(180deg, var(--bg) 0%, var(--bg-end, var(--bg)) 100%);
+  /* One optical frame for every full-canvas room. Individual objects may
+     center inside it, but they no longer invent slightly different edges. */
+  --crm-canvas-x: clamp(44px, 5vw, 64px);
+  --crm-canvas-top: 78px;
+  --crm-canvas-bottom: 78px;
+  --crm-object-gap: 18px;
+  --crm-section-gap: 28px;
   color-scheme: light;
   scrollbar-gutter: auto;
   background: var(--page-background) fixed;
   background-color: var(--bg);
   transition: background .18s ease, background-color .18s ease;
+}
+
+@media (max-width: 1050px) {
+  html {
+    --crm-canvas-x: 24px;
+    --crm-canvas-top: 70px;
+    --crm-canvas-bottom: 74px;
+    --crm-section-gap: 20px;
+  }
 }
 
 body {

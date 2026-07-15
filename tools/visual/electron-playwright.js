@@ -77,7 +77,7 @@ async function sampleLayoutStability(page, rootSelector, frames = 12) {
     const signatures = [];
     const changedFrames = [];
     const nodeSelector = [
-      '.crm-overview-pocket', '.crm-overview-ticket', '.crm-planner-bucket', '.crm-planner-card',
+      '.crm-overview-project', '.crm-overview-ticket', '.crm-overview-update', '.crm-planner-bucket', '.crm-planner-card',
       '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck', '.crm-assignment-bucket', '.crm-home-grid', '.crm-home-bucket',
       '.crm-home-priority-hand', '.crm-home-hand-card',
     ].join(',');
@@ -296,7 +296,7 @@ async function main() {
   }
 
   const rooms = [
-    {key:'desk',theater:'desk',content:'.crm-overview-pocket',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
+    {key:'desk',theater:'desk',content:'.crm-overview-project',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
     {key:'cases',theater:'tickets',content:'.tk-zone',expected:3}, {key:'money',theater:'money-room',content:'[data-crm-subtheater="money"]:not([hidden]) .tk-zone',expected:3},
     {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:3}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:4},
   ];

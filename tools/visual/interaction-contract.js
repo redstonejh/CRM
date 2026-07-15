@@ -208,43 +208,54 @@ async function main() {
     const room = document.querySelector('.crm-overview-surface:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
   });
-  await page.waitForFunction(() => document.querySelectorAll('.crm-overview-pocket').length === 3
-    && document.querySelectorAll('.crm-overview-project').length >= 3
+  await page.waitForFunction(() => document.querySelectorAll('.crm-overview-project').length >= 3
     && document.querySelectorAll('.crm-overview-mini-world').length >= 3
-    && document.querySelectorAll('.crm-overview-ticket').length >= 4, { timeout: 10000 });
-  await check('Overview is a coherent set of Projects, In focus, and Updates pocket universes', () => {
-    const pockets = [...document.querySelectorAll('.crm-overview-pocket')];
+    && document.querySelectorAll('.crm-overview-ticket').length >= 4
+    && document.querySelectorAll('.crm-overview-update').length >= 3, { timeout: 10000 });
+  await check('Overview is an open canvas of project worlds, ticket examples, and movement', () => {
     const projects = [...document.querySelectorAll('.crm-overview-project')];
-    const maps = [...document.querySelectorAll('.crm-overview-mini-world,.crm-overview-map')];
+    const maps = [...document.querySelectorAll('.crm-overview-mini-world')];
     const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
     const updates = [...document.querySelectorAll('.crm-overview-update')];
+    const list = document.querySelector('.crm-overview-project-list');
     return {
-      ok: pockets.map((pocket) => pocket.querySelector('.crm-overview-pocket-title')?.textContent.trim()).join(',') === 'Projects,In focus,Updates'
-        && projects.length >= 3 && maps.length >= projects.length + 1 && tickets.length >= 4 && updates.length >= 3
-        && !!document.querySelector('.crm-overview-project-list')
-        && getComputedStyle(document.querySelector('.crm-overview-project-list')).overflowY === 'auto'
-        && !document.querySelector('.crm-overview-metric,.crm-overview-work-group,.crm-overview-attention-stack,.crm-overview-recent-trail'),
+      ok: projects.length >= 3 && maps.length === projects.length && tickets.length >= 4 && updates.length >= 3
+        && !!list && getComputedStyle(list).overflowX === 'auto' && getComputedStyle(list).overflowY === 'hidden'
+        && !document.querySelector('.crm-overview-pocket,.crm-overview-worlds,.crm-overview-featured,.crm-overview-map')
+        && !!document.querySelector('.crm-overview-ticket-orbit') && !!document.querySelector('.crm-overview-movement'),
       detail: `${projects.length} project worlds / ${tickets.length} ticket examples / ${updates.length} updates`,
     };
   });
   await check('Overview miniatures are low-cost maps rather than copied ticket or bucket trees', () => {
-    const maps = [...document.querySelectorAll('.crm-overview-mini-world,.crm-overview-map')];
+    const maps = [...document.querySelectorAll('.crm-overview-mini-world')];
     const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
-    return maps.length >= 4 && tickets.length >= 4
+    return maps.length >= 3 && tickets.length >= 4
       && !document.querySelector('.crm-overview-surface .tk-card,.crm-overview-surface .tk-zone,.crm-overview-surface .ticket-body')
       && maps.every((map) => map.querySelectorAll('*').length <= 30);
   });
-  await check('Overview pockets consume the exact canonical menu shell', () => {
-    const reference = document.querySelector('.auth-profile-menu');
-    const panels = [...document.querySelectorAll('.crm-overview-pocket')];
-    if (!reference || panels.length !== 3) return false;
-    const expected = getComputedStyle(reference);
-    return panels.every((panel) => {
-      const actual = getComputedStyle(panel);
-      return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'color']
-        .every((property) => actual[property] === expected[property]);
-    });
+  await check('Overview uses physical pocket objects without reviving dashboard panels', () => {
+    const projects = [...document.querySelectorAll('.crm-overview-project')];
+    const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
+    const stage = document.querySelector('.crm-overview-support-stage');
+    return projects.every((item) => !item.classList.contains('crm-menu-action') && getComputedStyle(item).borderTopWidth === '1px')
+      && tickets.every((item) => !item.classList.contains('crm-menu-action') && getComputedStyle(item).borderTopWidth === '1px')
+      && getComputedStyle(stage).backgroundImage === 'none' && !document.querySelector('.crm-overview-pocket');
   });
+  const overviewProjectChoice = await page.evaluate(() => {
+    const current = window.crmPlanner?.selected?.();
+    return [...document.querySelectorAll('.crm-overview-project')].find((item) => item.dataset.overviewProject !== current)?.dataset.overviewProject || '';
+  });
+  if (overviewProjectChoice) {
+    await page.click(`.crm-overview-project[data-overview-project="${overviewProjectChoice}"]`);
+    await page.waitForFunction((projectId) => window.crmPlanner?.selected?.() === projectId
+      && document.querySelector(`.crm-overview-project[data-overview-project="${projectId}"]`)?.getAttribute('aria-pressed') === 'true'
+      && document.querySelector('[data-overview-open]')?.dataset.overviewOpen === projectId, { timeout: 5000 }, overviewProjectChoice);
+  }
+  await check('Selecting a project pocket updates the Overview context without leaving the room', () => (
+    document.body.dataset.crmModule === 'desk'
+      && document.querySelectorAll('.crm-overview-project.is-selected').length === 1
+      && document.querySelector('.crm-overview-project.is-selected')?.getAttribute('aria-pressed') === 'true'
+  ));
   await check('Retired standalone Home, Today, and Reports theaters do not own the stage', () => ![...document.querySelectorAll('[data-crm-theater="home"],[data-crm-theater="today"],[data-crm-theater="reports"]')].some((el) => !el.hidden));
 
   await page.evaluate(() => { void window.crmDeskTransit.driveTo('home'); });

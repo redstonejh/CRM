@@ -72,6 +72,8 @@
     ".crm-company-face",
     ".crm-home-flight",
     ".crm-planner-card",
+    ".crm-overview-project",
+    ".crm-overview-ticket",
     ".widget-card[data-widget-runtime-type='ticket']",
   ].join(",");
 

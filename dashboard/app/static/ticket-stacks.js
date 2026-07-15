@@ -636,6 +636,7 @@
     // RESTORED or DELETED PERMANENTLY (the only truly destructive action → the lone red item).
     m.innerHTML = `<button class="tk-menu-item" data-act="edit">edit</button>` +
       `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
+      `<button class="tk-menu-item" data-act="size">${window.crmObjectSizing?.isSmall?.(card, "card") ? "make large" : "make small"}</button>` +
       `<button class="tk-menu-item" data-act="activity">activity</button>` +
       (trashed
         ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
@@ -649,12 +650,13 @@
     const on = (act, fn) => { const b = m.querySelector(`[data-act="${act}"]`); if (b) b.onclick = () => { hideTicketMenu(); fn(); }; };
     on("edit", () => window.ticketStacks?.open?.(t, card));
     on("appearance", () => showAppearanceMenu(t, x, y));
+    on("size", () => window.crmObjectSizing?.toggle?.(card, "card"));
     on("activity", () => showActivityMenu(t, x, y));
     on("trash", () => deleteToBin(t, card));
     on("restore", () => window.ticketStacks?.restore?.(t.id));
     on("purge", () => purgeTicket(t, card));
   };
-  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); showTicketMenu(t, card, e.clientX, e.clientY); });
+  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTicketMenu(t, card, e.clientX, e.clientY); });
 
   // Appearance: an explicit palette colour (meta.color, persisted) or "match severity" (the default —
   // no override, the card follows its severity colour and tracks live severity changes). Recolours every

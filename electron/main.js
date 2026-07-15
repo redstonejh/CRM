@@ -363,7 +363,10 @@ function capturePreviewKeys(keys, label = 'refresh') {
         })()`, true);
         publishHomePreview(key, await captureRoom(worker), layoutSignature);
       }
-      if (requested.length === HOME_PREVIEW_KEYS.length) {
+      // A one-room refresh (for example after a Large/Small choice) must also
+      // refresh the resting Home composite. Otherwise the reverse camera would
+      // briefly fly toward the old-size snapshot before handing off to Home.
+      if (requested.length) {
         activeCaptureKey = 'home-motion';
         await captureHomeMotionSnapshot(worker);
       }

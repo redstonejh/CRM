@@ -983,6 +983,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     m.innerHTML = customActions.map((action, index) => `<button class="tk-menu-item" data-act="custom-${index}">${esc(action.label)}</button>`).join("") +
       `<button class="tk-menu-item" data-act="edit">edit</button>` +
       `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
+      `<button class="tk-menu-item" data-act="size">${window.crmObjectSizing?.isSmall?.(card, "card") ? "make large" : "make small"}</button>` +
       `<button class="tk-menu-item" data-act="activity">activity</button>` +
       (trashEnabled && trashed
         ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
@@ -999,12 +1000,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     customActions.forEach((action, index) => on(`custom-${index}`, () => Promise.resolve(action.run(t, card)).catch((error) => console.error("[CRM] context action failed", error))));
     on("edit", () => detail?.open(t, card));
     on("appearance", () => showAppearanceMenu(t, x, y));
+    on("size", () => window.crmObjectSizing?.toggle?.(card, "card"));
     on("activity", () => showActivityMenu(t, x, y));
     on("trash", () => deleteToBin(t, card));
     on("restore", () => publicApi?.restore?.(t.id));
     on("purge", () => purgeTicket(t, card));
   };
-  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); showTicketMenu(t, card, e.clientX, e.clientY); });
+  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTicketMenu(t, card, e.clientX, e.clientY); });
 
   // Appearance: an explicit palette colour (meta.color, persisted) or "match severity" (the default —
   // no override, the card follows its severity colour and tracks live severity changes). Recolours every

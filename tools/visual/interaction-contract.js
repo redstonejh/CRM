@@ -638,6 +638,53 @@ async function main() {
   await page.keyboard.press('Escape');
   await sleep(520);
 
+  await page.click(ticketCard, { button: 'right' });
+  await page.waitForSelector('.tk-menu [data-act="size"]');
+  await page.click('.tk-menu [data-act="size"]');
+  await page.waitForFunction((selector) => {
+    const card = document.querySelector(selector);
+    return card?.classList.contains('crm-object-small') && Number.parseFloat(getComputedStyle(card).scale) < .85;
+  }, {}, ticketCard);
+  await check('Right-click changes a ticket from Large to Small with a compositor-only scale', () => {
+    const card = document.querySelector('[data-crm-theater="tickets"] .tk-card.crm-object-small');
+    if (!card) return false;
+    const rect = card.getBoundingClientRect(); const scale = Number.parseFloat(getComputedStyle(card).scale);
+    const key = window.crmObjectSizing.keyOf(card, 'card'); const stored = JSON.parse(localStorage.getItem('crm-object-sizing-v1') || '{}');
+    return card.dataset.crmObjectSize === 'small' && scale > .75 && scale < .85 && rect.width < card.offsetWidth
+      && stored.cards?.[key] === 'small';
+  });
+  await page.click(ticketCard, { button: 'right' });
+  await check('A Small ticket remains fully interactive and offers the inverse Large action', () => document.querySelector('.tk-menu [data-act="size"]')?.textContent.trim().toLowerCase() === 'make large');
+  await page.keyboard.press('Escape');
+  await page.click(ticketCard);
+  await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail');
+  await page.keyboard.press('Escape');
+  await sleep(520);
+
+  const bucketSelector = '[data-crm-theater="tickets"] .tk-zone:first-child';
+  await page.click(`${bucketSelector} .tk-zone-hd`, { button: 'right' });
+  await page.waitForSelector('.crm-size-menu');
+  await page.click('.crm-size-menu .crm-menu-action');
+  await page.waitForFunction((selector) => {
+    const bucket = document.querySelector(selector);
+    return bucket?.classList.contains('crm-object-small') && Number.parseFloat(getComputedStyle(bucket).scale) < .83;
+  }, {}, bucketSelector);
+  await check('Right-click scales a bucket cell down without replacing its cards or behavior', () => {
+    const bucket = document.querySelector('[data-crm-theater="tickets"] .tk-zone.crm-object-small');
+    if (!bucket) return false;
+    const scale = Number.parseFloat(getComputedStyle(bucket).scale); const cards = bucket.querySelectorAll('.tk-zcard').length;
+    const key = window.crmObjectSizing.keyOf(bucket, 'bucket'); const stored = JSON.parse(localStorage.getItem('crm-object-sizing-v1') || '{}');
+    return {
+      ok: bucket.dataset.crmObjectSize === 'small' && scale > .78 && scale < .86 && cards >= 6 && stored.buckets?.[key] === 'small',
+      detail: `${bucket.dataset.crmObjectSize} / scale ${scale} / ${cards} cards / ${key}=${stored.buckets?.[key]}`,
+    };
+  });
+  await page.click(`${bucketSelector} .tk-zone-hd`, { button: 'right' });
+  await page.waitForSelector('.crm-size-menu');
+  await check('A Small bucket offers the inverse Large action in the same compact menu', () => document.querySelector('.crm-size-menu .crm-menu-action')?.textContent.trim().toLowerCase() === 'make large');
+  await page.click('.crm-size-menu .crm-menu-action');
+  await page.waitForFunction((selector) => !document.querySelector(selector)?.classList.contains('crm-object-small'), {}, bucketSelector);
+
   const routedTicketTitle = await page.evaluate(async () => {
     const result = await window.tickets?.list?.();
     const ticket = result?.tickets?.[0];
@@ -743,7 +790,26 @@ async function main() {
     return menu.classList.contains('crm-menu-surface') && rect.width < 200 && rect.height < 130
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
   });
-  await page.keyboard.press('Escape');
+  await page.click('.crm-planner-context .crm-menu-action');
+  await page.waitForFunction(() => Number.parseFloat(getComputedStyle(document.querySelector('.crm-planner-bucket:last-child')).scale) < .83);
+  await page.click('.crm-planner-bucket:last-child .crm-planner-card', { button: 'right' });
+  await page.waitForSelector('.crm-planner-context');
+  await page.click('.crm-planner-context .crm-menu-action');
+  await page.waitForFunction(() => Number.parseFloat(getComputedStyle(document.querySelector('.crm-planner-bucket:last-child .crm-planner-card')).scale) < .81);
+  await page.evaluate(() => {
+    const current = window.crmPlanner.selected();
+    const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;
+    if (other) window.crmPlanner.selectProject(other);
+    window.crmPlanner.selectProject(current);
+  });
+  await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child')?.classList.contains('crm-object-small')
+    && document.querySelector('.crm-planner-bucket:last-child .crm-planner-card')?.classList.contains('crm-object-small'));
+  await check('Planner bucket and item sizes persist when the project world is rebuilt', () => {
+    const bucket = document.querySelector('.crm-planner-bucket:last-child'); const card = bucket?.querySelector('.crm-planner-card');
+    const stored = JSON.parse(localStorage.getItem('crm-object-sizing-v1') || '{}');
+    return !!bucket && !!card && stored.buckets?.[window.crmObjectSizing.keyOf(bucket, 'bucket')] === 'small'
+      && stored.cards?.[window.crmObjectSizing.keyOf(card, 'card')] === 'small';
+  });
   await activate('desk');
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-overview-project-name')].some((element) => element.textContent.trim() === 'Interaction plan'));
   await check('Overview immediately reflects Planner projects as low-cost mini layouts', () => {

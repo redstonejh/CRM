@@ -233,7 +233,9 @@
   }
   function bucketMenu(bucket, anchor, x, y) {
     const project = selectedProject(); if (!project || !bucket) return;
+    const sizeTarget = anchor?.closest?.("[data-planner-bucket]") || root?.querySelector(`[data-planner-bucket="${CSS.escape(bucket.id)}"]`);
     openMenu(anchor, [
+      { label: window.crmObjectSizing?.isSmall?.(sizeTarget, "bucket") ? "Make large" : "Make small", run: () => window.crmObjectSizing?.toggle?.(sizeTarget, "bucket") },
       { label: "Rename", run: () => openEditor({ title: "Rename bucket", value: bucket.title, anchor, onSubmit: (value) => { bucket.title = value; touch(project); publish("bucket-renamed"); } }) },
       { label: "Delete bucket", danger: true, run: () => { project.buckets = project.buckets.filter((item) => item.id !== bucket.id); touch(project); publish("bucket-deleted"); } },
     ], x, y);
@@ -241,6 +243,7 @@
   function cardMenu(bucket, card, anchor, x, y) {
     const project = selectedProject(); if (!project || !bucket || !card) return;
     openMenu(anchor, [
+      { label: window.crmObjectSizing?.isSmall?.(anchor, "card") ? "Make large" : "Make small", run: () => window.crmObjectSizing?.toggle?.(anchor, "card") },
       { label: "Rename", run: () => openEditor({ title: "Rename item", value: card.title, anchor, onSubmit: (value) => { card.title = value; card.updatedAt = nowIso(); touch(project); publish("card-renamed"); } }) },
       { label: "Edit note", run: () => openEditor({ title: "Item note", value: card.note, placeholder: "A small update", anchor, onSubmit: (value) => { card.note = value; card.updatedAt = nowIso(); touch(project); publish("card-updated"); } }) },
       { label: "Delete item", danger: true, run: () => { bucket.cards = bucket.cards.filter((item) => item.id !== card.id); touch(project); publish("card-deleted"); } },

@@ -798,11 +798,19 @@ async function main() {
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
   });
   await page.click('.crm-planner-context .crm-menu-action');
-  await page.waitForFunction(() => Number.parseFloat(getComputedStyle(document.querySelector('.crm-planner-bucket:last-child')).scale) < .83);
+  await page.waitForFunction(() => {
+    const bucket = document.querySelector('.crm-planner-bucket:last-child');
+    return bucket?.classList.contains('crm-object-small') && bucket.getBoundingClientRect().width <= 205
+      && Number.parseFloat(getComputedStyle(bucket).scale) === 1;
+  });
   await page.click('.crm-planner-bucket:last-child .crm-planner-card', { button: 'right' });
   await page.waitForSelector('.crm-planner-context');
   await page.click('.crm-planner-context .crm-menu-action');
-  await page.waitForFunction(() => Number.parseFloat(getComputedStyle(document.querySelector('.crm-planner-bucket:last-child .crm-planner-card')).scale) < .81);
+  await page.waitForFunction(() => {
+    const card = document.querySelector('.crm-planner-bucket:last-child .crm-planner-card');
+    return card?.classList.contains('crm-object-small') && card.getBoundingClientRect().width <= 145
+      && Number.parseFloat(getComputedStyle(card).scale) === 1;
+  });
   await page.evaluate(() => {
     const current = window.crmPlanner.selected();
     const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;
@@ -815,7 +823,8 @@ async function main() {
     const bucket = document.querySelector('.crm-planner-bucket:last-child'); const card = bucket?.querySelector('.crm-planner-card');
     const stored = JSON.parse(localStorage.getItem('crm-object-sizing-v1') || '{}');
     return !!bucket && !!card && stored.buckets?.[window.crmObjectSizing.keyOf(bucket, 'bucket')] === 'small'
-      && stored.cards?.[window.crmObjectSizing.keyOf(card, 'card')] === 'small';
+      && stored.cards?.[window.crmObjectSizing.keyOf(card, 'card')] === 'small'
+      && bucket.getBoundingClientRect().width <= 205 && card.getBoundingClientRect().width <= 145;
   });
   await activate('desk');
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-overview-project-name')].some((element) => element.textContent.trim() === 'Interaction plan'));

@@ -111,61 +111,57 @@
     style.id = "crm-planner-styles";
     style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
-      .crm-planner-frame{position:absolute;inset:62px 50px 84px;max-width:1400px;margin:auto;display:grid;grid-template-columns:238px minmax(0,1fr);gap:16px}
-      .crm-planner-sidebar{min-height:0;padding:8px;display:grid;grid-template-rows:46px minmax(0,1fr)}
-      .crm-planner-sidebar-head,.crm-planner-canvas-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
-      .crm-planner-sidebar-head{padding:0 7px 0 11px}.crm-planner-sidebar-title{font-size:.82rem;font-weight:720;letter-spacing:.01em}
-      .crm-planner-icon{appearance:none;width:30px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;color:rgba(255,255,255,.48);cursor:pointer;display:grid;place-items:center;font:500 18px/1 system-ui;transition:color .14s ease}.crm-planner-icon:hover,.crm-planner-icon:focus-visible{color:#fff;outline:0}
-      .crm-planner-project-list{min-height:0;overflow-y:auto;overflow-x:hidden;display:grid;align-content:start;gap:2px;padding-right:2px;scrollbar-width:thin}
-      .crm-planner-project.crm-menu-action{position:relative;width:100%;height:64px;padding:8px 8px 8px 14px!important;display:grid;grid-template-columns:minmax(0,1fr) 54px;align-items:center;gap:9px;text-align:left;font-size:.78rem!important}
-      .crm-planner-project.is-selected:before{content:"";position:absolute;left:2px;top:17px;width:2px;height:30px;border-radius:4px;background:rgba(143,191,255,.88);box-shadow:0 0 12px rgba(98,159,240,.42)}
-      .crm-planner-project-copy{min-width:0}.crm-planner-project-name{display:block;color:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-meta{display:block;margin-top:5px;color:rgba(255,255,255,.34);font-size:9px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-project-minimap{height:31px;display:flex;align-items:stretch;gap:3px;padding:3px;border-radius:7px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.055);overflow:hidden}
-      .crm-project-minimap-column{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}.crm-project-minimap-column:before{content:"";height:2px;border-radius:4px;background:rgba(190,215,249,.27)}
-      .crm-project-minimap-card{display:block;height:4px;border-radius:2px;background:rgba(126,169,228,.24)}.crm-project-minimap-card:nth-child(3n){width:72%}
-      .crm-planner-main{min-width:0;min-height:0;display:grid;grid-template-rows:54px minmax(0,1fr);gap:12px}
-      .crm-planner-canvas-head{padding:0 12px 0 16px}.crm-planner-heading-copy{min-width:0}.crm-planner-heading{font-size:.94rem;font-weight:720;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-subheading{margin-top:4px;color:rgba(255,255,255,.39);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-planner-head-actions{display:flex;align-items:center;gap:2px}.crm-planner-text-action.crm-menu-action{height:32px;font-size:.72rem!important;padding:0 9px!important}
-      .crm-planner-buckets{min-width:0;min-height:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(226px,1fr);gap:12px;overflow-x:auto;overflow-y:hidden;padding:2px 2px 10px;scrollbar-width:thin}
-      .crm-planner-bucket{position:relative;min-width:0;min-height:0;padding:10px;display:grid;grid-template-rows:34px minmax(0,1fr) 34px;overflow:hidden}
-      .crm-planner-bucket-head{display:flex;align-items:center;min-width:0;padding:0 30px 0 3px}.crm-planner-bucket-title{font-size:.76rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-planner-bucket-menu{position:absolute;right:7px;top:7px;width:28px;height:28px;font-size:16px}.crm-planner-card-list{min-height:0;overflow-y:auto;display:grid;align-content:start;gap:7px;padding:3px 1px 8px;scrollbar-width:thin}
-      .crm-planner-card{appearance:none;position:relative;width:100%;min-height:74px;padding:11px;text-align:left;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:linear-gradient(155deg,rgba(112,151,207,.12),rgba(255,255,255,.025));color:rgba(255,255,255,.88);box-shadow:inset 0 1px rgba(255,255,255,.045),0 8px 20px -18px rgba(0,0,0,.8);cursor:pointer;transition:border-color .14s ease,background .14s ease}.crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;border-color:rgba(164,199,245,.2);background:linear-gradient(155deg,rgba(112,151,207,.17),rgba(255,255,255,.035))}
-      .crm-planner-card-title{display:block;padding-right:14px;font-size:.72rem;font-weight:680;line-height:1.28}.crm-planner-card-note{display:block;margin-top:7px;color:rgba(255,255,255,.4);font-size:9px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .crm-planner-add-card.crm-menu-action{width:100%;height:32px;text-align:left;padding-left:4px!important;font-size:.68rem!important;color:rgba(255,255,255,.35)!important}.crm-planner-add-card:hover{color:#fff!important}
-      .crm-planner-empty{height:100%;display:grid;place-items:center;padding:22px;text-align:center;color:rgba(255,255,255,.34);font-size:.7rem;line-height:1.45}
-      .crm-planner-popover{position:fixed;z-index:9300;width:min(286px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:.72rem;font-weight:700;color:#fff}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:.72rem!important}
-      .crm-planner-context{position:fixed;z-index:9310;width:166px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:34px;text-align:left;font-size:.72rem!important}
-      @media(max-width:900px){.crm-planner-frame{inset:58px 22px 82px;grid-template-columns:190px minmax(0,1fr);gap:10px}.crm-planner-buckets{grid-auto-columns:minmax(210px,1fr)}}
+      .crm-planner-frame{position:absolute;inset:62px 48px 78px;max-width:1460px;margin:auto;display:grid;grid-template-rows:76px minmax(0,1fr);gap:6px}
+      .crm-planner-topline{min-width:0;display:grid;grid-template-columns:minmax(220px,1fr) minmax(360px,620px) minmax(220px,1fr);align-items:center;gap:18px}
+      .crm-planner-heading-copy{min-width:0;padding-left:7px}.crm-planner-kicker{display:block;margin-bottom:5px;color:rgba(190,211,240,.38);font:700 8px/1 system-ui;letter-spacing:.16em;text-transform:uppercase}
+      .crm-planner-heading{font-size:1rem;font-weight:720;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-subheading{margin-top:6px;color:rgba(255,255,255,.36);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-project-dock{min-width:0;height:50px;box-sizing:border-box;padding:5px;display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:3px;overflow:hidden}
+      .crm-planner-project-list{min-width:0;display:flex;align-items:stretch;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
+      .crm-planner-project.crm-menu-action{position:relative;flex:0 0 148px;height:38px;padding:5px 7px 5px 10px!important;display:grid;grid-template-columns:minmax(0,1fr) 43px;align-items:center;gap:7px;text-align:left;font-size:.69rem!important}
+      .crm-planner-project.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:1px;height:1px;border-radius:2px;background:rgba(151,196,255,.75);box-shadow:0 0 8px rgba(91,151,236,.42)}
+      .crm-planner-project-copy{min-width:0}.crm-planner-project-name{display:block;color:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-project-minimap{height:23px;display:flex;align-items:stretch;gap:2px;padding:2px;border-radius:5px;background:rgba(255,255,255,.018);border:1px solid rgba(255,255,255,.05);overflow:hidden}
+      .crm-project-minimap-column{min-width:0;flex:1;display:flex;flex-direction:column;gap:1.5px}.crm-project-minimap-column:before{content:"";height:2px;border-radius:3px;background:rgba(190,215,249,.25)}
+      .crm-project-minimap-card{display:block;height:3px;border-radius:2px;background:rgba(126,169,228,.22)}.crm-project-minimap-card:nth-child(3n){width:72%}
+      .crm-planner-icon{appearance:none;width:30px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;color:rgba(255,255,255,.44);cursor:pointer;display:grid;place-items:center;font:500 18px/1 system-ui;transition:color .14s ease}.crm-planner-icon:hover,.crm-planner-icon:focus-visible{color:#fff;outline:0}
+      .crm-planner-new-project{align-self:center;width:32px;height:32px}.crm-planner-head-actions{justify-self:end;display:flex;align-items:center;gap:3px}.crm-planner-text-action.crm-menu-action{height:31px;font-size:.68rem!important;padding:0 8px!important}.crm-planner-project-menu{width:31px!important;padding:0!important;font-size:15px!important;text-align:center}
+      .crm-planner-universe{position:relative;min-width:0;min-height:0;overflow:hidden}.crm-planner-universe:before{content:"";position:absolute;left:8%;right:8%;top:54px;height:1px;background:linear-gradient(90deg,transparent,rgba(177,207,247,.12) 15%,rgba(177,207,247,.12) 85%,transparent);pointer-events:none}
+      .crm-planner-buckets{position:absolute;inset:0;min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:clamp(20px,3.1vw,48px);overflow-x:auto;overflow-y:hidden;padding:30px 34px 34px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .crm-planner-bucket{position:relative;flex:0 0 clamp(238px,21vw,282px);height:fit-content;min-height:238px;max-height:min(470px,calc(100vh - 238px));box-sizing:border-box;padding:10px;display:grid;grid-template-rows:33px minmax(140px,auto) 31px;overflow:hidden;transition:flex-basis .2s cubic-bezier(.22,1,.26,1),width .2s cubic-bezier(.22,1,.26,1)}
+      .crm-planner-bucket:nth-child(3n+2){margin-top:34px}.crm-planner-bucket:nth-child(3n){margin-top:14px}
+      .crm-planner-bucket:before{content:"";position:absolute;left:50%;top:-18px;width:5px;height:5px;border-radius:50%;transform:translateX(-50%);background:rgba(156,197,251,.58);box-shadow:0 0 12px rgba(87,148,230,.46)}
+      .crm-planner-bucket-head{display:flex;align-items:center;min-width:0;padding:0 35px 0 4px}.crm-planner-bucket-title{font-size:.73rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-bucket-menu{position:absolute;right:8px;top:8px;width:30px;height:26px;display:flex;align-items:center;justify-content:center;gap:2px}.crm-planner-bucket-menu i{display:block;width:6px;height:2px;border-radius:2px;background:rgba(155,194,245,.42)}
+      .crm-planner-card-list{min-height:140px;max-height:346px;overflow-y:auto;display:grid;align-content:start;justify-items:stretch;gap:8px;padding:4px 2px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .crm-planner-card{appearance:none;position:relative;width:100%;min-height:76px;box-sizing:border-box;padding:11px 12px;text-align:left;border:1px solid rgba(255,255,255,.085);border-radius:10px;background:linear-gradient(150deg,rgba(103,142,198,.2),rgba(50,70,101,.11));color:rgba(255,255,255,.88);box-shadow:inset 0 1px rgba(255,255,255,.055),0 12px 22px -18px rgba(0,0,0,.88);cursor:pointer;transition:width .18s ease,min-height .18s ease,border-color .14s ease,background .14s ease,translate .14s ease}
+      .crm-planner-bucket:nth-child(3n+2) .crm-planner-card{background:linear-gradient(150deg,rgba(123,112,159,.2),rgba(61,52,82,.11))}.crm-planner-bucket:nth-child(3n) .crm-planner-card{background:linear-gradient(150deg,rgba(137,126,89,.19),rgba(75,65,38,.1))}
+      .crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;border-color:rgba(169,202,245,.22);background:linear-gradient(150deg,rgba(112,155,214,.27),rgba(51,72,104,.14));translate:0 -1px}
+      .crm-planner-card-title{display:block;padding-right:10px;font-size:.71rem;font-weight:680;line-height:1.28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:block;margin-top:7px;color:rgba(255,255,255,.39);font-size:9px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-add-card.crm-menu-action{width:100%;height:29px;text-align:left;padding-left:4px!important;font-size:.64rem!important;color:rgba(255,255,255,.3)!important}.crm-planner-add-card:hover{color:#fff!important}
+      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:198px;min-width:198px;min-height:218px;max-height:min(405px,calc(100vh - 265px))}.crm-planner-card.crm-object-small{scale:1!important;width:76%;min-height:55px;justify-self:center;padding:9px 10px}.crm-planner-card.crm-object-small .crm-planner-card-note{display:none}
+      .crm-planner-empty{height:100%;display:grid;place-items:center;padding:20px;text-align:center;color:rgba(255,255,255,.3);font-size:.66rem;line-height:1.45}.crm-planner-world-empty{margin:auto;width:240px;height:130px}
+      .crm-planner-popover{position:fixed;z-index:9300;width:min(264px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:.72rem;font-weight:700;color:#fff}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:.72rem!important}
+      .crm-planner-context{position:fixed;z-index:9310;width:158px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:.7rem!important}
+      @media(max-width:1050px){.crm-planner-frame{inset:60px 24px 78px}.crm-planner-topline{grid-template-columns:minmax(180px,1fr) minmax(330px,500px) auto;gap:10px}.crm-planner-subheading{display:none}.crm-planner-project.crm-menu-action{flex-basis:132px}.crm-planner-buckets{justify-content:flex-start;padding-inline:24px}}
     `;
     document.head.appendChild(style);
   }
 
   const miniature = (project) => `<span class="crm-project-minimap" aria-hidden="true">${project.buckets.slice(0, 4).map((bucket) => `<span class="crm-project-minimap-column">${bucket.cards.slice(0, 4).map(() => '<i class="crm-project-minimap-card"></i>').join("")}</span>`).join("")}</span>`;
-  const summary = (project) => {
-    const items = project.buckets.reduce((total, bucket) => total + bucket.cards.length, 0);
-    return `${project.buckets.length} ${project.buckets.length === 1 ? "bucket" : "buckets"} · ${items} ${items === 1 ? "item" : "items"}`;
-  };
-
   function render() {
     if (!root) return;
     const project = selectedProject();
     root.innerHTML = `<div class="crm-planner-frame">
-      <aside class="crm-planner-sidebar crm-menu-surface">
-        <header class="crm-planner-sidebar-head"><span class="crm-planner-sidebar-title">Projects</span><button type="button" class="crm-planner-icon" data-planner-action="new-project" aria-label="Create project">+</button></header>
-        <div class="crm-planner-project-list">${projects.map((item) => `<button type="button" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}"><span class="crm-planner-project-copy"><span class="crm-planner-project-name">${esc(item.title)}</span><span class="crm-planner-project-meta">${esc(summary(item))}</span></span>${miniature(item)}</button>`).join("")}</div>
-      </aside>
-      <section class="crm-planner-main">
-        <header class="crm-planner-canvas-head crm-menu-surface">
-          <div class="crm-planner-heading-copy"><div class="crm-planner-heading">${esc(project?.title || "Projects")}</div><div class="crm-planner-subheading">${esc(project?.note || "Define a project with the buckets it actually needs.")}</div></div>
-          <div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="project-menu">Project</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-bucket">Add bucket</button>' : '<button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-project">New project</button>'}</div>
-        </header>
-        <div class="crm-planner-buckets">${project ? project.buckets.map((bucket) => `<section class="crm-planner-bucket crm-menu-surface" data-planner-bucket="${esc(bucket.id)}">
-          <header class="crm-planner-bucket-head"><span class="crm-planner-bucket-title">${esc(bucket.title)}</span></header><button type="button" class="crm-planner-icon crm-planner-bucket-menu" data-planner-action="bucket-menu" aria-label="Options for ${esc(bucket.title)}">···</button>
-          <div class="crm-planner-card-list">${bucket.cards.length ? bucket.cards.map((card) => `<button type="button" class="crm-planner-card" data-planner-card="${esc(card.id)}"><span class="crm-planner-card-title">${esc(card.title)}</span>${card.note ? `<span class="crm-planner-card-note">${esc(card.note)}</span>` : ""}</button>`).join("") : '<div class="crm-planner-empty">This bucket is ready for its first item.</div>'}</div>
-          <button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add item</button>
-        </section>`).join("") : '<div class="crm-planner-empty">Create a project to start shaping a plan.</div>'}</div>
-      </section>
+      <header class="crm-planner-topline">
+        <div class="crm-planner-heading-copy"><span class="crm-planner-kicker">Planner</span><div class="crm-planner-heading">${esc(project?.title || "Projects")}</div><div class="crm-planner-subheading">${esc(project?.note || "Define a project with the buckets it actually needs.")}</div></div>
+        <nav class="crm-planner-project-dock crm-menu-surface" aria-label="Projects"><div class="crm-planner-project-list">${projects.map((item) => `<button type="button" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}"><span class="crm-planner-project-copy"><span class="crm-planner-project-name">${esc(item.title)}</span></span>${miniature(item)}</button>`).join("")}</div><button type="button" class="crm-planner-icon crm-planner-new-project" data-planner-action="new-project" aria-label="Create project">+</button></nav>
+        <div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-bucket">Add bucket</button>' : '<button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-project">New project</button>'}</div>
+      </header>
+      <section class="crm-planner-universe"><div class="crm-planner-buckets">${project ? project.buckets.map((bucket) => `<section class="crm-planner-bucket crm-menu-surface" data-planner-bucket="${esc(bucket.id)}">
+        <header class="crm-planner-bucket-head"><span class="crm-planner-bucket-title">${esc(bucket.title)}</span></header><button type="button" class="crm-planner-icon crm-planner-bucket-menu" data-planner-action="bucket-menu" aria-label="Options for ${esc(bucket.title)}"><i></i><i></i><i></i></button>
+        <div class="crm-planner-card-list">${bucket.cards.length ? bucket.cards.map((card) => `<button type="button" class="crm-planner-card" data-planner-card="${esc(card.id)}"><span class="crm-planner-card-title">${esc(card.title)}</span>${card.note ? `<span class="crm-planner-card-note">${esc(card.note)}</span>` : ""}</button>`).join("") : '<div class="crm-planner-empty">Ready for its first item.</div>'}</div>
+        <button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add item</button>
+      </section>`).join("") : '<div class="crm-planner-empty crm-planner-world-empty">Create a project to start shaping a plan.</div>'}</div></section>
     </div>`;
   }
 

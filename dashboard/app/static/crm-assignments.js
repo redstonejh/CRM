@@ -180,7 +180,7 @@
         const assigned = assignedPerson(activity);
         const late = activity.dueAt && dueTime(activity) < Date.now();
         return `<section class="tk-zone crm-assignment-bucket" data-assignment-commitment="${esc(activity.id)}">
-          <div class="tk-zone-hd"><span title="${esc(activity.title)}">${esc(activity.title)}</span><span class="tk-zone-hd-r"><span class="tk-zone-count">${assigned ? 1 : 0}</span><div class="tk-bars" aria-hidden="true"><span class="tk-seg${late ? " r" : " g"}"></span><span class="tk-seg"></span><span class="tk-seg"></span></div></span></div>
+          <div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(activity.title)}">${esc(activity.title)}</span><span class="tk-zone-hd-r"><div class="tk-bars" aria-hidden="true"><span class="tk-seg${late ? " r" : " g"}"></span><span class="tk-seg"></span><span class="tk-seg"></span></div></span></div>
           <div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div></div>
         </section>`;
       }).join("")}</div>

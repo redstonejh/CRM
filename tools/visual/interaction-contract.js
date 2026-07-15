@@ -40,14 +40,15 @@ async function main() {
       detail: audit ? `${audit.surfaces} surfaces / ${audit.actions} actions / ${audit.bucketArrows} arrows` : 'audit unavailable',
     };
   });
-  await check('Information shells use the account/background recipe exactly', () => {
+  await check('Home tiles use the canonical glass without the menu shadow rectangle', () => {
     const surface = document.querySelector('.crm-home-grid > .crm-home-bucket');
     const reference = document.querySelector('.auth-profile-menu');
     if (!surface || !reference) return false;
     const actual = getComputedStyle(surface);
     const expected = getComputedStyle(reference);
-    return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'color']
-      .every((property) => actual[property] === expected[property]);
+    return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'color']
+      .every((property) => actual[property] === expected[property])
+      && actual.boxShadow !== expected.boxShadow && !actual.boxShadow.includes('42px');
   });
   await check('Non-top buttons use the account menu item recipe exactly', () => {
     const action = document.querySelector('.crm-home-control');
@@ -73,21 +74,21 @@ async function main() {
       && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
     detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/6 surfaces`,
   }));
-  await check('Home uses focused operating rooms and Assignments instead of a bespoke Calendar tile', () => {
-    const keys = ['desk','people','cases','bills','invoices','assignments'];
+  await check('Home combines money and makes room for Planner', () => {
+    const keys = ['desk','people','cases','money','planner','assignments'];
     const overviewTile = document.querySelector('.crm-home-bucket[data-module="desk"]');
     const ticketTile = document.querySelector('.crm-home-bucket[data-module="cases"]');
-    const billTile = document.querySelector('.crm-home-bucket[data-module="bills"]');
-    const invoiceTile = document.querySelector('.crm-home-bucket[data-module="invoices"]');
+    const moneyTile = document.querySelector('.crm-home-bucket[data-module="money"]');
+    const plannerTile = document.querySelector('.crm-home-bucket[data-module="planner"]');
     const assignmentTile = document.querySelector('.crm-home-bucket[data-module="assignments"]');
     return keys.every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`))
       && !document.querySelector('.crm-home-bucket[data-module="calendar"]')
       && !document.querySelector('.crm-home-bucket[data-module="pipeline"]')
-      && !document.querySelector('.crm-home-bucket[data-module="jobs"],.crm-home-bucket[data-module="money"]')
+      && !document.querySelector('.crm-home-bucket[data-module="jobs"],.crm-home-bucket[data-module="bills"],.crm-home-bucket[data-module="invoices"]')
       && overviewTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Overview'
       && ticketTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Tickets'
-      && billTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Bills'
-      && invoiceTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Invoices'
+      && moneyTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Money'
+      && plannerTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Planner'
       && assignmentTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Assignments';
   });
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0 && document.querySelectorAll('.crm-home-hand-card.tk-card').length > 0, { timeout: 10000 });
@@ -122,17 +123,18 @@ async function main() {
   await sleep(430);
   await page.evaluate(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').forEach((tile) => {
     const preview = tile.querySelector('.crm-home-preview');
+    tile.dataset.previewReady = 'true';
     if (!preview.querySelector('.crm-home-preview-foreground')) {
       const probe = document.createElement('img');
       probe.className = 'crm-home-preview-image crm-home-preview-foreground';
-      probe.dataset.previewVariant = 'preblurred';
+      probe.dataset.previewVariant = 'filtered';
       probe.dataset.interactionStyleProbe = 'true';
       preview.appendChild(probe);
     }
   }));
-  await check('Resting Home objects use cached pre-blurred rasters with no live filter', () => {
+  await check('Resting Home objects use one cached raster with the subtle blur', () => {
     const images = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')];
-    return images.length === 6 && images.every((image) => image.dataset.previewVariant === 'preblurred' && getComputedStyle(image).filter === 'none')
+    return images.length === 6 && images.every((image) => image.dataset.previewVariant === 'filtered' && getComputedStyle(image).filter === 'blur(2.4px)')
       && !document.querySelector('.crm-home-grid .crm-home-preview-sharp');
   });
   await page.hover('.crm-home-bucket[data-module="desk"]');
@@ -140,10 +142,9 @@ async function main() {
   await check('Hover sharpens tile objects and de-emphasizes its title', () => {
     const tile = document.querySelector('.crm-home-grid > .crm-home-bucket[data-module="desk"]');
     const foreground = tile?.querySelector('.crm-home-preview-foreground');
-    const sharp = tile?.querySelector('.crm-home-preview-sharp');
     const title = tile?.querySelector('.crm-home-title-glass');
-    return !!foreground && !!sharp && !!title && getComputedStyle(foreground).filter === 'none'
-      && Number(getComputedStyle(sharp).opacity) >= .95 && Number(getComputedStyle(title).opacity) <= .3;
+    return !!foreground && !!title && getComputedStyle(foreground).filter === 'blur(0px)'
+      && !tile.querySelector('.crm-home-preview-sharp') && Number(getComputedStyle(title).opacity) >= .35 && Number(getComputedStyle(title).opacity) < .45;
   });
   await page.evaluate(() => document.querySelectorAll('[data-interaction-style-probe]').forEach((probe) => probe.remove()));
   await page.evaluate(() => {
@@ -280,11 +281,11 @@ async function main() {
     };
     return Object.keys(now).every((key) => Math.abs(now[key] - before[key]) < .02);
   });
-  await check('Home tile titles stay hidden throughout the return animation', () => {
+  await check('Home tile titles return continuously during the zoom home', () => {
     const surface = window.crmHomeCamera?.surface?.();
     const titles = [...(surface?.querySelectorAll('.crm-home-title-glass') || [])];
-    return surface?.classList.contains('crm-home-camera-moving') && titles.length > 0
-      && titles.every((title) => getComputedStyle(title).visibility === 'hidden' && Number(getComputedStyle(title).opacity) === 0);
+    return surface?.classList.contains('crm-home-camera-contracting') && titles.length > 0
+      && titles.every((title) => getComputedStyle(title).visibility === 'visible' && Number(getComputedStyle(title).opacity) > .9);
   });
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.(), { timeout: 10000 });
   await sleep(100);
@@ -522,6 +523,18 @@ async function main() {
   await page.click('[data-person-history-close]');
   await page.waitForFunction(() => !window.crmPersonHistory?.isOpen?.(), { timeout: 5000 });
 
+  await activate('money');
+  await check('Money uses one vertical selector for Bills and Invoices', () => {
+    const room = document.querySelector('[data-crm-theater="money-room"]');
+    return !!room && room.querySelectorAll('.crm-money-view').length === 2
+      && room.querySelectorAll('.crm-money-view.is-selected').length === 1
+      && room.querySelectorAll('[data-crm-subtheater="money"]:not([hidden])').length === 1;
+  });
+  await page.click('.crm-money-view[data-money-view="bills"]');
+  await page.waitForFunction(() => window.crmMoneyRoom?.selected?.() === 'bills');
+  await check('Money selector swaps the live room without navigation chrome', () => document.querySelector('[data-crm-theater="bills"]:not([hidden])')
+    && document.querySelector('[data-crm-theater="money"]')?.hidden);
+
   const workflowRooms = { pipeline: 4, bills: 3, invoices: 3 };
   for (const [key, zones] of Object.entries(workflowRooms)) {
     await activate(key);
@@ -543,7 +556,7 @@ async function main() {
         && controls.every((element) => getComputedStyle(element).display === 'none');
     });
     await check(`${key} buckets stay proportional to a ticket`, () => {
-      const buckets = [...document.querySelectorAll('[data-crm-theater]:not([hidden]) .tk-zone')];
+      const buckets = [...document.querySelectorAll('[data-crm-theater]:not([hidden]) .tk-zone')].filter((bucket) => bucket.getBoundingClientRect().width > 0);
       return buckets.length > 0 && buckets.every((bucket) => {
         const { width, height } = bucket.getBoundingClientRect();
         return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;

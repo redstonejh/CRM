@@ -840,12 +840,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
-      .tk-zone-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-        padding: 2px 4px 11px; font-size: 0.98rem; font-weight: 700; line-height: 1.25; letter-spacing: .01em; color: rgba(255,255,255,0.85); }
-      .tk-zone-count { flex: 0 0 auto; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.62);
-        background: rgba(255,255,255,0.10); border-radius: 999px; padding: 1px 8px; }
-      .tk-zone-count[hidden] { display: none; }
-      .tk-zone-hd-r { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      .tk-zone-hd { position:relative;display:block;min-width:0;padding:2px 48px 11px 4px;font-size:.9rem;font-weight:700;
+        line-height:1.25;letter-spacing:.01em;color:rgba(255,255,255,.85);white-space:nowrap;overflow:hidden;text-overflow:ellipsis }
+      .tk-zone-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tk-zone-count{display:none!important}
+      .tk-zone-hd-r{position:absolute;right:4px;top:5px;display:inline-flex;align-items:center;opacity:.58;pointer-events:none}
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
       .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
@@ -2702,7 +2701,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const panel = document.createElement("div");
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
-      panel.innerHTML = `<div class="tk-zone-hd"><span>${esc(s.label)}</span><span class="tk-zone-hd-r"><span class="tk-zone-count" hidden></span>${barsHTML(bucketBarClasses(i), false)}</span></div>` +
+      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}</span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       zonesRoot.appendChild(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
@@ -3123,13 +3122,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id) && !inAttentionDeck(t))
         .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
-      const count = body.parentElement.querySelector(".tk-zone-count");
-      if (count) {
-        let summary = "";
-        try { summary = bucketSummary ? bucketSummary(s, list, { metaOf, stageOf, isResolved, stalenessOf }) : ""; } catch { summary = ""; }
-        count.textContent = String(summary || "");
-        count.hidden = !summary;
-      }
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${deckCopy.zoneEmpty}</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.

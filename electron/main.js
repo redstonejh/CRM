@@ -73,11 +73,11 @@ let mainWindow = null;
 let previewWindow = null;
 let settings = loadSettings();
 const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions'];
-const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'bills', 'invoices', 'assignments'];
+const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'money', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v27';
+const HOME_PREVIEW_VERSION = 'filtered-home-v28';
 const homePreviewCache = new Map();
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;
@@ -348,9 +348,11 @@ function capturePreviewKeys(keys, label = 'refresh') {
   const requested = keys.filter((key) => HOME_PREVIEW_KEYS.includes(key));
   homePreviewQueue = homePreviewQueue.then(async () => {
     let worker;
+    let activeCaptureKey = 'boot';
     try {
       worker = await createPreviewWindow();
       for (const key of requested) {
+        activeCaptureKey = key;
         await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive(${JSON.stringify(key)})`, true);
         await waitForRenderer(worker, `document.body.dataset.crmModule === ${JSON.stringify(key)} && !!document.querySelector('[data-crm-theater]:not([hidden])')`);
         await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
@@ -361,10 +363,13 @@ function capturePreviewKeys(keys, label = 'refresh') {
         })()`, true);
         publishHomePreview(key, await captureRoom(worker), layoutSignature);
       }
-      if (requested.length === HOME_PREVIEW_KEYS.length) await captureHomeMotionSnapshot(worker);
+      if (requested.length === HOME_PREVIEW_KEYS.length) {
+        activeCaptureKey = 'home-motion';
+        await captureHomeMotionSnapshot(worker);
+      }
     } catch (error) {
-      homeMotionSnapshotError = String(error?.stack || error?.message || error);
-      console.error(`[home-preview] ${label} capture failed:`, error?.message || error);
+      homeMotionSnapshotError = `${activeCaptureKey}: ${String(error?.stack || error?.message || error)}`;
+      console.error(`[home-preview] ${label} capture failed at ${activeCaptureKey}:`, error?.message || error);
     } finally {
       if (worker && !worker.isDestroyed()) worker.destroy();
     }

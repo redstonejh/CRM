@@ -181,7 +181,7 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'filtered-home-v27' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'filtered-home-v28' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes('blur(2.4px)') || item.titleOpacity < .9)) {
@@ -297,8 +297,8 @@ async function main() {
 
   const rooms = [
     {key:'desk',theater:'desk',content:'.crm-overview-panel',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
-    {key:'cases',theater:'tickets',content:'.tk-zone',expected:3}, {key:'bills',theater:'bills',content:'.tk-zone',expected:3},
-    {key:'invoices',theater:'money',content:'.tk-zone',expected:3}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:4},
+    {key:'cases',theater:'tickets',content:'.tk-zone',expected:3}, {key:'money',theater:'money-room',content:'[data-crm-subtheater="money"]:not([hidden]) .tk-zone',expected:3},
+    {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:3}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:4},
   ];
   const transitions=[];
   for (const room of rooms) {
@@ -325,16 +325,18 @@ async function main() {
       const theater=document.querySelector(`[data-crm-theater="${config.theater}"]`);
       const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===config.key);
       const signature={module:document.body.dataset.crmModule||'',text:String(theater?.innerText||'').replace(/\s+/g,' ').trim(),elements:theater?.querySelectorAll('*').length||0,calendarYear:window.fractalCalendar?.year?.()||null};
-      const bucketGeometry=[...(theater?.querySelectorAll('.tk-zone')||[])].map((bucket)=>{const rect=bucket.getBoundingClientRect();return{width:rect.width,height:rect.height,ratio:rect.width/rect.height}});
-      return{visible:!!theater&&!theater.hidden,count:theater?.querySelectorAll(config.content).length||0,arrows:theater?.querySelectorAll('svg.tk-flow,.tk-flow-shaft,.tk-flow-head').length||0,bucketGeometry,signature,previewSignature:preview?.layoutSignature||null,exactSrc:preview?.exactSrc||'',veil:document.querySelectorAll('.crm-transit-veil').length,invalid:[...(theater?.querySelectorAll('*')||[])].filter((n)=>/NaN|Infinity/.test(getComputedStyle(n).transform)).length};
+      const bucketGeometry=[...(theater?.querySelectorAll('.tk-zone')||[])].map((bucket)=>{const rect=bucket.getBoundingClientRect();return{width:rect.width,height:rect.height,ratio:rect.height?rect.width/rect.height:0}}).filter((bucket)=>bucket.width>0&&bucket.height>0);
+      const bucketHeaders=[...(theater?.querySelectorAll('.tk-zone')||[])].filter((bucket)=>bucket.getBoundingClientRect().width>0).map((bucket)=>{const title=bucket.querySelector('.tk-zone-title');const bars=bucket.querySelector('.tk-zone-hd-r');const bucketRect=bucket.getBoundingClientRect();const barsRect=bars?.getBoundingClientRect();return{title:title?.textContent.trim()||'',whiteSpace:title?getComputedStyle(title).whiteSpace:'',singleLine:!!title&&title.scrollHeight<=title.clientHeight+1,count:bucket.querySelectorAll('.tk-zone-count').length,barsPosition:bars?getComputedStyle(bars).position:'',barsRight:barsRect?Math.round(bucketRect.right-barsRect.right):null}});
+      return{visible:!!theater&&!theater.hidden,count:theater?.querySelectorAll(config.content).length||0,arrows:theater?.querySelectorAll('svg.tk-flow,.tk-flow-shaft,.tk-flow-head').length||0,bucketGeometry,bucketHeaders,signature,previewSignature:preview?.layoutSignature||null,exactSrc:preview?.exactSrc||'',veil:document.querySelectorAll('.crm-transit-veil').length,invalid:[...(theater?.querySelectorAll('*')||[])].filter((n)=>/NaN|Infinity/.test(getComputedStyle(n).transform)).length};
     },room);
     const liveBuffer=await page.screenshot({path:path.join(out,`room-${room.key}.png`)});
     const exactBuffer=Buffer.from(state.exactSrc.split(',')[1]||'','base64');
     const pixelMae=imageDifference(exactBuffer,liveBuffer,{left:50,right:1230,top:105,bottom:755});
     const probe={settled:await page.evaluate(()=>window.__fps),transition:await finishMotionProbe(page,`in-${room.key}`)};
     assertMotion(`${room.key} inbound`,probe.transition);
-    const badBucket=state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
-    if(!state.visible||state.count!==room.expected||state.arrows||badBucket||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.settled.fps<40||probe.transition.fps<45)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
+    const badBucket=room.key!=='planner'&&state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
+    const badHeader=state.bucketHeaders.some((header)=>!header.title||header.whiteSpace!=='nowrap'||!header.singleLine||header.count||header.barsPosition!=='absolute'||header.barsRight<8||header.barsRight>60);
+    if(!state.visible||state.count!==room.expected||state.arrows||badBucket||badHeader||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.settled.fps<40||probe.transition.fps<45)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
     await startMotionProbe(page,`out-${room.key}`);
     const outboundReaction=await page.evaluate(()=>{const started=performance.now();window.__homeDrive=window.crmDeskTransit.driveTo('home');return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),level:window.crmHomeCamera?.level?.(),module:document.body.dataset.crmModule}});
     if(!outboundReaction.busy||outboundReaction.level!==1||outboundReaction.module!=='home'||outboundReaction.elapsedMs>50)throw new Error(`${room.key} Home click did not start its camera move immediately: ${JSON.stringify(outboundReaction)}`);
@@ -353,6 +355,10 @@ async function main() {
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   const unsettled=transitTimings.filter((item)=>item.settled===false);
   if(unsettled.length)throw new Error(`Destinations were revealed before stable geometry: ${JSON.stringify(unsettled)}`);
+  await page.evaluate(()=>window.crmWorkspaces.setActive('money'));
+  await page.waitForFunction(()=>document.querySelectorAll('[data-crm-theater="money-room"] .crm-money-view').length===2&&document.querySelectorAll('[data-crm-theater="money-room"] [data-crm-subtheater="money"]:not([hidden]) .tk-zone').length===3);
+  const moneySelector=await page.evaluate(()=>{const root=document.querySelector('[data-crm-theater="money-room"]');const before=window.crmMoneyRoom?.selected?.();const buttons=[...root.querySelectorAll('.crm-money-view')];buttons.find((button)=>button.dataset.moneyView!==before)?.click();const after=window.crmMoneyRoom?.selected?.();const visible=[...root.querySelectorAll('[data-crm-subtheater="money"]')].filter((node)=>!node.hidden);return{buttons:buttons.length,before,after,selected:root.querySelectorAll('.crm-money-view.is-selected').length,visible:visible.map((node)=>node.dataset.crmTheater)}});
+  if(moneySelector.buttons!==2||moneySelector.before===moneySelector.after||moneySelector.selected!==1||moneySelector.visible.length!==1)throw new Error(`Money selector is not a single compact Bills/Invoices switch: ${JSON.stringify(moneySelector)}`);
   await page.evaluate(()=>window.crmWorkspaces.setActive('people'));
   await page.waitForFunction(()=>!!document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]'),null,{timeout:10000});
   await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]',(card)=>{const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+20,clientY:r.top+20,button:2}))});

@@ -4,11 +4,11 @@
 
   const MODULES = [
     { key: "desk", label: "Overview" }, { key: "people", label: "People" },
-    { key: "cases", label: "Tickets" }, { key: "bills", label: "Bills" },
-    { key: "invoices", label: "Invoices" }, { key: "assignments", label: "Assignments" },
+    { key: "cases", label: "Tickets" }, { key: "money", label: "Money" },
+    { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v27";
+  const HOME_PREVIEW_VERSION = "filtered-home-v28";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -30,8 +30,8 @@
   let factoryPrewarmAfter = 0;
   const prewarmedFactories = new Set();
   const recycledExpanders = new Map();
-  const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "billPipeline", "moneyPipeline", "crmAssignments"];
-  const FACTORY_API_BY_MODULE = { desk:"crmDesk", people:"peopleCards", cases:"ticketStacks", bills:"billPipeline", invoices:"moneyPipeline", assignments:"crmAssignments" };
+  const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "crmMoneyRoom", "crmPlanner", "crmAssignments"];
+  const FACTORY_API_BY_MODULE = { desk:"crmDesk", people:"peopleCards", cases:"ticketStacks", money:"crmMoneyRoom", planner:"crmPlanner", assignments:"crmAssignments" };
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -82,7 +82,8 @@
         max-width:80%;text-align:center;pointer-events:none;contain:layout style;opacity:.94;
         transition:opacity .2s ease;display:flex;flex-direction:column;align-items:center}
       .crm-home-title{font:650 clamp(11px,3.2cqh,15px)/1.05 system-ui;letter-spacing:.14em;text-transform:uppercase;
-        color:rgba(238,243,251,.86);text-shadow:0 1px 0 rgba(255,255,255,.2),0 -1px 0 rgba(0,0,0,.82),0 2px 10px rgba(0,0,0,.3)}
+        max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(238,243,251,.86);
+        text-shadow:0 1px 0 rgba(255,255,255,.2),0 -1px 0 rgba(0,0,0,.82),0 2px 10px rgba(0,0,0,.3)}
       .crm-home-loading-spinner{display:block;width:12px;height:12px;margin-top:10px;box-sizing:border-box;border-radius:50%;
         border:1.5px solid rgba(220,232,248,.22);border-top-color:rgba(238,246,255,.82);will-change:transform;
         animation:crm-home-loading-spin .72s linear infinite}
@@ -734,8 +735,8 @@
     });
   });
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
-    const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
-    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "money" ? "money-room" : key;
+    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
       const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
       const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
@@ -746,8 +747,8 @@
       stable=next&&next===last?stable+1:0;last=next;if(stable>=3||performance.now()-started>=timeoutMs)resolve({stable:stable>=3,signature:next});else requestAnimationFrame(tick)};requestAnimationFrame(tick);
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
-    const theater = key === "cases" ? "tickets" : key === "invoices" ? "money" : key;
-    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",bills:".tk-zone,.tk-deck",invoices:".tk-zone,.tk-deck",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const theater = key === "cases" ? "tickets" : key === "money" ? "money-room" : key;
+    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });

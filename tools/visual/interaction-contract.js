@@ -201,40 +201,35 @@ async function main() {
     const room = document.querySelector('.crm-overview-surface:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
   });
-  await page.waitForFunction(() => document.querySelectorAll('.crm-overview-panel').length === 3
-    && document.querySelectorAll('.crm-overview-work-group').length >= 3
-    && document.querySelectorAll('.crm-overview-card.tk-card .ticket-body').length >= 7, { timeout: 10000 });
-  await check('Overview keeps the generic calculated Commitments, Work in motion, and What changed template', () => {
-    const panels = [...document.querySelectorAll('.crm-overview-panel')];
-    const groups = [...document.querySelectorAll('.crm-overview-work-group')];
-    const cards = [...document.querySelectorAll('.crm-overview-card.tk-card')];
-    const metrics = [...document.querySelectorAll('.crm-overview-metric-value,.crm-overview-summary-value')];
+  await page.waitForFunction(() => document.querySelectorAll('.crm-overview-pocket').length === 3
+    && document.querySelectorAll('.crm-overview-project').length >= 3
+    && document.querySelectorAll('.crm-overview-mini-world').length >= 3
+    && document.querySelectorAll('.crm-overview-ticket').length >= 4, { timeout: 10000 });
+  await check('Overview is a coherent set of Projects, In focus, and Updates pocket universes', () => {
+    const pockets = [...document.querySelectorAll('.crm-overview-pocket')];
+    const projects = [...document.querySelectorAll('.crm-overview-project')];
+    const maps = [...document.querySelectorAll('.crm-overview-mini-world,.crm-overview-map')];
+    const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
+    const updates = [...document.querySelectorAll('.crm-overview-update')];
     return {
-      ok: panels.map((panel) => panel.querySelector('.crm-overview-panel-title')?.textContent.trim()).join(',') === 'Commitments,Work in motion,What changed'
-        && groups.length >= 3 && cards.length >= 7 && metrics.length >= groups.length + 2
-        && metrics.every((metric) => Number.isFinite(Number(metric.textContent.trim())))
-        && document.querySelectorAll('.crm-overview-stack-card').length >= 3
-        && document.querySelectorAll('.crm-overview-recent-card').length >= 2
-        && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.recordEntity)
-        && !document.querySelector('.crm-overview-bucket,[data-overview-phase]')
-        && !document.querySelector('[data-overview-system]')
-        && !document.querySelector('.crm-desk-panel,.crm-desk-work-card,.crm-desk-stagebar,.crm-desk-activity'),
-      detail: `${panels.length} calculated panels / ${groups.length} truthful source pools / ${cards.length} supporting cards`,
+      ok: pockets.map((pocket) => pocket.querySelector('.crm-overview-pocket-title')?.textContent.trim()).join(',') === 'Projects,In focus,Updates'
+        && projects.length >= 3 && maps.length >= projects.length + 1 && tickets.length >= 4 && updates.length >= 3
+        && !!document.querySelector('.crm-overview-project-list')
+        && getComputedStyle(document.querySelector('.crm-overview-project-list')).overflowY === 'auto'
+        && !document.querySelector('.crm-overview-metric,.crm-overview-work-group,.crm-overview-attention-stack,.crm-overview-recent-trail'),
+      detail: `${projects.length} project worlds / ${tickets.length} ticket examples / ${updates.length} updates`,
     };
   });
-  await check('Overview numbers are the primary hierarchy and literal objects are supporting evidence', () => {
-    const primary = document.querySelector('.crm-overview-metric-value');
-    const supporting = document.querySelector('.crm-overview-work-card');
-    const metricSize = Number.parseFloat(getComputedStyle(primary).fontSize);
-    const cardRect = supporting?.getBoundingClientRect();
-    return metricSize >= 45 && cardRect?.width <= 130 && cardRect?.height <= 195
-      && !!document.querySelector('.crm-overview-attention-stack')
-      && !!document.querySelector('.crm-overview-work-groups')
-      && !!document.querySelector('.crm-overview-recent-trail');
+  await check('Overview miniatures are low-cost maps rather than copied ticket or bucket trees', () => {
+    const maps = [...document.querySelectorAll('.crm-overview-mini-world,.crm-overview-map')];
+    const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
+    return maps.length >= 4 && tickets.length >= 4
+      && !document.querySelector('.crm-overview-surface .tk-card,.crm-overview-surface .tk-zone,.crm-overview-surface .ticket-body')
+      && maps.every((map) => map.querySelectorAll('*').length <= 30);
   });
-  await check('Overview generic panels consume the exact canonical menu shell', () => {
+  await check('Overview pockets consume the exact canonical menu shell', () => {
     const reference = document.querySelector('.auth-profile-menu');
-    const panels = [...document.querySelectorAll('.crm-overview-panel')];
+    const panels = [...document.querySelectorAll('.crm-overview-pocket')];
     if (!reference || panels.length !== 3) return false;
     const expected = getComputedStyle(reference);
     return panels.every((panel) => {
@@ -242,26 +237,6 @@ async function main() {
       return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'boxShadow', 'color']
         .every((property) => actual[property] === expected[property]);
     });
-  });
-  await page.mouse.move(800, 470);
-  await sleep(380);
-  await check('Commitments rest as a compact literal card stack', () => {
-    const cards = [...document.querySelectorAll('.crm-overview-attention-stack .crm-overview-stack-card')];
-    const tops = cards.map((card) => card.getBoundingClientRect().top);
-    return cards.length >= 3 && Math.max(...tops) - Math.min(...tops) < 130;
-  });
-  await page.hover('.crm-overview-attention-stack');
-  await sleep(450);
-  await check('Commitment cards reveal vertically without changing the overview template', () => {
-    const cards = [...document.querySelectorAll('.crm-overview-attention-stack .crm-overview-stack-card')];
-    const tops = cards.map((card) => card.getBoundingClientRect().top);
-    return cards.length >= 3 && Math.max(...tops) - Math.min(...tops) > 180;
-  });
-  await page.mouse.move(800, 470);
-  await check('Recent change is expressed as a separate literal card trail', () => {
-    const cards = [...document.querySelectorAll('.crm-overview-recent-trail .crm-overview-recent-card')];
-    const tops = cards.map((card) => card.getBoundingClientRect().top);
-    return cards.length >= 2 && Math.max(...tops) - Math.min(...tops) > 65;
   });
   await check('Retired standalone Home, Today, and Reports theaters do not own the stage', () => ![...document.querySelectorAll('[data-crm-theater="home"],[data-crm-theater="today"],[data-crm-theater="reports"]')].some((el) => !el.hidden));
 
@@ -687,35 +662,60 @@ async function main() {
   await page.keyboard.press('Escape');
 
   await activate('desk');
-  await check('Overview reuses native card paint, faces, and progress segments without menu-styled substitutes', () => {
-    const cards = [...document.querySelectorAll('.crm-overview-card.tk-card')];
-    return cards.length >= 7
-      && cards.every((card) => !!card.style.backgroundImage && !!card.querySelector('.ticket-body'))
-      && cards.some((card) => card.querySelector('.tk-bars-card .tk-seg'))
-      && cards.every((card) => !card.classList.contains('crm-menu-action'));
+  await check('Overview ticket examples stay lightweight while retaining their native ticket action', () => {
+    const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
+    return tickets.length >= 4 && tickets.every((ticket) => !ticket.classList.contains('tk-card') && !ticket.querySelector('.ticket-body'))
+      && tickets.some((ticket) => ticket.dataset.overviewTicket);
   });
-  await page.$eval('.crm-overview-card[data-record-entity="contacts"]', async (card) => {
-    const result = await window.crmStore.get('contacts', card.dataset.recordId);
-    const person = result?.record || {};
-    window.__overviewExpectedPerson = person.name || person.title || person.client || person.id;
-    card.click();
-  });
-  await page.waitForSelector('.record-world-shell:not([hidden])');
-  await check('An Overview card opens the same contextual record screen as its source module', () => ({
-    ok: document.querySelector('.record-world-kicker')?.textContent.trim() === 'Person'
-      && document.querySelector('.record-world-title')?.textContent.trim() === window.__overviewExpectedPerson
-      && !!document.querySelector('.record-world-facts')
-      && !!document.querySelector('.record-world-related') && !!document.querySelector('.record-world-commitments')
-      && !!document.querySelector('.record-world-timeline'),
-    detail: document.querySelector('.record-world-title')?.textContent || '',
-  }));
-  await page.click('[data-show-note]');
-  await page.type('[data-note-form] textarea', 'Interaction contract note');
-  await page.click('[data-note-form] button[type="submit"]');
-  await page.waitForFunction(() => [...document.querySelectorAll('.record-world-event-content')].some((el) => el.textContent.includes('Interaction contract note')), { timeout: 5000 });
-  await check('Adding a note creates durable contextual activity', () => [...document.querySelectorAll('.record-world-event-content')].some((el) => el.textContent.includes('Interaction contract note')));
+  await page.click('.crm-overview-ticket[data-overview-ticket]:not([data-overview-ticket=""])');
+  await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail', { timeout: 5000 });
+  await check('An Overview ticket opens the same ticket detail as the Tickets room', () => !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail'));
   await page.keyboard.press('Escape');
-  await page.waitForSelector('.record-world-shell[hidden]');
+
+  await activate('planner');
+  await check('Planner starts with editable project worlds and custom buckets', () => {
+    const projects = [...document.querySelectorAll('.crm-planner-project')];
+    const buckets = [...document.querySelectorAll('.crm-planner-bucket')];
+    return projects.length >= 3 && buckets.length === 3
+      && projects.every((project) => !!project.querySelector('.crm-project-minimap'))
+      && buckets.every((bucket) => !!bucket.querySelector('.crm-planner-bucket-title'));
+  });
+  await page.click('[data-planner-action="new-project"]');
+  await page.type('.crm-planner-popover input[name="value"]', 'Interaction plan');
+  await page.click('.crm-planner-popover button[type="submit"]');
+  await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
+  await page.click('[data-planner-action="new-bucket"]');
+  await page.type('.crm-planner-popover input[name="value"]', 'Review');
+  await page.click('.crm-planner-popover button[type="submit"]');
+  await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
+  await page.click('.crm-planner-bucket:last-child [data-planner-action="new-card"]');
+  await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
+  await page.click('.crm-planner-popover button[type="submit"]');
+  await check('Planner creates projects, custom buckets, and fully functional items', () => {
+    const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
+    const review = project?.buckets.find((bucket) => bucket.title === 'Review');
+    const stored = JSON.parse(localStorage.getItem('crm-planner-projects-v1') || '[]');
+    return !!project && project.buckets.length === 4 && review?.cards.some((card) => card.title === 'Ship the polished flow')
+      && stored.some((item) => item.id === project.id)
+      && !!document.querySelector('.crm-planner-card');
+  });
+  await page.click('.crm-planner-bucket:last-child [data-planner-action="bucket-menu"]');
+  await check('Planner edits use a compact canonical anchored menu', () => {
+    const menu = document.querySelector('.crm-planner-context');
+    const reference = document.querySelector('.auth-profile-menu');
+    if (!menu || !reference) return false;
+    const actual = getComputedStyle(menu); const expected = getComputedStyle(reference);
+    const rect = menu.getBoundingClientRect();
+    return menu.classList.contains('crm-menu-surface') && rect.width < 200 && rect.height < 130
+      && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
+  });
+  await page.keyboard.press('Escape');
+  await activate('desk');
+  await page.waitForFunction(() => [...document.querySelectorAll('.crm-overview-project-name')].some((element) => element.textContent.trim() === 'Interaction plan'));
+  await check('Overview immediately reflects Planner projects as low-cost mini layouts', () => {
+    const row = [...document.querySelectorAll('.crm-overview-project')].find((element) => element.querySelector('.crm-overview-project-name')?.textContent.trim() === 'Interaction plan');
+    return !!row && row.querySelectorAll('.crm-overview-mini-lane').length === 4 && !row.querySelector('.crm-planner-bucket,.tk-card');
+  });
   await activate('home');
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0
     && document.querySelectorAll('.crm-home-hand-card.tk-card').length === window.crmHome?.handStatus?.().count, { timeout: 10000 });

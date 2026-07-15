@@ -8,7 +8,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v28";
+  const HOME_PREVIEW_VERSION = "filtered-home-v29";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -736,7 +736,7 @@
   });
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "money" ? "money-room" : key;
-    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const selector = {desk:".crm-overview-pocket,.crm-overview-ticket",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
       const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
       const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
@@ -748,7 +748,7 @@
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
     const theater = key === "cases" ? "tickets" : key === "money" ? "money-room" : key;
-    const selector = {desk:".crm-overview-panel,.tk-card",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const selector = {desk:".crm-overview-pocket,.crm-overview-ticket",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });

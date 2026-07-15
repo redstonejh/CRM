@@ -77,8 +77,8 @@ async function sampleLayoutStability(page, rootSelector, frames = 12) {
     const signatures = [];
     const changedFrames = [];
     const nodeSelector = [
-      '.crm-overview-panel', '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck',
-      '.crm-assignment-bucket', '.crm-home-grid', '.crm-home-bucket',
+      '.crm-overview-pocket', '.crm-overview-ticket', '.crm-planner-bucket', '.crm-planner-card',
+      '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck', '.crm-assignment-bucket', '.crm-home-grid', '.crm-home-bucket',
       '.crm-home-priority-hand', '.crm-home-hand-card',
     ].join(',');
     const capture = () => {
@@ -181,7 +181,7 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'filtered-home-v28' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'filtered-home-v29' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes('blur(2.4px)') || item.titleOpacity < .9)) {
@@ -296,7 +296,7 @@ async function main() {
   }
 
   const rooms = [
-    {key:'desk',theater:'desk',content:'.crm-overview-panel',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
+    {key:'desk',theater:'desk',content:'.crm-overview-pocket',expected:3}, {key:'people',theater:'people',content:'.tk-zone',expected:8},
     {key:'cases',theater:'tickets',content:'.tk-zone',expected:3}, {key:'money',theater:'money-room',content:'[data-crm-subtheater="money"]:not([hidden]) .tk-zone',expected:3},
     {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:3}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:4},
   ];

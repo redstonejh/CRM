@@ -1,317 +1,125 @@
-// crm-desk.js — a semantic cross-system Overview whose evidence is made from
-// the same literal cards and buckets as the operating rooms.
+// crm-desk.js — Overview as a set of lightweight project pocket universes.
 (() => {
   let root = null;
   let active = false;
   let model = null;
+  let dirty = true;
   let timer = 0;
 
+  const esc = (value) => String(value ?? "").replace(/[&<>\"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+  }[character]));
   const rows = (result) => result?.records || [];
-  const terminalStages = new Set(["won", "lost", "paid", "closed", "resolved", "complete", "completed", "cancelled", "canceled"]);
-  const supportedWorkflows = new Set(["sales", "jobs", "money", "bills", "cases"]);
-  const done = (item) => ["completed", "cancelled", "canceled"].includes(String(item?.status || "").toLowerCase());
-  const dueMs = (item) => Date.parse(item?.dueAt || "") || Number.MAX_SAFE_INTEGER;
-  const dayStart = () => { const date = new Date(); date.setHours(0, 0, 0, 0); return date.getTime(); };
-  const normalizeEntity = (entity) => ({
-    case: "tickets", cases: "tickets", ticket: "tickets", deal: "deals", job: "jobs",
-    invoice: "invoices", bill: "bills", contact: "contacts", person: "contacts",
-  }[String(entity || "").toLowerCase()] || String(entity || "").toLowerCase());
-  const cardApi = (entity) => ({
-    tickets: window.ticketStacks,
-    deals: window.dealPipeline,
-    jobs: window.jobPipeline,
-    invoices: window.moneyPipeline,
-    bills: window.billPipeline,
-    contacts: window.peopleCards,
-  }[normalizeEntity(entity)] || null);
-  const systems = [
-    { key: "sales", label: "Sales", entity: "deals", module: "pipeline", stages: ["lead", "qualified", "proposal", "negotiation"] },
-    { key: "jobs", label: "Work", entity: "jobs", module: "jobs", stages: ["intake", "planned", "active", "review"] },
-    { key: "cases", label: "Tickets", entity: "tickets", module: "cases", stages: ["triage", "investigation", "resolution"] },
-    { key: "bills", label: "Bills", entity: "bills", module: "bills", stages: ["upcoming", "due", "overdue"] },
-    { key: "money", label: "Invoices", entity: "invoices", module: "invoices", stages: ["draft", "sent", "overdue"] },
-  ];
+  const first = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
+  const ticketTitle = (ticket) => first(ticket?.title, ticket?.subject, ticket?.name, ticket?.id, "Untitled ticket");
+  const ticketMeta = (ticket) => first(ticket?.companyLabel, ticket?.client, ticket?.requesterName, ticket?.priority, ticket?.state, "Open ticket");
+  const updateTitle = (activity) => first(activity?.title, activity?.summary, activity?.description, activity?.type, "Project updated");
+  const timeValue = (item) => Date.parse(item?.updatedAt || item?.occurredAt || item?.createdAt || "") || 0;
+  const relativeTime = (value) => {
+    const milliseconds = Date.now() - (Date.parse(value || "") || Date.now());
+    const minutes = Math.max(0, Math.floor(milliseconds / 60000));
+    if (minutes < 1) return "now";
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h`;
+    const days = Math.floor(hours / 24); return `${days}d`;
+  };
+  const projectCards = (project) => project?.buckets.flatMap((bucket) => bucket.cards.map((card) => ({ ...card, bucket: bucket.title, projectId: project.id, projectTitle: project.title }))) || [];
 
   function ensureStyles() {
     if (document.getElementById("crm-overview-styles")) return;
-    const style = document.createElement("style");
-    style.id = "crm-overview-styles";
+    const style = document.createElement("style"); style.id = "crm-overview-styles";
     style.textContent = `
-      .crm-overview-surface{position:fixed;inset:0;z-index:835;color:#fff;pointer-events:auto;overflow:hidden}
-      .crm-overview-surface[hidden]{display:none}
-      .crm-overview-frame{position:absolute;inset:58px 48px 86px;max-width:1320px;margin:auto;display:grid;grid-template-rows:58px minmax(0,1fr)}
-      .crm-overview-head{display:flex;align-items:flex-end;justify-content:space-between;padding:0 4px 15px}
-      .crm-overview-date{font:650 18px/1.15 system-ui;letter-spacing:-.015em;color:#fff}
-      .crm-overview-brief{margin-top:6px;font-size:11px;color:rgba(255,255,255,.62)}
-      .crm-overview-panels{min-height:0;display:grid;grid-template-columns:290px minmax(610px,1fr) 290px;gap:18px}
-      .crm-overview-panel{min-width:0;min-height:0;display:grid;grid-template-rows:38px minmax(0,1fr);padding:9px 6px;overflow:hidden}
-      .crm-overview-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 12px}
-      .crm-overview-panel-title{font-size:.95rem;font-weight:700;color:#fff}
-      .crm-overview-panel-count{font-size:.78rem;color:rgba(255,255,255,.62)}
-      .crm-overview-panel-body{position:relative;min-height:0;overflow:hidden}
-      .crm-overview-metric{position:absolute;left:12px;right:12px;top:4px;height:92px;display:flex;align-items:flex-end;gap:10px;padding-bottom:10px;box-sizing:border-box}
-      .crm-overview-metric-value{font:680 54px/.82 system-ui;letter-spacing:-.055em;color:#fff}
-      .crm-overview-metric-copy{padding-bottom:2px;font-size:11px;line-height:1.35;color:rgba(255,255,255,.62)}
-      .crm-overview-work-summary{position:absolute;left:10px;right:10px;top:5px;height:88px;display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
-      .crm-overview-summary-cell{display:flex;flex-direction:column;justify-content:flex-end;padding:0 7px 10px;color:rgba(255,255,255,.62)}
-      .crm-overview-summary-value{font:680 27px/1 system-ui;letter-spacing:-.035em;color:#fff}.crm-overview-summary-label{margin-top:4px;font-size:10px}
-      .crm-overview-work-groups{position:absolute;left:0;right:0;top:98px;bottom:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:4px 10px;padding:4px}
-      .crm-overview-work-group{position:relative;min-width:0;min-height:0;overflow:hidden}
-      .crm-overview-work-head{height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;color:rgba(255,255,255,.62)}
-      .crm-overview-work-name{font-size:.78rem;font-weight:700}.crm-overview-work-count{font-size:.78rem}
-      .crm-overview-work-stack{position:absolute;left:8px;right:8px;top:31px;bottom:3px}
-      .crm-overview-work-card.tk-card{position:absolute!important;left:8px!important;right:auto!important;bottom:auto!important;top:50%!important;
-        width:122px!important;height:184px!important;margin:0!important;cursor:pointer;z-index:var(--overview-z,1);
-        transform:translate3d(var(--group-rest-x),calc(-50% + var(--group-y)),0) rotate(var(--group-r));transition:transform .3s cubic-bezier(.22,1,.26,1)}
-      .crm-overview-work-group:is(:hover,:focus-within) .crm-overview-work-card.tk-card{transform:translate3d(var(--group-fan-x),calc(-50% + var(--group-y)),0) rotate(var(--group-r))}
-      .crm-overview-work-group:is(:hover,:focus-within) .crm-overview-work-card.tk-card:is(:hover,:focus-visible){transform:translate3d(var(--group-fan-x),calc(-50% + var(--group-y) - 10px),0) rotate(0deg) scale(1.018);z-index:90}
-      .crm-overview-card.tk-card:focus-visible{z-index:50}
-      .crm-overview-attention-stack,.crm-overview-recent-trail{position:absolute;left:0;right:0;top:98px;bottom:0}
-      .crm-overview-stack-card.tk-card,.crm-overview-recent-card.tk-card{position:absolute!important;left:50%!important;right:auto!important;bottom:auto!important;
-        width:165px!important;height:249px!important;margin:0!important;cursor:pointer;z-index:var(--overview-z,1);transition:top .32s cubic-bezier(.22,1,.26,1),transform .32s cubic-bezier(.22,1,.26,1)}
-      .crm-overview-stack-card.tk-card{top:calc(var(--stack-y) + 20px)!important;transform:translateX(-50%) rotate(var(--stack-r))}
-      .crm-overview-attention-stack:is(:hover,:focus-within) .crm-overview-stack-card.tk-card{top:var(--open-y)!important;transform:translateX(-50%) rotate(0deg)}
-      .crm-overview-attention-stack:is(:hover,:focus-within) .crm-overview-stack-card.tk-card:is(:hover,:focus-visible){transform:translateX(-50%) translateY(-10px) scale(1.018);z-index:90}
-      .crm-overview-recent-card.tk-card{top:calc(var(--trail-y) + var(--trail-start,0px))!important;transform:translateX(calc(-50% + var(--trail-x))) rotate(var(--trail-r));width:160px!important;height:242px!important}
-      .crm-overview-recent-card.tk-card:is(:hover,:focus-visible){transform:translateX(calc(-50% + var(--trail-x))) translateY(-8px) rotate(0deg);z-index:90}
-      @media(max-width:1180px){.crm-overview-frame{inset:56px 24px 84px}.crm-overview-panels{grid-template-columns:260px minmax(570px,1fr) 260px;gap:12px}}
+      .crm-overview-surface{position:fixed;inset:0;z-index:835;color:#fff;pointer-events:auto;overflow:hidden}.crm-overview-surface[hidden]{display:none}
+      .crm-overview-frame{position:absolute;inset:58px 48px 84px;max-width:1400px;margin:auto;display:grid;grid-template-rows:56px minmax(0,1fr);gap:12px}
+      .crm-overview-head{display:flex;align-items:center;justify-content:space-between;min-width:0;padding:0 5px}.crm-overview-title{font:720 1rem/1.1 system-ui;letter-spacing:-.012em}.crm-overview-brief{margin-top:5px;color:rgba(255,255,255,.42);font-size:10px}
+      .crm-overview-worlds{min-height:0;display:grid;grid-template-columns:minmax(276px,.85fr) minmax(420px,1.5fr) minmax(250px,.78fr);gap:14px}
+      .crm-overview-pocket{min-width:0;min-height:0;padding:9px;display:grid;grid-template-rows:40px minmax(0,1fr);overflow:hidden}
+      .crm-overview-pocket-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 8px}.crm-overview-pocket-title{font-size:.78rem;font-weight:720}.crm-overview-pocket-hint{color:rgba(255,255,255,.32);font-size:9px;white-space:nowrap}
+      .crm-overview-project-list{min-height:0;overflow-y:auto;display:grid;align-content:start;gap:5px;padding:2px 2px 4px;scrollbar-width:thin}
+      .crm-overview-project{appearance:none;width:100%;height:106px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px;padding:11px;text-align:left;border:0;border-radius:10px;background:transparent;color:rgba(255,255,255,.75);cursor:pointer;transition:color .14s ease,background .14s ease}.crm-overview-project:hover,.crm-overview-project:focus-visible,.crm-overview-project.is-selected{outline:0;color:#fff;background:rgba(255,255,255,.025)}
+      .crm-overview-project-copy{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}.crm-overview-project-name{font-size:.7rem;font-weight:680;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-project-state{color:rgba(255,255,255,.3);font-size:8px;white-space:nowrap}
+      .crm-overview-mini-world{min-height:0;display:flex;gap:5px;padding:6px;border:1px solid rgba(255,255,255,.055);border-radius:8px;background:rgba(255,255,255,.018);overflow:hidden}.crm-overview-mini-lane{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}.crm-overview-mini-lane:before{content:"";height:2px;border-radius:3px;background:rgba(195,218,248,.25)}.crm-overview-mini-card{display:block;height:7px;border-radius:3px;background:linear-gradient(90deg,rgba(117,165,230,.22),rgba(255,255,255,.035))}.crm-overview-mini-card:nth-child(3n){width:72%}
+      .crm-overview-focus-body{min-height:0;display:grid;grid-template-rows:218px minmax(0,1fr);gap:9px}
+      .crm-overview-featured{position:relative;min-height:0;padding:14px;border-radius:11px;background:linear-gradient(150deg,rgba(85,127,188,.105),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.065);overflow:hidden}.crm-overview-featured-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.crm-overview-featured-title{font-size:.88rem;font-weight:720;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-featured-note{margin-top:5px;color:rgba(255,255,255,.38);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-featured-open.crm-menu-action{height:28px;font-size:.66rem!important;padding:0 4px!important}
+      .crm-overview-map{position:absolute;left:13px;right:13px;bottom:13px;height:130px;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(74px,1fr);gap:8px;overflow:hidden}.crm-overview-map-lane{min-width:0;padding:8px;border-radius:8px;background:rgba(255,255,255,.023);border:1px solid rgba(255,255,255,.055);overflow:hidden}.crm-overview-map-title{display:block;color:rgba(255,255,255,.35);font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-map-cards{display:grid;gap:4px;margin-top:8px}.crm-overview-map-card{height:19px;border-radius:5px;background:linear-gradient(145deg,rgba(119,162,220,.17),rgba(255,255,255,.027));border:1px solid rgba(255,255,255,.035)}.crm-overview-map-card:nth-child(2n){width:84%}
+      .crm-overview-tickets{min-height:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:7px;overflow-y:auto;padding:1px;scrollbar-width:thin}.crm-overview-ticket{appearance:none;min-width:0;min-height:92px;padding:11px;text-align:left;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:linear-gradient(150deg,rgba(100,143,203,.09),rgba(255,255,255,.018));color:rgba(255,255,255,.8);cursor:pointer;transition:border-color .14s ease,background .14s ease}.crm-overview-ticket:hover,.crm-overview-ticket:focus-visible{outline:0;border-color:rgba(160,197,245,.2);background:linear-gradient(150deg,rgba(100,143,203,.14),rgba(255,255,255,.026))}.crm-overview-ticket-label{display:flex;align-items:center;gap:6px;color:rgba(159,196,245,.55);font-size:8px;text-transform:uppercase;letter-spacing:.07em}.crm-overview-ticket-label:before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor}.crm-overview-ticket-title{display:block;margin-top:8px;font-size:.7rem;font-weight:680;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-ticket-meta{display:block;margin-top:7px;color:rgba(255,255,255,.33);font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-overview-update-list{min-height:0;overflow-y:auto;display:grid;align-content:start;gap:1px;padding:1px 3px;scrollbar-width:thin}.crm-overview-update{position:relative;min-height:67px;padding:11px 34px 10px 20px;color:rgba(255,255,255,.67)}.crm-overview-update:before{content:"";position:absolute;left:7px;top:16px;width:4px;height:4px;border-radius:50%;background:rgba(135,181,242,.52);box-shadow:0 0 9px rgba(90,150,230,.22)}.crm-overview-update-title{font-size:.68rem;font-weight:650;line-height:1.32}.crm-overview-update-context{margin-top:6px;color:rgba(255,255,255,.31);font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-overview-update-time{position:absolute;right:4px;top:12px;color:rgba(255,255,255,.24);font-size:8px}
+      .crm-overview-empty{height:100%;display:grid;place-items:center;padding:24px;text-align:center;color:rgba(255,255,255,.35);font-size:.7rem;line-height:1.45}
+      @media(max-width:1080px){.crm-overview-frame{inset:56px 24px 82px}.crm-overview-worlds{grid-template-columns:235px minmax(400px,1fr) 225px;gap:10px}}
     `;
     document.head.appendChild(style);
   }
 
+  const miniWorld = (project) => `<span class="crm-overview-mini-world" aria-hidden="true">${project.buckets.slice(0, 4).map((bucket) => `<span class="crm-overview-mini-lane">${bucket.cards.slice(0, 4).map(() => '<i class="crm-overview-mini-card"></i>').join("")}</span>`).join("")}</span>`;
+  const projectMap = (project) => `<div class="crm-overview-map">${project.buckets.slice(0, 5).map((bucket) => `<div class="crm-overview-map-lane"><span class="crm-overview-map-title">${esc(bucket.title)}</span><div class="crm-overview-map-cards">${bucket.cards.slice(0, 4).map(() => '<i class="crm-overview-map-card"></i>').join("")}</div></div>`).join("")}</div>`;
+
+  async function safeList(source) { try { return rows(await source()); } catch { return []; } }
   async function load() {
-    const [commitmentResult, activityResult, flowResult, ...systemResults] = await Promise.all([
-      window.crmDomain.list("commitments", { includeDeleted: false, limit: 300 }),
-      window.crmDomain.list("activities", { includeDeleted: false, limit: 80 }),
-      window.crmDomain.list("workflow-entries", { includeDeleted: false, limit: 300 }),
-      ...systems.map((system) => window.crmStore.list(system.entity, { includeDeleted: false })),
+    const [tickets, activities] = await Promise.all([
+      safeList(() => window.crmStore.list("tickets", { includeDeleted: false })),
+      safeList(() => window.crmDomain.list("activities", { includeDeleted: false, limit: 80 })),
     ]);
-    const commitments = rows(commitmentResult).filter((item) => !done(item));
-    const activities = rows(activityResult);
-    const flows = rows(flowResult).filter((item) => !item.deletedAt
-      && supportedWorkflows.has(String(item.workflowKey || "").toLowerCase())
-      && !terminalStages.has(String(item.stage || "").toLowerCase()));
-
-    const references = [];
-    const addLinks = (owner, kind) => (owner?.links || []).forEach((link) => references.push({ owner, kind, link }));
-    commitments.forEach((item) => addLinks(item, "commitment"));
-    activities.forEach((item) => addLinks(item, "activity"));
-    flows.forEach((flow) => references.push({ owner: flow, kind: "flow", link: { entityType: flow.entityType, recordId: flow.recordId } }));
-
-    const entityIds = new Map();
-    references.forEach(({ link }) => {
-      const entity = normalizeEntity(link.entityType);
-      if (!entity || !link.recordId || !cardApi(entity)?.createCard) return;
-      if (!entityIds.has(entity)) entityIds.set(entity, new Set());
-      entityIds.get(entity).add(String(link.recordId));
-    });
-    const recordsByEntity = new Map(systems.map((system, index) => [
-      system.entity, new Map(rows(systemResults[index]).map((record) => [String(record.id), record])),
-    ]));
-    await Promise.all([...entityIds.keys()].filter((entity) => !recordsByEntity.has(entity)).map(async (entity) => {
-      const result = await window.crmStore.list(entity, { includeDeleted: false });
-      recordsByEntity.set(entity, new Map(rows(result).map((record) => [String(record.id), record])));
+    const projects = window.crmPlanner?.projects?.() || [];
+    const selected = window.crmPlanner?.selected?.();
+    const project = projects.find((item) => item.id === selected) || projects[0] || null;
+    const projectUpdates = projects.flatMap(projectCards).map((card) => ({
+      id: `planner:${card.id}`, title: card.title, context: `${card.projectTitle} · ${card.bucket}`,
+      updatedAt: card.updatedAt, projectId: card.projectId, source: "planner",
     }));
-    const resolveLink = (link) => {
-      const entity = normalizeEntity(link?.entityType);
-      const record = recordsByEntity.get(entity)?.get(String(link?.recordId || ""));
-      return record && cardApi(entity)?.createCard ? { entity, record } : null;
+    const activityUpdates = activities.map((activity) => ({
+      id: `activity:${activity.id}`, title: updateTitle(activity),
+      context: first(activity?.entityLabel, activity?.actorName, activity?.type, "CRM activity"),
+      updatedAt: activity.occurredAt || activity.updatedAt || activity.createdAt, source: "activity",
+    }));
+    return {
+      projects, project, tickets: tickets.filter((ticket) => !ticket.deletedAt).sort((a, b) => timeValue(b) - timeValue(a)).slice(0, 8),
+      updates: [...projectUpdates, ...activityUpdates].sort((a, b) => timeValue(b) - timeValue(a)).slice(0, 12),
     };
-
-    commitments.forEach((item) => { item.overviewRecord = (item.links || []).map(resolveLink).find(Boolean) || null; });
-    activities.forEach((item) => { item.overviewRecord = (item.links || []).map(resolveLink).find(Boolean) || null; });
-    flows.forEach((item) => { item.overviewRecord = resolveLink({ entityType: item.entityType, recordId: item.recordId }); });
-    const flowedRecords = new Set(flows.filter((item) => item.overviewRecord)
-      .map((item) => `${item.overviewRecord.entity}:${item.overviewRecord.record.id}`));
-    const sourceFallbacks = systems.flatMap((system) => [...(recordsByEntity.get(system.entity)?.values() || [])]
-      .filter((record) => !record.deletedAt && !terminalStages.has(String(record.stage || record.state || "").toLowerCase()))
-      .filter((record) => !flowedRecords.has(`${system.entity}:${record.id}`))
-      .map((record) => ({
-        id: `overview:${system.entity}:${record.id}`, workflowKey: system.key, entityType: system.entity,
-        recordId: record.id, stage: String(record.stage || record.state || system.stages[0]).toLowerCase(),
-        createdAt: record.createdAt, updatedAt: record.updatedAt || record.createdAt,
-        overviewRecord: { entity: system.entity, record },
-      })));
-    return { commitments, activities, flows: [...flows, ...sourceFallbacks] };
   }
 
-  const uniqueItems = (items, limit = 5) => {
-    const seen = new Set();
-    return items.filter((item) => {
-      const context = item.overviewRecord;
-      const key = context ? `${context.entity}:${context.record.id}` : "";
-      if (!key || seen.has(key)) return false;
-      seen.add(key); return true;
-    }).slice(0, limit);
+  const openProject = (projectId) => {
+    window.crmPlanner?.selectProject?.(projectId);
+    window.crmDeskTransit?.driveTo?.("planner");
   };
-
-  function priorityWeight(item) {
-    return ({ critical: 5, overdue: 5, urgent: 4, high: 3, due: 2 }
-      [String(item?.overviewRecord?.record?.priority || item?.overviewRecord?.record?.state || "").toLowerCase()] || 0);
-  }
-
-  function overviewDecks() {
-    const attention = uniqueItems([
-      ...model.commitments.slice().sort((a, b) => dueMs(a) - dueMs(b)),
-      ...model.flows.filter((item) => priorityWeight(item) > 0)
-        .sort((a, b) => priorityWeight(b) - priorityWeight(a)),
-    ], 5);
-    const recent = uniqueItems(model.activities
-      .slice().sort((a, b) => (Date.parse(b.occurredAt || b.createdAt || "") || 0) - (Date.parse(a.occurredAt || a.createdAt || "") || 0)), 5);
-    return [
-      { key: "attention", label: "Commitments", items: attention },
-      { key: "recent", label: "What changed", items: recent },
-    ];
-  }
-
-  function workGroups() {
-    return systems.map((system) => {
-      const all = model.flows.filter((item) => String(item.workflowKey || "").toLowerCase() === system.key)
-        .sort((a, b) => (Date.parse(b.updatedAt || b.createdAt || "") || 0) - (Date.parse(a.updatedAt || a.createdAt || "") || 0));
-      return {
-        key: system.key, label: system.label,
-        items: uniqueItems(all, 3),
-        total: uniqueItems(all, Number.MAX_SAFE_INTEGER).length,
-      };
-    }).filter((group) => group.total > 0).slice(0, 4);
-  }
-
-  function createOverviewCard(item, mechanism, index) {
-    const context = item.overviewRecord;
-    const api = cardApi(context.entity);
-    const card = api.createCard(context.record, {
-      onOpen: (_record, source) => {
-        if (context.entity === "tickets") window.ticketStacks?.open?.(context.record, source);
-        else window.crmRecordWorld?.open?.(context.entity, context.record.id, source);
-      },
-      ariaLabel: `${context.record.title || context.record.name || context.record.companyLabel || context.record.id} — open from Overview`,
-    });
-    card.classList.add("crm-overview-card");
-    card.dataset.overviewMechanism = mechanism;
-    card.dataset.recordEntity = context.entity;
-    card.dataset.recordId = context.record.id;
-    card.style.setProperty("--overview-z", String(index + 1));
-    if (mechanism === "work") {
-      card.classList.add("crm-overview-work-card");
-      card.style.setProperty("--group-rest-x", `${index * 40}px`);
-      card.style.setProperty("--group-fan-x", `${index * 56}px`);
-      card.style.setProperty("--group-y", `${Math.abs(index - 1) * 6}px`);
-      card.style.setProperty("--group-r", `${(index - 1) * 1.4}deg`);
-    } else if (mechanism === "attention") {
-      card.classList.add("crm-overview-stack-card");
-      card.style.setProperty("--stack-y", `${index * 34}px`);
-      card.style.setProperty("--open-y", `${index * 68}px`);
-      card.style.setProperty("--stack-r", `${(index - 1.5) * 1.2}deg`);
-    } else {
-      card.classList.add("crm-overview-recent-card");
-      card.style.setProperty("--trail-y", `${index * 80}px`);
-      card.style.setProperty("--trail-x", `${(index - 1.5) * 7}px`);
-      card.style.setProperty("--trail-r", `${(index - 1.5) * .8}deg`);
-    }
-    if (mechanism === "attention") {
-      let badges = card.querySelector(".ticket-face-badges");
-      if (!badges) { badges = document.createElement("div"); badges.className = "ticket-face-badges"; card.querySelector(".ticket-body")?.appendChild(badges); }
-      const chip = document.createElement("span"); chip.className = "ticket-face-chip";
-      const late = item.dueAt && dueMs(item) < dayStart(); chip.dataset.tone = late ? "overdue" : "warn";
-      chip.textContent = late ? `${Math.max(1, Math.ceil((dayStart() - dueMs(item)) / 86400000))}d overdue` : (item.dueAt ? "Due soon" : "Needs attention");
-      badges.appendChild(chip);
-    }
-    if (mechanism === "recent") {
-      let badges = card.querySelector(".ticket-face-badges");
-      if (!badges) { badges = document.createElement("div"); badges.className = "ticket-face-badges"; card.querySelector(".ticket-body")?.appendChild(badges); }
-      const chip = document.createElement("span"); chip.className = "ticket-face-chip"; chip.textContent = "Recently changed"; badges.appendChild(chip);
-    }
-    if (context.entity === "tickets") card.addEventListener("contextmenu", (event) => {
-      event.preventDefault(); event.stopPropagation();
-      window.ticketStacks?.contextMenu?.(context.record, card, event.clientX, event.clientY);
-    });
-    return card;
-  }
-
+  const openTicket = (ticket, source) => {
+    if (ticket?.id) window.ticketStacks?.open?.(ticket, source);
+  };
   function render() {
     if (!root || !model) return;
-    const decks = overviewDecks();
-    const groups = workGroups();
-    const attention = decks.find((deck) => deck.key === "attention");
-    const recent = decks.find((deck) => deck.key === "recent");
-    const activeTotal = uniqueItems(model.flows, Number.MAX_SAFE_INTEGER).length;
-    const now = new Date();
-    const overdueTotal = model.commitments.filter((item) => item.dueAt && dueMs(item) < dayStart()).length;
-    const recentTotal = model.activities.filter((item) => (Date.parse(item.occurredAt || item.createdAt || "") || 0) >= now.getTime() - 7 * 86400000).length;
-    const date = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-    const brief = overdueTotal
-      ? `${overdueTotal} overdue · ${activeTotal} active records · ${recentTotal} changes this week`
-      : `${activeTotal} records are moving · nothing needs immediate judgment`;
+    const project = model.project || model.projects[0] || null;
+    const projectItems = projectCards(project).slice(0, 4);
+    const supportingTickets = model.tickets.length ? model.tickets.slice(0, 4) : projectItems.map((card) => ({
+      id: "", title: card.title, companyLabel: `${card.bucket} · ${project?.title || "Project"}`, state: "Project item",
+    }));
     root.innerHTML = `<div class="crm-overview-frame">
-      <header class="crm-overview-head"><div><div class="crm-overview-date">${date}</div><div class="crm-overview-brief">${brief}</div></div></header>
-      <div class="crm-overview-panels">
-        <section class="crm-overview-panel crm-menu-surface" data-overview-panel="attention">
-          <div class="crm-overview-panel-head"><span class="crm-overview-panel-title">${attention.label}</span><span class="crm-overview-panel-count">calculated</span></div>
-          <div class="crm-overview-panel-body"><div class="crm-overview-metric"><span class="crm-overview-metric-value">${model.commitments.length}</span><span class="crm-overview-metric-copy">open<br>${overdueTotal} overdue</span></div><div class="crm-overview-attention-stack"></div></div>
-        </section>
-        <section class="crm-overview-panel crm-menu-surface" data-overview-panel="motion">
-          <div class="crm-overview-panel-head"><span class="crm-overview-panel-title">Work in motion</span><span class="crm-overview-panel-count">${activeTotal} active</span></div>
-          <div class="crm-overview-panel-body"><div class="crm-overview-work-summary">${groups.map((group) => `<div class="crm-overview-summary-cell crm-menu-item"><span class="crm-overview-summary-value">${group.total}</span><span class="crm-overview-summary-label">${group.label}</span></div>`).join("")}</div><div class="crm-overview-work-groups">${groups.map((group) => `
-            <section class="crm-overview-work-group crm-menu-item" data-overview-work-group="${group.key}">
-              <div class="crm-overview-work-head"><span class="crm-overview-work-name">${group.label}</span><span class="crm-overview-work-count">${group.total}</span></div>
-              <div class="crm-overview-work-stack"></div>
-            </section>`).join("")}</div></div>
-        </section>
-        <section class="crm-overview-panel crm-menu-surface" data-overview-panel="recent">
-          <div class="crm-overview-panel-head"><span class="crm-overview-panel-title">${recent.label}</span><span class="crm-overview-panel-count">7 days</span></div>
-          <div class="crm-overview-panel-body"><div class="crm-overview-metric"><span class="crm-overview-metric-value">${recentTotal}</span><span class="crm-overview-metric-copy">changes<br>this week</span></div><div class="crm-overview-recent-trail"></div></div>
-        </section>
+      <header class="crm-overview-head"><div><div class="crm-overview-title">Overview</div><div class="crm-overview-brief">Projects, tickets, and movement — held in one quiet map.</div></div></header>
+      <div class="crm-overview-worlds">
+        <section class="crm-overview-pocket crm-menu-surface" data-overview-pocket="projects"><header class="crm-overview-pocket-head"><span class="crm-overview-pocket-title">Projects</span><span class="crm-overview-pocket-hint">open a universe</span></header><div class="crm-overview-project-list">${model.projects.length ? model.projects.map((item) => `<button type="button" class="crm-overview-project${item.id === project?.id ? " is-selected" : ""}" data-overview-project="${esc(item.id)}"><span class="crm-overview-project-copy"><span class="crm-overview-project-name">${esc(item.title)}</span><span class="crm-overview-project-state">${item.buckets.length} paths</span></span>${miniWorld(item)}</button>`).join("") : '<div class="crm-overview-empty">Your Planner projects will collect here.</div>'}</div></section>
+        <section class="crm-overview-pocket crm-menu-surface" data-overview-pocket="focus"><header class="crm-overview-pocket-head"><span class="crm-overview-pocket-title">In focus</span><span class="crm-overview-pocket-hint">supporting examples</span></header><div class="crm-overview-focus-body">${project ? `<article class="crm-overview-featured"><div class="crm-overview-featured-head"><div><div class="crm-overview-featured-title">${esc(project.title)}</div><div class="crm-overview-featured-note">${esc(project.note || "A custom project plan")}</div></div><button type="button" class="crm-overview-featured-open crm-menu-action" data-overview-project="${esc(project.id)}">Open</button></div>${projectMap(project)}</article>` : '<div class="crm-overview-empty">Create a project in Planner to shape this space.</div>'}<div class="crm-overview-tickets">${supportingTickets.map((ticket) => `<button type="button" class="crm-overview-ticket" data-overview-ticket="${esc(ticket.id || "")}"><span class="crm-overview-ticket-label">${ticket.id ? "Ticket" : "Project item"}</span><span class="crm-overview-ticket-title">${esc(ticketTitle(ticket))}</span><span class="crm-overview-ticket-meta">${esc(ticketMeta(ticket))}</span></button>`).join("")}</div></div></section>
+        <section class="crm-overview-pocket crm-menu-surface" data-overview-pocket="updates"><header class="crm-overview-pocket-head"><span class="crm-overview-pocket-title">Updates</span><span class="crm-overview-pocket-hint">recent movement</span></header><div class="crm-overview-update-list">${model.updates.length ? model.updates.map((update) => `<div class="crm-overview-update crm-menu-item"><div class="crm-overview-update-title">${esc(update.title)}</div><div class="crm-overview-update-context">${esc(update.context)}</div><time class="crm-overview-update-time">${esc(relativeTime(update.updatedAt))}</time></div>`).join("") : '<div class="crm-overview-empty">Updates will appear as work moves.</div>'}</div></section>
       </div>
     </div>`;
-    groups.forEach((group) => {
-      const stack = root.querySelector(`[data-overview-work-group="${group.key}"] .crm-overview-work-stack`);
-      group.items.forEach((item, index) => stack.appendChild(createOverviewCard(item, "work", index)));
-    });
-    attention.items.slice(0, 4).forEach((item, index) => root.querySelector(".crm-overview-attention-stack")
-      .appendChild(createOverviewCard(item, "attention", index)));
-    root.querySelector(".crm-overview-recent-trail").style.setProperty("--trail-start", `${Math.max(0, (4 - Math.min(4, recent.items.length)) * 40)}px`);
-    recent.items.slice(0, 4).forEach((item, index) => root.querySelector(".crm-overview-recent-trail")
-      .appendChild(createOverviewCard(item, "recent", index)));
+    root.querySelectorAll("[data-overview-project]").forEach((element) => element.addEventListener("click", () => openProject(element.dataset.overviewProject)));
+    root.querySelectorAll("[data-overview-ticket]").forEach((element) => element.addEventListener("click", () => {
+      const ticket = model.tickets.find((item) => String(item.id) === element.dataset.overviewTicket); if (ticket) openTicket(ticket, element);
+    }));
   }
 
-  let renderDirty = true;
-  async function refresh() { model = await load(); render(); renderDirty = false; return model; }
+  async function refresh() { model = await load(); render(); dirty = false; return model; }
+  const schedule = () => { dirty = true; clearTimeout(timer); timer = setTimeout(() => { if (active) refresh(); }, 90); };
   async function miniature() {
-    if (!root) mount();
-    await refresh();
-    const clone = root.cloneNode(true); clone.hidden = false; clone.removeAttribute("data-crm-theater");
-    Object.assign(clone.style, { position: "absolute", left: "50%", top: "50%", width: "1280px", height: "860px", transform: "translate(-50%,-50%) scale(.285)", transformOrigin: "center", pointerEvents: "none" });
-    return clone;
-  }
-  const schedule = () => { renderDirty = true; clearTimeout(timer); timer = setTimeout(() => { if (active) refresh(); }, 120); };
-  function setActive(on) {
-    active = !!on;
-    if (!root) mount();
-    root.hidden = !active;
-    if (active && renderDirty) refresh();
-    return api;
+    if (!root) mount(); await refresh(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater");
+    Object.assign(copy.style, { position: "absolute", left: "50%", top: "50%", width: "1280px", height: "860px", transform: "translate(-50%,-50%) scale(.285)", transformOrigin: "center", pointerEvents: "none" });
+    return copy;
   }
   function mount() {
-    ensureStyles();
-    root = document.createElement("main");
-    root.className = "crm-overview-surface";
-    root.dataset.crmTheater = "desk";
-    root.hidden = true;
-    document.body.appendChild(root);
-    try { window.crmDomain?.onChanged?.(schedule); } catch {}
-    try { window.crmStore?.onChanged?.(schedule); } catch {}
+    if (root) return root; ensureStyles(); root = document.createElement("main"); root.className = "crm-overview-surface"; root.dataset.crmTheater = "desk"; root.hidden = true; document.body.appendChild(root);
+    try { window.crmStore?.onChanged?.(schedule); } catch {} try { window.crmDomain?.onChanged?.(schedule); } catch {} try { window.crmPlanner?.onChanged?.(schedule); } catch {}
+    document.addEventListener("crm:planner-change", schedule); return root;
   }
-  const baseline = async (options = {}) => {
-    if (!root) mount();
-    if (!model || renderDirty) {
-      model = await load();
-      if (typeof options.canRender === "function" && !options.canRender()) return root;
-      render(); renderDirty = false;
-    }
-    root.hidden = !active;
-    return root;
-  };
+  const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); return api; };
+  const baseline = async (options = {}) => { if (!root) mount(); if (!model || dirty) { model = await load(); if (typeof options.canRender === "function" && !options.canRender()) return root; render(); dirty = false; } root.hidden = !active; return root; };
   const api = { setActive, refresh, miniature, baseline, isActive: () => active };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount); else mount();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true }); else mount();
   window.crmDesk = api;
 })();

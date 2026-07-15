@@ -6,13 +6,15 @@ const { _electron: electron } = require('playwright');
 const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const MOTION_TARGET = { minFps: 65, maxP95Ms: 55, maxFrameMs: 110, maxOver34Ms: 3 };
+const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
   && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
+  && window.crmHome?.motionStatus?.().ready
   && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
     const image = host.querySelector(':scope > .crm-home-preview-foreground');
-    return host.children.length === 1 && image?.complete && image.naturalWidth > 0;
+    const sharp = host.querySelector(':scope > .crm-home-preview-sharp');
+    return host.children.length <= 2 && (!sharp || sharp.complete) && image?.complete && image.naturalWidth > 0;
   });
 
 async function frameRate(page, duration = 1200) {
@@ -103,7 +105,7 @@ async function main() {
     controls: document.querySelectorAll('.window-control-cluster .window-glass-control').length,
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'assignment-centered-hand-v22' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== 'preblurred-home-v23' || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => !item.glass.backdrop.includes('blur(26px)')
@@ -174,10 +176,10 @@ async function main() {
     const inboundReaction=await page.$eval(selector,(bucket)=>{const started=performance.now();bucket.click();return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),transitioning:window.crmHomeCamera?.isTransitioning?.()}});
     if(!inboundReaction.busy||!inboundReaction.transitioning||inboundReaction.elapsedMs>50)throw new Error(`${room.key} click did not start its camera move immediately: ${JSON.stringify(inboundReaction)}`);
     await sleep(100);
-    const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(surface?.querySelectorAll('.crm-home-title-glass')||[])];return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-moving')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
-    const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===2&&mid.rect&&mid.rect.width>=300;
+    const mid=await page.evaluate(()=>{const e=document.querySelector('.crm-home-expander:not(.crm-home-warm)');const r=e?.getBoundingClientRect();const root=window.crmHomeCamera?.layers?.()[0];const surface=window.crmHomeCamera?.surface?.();const drag=document.querySelector('.app-window-drag-region');const titles=[...(surface?.querySelectorAll('.crm-home-title-glass')||[])];const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');return{module:document.body.dataset.crmModule,transitioning:window.crmHomeCamera?.isTransitioning?.(),images:e?.querySelectorAll('img').length||0,rect:r?{width:r.width,height:r.height}:null,neighborOpacity:root?Number(getComputedStyle(root).opacity):0,titlesHidden:surface?.classList.contains('crm-home-camera-moving')&&titles.length>0&&titles.every((title)=>getComputedStyle(title).visibility==='hidden'),snapshotActive:!!snapshot&&getComputedStyle(snapshot).display!=='none'&&getComputedStyle(root.querySelector(':scope>.crm-home-grid')).visibility==='hidden',rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,dragTop:document.elementsFromPoint(520,20)[0]===drag,controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((n)=>{const b=n.getBoundingClientRect(),h=document.elementsFromPoint(b.left+b.width/2,b.top+b.height/2)[0];return h===n||n.contains(h)})}});
+    const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===1&&mid.rect&&mid.rect.width>=300;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
-    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.neighborOpacity<.99||!mid.titlesHidden||!mid.rootComposited))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
+    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.neighborOpacity<.99||!mid.titlesHidden||!mid.snapshotActive||!mid.rootComposited))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify(mid)}`);
     await page.screenshot({path:path.join(out,`transition-${room.key}.png`)});
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key,room.key,{timeout:10000}); await sleep(650);
     await page.mouse.move(1,1); await sleep(80);
@@ -204,6 +206,7 @@ async function main() {
     await page.waitForFunction(({key,before})=>(window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0)>before,{key:room.key,before},{timeout:30000});
     transitions.push({key:room.key,mid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundReaction,outboundReaction,signatureMatches:true});
   }
+  const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   await page.evaluate(()=>window.crmWorkspaces.setActive('people'));
   await page.waitForFunction(()=>!!document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]'),null,{timeout:10000});
   await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]',(card)=>{const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+20,clientY:r.top+20,button:2}))});
@@ -230,7 +233,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,instantControls,domainProbe,transitions,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeDrag,sameNodes,homeFps,settledFps,instantControls,domainProbe,transitions,transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
 }

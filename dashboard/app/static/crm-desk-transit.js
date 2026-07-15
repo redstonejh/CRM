@@ -12,6 +12,7 @@
 
   let busy = false;
   let queued = null;
+  const performanceTimings = [];
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
@@ -43,6 +44,10 @@
   // destination theater is committed beneath it, then unfrosts away. The swap
   // happens behind blur(28px) glass — continuous to the eye, never a cut.
   const finishDiveIn = async (key, done) => {
+    const startedAt = performance.now();
+    const destinationApi = ({ people: window.peopleCards, bills: window.billPipeline, invoices: window.moneyPipeline })[key];
+    const destinationState = destinationApi?.performanceState?.() || null;
+    const homePrewarm = window.crmHome?.prewarmStatus?.() || null;
     const cam = camera();
     const surface = cam?.surface?.();
     const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
@@ -55,20 +60,28 @@
       document.body.appendChild(veil);
     }
     document.documentElement.classList.add("crm-transit-materializing");
+    const commitAt = performance.now();
     commit(key);
+    const committedAt = performance.now();
     // Release on the first paint-ready frame. There is no post-animation dwell:
     // the moving lid is replaced directly by the fully materialized theater.
     try {
       if (window.crmHome?.waitForModuleReady) await window.crmHome.waitForModuleReady(key);
       else await window.crmHome?.waitForModuleSettled?.(key);
     } catch {}
+    const readyAt = performance.now();
     requestAnimationFrame(() => {
+      const releaseAt = performance.now();
       veil?.remove();
       if (cam?.restoreRoot) cam.restoreRoot();
       else cam?.rebuildRoot?.();
       try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
       if (surface) surface.style.zIndex = "";
       document.documentElement.classList.remove("crm-transit-materializing");
+      const doneAt = performance.now();
+      performanceTimings.push({ key, destinationState, homePrewarm, commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
+        frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
+      if (performanceTimings.length > 24) performanceTimings.shift();
       done();
     });
   };
@@ -221,6 +234,7 @@
     zoomOutToCalendar,
     temporalModules: () => [...TEMPORAL_MODULES],
     isBusy: () => busy,
+    performanceTimings: () => performanceTimings.map((item) => ({ ...item })),
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => syncTemporalContext(), { once: true });
   else syncTemporalContext();

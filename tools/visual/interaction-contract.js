@@ -125,21 +125,25 @@ async function main() {
     if (!preview.querySelector('.crm-home-preview-foreground')) {
       const probe = document.createElement('img');
       probe.className = 'crm-home-preview-image crm-home-preview-foreground';
+      probe.dataset.previewVariant = 'preblurred';
       probe.dataset.interactionStyleProbe = 'true';
       preview.appendChild(probe);
     }
   }));
-  await check('Resting Home objects use the lightweight raster blur', () => {
+  await check('Resting Home objects use cached pre-blurred rasters with no live filter', () => {
     const images = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')];
-    return images.length === 6 && images.every((image) => getComputedStyle(image).filter === 'blur(1.25px)');
+    return images.length === 6 && images.every((image) => image.dataset.previewVariant === 'preblurred' && getComputedStyle(image).filter === 'none')
+      && !document.querySelector('.crm-home-grid .crm-home-preview-sharp');
   });
   await page.hover('.crm-home-bucket[data-module="desk"]');
   await sleep(220);
   await check('Hover sharpens tile objects and de-emphasizes its title', () => {
     const tile = document.querySelector('.crm-home-grid > .crm-home-bucket[data-module="desk"]');
     const foreground = tile?.querySelector('.crm-home-preview-foreground');
+    const sharp = tile?.querySelector('.crm-home-preview-sharp');
     const title = tile?.querySelector('.crm-home-title-glass');
-    return !!foreground && !!title && getComputedStyle(foreground).filter === 'none' && Number(getComputedStyle(title).opacity) <= .3;
+    return !!foreground && !!sharp && !!title && getComputedStyle(foreground).filter === 'none'
+      && Number(getComputedStyle(sharp).opacity) >= .95 && Number(getComputedStyle(title).opacity) <= .3;
   });
   await page.evaluate(() => document.querySelectorAll('[data-interaction-style-probe]').forEach((probe) => probe.remove()));
   await page.evaluate(() => {

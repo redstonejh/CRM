@@ -8,7 +8,7 @@
     { key: "invoices", label: "Invoices" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "assignment-centered-hand-v22";
+  const HOME_PREVIEW_VERSION = "preblurred-home-v23";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -21,7 +21,15 @@
   let handRefreshTimer = 0;
   let handRefreshGeneration = 0;
   let activeRefreshPending = false;
+  let motionSnapshot = null;
+  let factoryPrewarmHandle = 0;
+  let factoryPrewarmTimer = 0;
+  let factoryPrewarmRunning = false;
+  let factoryPrewarmAttempts = 0;
+  let factoryPrewarmAfter = 0;
+  const prewarmedFactories = new Set();
   const recycledExpanders = new Map();
+  const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "billPipeline", "moneyPipeline", "crmAssignments"];
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -39,7 +47,16 @@
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
       .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
         will-change:transform;backface-visibility:hidden}
-      .crm-home-grid{position:absolute;display:grid;pointer-events:auto;will-change:transform;contain:layout style paint;
+      .crm-home-scene-backdrop{display:none;position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+      .crm-home-motion-snapshot{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
+        pointer-events:none;user-select:none;backface-visibility:hidden}
+      .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint}
+      .crm-home-surface.crm-home-camera-moving .crm-home-scene-backdrop{display:block}
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{display:block}
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-scene-backdrop,
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid,
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{visibility:hidden}
+      .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style paint;
         grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:16px}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
         cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
@@ -50,19 +67,26 @@
       .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(70,110,190,.34),rgba(40,70,130,.26));
         box-shadow:inset 0 0 0 1px rgba(125,180,255,.5),0 0 30px rgba(90,150,255,.42)}
       .crm-home-title-glass{position:absolute;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);width:max-content;
-        max-width:80%;text-align:center;pointer-events:none;transition:opacity .18s ease}
+        max-width:80%;text-align:center;pointer-events:none;transition:opacity .18s ease;display:flex;flex-direction:column;align-items:center}
       .crm-home-title{font:600 clamp(11px,3.2cqh,15px)/1.05 system-ui;letter-spacing:.14em;text-transform:uppercase;
         color:rgba(226,234,246,.72);text-shadow:0 1px 0 rgba(255,255,255,.19),0 -1px 0 rgba(0,0,0,.78),0 2px 8px rgba(0,0,0,.24)}
+      .crm-home-loading-spinner{display:block;width:12px;height:12px;margin-top:10px;box-sizing:border-box;border-radius:50%;
+        border:1.5px solid rgba(220,232,248,.22);border-top-color:rgba(238,246,255,.82);will-change:transform;
+        animation:crm-home-loading-spin .72s linear infinite}
+      .crm-home-bucket[data-preview-ready="true"] .crm-home-loading-spinner{display:none}
+      @keyframes crm-home-loading-spin{to{transform:rotate(360deg)}}
       .crm-home-bucket:hover .crm-home-title-glass{opacity:.28}
       .crm-home-preview{position:absolute;inset:0;z-index:1;overflow:hidden;contain:paint;border-radius:inherit;color:rgba(255,255,255,.62)}
       .crm-home-preview-state{position:absolute;inset:0;display:grid;place-items:center;font-size:.68rem;font-weight:760;
         letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.38)}
       .crm-home-preview-image{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;
         user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
-      /* Home owns six inert raster layers, so a small foreground-only filter is
-         cheaper than blurring live room DOM or adding another backdrop pass. */
-      .crm-home-preview-foreground{filter:blur(1.25px);transition:filter .18s ease}
-      .crm-home-bucket:hover .crm-home-preview-foreground{filter:none}
+      /* The resting softness is baked into the capture once. Hover adds one
+         sharp raster only for the tile under the pointer and crossfades it by
+         opacity, avoiding a live filter pass on all six tiles. */
+      .crm-home-preview-foreground{filter:none}
+      .crm-home-preview-sharp{opacity:0;filter:none;transition:opacity .16s ease}
+      .crm-home-preview-sharp.is-visible{opacity:1}
       /* These are the card system's real .tk-card objects. Home contributes
          only the held-hand geometry and compositor-friendly reveal motion. */
       .crm-home-priority-hand{position:absolute;z-index:9;left:0;right:0;bottom:0;height:var(--home-hand-reserve,280px);
@@ -91,22 +115,25 @@
       .crm-home-surface.crm-home-camera-moving .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       .crm-home-surface.crm-home-camera-moving .crm-home-bucket,
       .crm-home-surface.crm-home-camera-moving .crm-home-preview-foreground{transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{
+        -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-home-expander .crm-home-title-glass{display:none}.crm-home-expander .crm-home-preview{opacity:1}
-      .crm-home-preview-exact{opacity:0;transform:none}
+      .crm-home-preview-exact{opacity:0;transform:translateY(var(--far-shift-y,0%))}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transition:transform 460ms cubic-bezier(.22,1,.26,1),opacity 120ms ease 330ms}
-      .crm-home-expander .crm-home-preview-exact{transition:opacity 120ms ease 330ms}
+      .crm-home-expander .crm-home-preview-exact{transition:transform 460ms cubic-bezier(.22,1,.26,1),opacity 120ms ease 330ms}
       .crm-home-expander.is-unwrapping .crm-home-preview-foreground{transform:none;opacity:0}
-      .crm-home-expander.is-unwrapping .crm-home-preview-exact{opacity:1}
+      .crm-home-expander.is-unwrapping .crm-home-preview-exact{transform:none;opacity:1}
+      .crm-home-warm .crm-home-preview-exact{opacity:.001!important;will-change:transform,opacity}
+      .crm-home-surface.crm-home-motion-priming .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
+        display:block;opacity:.001;transform:translateZ(0)}
       .crm-home-warm,.crm-home-warm *{pointer-events:none!important}
     `;
     document.head.appendChild(style);
   };
 
   const bucketHTML = (module) => `
-    <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-hidden="true">
-      <span class="crm-home-preview-state">Preparing</span>
-    </div>
-    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div>`;
+    <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-label="Loading preview"></div>
+    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div><span class="crm-home-loading-spinner" aria-hidden="true"></span></div>`;
 
   const farShift = (preview) => {
     const bounds = preview?.foregroundBounds;
@@ -117,17 +144,30 @@
   const imageNode = (className, src) => {
     const image = document.createElement("img");
     image.className = `crm-home-preview-image ${className}`;
-    image.src = src; image.alt = ""; image.draggable = false; image.decoding = "async";
+    if (src) image.src = src;
+    image.alt = ""; image.draggable = false; image.decoding = "async";
     return image;
   };
-  const mountHost = (host, preview, exact = false) => {
+  const mountHost = (host, preview, exact = false, exactOnly = false) => {
     if (!host || !preview?.foregroundSrc) return false;
     host.style.setProperty("--far-shift-y", `${farShift(preview).toFixed(3)}%`);
     let foreground = host.querySelector(":scope > .crm-home-preview-foreground");
-    if (!foreground) {
-      foreground = imageNode("crm-home-preview-foreground", preview.foregroundSrc);
+    if (exactOnly) {
+      foreground?.remove();
+      foreground = null;
+    } else if (!foreground) {
+      foreground = imageNode("crm-home-preview-foreground", preview.blurredForegroundSrc || preview.foregroundSrc);
       host.replaceChildren(foreground);
-    } else if (foreground.src !== preview.foregroundSrc) foreground.src = preview.foregroundSrc;
+    } else {
+      const restingSrc = preview.blurredForegroundSrc || preview.foregroundSrc;
+      if (foreground.src !== restingSrc) foreground.src = restingSrc;
+    }
+    if (foreground) {
+      foreground.dataset.previewVariant = preview.blurredForegroundSrc ? "preblurred" : "source";
+      foreground.dataset.sharpSrc = preview.foregroundSrc;
+      const sharp = host.querySelector(":scope > .crm-home-preview-sharp");
+      if (sharp && sharp.src !== preview.foregroundSrc) sharp.remove();
+    }
     if (exact) {
       let full = host.querySelector(":scope > .crm-home-preview-exact");
       if (!full) { full = imageNode("crm-home-preview-exact", preview.exactSrc); host.appendChild(full); }
@@ -144,15 +184,72 @@
     return mountHost(host, previews.get(key), false);
   };
   const mountAll = () => MODULES.forEach(({ key }) => mountPreview(key));
+  const revealSharpPreview = (bucket) => {
+    const host = bucket?.querySelector?.(":scope > .crm-home-preview");
+    const foreground = host?.querySelector?.(":scope > .crm-home-preview-foreground");
+    if (!host || !foreground) return;
+    let sharp = host.querySelector(":scope > .crm-home-preview-sharp");
+    if (!sharp) {
+      sharp = imageNode("crm-home-preview-sharp", foreground.dataset.sharpSrc || "");
+      host.appendChild(sharp);
+    }
+    const reveal = () => {
+      if (!bucket.matches(":hover") || !sharp.isConnected) return;
+      requestAnimationFrame(() => sharp.classList.add("is-visible"));
+    };
+    if (sharp.complete && sharp.naturalWidth > 0) reveal();
+    else sharp.decode?.().then(reveal).catch(reveal);
+  };
+  const restSharpPreview = (bucket) => {
+    const sharp = bucket?.querySelector?.(":scope > .crm-home-preview > .crm-home-preview-sharp");
+    if (!sharp) return;
+    sharp.classList.remove("is-visible");
+    setTimeout(() => { if (sharp.isConnected && !bucket.matches(":hover")) sharp.remove(); }, 180);
+  };
   const acceptPreview = (preview) => {
     if (preview?.version !== HOME_PREVIEW_VERSION || !preview?.foregroundSrc || !preview?.exactSrc || !MODULES.some(({ key }) => key === preview.key)) return false;
     previews.set(preview.key, preview);
     if (camera?.isActive?.() && camera.level() === 0) mountPreview(preview.key);
     return true;
   };
+  const syncMotionSnapshot = (root = camera?.layers?.()[0]) => {
+    if (!root) return;
+    let image = root.querySelector(":scope > .crm-home-motion-snapshot");
+    if (!image) {
+      image = imageNode("crm-home-motion-snapshot", "");
+      root.prepend(image);
+    }
+    if (!motionSnapshot?.src) {
+      root.dataset.motionSnapshotReady = "false";
+      return;
+    }
+    const src = motionSnapshot.src;
+    const ready = () => {
+      if (motionSnapshot?.src !== src || image.src !== src || image.naturalWidth <= 0) return;
+      root.dataset.motionSnapshotReady = "true";
+      const surface = camera?.surface?.();
+      if (surface && !surface.classList.contains("crm-home-motion-priming")) {
+        surface.classList.add("crm-home-motion-priming");
+        requestAnimationFrame(() => requestAnimationFrame(() => surface.classList.remove("crm-home-motion-priming")));
+      }
+    };
+    if (image.src !== src) {
+      root.dataset.motionSnapshotReady = "false";
+      image.src = src;
+      image.decode?.().then(ready).catch(() => {});
+    } else if (image.complete) ready();
+  };
+  const acceptMotionSnapshot = (snapshot) => {
+    if (snapshot?.version !== HOME_PREVIEW_VERSION || !snapshot?.src) return false;
+    motionSnapshot = snapshot;
+    syncMotionSnapshot();
+    return true;
+  };
+  const requestMotionSnapshot = async () => {
+    try { acceptMotionSnapshot((await window.crmHomePreviews?.motionSnapshot?.())?.snapshot); } catch {}
+  };
   const requestPreviews = async (reset = false) => {
     clearTimeout(retryTimer);
-    if (window.crmHomePreviews?.isCaptureWorker) return;
     if (reset) retryAttempt = 0;
     try { (await window.crmHomePreviews?.list?.())?.previews?.forEach(acceptPreview); } catch {}
     if (previews.size === MODULES.length) return;
@@ -324,7 +421,7 @@
     requestAnimationFrame(() => { layoutPriorityHand(hand); camera?.layout?.(); });
   };
   const refreshPriorityHand = async () => {
-    if (window.crmHomePreviews?.isCaptureWorker || !camera?.isActive?.() || !window.crmDomain?.list) return;
+    if (!camera?.isActive?.() || !window.crmDomain?.list) return;
     const generation = ++handRefreshGeneration;
     try {
       const [result, summary, session] = await Promise.all([
@@ -339,25 +436,120 @@
     } catch {}
   };
   const scheduleHandRefresh = () => { clearTimeout(handRefreshTimer); handRefreshTimer = setTimeout(refreshPriorityHand, 120); };
+  const canPrewarmFactory = () => !!camera?.isActive?.()
+    && !camera?.isTransitioning?.()
+    && !window.crmDeskTransit?.isBusy?.()
+    && performance.now() >= factoryPrewarmAfter;
+  const primeInactiveTheater = (node, api) => new Promise((resolve) => {
+    if (!node || api?.isActive?.() || !canPrewarmFactory()) { resolve(); return; }
+    const properties = ["display", "opacity", "z-index", "pointer-events"];
+    const saved = properties.map((property) => [property, node.style.getPropertyValue(property), node.style.getPropertyPriority(property)]);
+    node.hidden = true;
+    node.style.setProperty("display", "block", "important");
+    node.style.setProperty("opacity", ".001", "important");
+    node.style.setProperty("z-index", "0", "important");
+    node.style.setProperty("pointer-events", "none", "important");
+    const restore = () => {
+      saved.forEach(([property, value, priority]) => value ? node.style.setProperty(property, value, priority) : node.style.removeProperty(property));
+      node.hidden = !api?.isActive?.();
+      resolve();
+    };
+    requestAnimationFrame(() => {
+      if (!canPrewarmFactory()) { restore(); return; }
+      requestAnimationFrame(restore);
+    });
+  });
+  const scheduleFactoryPrewarm = () => {
+    if (window.crmHomePreviews?.isCaptureWorker || factoryPrewarmRunning || factoryPrewarmHandle || factoryPrewarmTimer
+      || prewarmedFactories.size >= FACTORY_PREWARM_APIS.length || factoryPrewarmAttempts >= 30) return;
+    const run = async () => {
+      factoryPrewarmHandle = 0;
+      if (!canPrewarmFactory()) {
+        factoryPrewarmTimer = setTimeout(() => { factoryPrewarmTimer = 0; scheduleFactoryPrewarm(); }, 120);
+        return;
+      }
+      const name = FACTORY_PREWARM_APIS.find((apiName) => !prewarmedFactories.has(apiName) && window[apiName]?.baseline);
+      if (!name) {
+        factoryPrewarmAttempts += 1;
+        factoryPrewarmTimer = setTimeout(() => { factoryPrewarmTimer = 0; scheduleFactoryPrewarm(); }, 120);
+        return;
+      }
+      factoryPrewarmRunning = true;
+      try {
+        const api = window[name];
+        const theater = await api.baseline({ canRender: canPrewarmFactory });
+        if (canPrewarmFactory()) await primeInactiveTheater(theater, api);
+        if (canPrewarmFactory()) prewarmedFactories.add(name);
+      } catch {}
+      factoryPrewarmRunning = false;
+      scheduleFactoryPrewarm();
+    };
+    if (typeof requestIdleCallback === "function") factoryPrewarmHandle = requestIdleCallback(run, { timeout: 700 });
+    else factoryPrewarmHandle = requestAnimationFrame(run);
+  };
   const subscribe = () => {
-    if (subscribed || window.crmHomePreviews?.isCaptureWorker) return;
+    if (subscribed) return;
     subscribed = true;
     try { window.crmHomePreviews?.onChanged?.(acceptPreview); } catch {}
+    if (window.crmHomePreviews?.isCaptureWorker) { requestPreviews(true); return; }
+    try { window.crmHomePreviews?.onMotionSnapshotChanged?.(acceptMotionSnapshot); } catch {}
     try { window.crmDomain?.onChanged?.(scheduleHandRefresh); } catch {}
     try { window.auth?.onChanged?.(scheduleHandRefresh); } catch {}
     requestPreviews(true);
+    requestMotionSnapshot();
     refreshPriorityHand();
+    scheduleFactoryPrewarm();
+  };
+
+  const syncSceneBackdrop = (root) => {
+    if (!root) return;
+    let scene = root.querySelector(":scope > .crm-home-scene-backdrop");
+    if (!scene) { scene = document.createElement("div"); scene.className = "crm-home-scene-backdrop"; root.prepend(scene); }
+    const source = document.querySelector("body > .workspace-photo-backdrop:not([hidden])");
+    const track = source?.querySelector(":scope > .workspace-photo-track");
+    if (track) {
+      // The live track intentionally carries at least three viewport panels
+      // for page scrolling. Cloning that entire strip into a zooming layer
+      // triples its texture height. Home only needs the panel currently under
+      // this fixed viewport, represented by one equivalent background paint.
+      const panels = [...track.querySelectorAll(":scope > .workspace-photo-panel")];
+      const index = Math.max(0, Math.min(panels.length - 1, Math.floor(scrollY / Math.max(1, innerHeight))));
+      const panelStyle = panels[index] ? getComputedStyle(panels[index]) : null;
+      scene.replaceChildren();
+      Object.assign(scene.style, {
+        backgroundColor: panelStyle?.backgroundColor || "transparent",
+        backgroundImage: panelStyle?.backgroundImage || "none",
+        backgroundPosition: panelStyle?.backgroundPosition || "center center",
+        backgroundSize: panelStyle?.backgroundSize || "cover",
+        backgroundRepeat: panelStyle?.backgroundRepeat || "no-repeat",
+      });
+      return;
+    }
+    scene.replaceChildren();
+    const style = getComputedStyle(document.body);
+    Object.assign(scene.style, {
+      backgroundColor: style.backgroundColor,
+      backgroundImage: style.backgroundImage,
+      backgroundPosition: style.backgroundPosition,
+      backgroundSize: style.backgroundSize,
+      backgroundRepeat: style.backgroundRepeat,
+    });
   };
 
   const buildRoot = () => {
     const root = document.createElement("div"); root.className = "crm-home-level";
+    const scene = document.createElement("div"); scene.className = "crm-home-scene-backdrop"; root.appendChild(scene);
+    const snapshot = imageNode("crm-home-motion-snapshot", ""); root.appendChild(snapshot);
     const grid = document.createElement("div"); grid.className = "crm-home-grid";
     MODULES.forEach((module) => {
       const bucket = document.createElement("button"); bucket.type = "button"; bucket.className = "crm-home-bucket";
-      bucket.dataset.module = module.key; bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module); grid.appendChild(bucket);
+      bucket.dataset.module = module.key; bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
+      bucket.addEventListener("pointerenter", () => revealSharpPreview(bucket));
+      bucket.addEventListener("pointerleave", () => restSharpPreview(bucket));
+      grid.appendChild(bucket);
     });
     const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important things coming up");
-    fillPriorityHand(hand); root.append(grid, hand); requestAnimationFrame(mountAll); return root;
+    fillPriorityHand(hand); root.append(grid, hand); syncSceneBackdrop(root); syncMotionSnapshot(root); requestAnimationFrame(mountAll); return root;
   };
   const layout = ({ expRect }) => {
     const surface = camera?.surface?.(); const grid = surface?.querySelector(".crm-home-grid"); const hand = surface?.querySelector(".crm-home-priority-hand"); if (!grid) return;
@@ -390,7 +582,7 @@
     bucket.className = "crm-home-bucket crm-home-expander";
     bucket.dataset.module = module.key;
     if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
-    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true);
+    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true, true);
     return bucket;
   };
   const recycleExpander = (key, expander) => {
@@ -407,11 +599,19 @@
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareJump:(expander)=>expander.classList.add("is-unwrapping"),
     onTransitionStart:(direction,context)=>{
+      factoryPrewarmAfter = Number.POSITIVE_INFINITY;
+      context.surface?.classList.remove("crm-home-motion-priming");
+      syncMotionSnapshot(context.layers?.[0]);
+      syncSceneBackdrop(context.layers?.[0]);
       context.surface?.classList.add("crm-home-camera-moving");
       const expander=[...(context.surface?.querySelectorAll(".crm-home-expander:not(.crm-home-warm)")||[])].pop();
       if(expander)requestAnimationFrame(()=>expander.classList.toggle("is-unwrapping",direction==="expand"));
     },
-    onTransitionEnd:(_direction,context)=>context.surface?.classList.remove("crm-home-camera-moving"),
+    onTransitionEnd:(_direction,context)=>{
+      context.surface?.classList.remove("crm-home-camera-moving");
+      factoryPrewarmAfter = performance.now() + 250;
+      scheduleFactoryPrewarm();
+    },
     onLevelChange:(context)=>{if(context.active&&context.level===0)mountAll()},
   });
 
@@ -429,13 +629,25 @@
   const setActive = (on) => {
     subscribe();
     const changed = camera.isActive() !== !!on;
-    if (changed) camera.setActive(on);
+    if (changed) {
+      camera.setActive(on);
+      if (on) factoryPrewarmAfter = performance.now() + 250;
+    }
     if (on) {
       mountAll();
+      scheduleFactoryPrewarm();
       if (window.crmDeskTransit?.isBusy?.()) activeRefreshPending = true;
       else { activeRefreshPending = false; requestPreviews(false); refreshPriorityHand(); }
     }
-    else { clearTimeout(handRefreshTimer); handRefreshGeneration += 1; }
+    else {
+      clearTimeout(handRefreshTimer); handRefreshGeneration += 1;
+      clearTimeout(factoryPrewarmTimer); factoryPrewarmTimer = 0;
+      if (factoryPrewarmHandle) {
+        if (typeof cancelIdleCallback === "function") cancelIdleCallback(factoryPrewarmHandle);
+        else cancelAnimationFrame(factoryPrewarmHandle);
+        factoryPrewarmHandle = 0;
+      }
+    }
     return window.crmHome;
   };
   document.addEventListener("crm:desk-transit-settled", (event) => {
@@ -468,5 +680,7 @@
   window.addEventListener("resize",()=>camera?.layout?.());
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false)},captureBaseline,waitForModuleSettled,waitForModuleReady,recycleExpander,
     previewStatus:()=>MODULES.map(({key})=>({key,state:previews.has(key)?"ready":"waiting",version:previews.get(key)?.version||null,capturedAt:previews.get(key)?.capturedAt||0,layoutSignature:previews.get(key)?.layoutSignature||null})),
-    handStatus:()=>({count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)})};
+    handStatus:()=>({count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
+    motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0}),
+    prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};
 })();

@@ -120,7 +120,7 @@
   let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
 
   let theater = null, root = null, stackScrim = null;
-  let active = false;
+  let active = false, hasRendered = false;
   const decks = { left: null, right: null, trash: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false, trash: false };
   const DECK_SIDES = ["left", "right", "trash"];   // trash = the recycle bin, a right-hand stack lifted above the icon
@@ -2545,6 +2545,7 @@
       };
       setTimeout(() => tryOpen(8), 420);
     }
+    hasRendered = true;
   };
 
   // The left "+": spawn the real ticket into the inbox stack, then fly it into the original guided
@@ -2556,11 +2557,11 @@
     load();
   };
 
-  const load = async () => {
+  const load = async (options = {}) => {
     try { const r = await window.tickets?.list?.(); tickets = (r && r.tickets) || []; }
     catch { tickets = []; }
     hydrateInitialStages(tickets);
-    render();
+    if (typeof options.canRender !== "function" || options.canRender()) render();
     if (!subscribed) {
       subscribed = true;
       // While the config is open, the card the detail panel is animating from must NOT be rebuilt
@@ -2646,6 +2647,12 @@
   // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
   window.ticketStacks = {
     reload: load,
+    baseline: async (options = {}) => {
+      if (!tickets.length) await load(options);
+      else if (!hasRendered && (typeof options.canRender !== "function" || options.canRender())) render();
+      if (theater) theater.hidden = !active;
+      return theater;
+    },
     open: openTicket,
     contextMenu: openContextMenu,
     // Return the canonical ticket card face for aggregate surfaces that own
@@ -2683,9 +2690,8 @@
         hideTicketMenu();
         stopTrashRing();
         window.ticketDetail?.close?.();
-      } else {
+      } else if (!hasRendered) {
         render();
-        requestAnimationFrame(() => { layoutZones(); DECK_SIDES.forEach(layout); });
       }
       return window.ticketStacks;
     },
@@ -2777,6 +2783,10 @@
       if (pendingRender) { pendingRender = false; render(); }
     },
   };
+  window.addEventListener("resize", () => {
+    hasRendered = false;
+    if (active) render();
+  });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load);
   else load();
 })();

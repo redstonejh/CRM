@@ -337,7 +337,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const CONTROL_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : [])];
   const DECK_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : []), ...(trashEnabled ? ["trash"] : [])];   // trash = the recycle bin, a right-hand stack lifted above the icon
   const CORNER_SIDES = rightDeckEnabled ? ["left", "right"] : ["left"];
-  let tickets = [], subscribed = false;
+  let tickets = [], subscribed = false, renderDirty = true, renderedDataFingerprint = "";
+  const dataFingerprint = () => JSON.stringify(tickets);
   let linkHighlightEl = null;
 
   // ONE owned root per instance. Everything this factory creates — stacks,
@@ -3208,7 +3209,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
 
   const render = () => {
-    if (!active) { applyActiveVisibility(); return; }
+    if (!active) {
+      if (dataFingerprint() !== renderedDataFingerprint) renderDirty = true;
+      applyActiveVisibility();
+      return;
+    }
     ensureRoot(); ensureZones();
     applyActiveVisibility();
     matchCardSize(); sizeRoot(); layoutZones(); syncDropFloor();
@@ -3291,6 +3296,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       };
       setTimeout(() => tryOpen(8), 420);
     }
+    renderedDataFingerprint = dataFingerprint();
+    renderDirty = false;
   };
 
   // The left "+": spawn the real ticket into the inbox stack, then (once its card has landed) fly it to
@@ -3389,6 +3396,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       [zoneBody, zoneTrack, zoneScroll].forEach((map) => Object.keys(map).forEach((key) => { delete map[key]; }));
       STAGES = normalized;
       STAGE_KEYS = normalized.map((stage) => stage.key);
+      renderDirty = true;
       ensureZones();
       render();
       return publicApi;
@@ -3408,6 +3416,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     create: openCreate,
     openCreate,
     previewState: (kind) => showSystemState(kind === "loading" ? "loading" : kind === "error" ? "error" : null),
+    performanceState: () => ({ active, started, renderDirty, records: tickets.length,
+      fingerprintMatch: dataFingerprint() === renderedDataFingerprint, theaterElements: theater?.querySelectorAll?.("*").length || 0 }),
     // Return the established card object for a surface that owns its own
     // layout. It deliberately omits deck dragging/reordering; every visual
     // and face-detail concern still comes from this factory.
@@ -3435,10 +3445,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // An inactive factory normally skips render() entirely, so lay it out once
     // synchronously and hide it again before the browser has a paint chance.
     // The detached snapshot is then responsible for Home's progressive LOD.
-    baseline: async () => {
+    baseline: async (options = {}) => {
       if (!started) {
         started = true;
         await load();
+      }
+      // Home may begin a camera move while an idle prewarm is waiting on its
+      // data source.  Do not let the eventual promise continuation build a
+      // large room in the middle of that animation.
+      if (typeof options.canRender === "function" && !options.canRender()) {
+        applyActiveVisibility();
+        return ensureTheater();
       }
       const wasActive = active;
       active = true;
@@ -3599,8 +3616,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (!started) {
         started = true;
         load();
-      } else {
+      } else if (renderDirty) {
         render();
+      } else {
+        // Idle prewarm already built this exact room. Reveal those same card
+        // objects instead of throwing them away or synchronously remeasuring
+        // their entire tree on the user's click.
+        applyActiveVisibility();
       }
     } else {
       applyActiveVisibility();
@@ -3612,6 +3634,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return publicApi;
   };
   publicApi.isActive = () => active;
+  window.addEventListener("resize", () => {
+    renderDirty = true;
+    if (active) render();
+  });
   if (instanceGlobal) global[instanceGlobal] = publicApi;
   const start = () => {
     if (started || !active) return;

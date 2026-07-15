@@ -77,8 +77,10 @@ const HOME_PREVIEW_KEYS = ['desk', 'people', 'cases', 'bills', 'invoices', 'assi
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'assignment-centered-hand-v22';
+const HOME_PREVIEW_VERSION = 'preblurred-home-v23';
 const homePreviewCache = new Map();
+let homeMotionSnapshot = null;
+let homeMotionSnapshotError = null;
 let homePreviewQueue = Promise.resolve();
 let homePreviewRefreshTimer = null;
 
@@ -221,6 +223,8 @@ async function prepareCapture(win, matte = null) {
     *,*::before,*::after { animation:none !important; transition:none !important; }
     .window-control-cluster,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
     .crm-module-switch,.db-loading { display:none !important; }
+    .crm-home-title-glass { display:none !important; }
+    .crm-home-preview-foreground { filter:none !important; }
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
@@ -292,14 +296,43 @@ async function createPreviewWindow() {
 function publishHomePreview(key, capture, layoutSignature) {
   if (!capture?.foreground || !capture?.exact) return null;
   const size = capture.exact.getSize();
+  const sourceSize = capture.foreground.getSize();
+  const softened = capture.foreground
+    .resize({ width: Math.max(1, Math.round(sourceSize.width * 0.55)), height: Math.max(1, Math.round(sourceSize.height * 0.55)), quality: 'best' })
+    .resize({ width: sourceSize.width, height: sourceSize.height, quality: 'best' });
   const preview = {
     key, version: HOME_PREVIEW_VERSION, width: size.width, height: size.height, capturedAt: Date.now(),
-    foregroundSrc: capture.foreground.toDataURL(), exactSrc: capture.exact.toDataURL(),
+    foregroundSrc: capture.foreground.toDataURL(), blurredForegroundSrc: softened.toDataURL(), exactSrc: capture.exact.toDataURL(),
     foregroundBounds: capture.bounds, layoutSignature,
   };
   homePreviewCache.set(key, preview);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:changed', preview);
+  if (previewWindow && !previewWindow.isDestroyed()) previewWindow.webContents.send('home-preview:changed', preview);
   return preview;
+}
+
+async function captureHomeMotionSnapshot(worker) {
+  homeMotionSnapshotError = null;
+  await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('home'); window.crmHome?.refresh?.()`, true);
+  await waitForRenderer(worker, `document.body.dataset.crmModule === 'home'
+    && window.crmHome?.previewStatus?.().every((item) => item.state === 'ready')`);
+  await worker.webContents.executeJavaScript(`Promise.all([...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')].map(async (image) => {
+    const sharp = image.dataset.sharpSrc;
+    if (!sharp || image.src === sharp) return;
+    image.src = sharp;
+    try { await image.decode(); } catch {}
+  }))`, true);
+  await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
+  await prepareCapture(worker, null);
+  const image = await worker.webContents.capturePage();
+  if (!image || image.isEmpty()) return null;
+  const size = image.getSize();
+  homeMotionSnapshot = {
+    version: HOME_PREVIEW_VERSION, width: size.width, height: size.height,
+    capturedAt: Date.now(), src: image.toDataURL(),
+  };
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:motion-changed', homeMotionSnapshot);
+  return homeMotionSnapshot;
 }
 
 function capturePreviewKeys(keys, label = 'refresh') {
@@ -319,7 +352,9 @@ function capturePreviewKeys(keys, label = 'refresh') {
         })()`, true);
         publishHomePreview(key, await captureRoom(worker), layoutSignature);
       }
+      if (requested.length === HOME_PREVIEW_KEYS.length) await captureHomeMotionSnapshot(worker);
     } catch (error) {
+      homeMotionSnapshotError = String(error?.stack || error?.message || error);
       console.error(`[home-preview] ${label} capture failed:`, error?.message || error);
     } finally {
       if (worker && !worker.isDestroyed()) worker.destroy();
@@ -474,12 +509,19 @@ ipcMain.handle('dashboard:open', () => { showMainWindow(); return { ok: true }; 
 function isMainSender(e) {
   return mainWindow && !mainWindow.isDestroyed() && e.sender === mainWindow.webContents;
 }
+function isPreviewSender(e) {
+  return previewWindow && !previewWindow.isDestroyed() && e.sender === previewWindow.webContents;
+}
 ipcMain.handle('dashboard-window:reload', (e) => { if (isMainSender(e)) mainWindow.webContents.reload(); return { ok: true }; });
 ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });
 ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
 ipcMain.handle('home-preview:list', (event) => {
-  if (!isMainSender(event)) return { ok: false, previews: [] };
+  if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
   return { ok: true, previews: [...homePreviewCache.values()] };
+});
+ipcMain.handle('home-preview:motion', (event) => {
+  if (!isMainSender(event)) return { ok: false, snapshot: null };
+  return { ok: true, snapshot: homeMotionSnapshot, error: homeMotionSnapshotError };
 });
 ipcMain.handle('home-preview:capture', async (event, { key } = {}) => {
   if (!isMainSender(event) || !HOME_PREVIEW_KEYS.includes(key)) return { ok: false, error: 'Invalid preview key' };

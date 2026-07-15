@@ -222,7 +222,8 @@
     });
   }
 
-  async function refresh() { model = await load(); render(); return model; }
+  let renderDirty = true;
+  async function refresh() { model = await load(); render(); renderDirty = false; return model; }
   async function miniature() {
     if (!root) mount();
     await refresh();
@@ -230,8 +231,8 @@
     Object.assign(clone.style, { position: "absolute", left: "50%", top: "50%", width: "1280px", height: "860px", transform: "translate(-50%,-50%) scale(.285)", transformOrigin: "center", pointerEvents: "none" });
     return clone;
   }
-  const schedule = () => { clearTimeout(timer); timer = setTimeout(() => { if (active) refresh(); }, 120); };
-  function setActive(on) { active = !!on; if (!root) mount(); root.hidden = !active; if (active) refresh(); return api; }
+  const schedule = () => { renderDirty = true; clearTimeout(timer); timer = setTimeout(() => { if (active) refresh(); }, 120); };
+  function setActive(on) { active = !!on; if (!root) mount(); root.hidden = !active; if (active && renderDirty) refresh(); return api; }
   function mount() {
     ensureStyles();
     root = document.createElement("main"); root.className = "crm-assignments-surface"; root.dataset.crmTheater = "assignments"; root.hidden = true;
@@ -239,7 +240,17 @@
     try { window.crmDomain?.onChanged?.(schedule); } catch {}
     try { window.crmStore?.onChanged?.(schedule); } catch {}
   }
-  const api = { setActive, refresh, miniature, assign, unassign, selectPool: (id) => { selectedPoolId = String(id); render(); }, isActive: () => active };
+  const baseline = async (options = {}) => {
+    if (!root) mount();
+    if (!model || renderDirty) {
+      model = await load();
+      if (typeof options.canRender === "function" && !options.canRender()) return root;
+      render(); renderDirty = false;
+    }
+    root.hidden = !active;
+    return root;
+  };
+  const api = { setActive, refresh, miniature, baseline, assign, unassign, selectPool: (id) => { selectedPoolId = String(id); render(); }, isActive: () => active };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount); else mount();
   window.crmAssignments = api;
 })();

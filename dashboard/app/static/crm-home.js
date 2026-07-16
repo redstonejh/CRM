@@ -29,6 +29,8 @@
   let factoryPrewarmAttempts = 0;
   let factoryPrewarmAfter = 0;
   let handoffSequence = 0;
+  let handoffPromise = Promise.resolve();
+  let handoffResolve = null;
   const prewarmedFactories = new Set();
   const recycledExpanders = new Map();
   const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "crmMoneyRoom", "crmPlanner", "crmAssignments"];
@@ -61,7 +63,16 @@
          can therefore rejoin the compositor while still covered, eliminating
          the otherwise-visible one-frame materialization at rest. */
       .crm-home-surface.crm-home-camera-handoff .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
-        display:block;z-index:30;opacity:1;transform:translateZ(0);will-change:opacity}
+        display:block;z-index:30;opacity:.999;transform:translateZ(0);will-change:opacity;transition:opacity 112ms linear}
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
+        opacity:0}
+      /* Removing .crm-home-camera-moving restores each tile's background and
+         shadow underneath the endpoint raster. Keep that restoration atomic:
+         otherwise the normal 180ms hover transition rebuilds the shadow after
+         the raster has already gone, which reads as a one-frame flash. */
+      .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket,
+      .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand>.crm-home-hand-card{
+        animation:none!important;transition:none!important}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-scene-backdrop,
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{visibility:hidden}
       /* The verified raster carries the expensive previews, glass, hand and
@@ -666,6 +677,44 @@
     expander.className = "crm-home-bucket crm-home-expander";
     recycledExpanders.set(key, expander);
   };
+  const finishHandoff = () => {
+    camera?.surface?.()?.classList.remove("crm-home-camera-handoff", "crm-home-camera-releasing");
+    const resolve = handoffResolve;
+    handoffResolve = null;
+    resolve?.();
+  };
+  const beginHomeHandoff = (context, sequence) => {
+    const surface = context.surface;
+    const snapshot = context.layers?.[0]?.querySelector?.(":scope > .crm-home-motion-snapshot");
+    if (!surface || !snapshot || context.layers?.[0]?.dataset?.motionSnapshotReady !== "true") {
+      finishHandoff();
+      handoffPromise = Promise.resolve();
+      return;
+    }
+    finishHandoff();
+    handoffPromise = new Promise((resolve) => { handoffResolve = resolve; });
+    surface.classList.add("crm-home-camera-handoff");
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      snapshot.removeEventListener("transitionend", onEnd);
+      if (sequence === handoffSequence) finishHandoff();
+      else handoffResolve?.();
+    };
+    const onEnd = (event) => {
+      if (event.target === snapshot && event.propertyName === "opacity") finish();
+    };
+    const timeout = setTimeout(finish, 180);
+    snapshot.addEventListener("transitionend", onEnd);
+    // Two fully covered paints instantiate the live Home glass and shadows;
+    // the short overlap then trades identical pixels without a hard edge.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (sequence !== handoffSequence) { finish(); return; }
+      surface.classList.add("crm-home-camera-releasing");
+    }));
+  };
 
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
@@ -675,9 +724,10 @@
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareJump:(expander)=>expander.classList.add("is-unwrapping"),
     onTransitionStart:(direction,context)=>{
+      finishHandoff();
       handoffSequence += 1;
       factoryPrewarmAfter = Number.POSITIVE_INFINITY;
-      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff");
+      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff","crm-home-camera-releasing");
       syncMotionSnapshot(context.layers?.[0]);
       syncSceneBackdrop(context.layers?.[0]);
       context.surface?.classList.add("crm-home-camera-moving");
@@ -690,11 +740,8 @@
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting");
       const sequence = ++handoffSequence;
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
-        context.surface?.classList.add("crm-home-camera-handoff");
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (sequence === handoffSequence) context.surface?.classList.remove("crm-home-camera-handoff");
-        }));
-      } else context.surface?.classList.remove("crm-home-camera-handoff");
+        beginHomeHandoff(context, sequence);
+      } else finishHandoff();
       // After returning Home, use the next idle slice to prepare the next room.
       // Expanding leaves Home inactive, so its longer guard remains appropriate.
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);
@@ -782,7 +829,7 @@
     if (apiName) prewarmedFactories.add(apiName);
   };
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,noteModuleReady,recycleExpander,
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,
     previewStatus:()=>MODULES.map(({key})=>({key,state:previews.has(key)?"ready":"waiting",version:previews.get(key)?.version||null,capturedAt:previews.get(key)?.capturedAt||0,layoutSignature:previews.get(key)?.layoutSignature||null})),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),

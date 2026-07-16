@@ -22,7 +22,9 @@
       /* The veil carries the fully-dived bucket lid for one beat while the
          destination theater takes the stage beneath its frost, then fades. */
       .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none;
-        opacity: .999; transform: translateZ(0); will-change: opacity; contain: paint; }
+        opacity: .999; transform: translateZ(0); will-change: opacity; contain: paint;
+        transition: opacity 96ms linear; }
+      .crm-transit-veil.is-releasing { opacity: 0; }
       /* A destination appears behind the camera lid in its final visual state.
          Its own entrance transitions must not restart shadows or geometry when
          the lid is removed one frame later. */
@@ -36,6 +38,26 @@
 
   const camera = () => window.crmHomeCamera;
   const commit = (key) => window.crmWorkspaces?.setActive?.(key);
+  const paint = (frames = 1) => new Promise((resolve) => {
+    const next = () => frames-- > 0 ? requestAnimationFrame(next) : resolve();
+    requestAnimationFrame(next);
+  });
+  const afterOpacity = (element, timeoutMs = 150) => new Promise((resolve) => {
+    if (!element?.isConnected) { resolve(); return; }
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      element.removeEventListener("transitionend", onEnd);
+      resolve();
+    };
+    const onEnd = (event) => {
+      if (event.target === element && event.propertyName === "opacity") done();
+    };
+    const timeout = setTimeout(done, timeoutMs);
+    element.addEventListener("transitionend", onEnd);
+  });
   const bucketFor = (key) => {
     const layer = camera()?.layers?.()[0];
     return layer?.querySelector?.(`.crm-home-bucket[data-module="${key}"]`) || null;
@@ -91,23 +113,29 @@
     // lid is retired, then keep entrance motion disabled for the first exposed
     // paint. This is a handoff between already-painted layers, not a reveal that
     // asks shadows and backdrop filters to instantiate on screen.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const releaseAt = performance.now();
-      veil?.remove();
-      if (cam?.restoreRoot) cam.restoreRoot();
-      else cam?.rebuildRoot?.();
-      try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
-      if (surface) surface.style.zIndex = "";
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        document.documentElement.classList.remove("crm-transit-materializing");
-        const doneAt = performance.now();
-        performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
-          commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
-          frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
-        if (performanceTimings.length > 24) performanceTimings.shift();
-        done();
-      }));
-    }));
+    await paint(2);
+    const releaseAt = performance.now();
+    if (veil) {
+      // The exact lid and the final live room now occupy the same pixels. Fade
+      // between them while both remain composited so backdrop filters and
+      // shadows cannot first materialize on the uncovered frame.
+      void veil.offsetWidth;
+      veil.classList.add("is-releasing");
+      await afterOpacity(veil);
+      veil.remove();
+    }
+    if (cam?.restoreRoot) cam.restoreRoot();
+    else cam?.rebuildRoot?.();
+    try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
+    if (surface) surface.style.zIndex = "";
+    await paint(2);
+    document.documentElement.classList.remove("crm-transit-materializing");
+    const doneAt = performance.now();
+    performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
+      commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
+      frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
+    if (performanceTimings.length > 24) performanceTimings.shift();
+    done();
   };
 
   // Home (active, level 0) → module: play the home camera's own dive, commit at
@@ -140,7 +168,7 @@
     commit("home");   // the module vanishes behind the full-screen lid, same frame
     requestAnimationFrame(() => {
       cam.back();     // 460ms house contract into the Home slot
-      Promise.resolve(cam.whenSettled?.()).then(() => {
+      Promise.resolve(cam.whenSettled?.()).then(() => window.crmHome?.waitForHandoff?.()).then(() => {
         if (surface) surface.style.zIndex = "";
         done();
       });

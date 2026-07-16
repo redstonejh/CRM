@@ -2,7 +2,7 @@
 (() => {
   const STORE_KEY = "crm-object-sizing-v1";
   const CARD_SELECTOR = ".tk-card:not(.td-card):not(.td-flyer),.tk-zcard,.crm-planner-card,.crm-assignment-work-card";
-  const BUCKET_SELECTOR = ".tk-zone,.crm-planner-bucket,.crm-company-bucket";
+  const BUCKET_SELECTOR = ".tk-zone,.crm-planner-bucket,.crm-company-bucket,.crm-assignment-bucket";
   let state = { cards: {}, buckets: {} };
   let menu = null;
   let previewTimer = 0;

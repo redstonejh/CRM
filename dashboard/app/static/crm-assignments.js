@@ -20,6 +20,13 @@
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[character]));
   const first = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
+  const MAX_OVERSCROLL = 92;
+  const damp = (value, minimum) => {
+    if (value > 0) return MAX_OVERSCROLL * Math.tanh(value / MAX_OVERSCROLL);
+    if (value < minimum) return minimum - MAX_OVERSCROLL * Math.tanh((minimum - value) / MAX_OVERSCROLL);
+    return value;
+  };
   const nowIso = () => new Date().toISOString();
   const closed = (item) => ["completed", "cancelled", "canceled"].includes(String(item?.status || "").toLowerCase());
   const contactName = (contact) => first(contact?.name, contact?.title, contact?.client, contact?.id, "Person");
@@ -49,6 +56,10 @@
   let selectedFilter = localStorage.getItem(FILTER_KEY) || "all";
   let expandedStages = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
   let model = { commitments:[], flows:[], contacts:[], companies:[], tasks:[], tickets:[], workItems:[] };
+  const boardScroll = { x:0, target:0, raf:0, wheeling:false, releaseTimer:0 };
+  let boardResizeObserver = null;
+  let boardAutoRaf = 0;
+  let boardAutoVelocity = 0;
 
   const itemById = (id) => model.commitments.find((item) => String(item.id) === String(id));
   const flowFor = (item) => model.flows.find((flow) => flow.workflowKey === "assignments" && flow.entityType === "commitments" && String(flow.recordId) === String(item?.id));
@@ -69,24 +80,28 @@
   function ensureStyles() {
     if (document.getElementById("crm-assignments-styles")) return;
     const style = document.createElement("style"); style.id = "crm-assignments-styles"; style.textContent = `
-      .crm-assignments-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-assignments-surface[hidden]{display:none}
-      .crm-assignments-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1490px;margin:auto;display:grid;grid-template-columns:184px minmax(0,1fr);gap:var(--crm-object-gap,18px);min-height:0}
+      .crm-assignments-surface{--assignment-card-width:185px;--assignment-card-height:279px;--assignment-card-peek:42px;--assignment-card-small:.8;--assignment-bucket-width:268px;--assignment-bucket-small:.76;position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-assignments-surface[hidden]{display:none}
+      .crm-assignments-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);display:grid;grid-template-columns:184px minmax(0,1fr);gap:var(--crm-object-gap,18px);min-width:0;min-height:0}
       .crm-assignment-rail{align-self:start;max-height:100%;box-sizing:border-box;padding:6px;display:grid;grid-template-rows:40px minmax(0,1fr) auto;overflow:hidden}.crm-assignment-rail-head{display:flex;align-items:center;justify-content:space-between;padding:0 7px 0 10px}.crm-assignment-title{font-size:var(--crm-type-object,14px);font-weight:700}.crm-assignment-new.crm-menu-action{width:29px;height:29px;padding:0!important;font-size:17px!important}
       .crm-assignment-filters{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto}.crm-assignment-filter.crm-menu-action{position:relative;width:100%;min-height:39px;text-align:left}.crm-assignment-filter.is-selected:before{content:"";position:absolute;left:3px;top:12px;width:3px;height:15px;border-radius:2px;background:rgba(166,202,249,.72)}
       .crm-assignment-rail-foot{padding:10px;color:rgba(255,255,255,.34);font-size:var(--crm-type-meta,10px);line-height:1.45}
-      .crm-assignment-pipeline{--assignment-stage-width:clamp(164px,calc((100% - 56px)/5),226px);min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:14px;overflow-x:auto;overflow-y:hidden;padding:0 4px 22px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
-      .crm-assignment-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 var(--assignment-stage-width);width:var(--assignment-stage-width);height:min(600px,calc(100vh - 184px));min-height:390px;box-sizing:border-box;padding:12px 13px 13px;overflow:hidden;transition:width .18s cubic-bezier(.22,1,.26,1),flex-basis .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1)}
+      .crm-assignment-board{position:relative;min-width:0;min-height:0;height:100%;overflow:hidden;-webkit-app-region:no-drag}.crm-assignment-board-clip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0}.crm-assignment-board-clip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
+      .crm-assignment-pipeline{position:relative;width:max-content;height:100%;min-height:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 4px;box-sizing:border-box;will-change:transform}
+      .crm-assignment-bucket{position:relative;flex:0 0 var(--assignment-bucket-width);width:var(--assignment-bucket-width);height:100%;min-height:0;box-sizing:border-box;overflow:visible;transition:width .18s cubic-bezier(.22,1,.26,1),flex-basis .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1)}.crm-assignment-bucket-shell.tk-zone{position:absolute;inset:0;z-index:auto;width:100%;height:100%;box-sizing:border-box;padding:12px 13px 13px;overflow:hidden;transform:scale(1);transform-origin:top left;transition:transform .18s cubic-bezier(.22,1,.26,1)}
       .crm-assignment-bucket .tk-zone-hd{flex:0 0 30px;padding-right:42px}.crm-assignment-bucket .tk-zone-hd-r{right:0;top:1px;opacity:.72;pointer-events:auto}.crm-assignment-stack-toggle.crm-menu-action{width:28px;height:27px;padding:0!important;display:grid;place-items:center}.crm-assignment-stack-toggle svg{width:13px;height:13px}.crm-assignment-stack-toggle path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}.crm-assignment-stack-toggle[aria-expanded="true"]{color:rgba(193,220,255,.96)!important;background:rgba(124,175,241,.1)!important}
-      .crm-assignment-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}
-      .crm-assignment-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 1px 9px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}.crm-assignment-card-list.is-expanded{gap:8px}
-      .crm-assignment-work-card{appearance:none;position:relative;flex:0 0 auto;width:calc(100% - 4px);min-height:116px;box-sizing:border-box;padding:12px 13px;text-align:left;border:0;border-radius:15px;color:rgba(255,255,255,.9);background:linear-gradient(150deg,rgba(92,108,131,.95),rgba(54,67,87,.94));box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.55);cursor:grab;overflow:hidden;transition:width .18s cubic-bezier(.22,1,.26,1),min-height .18s cubic-bezier(.22,1,.26,1),margin .2s cubic-bezier(.22,1,.26,1),opacity .14s ease,box-shadow .14s ease}.crm-assignments-surface.is-seating .crm-assignment-work-card{transition:none!important}.crm-assignment-work-card+.crm-assignment-work-card{margin-top:-72px}.crm-assignment-card-list.is-expanded .crm-assignment-work-card+.crm-assignment-work-card{margin-top:0}.crm-assignment-work-card[data-priority="high"]{background:linear-gradient(150deg,rgba(133,104,83,.96),rgba(78,63,57,.94))}.crm-assignment-work-card[data-priority="urgent"]{background:linear-gradient(150deg,rgba(142,82,82,.96),rgba(81,50,59,.94))}.crm-assignment-work-card:hover,.crm-assignment-work-card:focus-visible{outline:0;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.09),inset 0 1px rgba(255,255,255,.3),0 16px 22px -14px rgba(0,0,0,.6)}.crm-assignment-work-card.is-dragging{opacity:.3}.crm-assignment-work-card:active{cursor:grabbing}
-      .crm-assignment-card-title{display:block;font-size:var(--crm-type-object,14px);font-weight:700;line-height:1.22;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-assignment-card-note{display:-webkit-box;margin-top:7px;color:rgba(255,255,255,.53);font-size:var(--crm-type-meta,10px);line-height:1.35;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.crm-assignment-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;color:rgba(255,255,255,.5);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-assignment-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis}.crm-assignment-card-context{color:rgba(211,227,249,.64)!important}
+      .crm-assignment-bucket.is-drop-target .crm-assignment-bucket-shell{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}
+      .crm-assignment-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 1px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.5) transparent}.crm-assignment-card-list.is-expanded{gap:8px}
+      .crm-assignment-work-card{appearance:none;position:relative;flex:0 0 auto;width:var(--assignment-card-width);height:var(--assignment-card-height);box-sizing:border-box;padding:0;text-align:left;border:0;border-radius:15px;color:#fff;background:transparent;cursor:grab;overflow:visible;transition:width .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1),margin .2s cubic-bezier(.22,1,.26,1),opacity .14s ease}.crm-assignments-surface.is-seating .crm-assignment-work-card{transition:none!important}.crm-assignment-work-card+.crm-assignment-work-card{margin-top:-237px}.crm-assignment-work-card.crm-object-small+.crm-assignment-work-card{margin-top:-189.6px}.crm-assignment-card-list.is-expanded .crm-assignment-work-card+.crm-assignment-work-card{margin-top:0}.crm-assignment-work-card:focus-visible{outline:0}.crm-assignment-work-card.is-dragging{opacity:.3}.crm-assignment-work-card:active{cursor:grabbing}
+      .crm-assignment-card-face{position:absolute;left:0;top:0;width:var(--assignment-card-width);height:var(--assignment-card-height);box-sizing:border-box;padding:14px 15px;border-radius:15px;display:flex;flex-direction:column;overflow:hidden;transform:scale(1);transform-origin:top left;background-color:rgb(107,114,128);background-image:linear-gradient(180deg,rgba(14,165,233,.42),rgba(14,165,233,.2));box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.55);transition:transform .18s cubic-bezier(.22,1,.26,1),box-shadow .14s ease}.crm-assignment-work-card[data-priority="high"] .crm-assignment-card-face{background-image:linear-gradient(180deg,rgba(202,138,4,.45),rgba(202,138,4,.22))}.crm-assignment-work-card[data-priority="urgent"] .crm-assignment-card-face{background-image:linear-gradient(180deg,rgba(220,38,38,.46),rgba(190,24,93,.2))}.crm-assignment-work-card:hover .crm-assignment-card-face,.crm-assignment-work-card:focus-visible .crm-assignment-card-face{box-shadow:inset 0 0 0 9999px rgba(255,255,255,.1),inset 0 1px rgba(255,255,255,.32),0 14px 18px -14px rgba(0,0,0,.55)}
+      .crm-assignment-card-progress{position:absolute;right:13px;top:14px;display:flex;gap:3px}.crm-assignment-card-progress i{display:block;width:8px;height:3px;border-radius:4px;background:rgba(255,255,255,.18)}.crm-assignment-card-progress i.is-past{background:rgba(94,231,157,.8)}.crm-assignment-card-title{display:block;max-width:132px;font-size:var(--crm-type-object,14px);font-weight:800;line-height:1.22;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-assignment-card-note{display:-webkit-box;margin-top:9px;color:rgba(255,255,255,.67);font-size:var(--crm-type-body,12px);line-height:1.38;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}.crm-assignment-card-details{display:grid;gap:7px;margin-top:auto;padding-top:13px}.crm-assignment-card-meta{display:grid;grid-template-columns:48px minmax(0,1fr);gap:6px;color:rgba(255,255,255,.75);font-size:var(--crm-type-meta,10px);line-height:1.25}.crm-assignment-card-meta b{color:rgba(255,255,255,.4);font-weight:700}.crm-assignment-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-assignment-empty{height:100%;display:grid;place-items:center;padding:15px;text-align:center;color:rgba(255,255,255,.28);font-size:var(--crm-type-caption,11px)}
-      .crm-assignment-bucket.crm-object-small{scale:1!important;flex-basis:clamp(142px,calc(var(--assignment-stage-width) - 28px),164px);width:clamp(142px,calc(var(--assignment-stage-width) - 28px),164px);height:min(510px,calc(100vh - 206px));min-height:340px;padding-inline:10px}.crm-assignment-work-card.crm-object-small{scale:1!important;width:clamp(112px,calc(100% - 30px),136px);min-height:78px;padding:10px 11px}.crm-assignment-work-card.crm-object-small+.crm-assignment-work-card{margin-top:-38px}.crm-assignment-card-list.is-expanded .crm-assignment-work-card.crm-object-small+.crm-assignment-work-card{margin-top:0}.crm-assignment-work-card.crm-object-small .crm-assignment-card-note{display:none}.crm-assignment-work-card.crm-object-small .crm-assignment-card-title{font-size:var(--crm-type-body,12px)}.crm-assignment-work-card.crm-object-small .crm-assignment-card-meta{margin-top:7px}
+      .crm-assignment-bucket.crm-object-small{scale:1!important;flex-basis:203.68px;width:203.68px;height:76%}.crm-assignment-bucket.crm-object-small .crm-assignment-bucket-shell{width:268px;height:131.578947%;transform:scale(.76)}.crm-assignment-work-card.crm-object-small{scale:1!important;width:148px;height:223.2px;border-radius:12px}.crm-assignment-work-card.crm-object-small .crm-assignment-card-face{transform:scale(.8)}
+      .crm-assignment-hsb{position:absolute;z-index:3;left:4px;right:4px;bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-assignment-hsb.is-on{opacity:1;pointer-events:auto}.crm-assignment-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease;-webkit-app-region:no-drag}.crm-assignment-hth:hover{background:rgba(255,255,255,.88)}.crm-assignment-hth:active{cursor:grabbing;background:#fff}
+      body[data-crm-module="assignments"] .crm-home-control-deadzone{pointer-events:none}
       .crm-assignment-menu{position:fixed;z-index:9320;width:178px;padding:6px;display:grid;gap:1px}.crm-assignment-menu .crm-menu-action{height:33px;text-align:left}
       .crm-assignment-editor{position:fixed;z-index:9330;width:min(380px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}.crm-assignment-editor-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-assignment-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}.crm-assignment-fields>.crm-wide,.crm-assignment-fields>textarea{grid-column:1/-1}.crm-assignment-fields textarea{min-height:64px;resize:vertical;padding-top:9px}.crm-assignment-editor-actions{display:flex;justify-content:flex-end;gap:2px}.crm-assignment-editor .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
       @media(max-width:1250px){.crm-assignments-frame{grid-template-columns:172px minmax(0,1fr);gap:14px}}
-      @media(prefers-reduced-motion:reduce){.crm-assignment-work-card,.crm-assignment-bucket{transition-duration:.01ms!important}}
+      @media(prefers-reduced-motion:reduce){.crm-assignment-work-card,.crm-assignment-card-face,.crm-assignment-bucket{transition-duration:.01ms!important}}
     `; document.head.appendChild(style);
   }
 
@@ -121,7 +136,79 @@
   };
   const contextLabel = (item) => { const link = linkOf(item); if (!link) return "Independent work"; const entity = ({ workItems:"Pipeline", tickets:"Ticket", tasks:"Task", contacts:"Person", companies:"Company" })[link.entityType] || "Work"; return `${entity} · ${recordName(targetRecord(link) || { id:link.recordId })}`; };
   function cardHTML(item) {
-    return `<button type="button" class="crm-assignment-work-card" draggable="true" data-assignment-card="${esc(item.id)}" data-record-entity="commitments" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:commitments:${item.id}`)}" data-priority="${esc(String(item.priority || "normal").toLowerCase())}"><span class="crm-assignment-card-title">${esc(first(item.title, "Untitled work"))}</span>${first(item.context, item.note, item.description) ? `<span class="crm-assignment-card-note">${esc(first(item.context, item.note, item.description))}</span>` : ""}<span class="crm-assignment-card-meta"><span>${esc(first(item.assignee, "Unassigned"))}</span><span>${esc(dueLabel(item))}</span></span><span class="crm-assignment-card-meta crm-assignment-card-context"><span>${esc(contextLabel(item))}</span><span>${esc(first(item.priority, "normal"))}</span></span></button>`;
+    const currentStage = stageOf(item); const stageIndex = Math.max(0, STAGES.findIndex((stage) => stage.id === currentStage));
+    const progress = STAGES.map((stage, index) => `<i class="${index <= stageIndex ? "is-past" : ""}" title="${esc(stage.title)}"></i>`).join("");
+    return `<button type="button" class="crm-assignment-work-card" draggable="true" data-assignment-card="${esc(item.id)}" data-record-entity="commitments" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:commitments:${item.id}`)}" data-priority="${esc(String(item.priority || "normal").toLowerCase())}" aria-label="${esc(first(item.title, "Untitled assignment"))}"><span class="crm-assignment-card-face"><span class="crm-assignment-card-progress" aria-hidden="true">${progress}</span><span class="crm-assignment-card-title">${esc(first(item.title, "Untitled assignment"))}</span>${first(item.context, item.note, item.description) ? `<span class="crm-assignment-card-note">${esc(first(item.context, item.note, item.description))}</span>` : ""}<span class="crm-assignment-card-details"><span class="crm-assignment-card-meta"><b>Owner</b><span>${esc(first(item.assignee, "Unassigned"))}</span></span><span class="crm-assignment-card-meta"><b>Due</b><span>${esc(dueLabel(item))}</span></span><span class="crm-assignment-card-meta"><b>For</b><span>${esc(contextLabel(item))}</span></span><span class="crm-assignment-card-meta"><b>Priority</b><span>${esc(first(item.priority, "Normal"))}</span></span></span></span></button>`;
+  }
+
+  const boardElements = () => ({
+    clip:root?.querySelector(".crm-assignment-board-clip"),
+    track:root?.querySelector(".crm-assignment-pipeline"),
+    bar:root?.querySelector(".crm-assignment-hsb"),
+    thumb:root?.querySelector(".crm-assignment-hth"),
+  });
+  const boardMinimum = () => {
+    const { clip, track } = boardElements();
+    return Math.min(0, (clip?.clientWidth || 0) - (track?.scrollWidth || track?.offsetWidth || 0));
+  };
+  function positionBoard() {
+    const { clip, track, bar, thumb } = boardElements(); if (!clip || !track || !bar || !thumb) return;
+    track.style.transform = `translateX(${Math.round(boardScroll.x)}px)`;
+    const view = clip.clientWidth; const content = track.scrollWidth || track.offsetWidth; const minimum = Math.min(0, view - content); const overflowing = content > view + 1;
+    bar.classList.toggle("is-on", overflowing); bar.setAttribute("aria-hidden", String(!overflowing));
+    if (!overflowing) { boardScroll.x = 0; boardScroll.target = 0; track.style.transform = "translateX(0px)"; return; }
+    const trackWidth = Math.max(1, bar.clientWidth); const base = Math.max(28, trackWidth * (view / content)); let width = base; let left = 0;
+    if (boardScroll.x > 0) { width = Math.max(14, base - boardScroll.x); left = 0; }
+    else if (boardScroll.x < minimum) { width = Math.max(14, base - (minimum - boardScroll.x)); left = trackWidth - width; }
+    else left = (minimum ? boardScroll.x / minimum : 0) * (trackWidth - width);
+    thumb.style.width = `${Math.round(width)}px`; thumb.style.left = `${Math.round(left)}px`;
+  }
+  function runBoardScroll() {
+    if (boardScroll.raf) return;
+    const tick = () => {
+      const minimum = boardMinimum(); const goal = boardScroll.wheeling ? boardScroll.target : clamp(boardScroll.target, minimum, 0);
+      boardScroll.x += (goal - boardScroll.x) * .22;
+      if (!boardScroll.wheeling && Math.abs(goal - boardScroll.x) < .4) { boardScroll.x = goal; boardScroll.target = goal; positionBoard(); boardScroll.raf = 0; return; }
+      positionBoard(); boardScroll.raf = requestAnimationFrame(tick);
+    };
+    boardScroll.raf = requestAnimationFrame(tick);
+  }
+  function scrollBoardBy(delta, immediate = false) {
+    const minimum = boardMinimum(); if (minimum >= 0) return false;
+    if (immediate) { boardScroll.x = boardScroll.target = clamp(boardScroll.x - delta, minimum, 0); positionBoard(); return true; }
+    if (!boardScroll.raf) boardScroll.target = boardScroll.x;
+    boardScroll.target = damp(boardScroll.target - delta, minimum); boardScroll.wheeling = true;
+    clearTimeout(boardScroll.releaseTimer); boardScroll.releaseTimer = setTimeout(() => { boardScroll.wheeling = false; runBoardScroll(); }, 90); runBoardScroll(); return true;
+  }
+  function revealStage(stageId) {
+    const { clip } = boardElements(); const bucket = root?.querySelector(`[data-assignment-stage="${String(stageId || "").replace(/["\\\]]/g, "\\$&")}"]`); if (!clip || !bucket) return false;
+    const view = clip.getBoundingClientRect(); const bounds = bucket.getBoundingClientRect(); const inset = 8; let shift = 0;
+    if (bounds.left < view.left + inset) shift = (view.left + inset) - bounds.left;
+    else if (bounds.right > view.right - inset) shift = (view.right - inset) - bounds.right;
+    if (!shift) return true; boardScroll.target = clamp(boardScroll.x + shift, boardMinimum(), 0); boardScroll.wheeling = false; runBoardScroll(); return true;
+  }
+  function stopBoardAutoScroll() { boardAutoVelocity = 0; if (boardAutoRaf) { cancelAnimationFrame(boardAutoRaf); boardAutoRaf = 0; } }
+  function updateBoardAutoScroll(clientX) {
+    const { clip } = boardElements(); const minimum = boardMinimum(); if (!clip || minimum >= 0) return stopBoardAutoScroll();
+    const bounds = clip.getBoundingClientRect(); const edge = 74; boardAutoVelocity = 0;
+    if (clientX < bounds.left + edge && boardScroll.x < 0) boardAutoVelocity = clamp((bounds.left + edge - clientX) / edge, 0, 1) * 13;
+    else if (clientX > bounds.right - edge && boardScroll.x > minimum) boardAutoVelocity = -clamp((clientX - (bounds.right - edge)) / edge, 0, 1) * 13;
+    if (!boardAutoVelocity) return stopBoardAutoScroll();
+    if (!boardAutoRaf) {
+      const tick = () => { boardAutoRaf = 0; if (!boardAutoVelocity || !dragItemId) return; const next = clamp(boardScroll.x + boardAutoVelocity, boardMinimum(), 0); boardScroll.x = boardScroll.target = next; positionBoard(); boardAutoRaf = requestAnimationFrame(tick); };
+      boardAutoRaf = requestAnimationFrame(tick);
+    }
+  }
+  function wireBoardScroller() {
+    const { clip, bar, thumb } = boardElements(); if (!clip || !bar || !thumb) return;
+    clip.addEventListener("wheel", (event) => { const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY; if (!raw) return; const pixels = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * clip.clientWidth : raw; if (scrollBoardBy(pixels)) event.preventDefault(); }, { passive:false });
+    clip.addEventListener("keydown", (event) => { const amount = event.key === "ArrowLeft" ? -72 : event.key === "ArrowRight" ? 72 : event.key === "PageUp" ? -clip.clientWidth * .82 : event.key === "PageDown" ? clip.clientWidth * .82 : 0; if (!amount) return; event.preventDefault(); scrollBoardBy(amount); });
+    let dragging = false; let startX = 0; let startScroll = 0; let pointerId = null;
+    const move = (event) => { if (!dragging) return; const minimum = boardMinimum(); const view = clip.clientWidth; const content = view - minimum; const trackWidth = bar.clientWidth; const thumbWidth = Math.max(28, trackWidth * (view / content)); const fraction = (event.clientX - startX) / Math.max(1, trackWidth - thumbWidth); boardScroll.x = damp(startScroll + fraction * minimum, minimum); boardScroll.target = boardScroll.x; positionBoard(); };
+    const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && thumb.hasPointerCapture?.(pointerId)) thumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); boardScroll.wheeling = false; boardScroll.target = boardScroll.x; runBoardScroll(); };
+    thumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; pointerId = event.pointerId; try { thumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = boardScroll.x; cancelAnimationFrame(boardScroll.raf); boardScroll.raf = 0; clearTimeout(boardScroll.releaseTimer); boardScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
+    boardResizeObserver?.disconnect(); boardResizeObserver = new ResizeObserver(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); }); boardResizeObserver.observe(clip); boardResizeObserver.observe(root.querySelector(".crm-assignment-pipeline"));
+    requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); });
   }
 
   function render() {
@@ -129,11 +216,12 @@
     root.classList.add("is-seating");
     if (!FILTERS.some((filter) => filter.id === selectedFilter)) selectedFilter = "all";
     const visible = filteredItems(); const openCount = model.commitments.filter((item) => !closed(item)).length; const unassignedCount = model.commitments.filter((item) => stageOf(item) === "unassigned").length;
-    root.innerHTML = `<div class="crm-assignments-frame"><aside class="crm-assignment-rail crm-menu-surface"><header class="crm-assignment-rail-head crm-menu-item"><span class="crm-assignment-title">Assignments</span><button type="button" class="crm-assignment-new crm-menu-action" data-assignment-action="new" aria-label="Create assignment">+</button></header><nav class="crm-assignment-filters" aria-label="Assignment filters">${FILTERS.map((filter) => `<button type="button" class="crm-assignment-filter crm-menu-action${filter.id === selectedFilter ? " is-selected" : ""}" data-assignment-filter="${filter.id}" aria-pressed="${filter.id === selectedFilter}">${esc(filter.label)}</button>`).join("")}</nav><footer class="crm-assignment-rail-foot">${openCount} open<br>${unassignedCount} unassigned</footer></aside><section class="crm-assignment-pipeline" aria-label="Assignment pipeline">${STAGES.map((stage) => {
+    root.innerHTML = `<div class="crm-assignments-frame"><aside class="crm-assignment-rail crm-menu-surface"><header class="crm-assignment-rail-head crm-menu-item"><span class="crm-assignment-title">Assignments</span><button type="button" class="crm-assignment-new crm-menu-action" data-assignment-action="new" aria-label="Create assignment">+</button></header><nav class="crm-assignment-filters" aria-label="Assignment filters">${FILTERS.map((filter) => `<button type="button" class="crm-assignment-filter crm-menu-action${filter.id === selectedFilter ? " is-selected" : ""}" data-assignment-filter="${filter.id}" aria-pressed="${filter.id === selectedFilter}">${esc(filter.label)}</button>`).join("")}</nav><footer class="crm-assignment-rail-foot">${openCount} open<br>${unassignedCount} unassigned</footer></aside><section class="crm-assignment-board" aria-label="Assignment pipeline"><div class="crm-assignment-board-clip" tabindex="0" aria-label="Scrollable assignment buckets"><div class="crm-assignment-pipeline">${STAGES.map((stage) => {
       const items = sorted(visible.filter((item) => stageOf(item) === stage.id)); const expanded = expandedStages.has(expansionKey(stage.id));
-      return `<section class="crm-assignment-bucket tk-zone${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-assignment-stack-toggle crm-menu-action" data-assignment-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></header><div class="crm-assignment-card-list${expanded ? " is-expanded" : ""}">${items.length ? items.map(cardHTML).join("") : '<div class="crm-assignment-empty">No work here</div>'}</div></section>`;
-    }).join("")}</section></div>`;
+      return `<section class="crm-assignment-bucket${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><div class="crm-assignment-bucket-shell tk-zone${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-assignment-stack-toggle crm-menu-action" data-assignment-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></header><div class="crm-assignment-card-list${expanded ? " is-expanded" : ""}">${items.length ? items.map(cardHTML).join("") : '<div class="crm-assignment-empty">No work here</div>'}</div></div></section>`;
+    }).join("")}</div></div><div class="crm-assignment-hsb" aria-hidden="true"><div class="crm-assignment-hth"></div></div></section></div>`;
     window.crmObjectSizing?.scan?.(root);
+    wireBoardScroller();
     requestAnimationFrame(() => requestAnimationFrame(() => root?.classList.remove("is-seating")));
   }
 
@@ -232,21 +320,21 @@
     });
     root.addEventListener("contextmenu", (event) => { const card = event.target.closest("[data-assignment-card]"); if (!card) return; event.preventDefault(); event.stopPropagation(); const item = itemById(card.dataset.assignmentCard); if (item) openMenu(item, card, event.clientX, event.clientY); });
     root.addEventListener("dragstart", (event) => { const card = event.target.closest("[data-assignment-card]"); if (!card) return; dragItemId = card.dataset.assignmentCard; card.classList.add("is-dragging"); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", dragItemId); });
-    root.addEventListener("dragend", (event) => { event.target.closest("[data-assignment-card]")?.classList.remove("is-dragging"); root.querySelectorAll(".is-drop-target").forEach((node) => node.classList.remove("is-drop-target")); dragItemId = ""; });
-    root.addEventListener("dragover", (event) => { const bucket = event.target.closest("[data-assignment-stage]"); if (!bucket || !dragItemId) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; root.querySelectorAll(".crm-assignment-bucket").forEach((node) => node.classList.toggle("is-drop-target", node === bucket)); });
+    root.addEventListener("dragend", (event) => { event.target.closest("[data-assignment-card]")?.classList.remove("is-dragging"); root.querySelectorAll(".is-drop-target").forEach((node) => node.classList.remove("is-drop-target")); dragItemId = ""; stopBoardAutoScroll(); });
+    root.addEventListener("dragover", (event) => { if (dragItemId) updateBoardAutoScroll(event.clientX); const bucket = event.target.closest("[data-assignment-stage]"); if (!bucket || !dragItemId) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; root.querySelectorAll(".crm-assignment-bucket").forEach((node) => node.classList.toggle("is-drop-target", node === bucket)); });
     root.addEventListener("dragleave", (event) => { const bucket = event.target.closest("[data-assignment-stage]"); if (bucket && !bucket.contains(event.relatedTarget)) bucket.classList.remove("is-drop-target"); });
-    root.addEventListener("drop", async (event) => { const bucket = event.target.closest("[data-assignment-stage]"); if (!bucket || !dragItemId) return; event.preventDefault(); const id = dragItemId; dragItemId = ""; await move(id, bucket.dataset.assignmentStage); });
+    root.addEventListener("drop", async (event) => { const bucket = event.target.closest("[data-assignment-stage]"); if (!bucket || !dragItemId) return; event.preventDefault(); const id = dragItemId; dragItemId = ""; stopBoardAutoScroll(); await move(id, bucket.dataset.assignmentStage); });
   }
 
   function mount() {
     if (root) return root; ensureStyles(); root = document.createElement("main"); root.className = "crm-assignments-surface"; root.dataset.crmTheater = "assignments"; root.hidden = true; document.body.appendChild(root); wire();
     try { window.crmDomain?.onChanged?.(schedule); } catch {} try { window.crmStore?.onChanged?.(schedule); } catch {} refresh(); return root;
   }
-  const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); if (!active) closeFloating(); return api; };
+  const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); else if (active) requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); }); if (!active) { closeFloating(); stopBoardAutoScroll(); } return api; };
   const baseline = async () => { mount(); if (dirty || !model.commitments.length) await refresh(); render(); root.hidden = !active; return root; };
   async function miniature() { await baseline(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater"); Object.assign(copy.style, { position:"absolute", left:"50%", top:"50%", width:"1320px", height:"860px", transform:"translate(-50%,-50%) scale(.285)", transformOrigin:"center", pointerEvents:"none" }); return copy; }
-  const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; openEditor(item, anchor); return true; };
-  const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), selectFilter:(id) => { selectedFilter = String(id); render(); }, setStageExpanded, expandedStages:() => [...expandedStages], isActive:() => active };
+  const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; revealStage(stageOf(item)); requestAnimationFrame(() => openEditor(item, anchor || root?.querySelector(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`))); return true; };
+  const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), selectFilter:(id) => { selectedFilter = String(id); render(); }, setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), isActive:() => active };
   document.addEventListener("crm:theater-switch", closeFloating);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmAssignments = api;

@@ -95,10 +95,9 @@
   const ensureStyles = () => {
     if (document.getElementById("crm-object-sizing-styles")) return;
     const style = document.createElement("style"); style.id = "crm-object-sizing-styles"; style.textContent = `
-      .crm-object-small{scale:.8;transition:scale .18s cubic-bezier(.22,1,.26,1)!important}
-      .tk-zcard.crm-object-small,.crm-assignment-bucket-card.crm-object-small,.crm-planner-card.crm-object-small{transform-origin:top center}
-      .tk-card.crm-object-small:not(.crm-assignment-bucket-card){transform-origin:bottom center}
-      .tk-zone.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:.82;transform-origin:center}
+      .crm-object-small{transition:width .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1),flex-basis .18s cubic-bezier(.22,1,.26,1),scale .18s cubic-bezier(.22,1,.26,1)!important}
+      .tk-card.crm-object-small:not(.crm-assignment-bucket-card){scale:.8;transform-origin:bottom center}
+      .tk-zcard.crm-object-small,.tk-zone.crm-object-small,.crm-assignment-bucket-card.crm-object-small,.crm-planner-card.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:1!important}
       .crm-size-menu{position:fixed;z-index:9320;width:154px;padding:6px;display:grid}.crm-size-menu .crm-menu-action{height:34px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       @media(prefers-reduced-motion:reduce){.crm-object-small{transition-duration:.01ms!important}}
     `; document.head.appendChild(style);
@@ -114,6 +113,7 @@
     });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && menu) closeMenu(); });
     document.addEventListener("crm:theater-switch", closeMenu);
+    document.dispatchEvent(new CustomEvent("crm:object-sizing-ready"));
   };
   window.addEventListener("storage", (event) => { if (event.key === STORE_KEY) { read(); scan(document.body); } });
   const api = { keyOf, sizeOf, isSmall, setSize, toggle, scan, openMenu, closeMenu, state: () => JSON.parse(JSON.stringify(state)) };

@@ -663,12 +663,15 @@ async function main() {
       const action = document.querySelector('[data-crm-theater]:not([hidden]) .tk-create-action');
       return !!action && action.textContent.trim().length > 3 && !action.querySelector('svg');
     });
-    await check(`${key} keeps stack-control logic mounted but hides its physical chrome`, () => {
+    await check(`${key} keeps dormant corner controls hidden and exposes one quiet spread control per stage`, () => {
       const room = document.querySelector('[data-crm-theater]:not([hidden])');
       const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+      const spreads = [...room.querySelectorAll('.tk-zone-spread')];
       return controls.some((element) => element.matches('.tk-stack-btn'))
         && controls.some((element) => element.matches('.tk-deck-trash'))
-        && controls.every((element) => getComputedStyle(element).display === 'none');
+        && controls.every((element) => getComputedStyle(element).display === 'none')
+        && spreads.length === room.querySelectorAll('.tk-zone').length
+        && spreads.every((element) => getComputedStyle(element).display !== 'none' && element.getAttribute('aria-expanded') === 'false');
     });
     await check(`${key} buckets stay proportional to a ticket`, () => {
       const buckets = [...document.querySelectorAll('[data-crm-theater]:not([hidden]) .tk-zone')].filter((bucket) => bucket.getBoundingClientRect().width > 0);
@@ -699,12 +702,14 @@ async function main() {
       detail: `stages ${stages.join('/')} · inbox ${inbox} · resolved ${resolved}`,
     };
   });
-  await check('Tickets keeps stack-control logic mounted but hides its physical chrome', () => {
+  await check('Tickets hides dormant corner controls and exposes stage stack expansion', () => {
     const room = document.querySelector('[data-crm-theater="tickets"]:not([hidden])');
     const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+    const spreads = [...room.querySelectorAll('.tk-zone-spread')];
     return controls.some((element) => element.matches('.tk-stack-btn[aria-label="Create a ticket"]'))
       && controls.some((element) => element.matches('.tk-deck-trash'))
-      && controls.every((element) => getComputedStyle(element).display === 'none');
+      && controls.every((element) => getComputedStyle(element).display === 'none')
+      && spreads.length === 3 && spreads.every((element) => getComputedStyle(element).display !== 'none');
   });
   await check('Tickets buckets stay proportional to a ticket', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="tickets"] .tk-zone')];
@@ -785,28 +790,69 @@ async function main() {
   await sleep(520);
 
   const bucketSelector = '[data-crm-theater="tickets"] .tk-zone:first-child';
+  const bucketBefore = await page.$eval(bucketSelector, (bucket) => ({
+    width:bucket.getBoundingClientRect().width,
+    ids:[...bucket.querySelectorAll('.tk-zcard')].map((card) => card.dataset.id),
+  }));
   await page.click(`${bucketSelector} .tk-zone-hd`, { button: 'right' });
   await page.waitForSelector('.crm-size-menu');
   await page.click('.crm-size-menu .crm-menu-action');
-  await page.waitForFunction((selector) => {
+  await page.waitForFunction((selector, largeWidth) => {
     const bucket = document.querySelector(selector);
-    return bucket?.classList.contains('crm-object-small') && Number.parseFloat(getComputedStyle(bucket).scale) < .83;
-  }, {}, bucketSelector);
-  await check('Right-click scales a bucket cell down without replacing its cards or behavior', () => {
+    return bucket?.classList.contains('crm-object-small') && bucket.getBoundingClientRect().width < largeWidth * .82
+      && Number.parseFloat(getComputedStyle(bucket).scale) === 1;
+  }, {}, bucketSelector, bucketBefore.width);
+  await check('Right-click makes a genuinely smaller bucket cell without replacing its cards', ({ before }) => {
     const bucket = document.querySelector('[data-crm-theater="tickets"] .tk-zone.crm-object-small');
     if (!bucket) return false;
-    const scale = Number.parseFloat(getComputedStyle(bucket).scale); const cards = bucket.querySelectorAll('.tk-zcard').length;
+    const scale = Number.parseFloat(getComputedStyle(bucket).scale); const ids = [...bucket.querySelectorAll('.tk-zcard')].map((card) => card.dataset.id);
     const key = window.crmObjectSizing.keyOf(bucket, 'bucket'); const stored = JSON.parse(localStorage.getItem('crm-object-sizing-v1') || '{}');
     return {
-      ok: bucket.dataset.crmObjectSize === 'small' && scale > .78 && scale < .86 && cards >= 6 && stored.buckets?.[key] === 'small',
-      detail: `${bucket.dataset.crmObjectSize} / scale ${scale} / ${cards} cards / ${key}=${stored.buckets?.[key]}`,
+      ok: bucket.dataset.crmObjectSize === 'small' && scale === 1 && bucket.offsetWidth === Math.round(bucket.getBoundingClientRect().width)
+        && bucket.getBoundingClientRect().width < before.width * .82 && JSON.stringify(ids) === JSON.stringify(before.ids) && stored.buckets?.[key] === 'small',
+      detail: `${bucket.dataset.crmObjectSize} / ${Math.round(before.width)}→${Math.round(bucket.getBoundingClientRect().width)}px / ${ids.length} cards / ${key}=${stored.buckets?.[key]}`,
     };
-  });
+  }, { before:bucketBefore });
   await page.click(`${bucketSelector} .tk-zone-hd`, { button: 'right' });
   await page.waitForSelector('.crm-size-menu');
   await check('A Small bucket offers the inverse Large action in the same compact menu', () => document.querySelector('.crm-size-menu .crm-menu-action')?.textContent.trim().toLowerCase() === 'make large');
   await page.click('.crm-size-menu .crm-menu-action');
   await page.waitForFunction((selector) => !document.querySelector(selector)?.classList.contains('crm-object-small'), {}, bucketSelector);
+
+  const zoneCardSelector = `${bucketSelector} .tk-zcard:last-child`;
+  const zoneCardBefore = await page.$eval(zoneCardSelector, (card) => ({ id:card.dataset.id, width:card.getBoundingClientRect().width, stage:card.closest('.tk-zone')?.dataset.stage }));
+  await page.click(zoneCardSelector, { button:'right' });
+  await page.waitForSelector('.tk-menu [data-act="size"]');
+  await page.click('.tk-menu [data-act="size"]');
+  await page.waitForFunction((selector, largeWidth) => {
+    const card = document.querySelector(selector); return card?.classList.contains('crm-object-small') && card.getBoundingClientRect().width < largeWidth * .82;
+  }, {}, zoneCardSelector, zoneCardBefore.width);
+  await check('Small cards reflow inside their existing stage instead of shrinking a compositor copy', ({ before }) => {
+    const card = document.querySelector('[data-crm-theater="tickets"] .tk-zone .tk-zcard.crm-object-small');
+    if (!card) return false; const rect = card.getBoundingClientRect(); const scale = getComputedStyle(card).scale;
+    return { ok:card.dataset.id === before.id && card.closest('.tk-zone')?.dataset.stage === before.stage
+      && card.offsetWidth === Math.round(rect.width) && rect.width < before.width * .85,
+      detail:`${card.dataset.id} · ${Math.round(before.width)}→${Math.round(rect.width)}px · scale ${scale}` };
+  }, { before:zoneCardBefore });
+  await page.click(zoneCardSelector, { button:'right' });
+  await page.waitForSelector('.tk-menu [data-act="size"]');
+  await page.click('.tk-menu [data-act="size"]');
+  await page.waitForFunction((selector) => !document.querySelector(selector)?.classList.contains('crm-object-small'), {}, zoneCardSelector);
+
+  const collapsedStack = await page.$eval(bucketSelector, (bucket) => {
+    const cards = [...bucket.querySelectorAll('.tk-zcard')];
+    return { ids:cards.map((card) => card.dataset.id), step:cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top };
+  });
+  await page.click(`${bucketSelector} .tk-zone-spread`);
+  await page.waitForFunction((selector) => document.querySelector(`${selector} .tk-zone-spread`)?.getAttribute('aria-expanded') === 'true', {}, bucketSelector);
+  await check('The stage spread button expands the same stack outward without copying its objects', ({ selector, before }) => {
+    const bucket = document.querySelector(selector); const cards = [...bucket.querySelectorAll('.tk-zcard')];
+    const step = cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top;
+    return { ok:JSON.stringify(cards.map((card) => card.dataset.id)) === JSON.stringify(before.ids) && step > before.step + 100
+      && bucket.classList.contains('is-stack-expanded'), detail:`${Math.round(before.step)}→${Math.round(step)}px · ${cards.length} same cards` };
+  }, { selector:bucketSelector, before:collapsedStack });
+  await page.click(`${bucketSelector} .tk-zone-spread`);
+  await page.waitForFunction((selector) => document.querySelector(`${selector} .tk-zone-spread`)?.getAttribute('aria-expanded') === 'false', {}, bucketSelector);
 
   const routedTicketTitle = await page.evaluate(async () => {
     const result = await window.tickets?.list?.();
@@ -934,7 +980,25 @@ async function main() {
       && state.itemStage === state.flowStage && state.restored && state.restored !== state.itemStage,
     detail:JSON.stringify(state),
   }), plannerStageMove);
-  await page.click('.crm-planner-bucket:last-child', { button: 'right' });
+  const plannerStackBefore = await page.$eval('.crm-planner-bucket:last-child', (bucket) => ({
+    project:window.crmPlanner.selected(), stage:bucket.dataset.plannerBucket,
+    ids:[...bucket.querySelectorAll('.crm-planner-card')].map((card) => card.dataset.plannerCard),
+  }));
+  await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.click());
+  await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'true');
+  await page.evaluate(() => {
+    const current = window.crmPlanner.selected(); const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;
+    if (other) window.crmPlanner.selectProject(other); window.crmPlanner.selectProject(current);
+  });
+  await check('Planner stage expansion persists with the project and retains the exact work objects', (before) => {
+    const bucket = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(before.stage)}"]`);
+    const ids = [...(bucket?.querySelectorAll('.crm-planner-card') || [])].map((card) => card.dataset.plannerCard);
+    return !!bucket && bucket.querySelector('.crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'true'
+      && window.crmPlanner.expandedStages().includes(`${before.project}:${before.stage}`) && JSON.stringify(ids) === JSON.stringify(before.ids);
+  }, plannerStackBefore);
+  await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.click());
+  await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'false');
+  await page.click('.crm-planner-bucket:last-child .tk-zone-hd', { button: 'right' });
   await page.waitForSelector('.crm-planner-context', { timeout:10000 });
   await check('Planner edits use a compact canonical anchored menu', () => {
     const menu = document.querySelector('.crm-planner-context');

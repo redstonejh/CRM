@@ -3,6 +3,7 @@
   const SELECTED_KEY = "crm-planner-selected-v2";
   const LEGACY_KEY = "crm-planner-projects-v1";
   const MIGRATED_KEY = "crm-planner-projects-migrated-v2";
+  const EXPANDED_KEY = "crm-planner-stack-expansion-v1";
   const listeners = new Set();
   const rows = (result) => result?.records || [];
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
@@ -22,10 +23,12 @@
   let dirty = true;
   let refreshTimer = 0;
   let refreshPromise = null;
+  let refreshTail = Promise.resolve();
   let floating = null;
   let selectedId = localStorage.getItem(SELECTED_KEY) || "";
   let dragItemId = "";
   let model = { projects:[], items:[], flows:[], commitments:[], contacts:[], tasks:[], tickets:[] };
+  let expandedStacks = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
 
   const normalizeStage = (stage = {}, index = 0) => ({
     id:String(stage.id || uid("stage")), title:first(stage.title, stage.label, `Stage ${index + 1}`),
@@ -46,6 +49,13 @@
   const flowFor = (item) => model.flows.find((flow) => flow.entityType === "workItems" && String(flow.recordId) === String(item?.id));
   const contactName = (contact) => first(contact?.name, contact?.title, contact?.id, "Person");
   const recordName = (record) => first(record?.title, record?.name, record?.companyLabel, record?.description, record?.id, "Untitled");
+  const expansionKey = (projectId, stageId) => `${projectId}:${stageId}`;
+  const stageExpanded = (projectId, stageId) => expandedStacks.has(expansionKey(projectId, stageId));
+  const setStageExpanded = (projectId, stageId, open = !stageExpanded(projectId, stageId)) => {
+    const key = expansionKey(projectId, stageId); if (open) expandedStacks.add(key); else expandedStacks.delete(key);
+    if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedStacks]));
+    render(); return expandedStacks.has(key);
+  };
 
   const writeSelected = () => {
     if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(SELECTED_KEY, selectedId);
@@ -75,12 +85,13 @@
       .crm-planner-head-actions{display:flex;align-items:center;gap:2px}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
       .crm-planner-buckets{min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:var(--crm-object-gap,18px);overflow-x:auto;overflow-y:hidden;padding:clamp(18px,4vh,34px) 12px 28px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
       .crm-planner-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 226px;width:226px;height:min(500px,calc(100vh - 210px));min-height:342px;box-sizing:border-box;padding:12px 14px;overflow:hidden;transition:width .16s ease,flex-basis .16s ease,height .16s ease}
-      .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-hd-r{right:2px;top:1px;pointer-events:auto;opacity:.72}
-      .crm-planner-stage-menu.crm-menu-action{width:28px;height:27px;padding:0!important;display:grid;place-items:center;font-size:14px!important}.crm-planner-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:8px;padding:4px 2px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
-      .crm-planner-card{appearance:none;position:relative;flex:0 0 auto;width:188px;min-height:102px;box-sizing:border-box;padding:12px 13px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.94),rgba(62,74,94,.92));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:grab;transition:width .16s ease,min-height .16s ease,box-shadow .14s ease,opacity .14s ease}.crm-planner-card:active{cursor:grabbing}.crm-planner-card.is-dragging{opacity:.32}
+      .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-hd-r{right:0;top:1px;gap:1px;pointer-events:auto;opacity:.72}
+      .crm-planner-stage-menu.crm-menu-action,.crm-planner-stack-toggle.crm-menu-action{width:28px;height:27px;padding:0!important;display:grid;place-items:center;font-size:14px!important}.crm-planner-stack-toggle svg{width:13px;height:13px}.crm-planner-stack-toggle path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}.crm-planner-stack-toggle[aria-expanded="true"]{color:rgba(193,220,255,.96)!important;background:rgba(124,175,241,.1)!important}
+      .crm-planner-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 2px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}.crm-planner-card-list.is-expanded{gap:8px}
+      .crm-planner-card{appearance:none;position:relative;flex:0 0 auto;width:188px;min-height:102px;box-sizing:border-box;padding:12px 13px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.94),rgba(62,74,94,.92));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:grab;transition:width .16s ease,min-height .16s ease,margin .2s cubic-bezier(.22,1,.26,1),box-shadow .14s ease,opacity .14s ease}.crm-planner-card+.crm-planner-card{margin-top:-58px}.crm-planner-card-list.is-expanded .crm-planner-card+.crm-planner-card{margin-top:0}.crm-planner-card:active{cursor:grabbing}.crm-planner-card.is-dragging{opacity:.32}
       .crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.1),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
       .crm-planner-card-title{display:block;font-size:var(--crm-type-object,14px);font-weight:680;line-height:1.24;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:-webkit-box;margin-top:7px;color:rgba(255,255,255,.54);font-size:var(--crm-type-meta,10px);line-height:1.35;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.crm-planner-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;color:rgba(255,255,255,.5);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-planner-card-meta span{overflow:hidden;text-overflow:ellipsis}.crm-planner-card-link{color:rgba(211,227,249,.62)!important}
-      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;min-height:72px;padding:10px 11px}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{margin-top:8px}
+      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;min-height:72px;padding:10px 11px}.crm-planner-card.crm-object-small+.crm-planner-card{margin-top:-34px}.crm-planner-card-list.is-expanded .crm-planner-card.crm-object-small+.crm-planner-card{margin-top:0}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{margin-top:8px}
       .crm-planner-add-card.crm-menu-action{flex:0 0 29px;width:100%;height:29px;text-align:left;padding-left:4px!important;font-size:var(--crm-type-caption,11px)!important;color:rgba(255,255,255,.34)!important}.crm-planner-add-card:hover{color:#fff!important}.crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:var(--crm-type-caption,11px)}
       .crm-planner-popover{position:fixed;z-index:9300;width:min(280px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
       .crm-planner-item-editor{position:fixed;z-index:9310;width:min(370px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}.crm-planner-item-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}.crm-planner-item-fields>.crm-menu-input:first-child,.crm-planner-item-fields>textarea,.crm-planner-item-fields>.crm-planner-wide{grid-column:1/-1}.crm-planner-item-fields textarea{min-height:68px;resize:vertical;padding-top:9px}.crm-planner-item-editor .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
@@ -145,19 +156,17 @@
   }
 
   async function refresh(force = false) {
-    if (refreshPromise) {
-      await refreshPromise;
-      if (!force) return model;
-    }
-    const run = (async () => {
+    if (!force && refreshPromise) return refreshPromise;
+    const run = refreshTail.catch(() => null).then(async () => {
       model = await load();
       if (await migrateLegacy()) model = await load();
       if (!model.projects.some((project) => project.id === selectedId)) selectedId = model.projects[0]?.id || "";
       dirty = false; publish("refreshed"); return model;
-    })();
+    });
+    refreshTail = run;
     refreshPromise = run;
-    try { return await run; }
-    finally { if (refreshPromise === run) refreshPromise = null; }
+    run.finally(() => { if (refreshPromise === run) refreshPromise = null; }).catch(() => {});
+    return run;
   }
   const schedule = () => { dirty = true; clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (active) refresh(); }, 100); };
 
@@ -169,8 +178,9 @@
       <section class="crm-planner-stage"><header class="crm-planner-topline"><div class="crm-planner-heading">${esc(project?.title || "Planner")}</div><div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button>' : ""}</div></header>
       <div class="crm-planner-buckets">${project ? stages.map((stage) => {
         const items = model.items.filter((item) => item.projectId === project.id && item.stageId === stage.id).sort((a, b) => a.rank - b.rank || String(a.createdAt).localeCompare(String(b.createdAt)));
-        return `<section class="crm-planner-bucket tk-zone" data-planner-bucket="${esc(stage.id)}" data-stage="${esc(stage.id)}" data-crm-size-key="${esc(`bucket:planner:${project.id}:${stage.id}`)}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-planner-stage-menu crm-menu-action" data-planner-action="stage-menu" aria-label="${esc(stage.title)} options">···</button></span></header>
-          <div class="crm-planner-card-list">${items.length ? items.map(cardHTML).join("") : '<div class="crm-planner-empty">No work yet</div>'}</div><button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add work</button></section>`;
+        const expanded = stageExpanded(project.id, stage.id);
+        return `<section class="crm-planner-bucket tk-zone${expanded ? " is-stack-expanded" : ""}" data-planner-bucket="${esc(stage.id)}" data-stage="${esc(stage.id)}" data-crm-size-key="${esc(`bucket:planner:${project.id}:${stage.id}`)}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-planner-stack-toggle crm-menu-action" data-planner-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button><button type="button" class="crm-planner-stage-menu crm-menu-action" data-planner-action="stage-menu" aria-label="${esc(stage.title)} options">···</button></span></header>
+          <div class="crm-planner-card-list${expanded ? " is-expanded" : ""}">${items.length ? items.map(cardHTML).join("") : '<div class="crm-planner-empty">No work yet</div>'}</div><button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add work</button></section>`;
       }).join("") : ""}</div></section></div>`;
     window.crmObjectSizing?.scan?.(root);
   }
@@ -309,6 +319,7 @@
       if (action.dataset.plannerAction === "new-project") openTextEditor({ title:"New project", placeholder:"Project name", submit:"Create", anchor:action, onSubmit:(value) => createProject(value) });
       if (action.dataset.plannerAction === "project-menu") projectMenu(action);
       if (action.dataset.plannerAction === "new-stage" && project) openTextEditor({ title:"New stage", placeholder:"Stage name", submit:"Add", anchor:action, onSubmit:(value) => createStage(project.id, value) });
+      if (action.dataset.plannerAction === "toggle-stack" && project && stage) setStageExpanded(project.id, stage.id);
       if (action.dataset.plannerAction === "stage-menu" && stage) stageMenu(stage, action);
       if (action.dataset.plannerAction === "new-card" && project && stage) openTextEditor({ title:`Add to ${stage.title}`, placeholder:"Work item", submit:"Add", anchor:action, onSubmit:(value) => createCard(project.id, stage.id, value) });
     });
@@ -338,7 +349,7 @@
     requestAnimationFrame(() => { const card = root?.querySelector(`[data-planner-card="${cssValue(item.id)}"]`); card?.classList.add("is-focus-target"); card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); setTimeout(() => card?.classList.remove("is-focus-target"), 1600); });
     return true;
   }
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, projects:projectsSnapshot, items:() => clone(model.items), createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, projects:projectsSnapshot, items:() => clone(model.items), createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmPlanner = api;

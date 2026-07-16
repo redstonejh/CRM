@@ -31,6 +31,7 @@
   let refreshTimer = null;
   let broadcastTimer = null;
   const entityStores = new Map();
+  const entityEpochs = new Map();
   const loadedEntities = new Set();
   const pendingRefresh = new Set();
 
@@ -94,27 +95,35 @@
     }
   }
 
-  function applyRecord(entity, record) {
+  const bumpEntityEpoch = (entity) => entityEpochs.set(entity, (entityEpochs.get(entity) || 0) + 1);
+  function applyRecord(entity, record, trackMutation = true) {
     if (!record || !record.id) return null;
     const doc = normalizeRecord(entity, record);
     entityMap(entity).set(doc.id, doc);
     loadedEntities.add(entity);
+    if (trackMutation) bumpEntityEpoch(entity);
     return doc;
   }
-  function removeRecord(entity, id) {
+  function removeRecord(entity, id, trackMutation = true) {
     entityMap(entity).delete(safeId(id));
     loadedEntities.add(entity);
+    if (trackMutation) bumpEntityEpoch(entity);
   }
   async function refreshEntity(entity) {
     const key = safeEntity(entity);
     if (pendingRefresh.has(key)) return;
     pendingRefresh.add(key);
+    const startEpoch = entityEpochs.get(key) || 0;
     const res = await request(`/api/entities/${encodeURIComponent(key)}?includeDeleted=true`);
     pendingRefresh.delete(key);
     if (!res.ok) return;
     const map = entityMap(key);
-    map.clear();
-    (res.records || []).forEach((record) => applyRecord(key, record));
+    const changedWhileLoading = (entityEpochs.get(key) || 0) !== startEpoch;
+    if (!changedWhileLoading) map.clear();
+    (res.records || []).forEach((record) => {
+      const incoming = normalizeRecord(key, record); const current = map.get(incoming.id);
+      if (!current || Number(incoming.version || 0) >= Number(current.version || 0)) applyRecord(key, incoming, false);
+    });
     loadedEntities.add(key);
     scheduleBroadcast();
   }

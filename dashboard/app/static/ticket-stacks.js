@@ -10,9 +10,21 @@
   let CARD_W = 185, CARD_H = 279;          // matched to the grid ticket card at render time
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
   const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
+  const SMALL_CARD_SCALE = .8, SMALL_BUCKET_SCALE = .76;
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
   const SEV_RGB = { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
   const sevOf = (t) => { const p = priorityOf(t); return ["low", "medium", "high", "critical"].includes(p) ? p : (t ? "medium" : "none"); };
+  const STACK_EXPAND_KEY = "crm-zone-expansion-v1:tickets";
+  const expandedStages = (() => { try { const value = JSON.parse(localStorage.getItem(STACK_EXPAND_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
+  const writeExpandedStages = () => { if (!window.crmHomePreviews?.isCaptureWorker) { try { localStorage.setItem(STACK_EXPAND_KEY, JSON.stringify([...expandedStages])); } catch {} } };
+  const cardSizeKey = (id) => `card:tickets:${String(id || "")}`;
+  const bucketSizeKey = (stage) => `bucket:tickets:${String(stage || "")}`;
+  const isSmallObject = (element) => element?.classList?.contains("crm-object-small") || element?.dataset?.crmObjectSize === "small";
+  const applyZoneCardMetrics = (element) => {
+    const small = isSmallObject(element); const metrics = { width:Math.round(CARD_W * (small ? SMALL_CARD_SCALE : 1)), height:Math.round(CARD_H * (small ? SMALL_CARD_SCALE : 1)) };
+    if (element) { element.style.width = `${metrics.width}px`; element.style.height = `${metrics.height}px`; }
+    return metrics;
+  };
 
   // Persist the per-deck custom card order (from drag-to-reorder) across reloads.
   const ORDER_KEY = (side) => `tk-stack-order-${side}`;
@@ -513,7 +525,7 @@
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
         border: 1px solid rgba(255,255,255,0.14);
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
-        transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+        transition: left .2s ${EASE}, top .2s ${EASE}, width .2s ${EASE}, height .2s ${EASE}, border-color .18s ease, box-shadow .18s ease, background .18s ease; }
       /* In focus: lift the bucket above the scrim (sharp). Out of focus it simply rests below the scrim
          and the scrim blurs it — the same crisp depth-of-field whether the bin is closed, a stack is
          fanned, or a drag is in flight (the valid target lifts, the rest stay scrim-blurred). */
@@ -521,11 +533,14 @@
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
-      .tk-zone-hd { position:relative;display:block;box-sizing:border-box;height:30px;min-width:0;padding:2px 44px 8px 4px;font-size:var(--crm-type-object,14px);font-weight:700;
+      .tk-zone-hd { position:relative;display:block;box-sizing:border-box;height:30px;min-width:0;padding:2px 76px 8px 4px;font-size:var(--crm-type-object,14px);font-weight:700;
         line-height:1;letter-spacing:.005em;color:rgba(255,255,255,.84);white-space:nowrap;overflow:hidden;text-overflow:ellipsis }
       .tk-zone-title{display:block;height:17px;line-height:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tk-zone-count { display:none!important }
-      .tk-zone-hd-r{position:absolute;right:4px;top:6px;display:inline-flex;align-items:center;opacity:.46;pointer-events:none}
+      .tk-zone-hd-r{position:absolute;right:2px;top:0;display:inline-flex;align-items:center;gap:5px;opacity:.56;pointer-events:auto}
+      .tk-zone-spread{appearance:none;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgba(255,255,255,.62);display:grid;place-items:center;cursor:pointer;transition:background .14s ease,color .14s ease,opacity .14s ease}
+      .tk-zone-spread:hover,.tk-zone-spread:focus-visible{outline:0;background:rgba(255,255,255,.08);color:#fff}.tk-zone-spread[aria-expanded="true"]{color:rgba(187,215,251,.94);background:rgba(123,174,240,.1)}
+      .tk-zone-spread svg{width:13px;height:13px;display:block}.tk-zone-spread path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
       .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
@@ -1815,6 +1830,8 @@
     // fill is an opaque copy of the grid card so the colour matches exactly.
     card.className = "tk-card";
     card.dataset.id = t.id || "";
+    card.dataset.recordEntity = "tickets"; card.dataset.crmSizeKey = cardSizeKey(t.id);
+    window.crmObjectSizing?.scan?.(card);
     card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = cardBg(t);
@@ -2122,35 +2139,41 @@
     const region = g
       ? { left: g.left, width: g.colW * g.cols + g.gap * (g.cols - 1) }
       : { left: MARGIN, width: window.innerWidth - MARGIN * 2 };
-    const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (n + 1)) / n);  // one full card + room for the scrollbar
-    const gap = (region.width - bucketW * n) / (n + 1);          // equal gap incl. both ends
+    const bucketW = Math.max(168, Math.min(CARD_W + 60, (region.width - MARGIN * (n + 1)) / n));  // one full card + room for the scrollbar
     const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
     const bucketH = Math.max(180, Math.min(CARD_H + 80, availableH));
-    const startTop = zTop + Math.max(0, (availableH - bucketH) / 2);
+    const geometry = STAGES.map((stage) => {
+      const panel = zoneBody[stage.key]?.parentElement; window.crmObjectSizing?.scan?.(panel);
+      const compact = isSmallObject(panel);
+      return { stage, panel, width:Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)), height:Math.round(bucketH * (compact ? .78 : 1)) };
+    });
+    const rowHeight = Math.max(...geometry.map((item) => item.height), 0);
+    const totalWidth = geometry.reduce((sum, item) => sum + item.width, 0);
+    const gap = Math.max(0, (region.width - totalWidth) / (n + 1));          // equal gap incl. both ends
+    const startTop = zTop + Math.max(0, (availableH - rowHeight) / 2);
+    let nextLeft = region.left + gap;
     const lefts = [];
-    STAGES.forEach((s, i) => {
-      const left = region.left + gap * (i + 1) + bucketW * i;
+    geometry.forEach(({ stage:s, panel, width, height }) => {
+      const left = nextLeft;
       lefts.push(left);
-      const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;
-      panel.style.top = `${Math.round(startTop)}px`;            // fixed panels position themselves now
+      panel.style.top = `${Math.round(startTop + (rowHeight - height) / 2)}px`;            // fixed panels position themselves now
       panel.style.bottom = "auto";
-      panel.style.height = `${Math.round(bucketH)}px`;
-      panel.style.width = `${Math.round(bucketW)}px`;
+      panel.style.height = `${height}px`;
+      panel.style.width = `${width}px`;
       panel.style.left = `${Math.round(left)}px`;
       // Slide the header's bars left so they sit directly above the CENTRED ticket cards' bars (which are
       // at right:13 of a CARD_W-wide card) → the header + every ticket's bars line up in one column. The
       // header's hd-r rests 18px in from the panel edge (14 panel pad + 4 header pad); a centred card's bars
       // rest 13px in → slide by (gap/2 − 5). When a ticket is present, measure its real bars and correct any
       // residual box-model drift (the same measured approach as the scrollbar centring below).
-      const hdR = panel.querySelector(".tk-zone-hd-r");
-      if (hdR) {
-        const base = (bucketW - CARD_W) / 2 - 5;
-        hdR.style.marginRight = `${Math.round(base)}px`;
+      const headerBars = panel.querySelector(".tk-zone-hd-r > .tk-bars");
+      if (headerBars) {
+        headerBars.style.translate = "";
         const cardBars = zoneBody[s.key]?.querySelector(".tk-zcard .tk-bars-card");
         if (cardBars) {
-          const delta = hdR.getBoundingClientRect().right - cardBars.getBoundingClientRect().right;
-          if (Math.abs(delta) > 0.5) hdR.style.marginRight = `${Math.round(base + delta)}px`;
+          const delta = headerBars.getBoundingClientRect().right - cardBars.getBoundingClientRect().right;
+          if (Math.abs(delta) > 0.5) headerBars.style.translate = `${Math.round(-delta)}px 0`;
         }
       }
       // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
@@ -2158,10 +2181,12 @@
       const body = zoneBody[s.key], sb = body.querySelector(".tk-zsb");
       if (sb) {
         const gutter = panel.getBoundingClientRect().right - body.getBoundingClientRect().right;  // body edge → bucket edge
-        const ticketGap = Math.max(0, (body.clientWidth - CARD_W) / 2);                            // ticket edge → body edge
+        const ticketWidth = body.querySelector(".tk-zcard")?.offsetWidth || CARD_W;
+        const ticketGap = Math.max(0, (body.clientWidth - ticketWidth) / 2);                       // ticket edge → body edge
         const center = (ticketGap - gutter) / 2;                                                    // midpoint, left of body's right edge
         sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                    // 8px bar centred there, kept inside the bucket
       }
+      nextLeft += width + gap;
     });
     // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does
     // the same via updateDeckEdges() at the end of layout(). Without the re-clamp a bucket scrolled to
@@ -2175,6 +2200,11 @@
     if (st && !st.raf) { st.sy = clamp(st.sy, zMin(s), 0); st.ty = st.sy; }
     positionZone(s);
   };
+  const setZoneExpanded = (stage, open = !expandedStages.has(String(stage))) => {
+    stage = String(stage || ""); if (!STAGE_KEYS.includes(stage)) return false;
+    if (open) expandedStages.add(stage); else expandedStages.delete(stage);
+    writeExpandedStages(); renderZones(); layoutZones(); return expandedStages.has(stage);
+  };
   const ensureZones = () => {
     if (zonesRoot) return;
     ensureStyles();
@@ -2185,9 +2215,14 @@
       const panel = document.createElement("div");
       panel.className = "tk-zone";
       panel.dataset.stage = s.key;
-      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}</span></div>` +
+      panel.dataset.crmSizeKey = bucketSizeKey(s.key);
+      const expanded = expandedStages.has(s.key);
+      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}<button type="button" class="tk-zone-spread" data-zone-spread="${esc(s.key)}" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(s.label)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
+      panel.classList.toggle("is-stack-expanded", expanded);
+      panel.querySelector(".tk-zone-spread")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); setZoneExpanded(s.key); });
       zonesRoot.appendChild(panel);
+      window.crmObjectSizing?.scan?.(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
       zoneTrack[s.key] = panel.querySelector(".tk-zone-track");
       zoneScroll[s.key] = { sy: 0, ty: 0, raf: 0, wheeling: false, releaseT: 0 };
@@ -2393,7 +2428,8 @@
     const card = document.createElement("div");
     card.className = "tk-zcard";
     card.dataset.id = t.id || "";
-    card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;   // full ticket dimensions
+    card.dataset.recordEntity = "tickets"; card.dataset.crmSizeKey = cardSizeKey(t.id);
+    window.crmObjectSizing?.scan?.(card); applyZoneCardMetrics(card);
     card.style.backgroundColor = baseColor();
     card.style.backgroundImage = cardBg(t);
     card.innerHTML = zoneCardInner(t);
@@ -2408,7 +2444,11 @@
   const zoneInsertIndex = (stage, y) => {
     const body = zoneBody[stage], track = zoneTrack[stage]; if (!body || !track) return 0;
     const r = body.getBoundingClientRect();
-    const count = track.querySelectorAll(".tk-zcard").length;
+    const cards = [...track.querySelectorAll(".tk-zcard")]; const count = cards.length;
+    if (expandedStages.has(stage)) {
+      for (let index = 0; index < cards.length; index += 1) { const rect = cards[index].getBoundingClientRect(); if (y < rect.top + rect.height / 2) return index; }
+      return count;
+    }
     const sy = zoneScroll[stage]?.sy || 0;   // track is translated by sy → undo it to get content-y
     return clamp(Math.floor((y - r.top - sy) / ZCARD_PEEK), 0, count);
   };
@@ -2425,8 +2465,11 @@
   const previewGap = (stage, index) => {
     if (gapStage && gapStage !== stage) clearGap();
     gapStage = stage;
-    (zoneTrack[stage]?.querySelectorAll(".tk-zcard") || []).forEach((c, i) => {
-      c.style.transform = i >= index ? `translateY(${ZCARD_PEEK}px)` : "";
+    const cards = [...(zoneTrack[stage]?.querySelectorAll(".tk-zcard") || [])];
+    const reference = cards[Math.min(index, Math.max(0, cards.length - 1))];
+    const shift = expandedStages.has(stage) ? (reference?.offsetHeight || CARD_H) + 10 : ZCARD_PEEK;
+    cards.forEach((c, i) => {
+      c.style.transform = i >= index ? `translateY(${shift}px)` : "";
     });
     positionZone(stage);   // sandwich gap shifted cards → shadows track the reorder live
   };
@@ -2446,6 +2489,17 @@
     return { stage: z, index };
   };
 
+  const restackZoneElements = (stage) => {
+    const track = zoneTrack[stage]; if (!track) return;
+    const expanded = expandedStages.has(stage); let previousHeight = 0;
+    [...track.querySelectorAll(":scope > .tk-zcard")].forEach((card, index) => {
+      window.crmObjectSizing?.scan?.(card); const { height } = applyZoneCardMetrics(card);
+      card.style.marginTop = index ? (expanded ? "10px" : `-${Math.max(0, previousHeight - ZCARD_PEEK)}px`) : "0px";
+      previousHeight = height; fitCardFields(card);
+    });
+    clampZoneScroll(stage);
+  };
+
   const renderZones = () => {
     ensureZones();
     const byCreated = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
@@ -2455,20 +2509,31 @@
       const oidx = (id) => { const i = ord.indexOf(id); return i === -1 ? 1e9 : i; };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id))
         .sort((a, b) => oidx(a.id) - oidx(b.id) || byCreated(a, b));
+      const expanded = expandedStages.has(s.key); const panel = body.parentElement;
+      panel?.classList.toggle("is-stack-expanded", expanded);
+      const spread = panel?.querySelector(".tk-zone-spread");
+      if (spread) { spread.setAttribute("aria-expanded", String(expanded)); spread.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${s.label} stack`); }
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
         const card = zoneCardEl(t, s.key);
-        if (i > 0) card.style.marginTop = `-${CARD_H - ZCARD_PEEK}px`;
         card.style.zIndex = String(i + 1);
         track.appendChild(card);
-        fitCardFields(card);   // measure in the DOM → expand entries, clamp only on overflow
       });
+      restackZoneElements(s.key);
       const st = zoneScroll[s.key];   // re-clamp scroll to the new content height + reposition
       if (st) { st.sy = clamp(st.sy, zMin(s.key), 0); st.ty = st.sy; positionZone(s.key); }
     });
   };
+
+  const reflowObjectSizes = (detail = null) => {
+    if (!theater) return; const sized = [...theater.querySelectorAll("[data-crm-size-key]")];
+    if (detail?.key && !sized.some((element) => element.dataset.crmSizeKey === detail.key)) return;
+    window.crmObjectSizing?.scan?.(theater); STAGES.forEach((stage) => restackZoneElements(stage.key)); layoutZones(); ["left","right","trash"].forEach((side) => layout(side));
+  };
+  document.addEventListener("crm:object-sizing-ready", () => requestAnimationFrame(() => reflowObjectSizes()));
+  document.addEventListener("crm:object-size-change", (event) => requestAnimationFrame(() => reflowObjectSizes(event.detail)));
 
   // Drop a ticket dragged from a corner stack into a zone: assign the stage, leave the stack,
   // and fly a shrinking clone from the drop point into its new card in the zone.
@@ -2661,6 +2726,9 @@
     },
     open: openTicket,
     contextMenu: openContextMenu,
+    setStageExpanded: setZoneExpanded,
+    toggleStageExpanded: (stage) => setZoneExpanded(stage),
+    expandedStages: () => [...expandedStages],
     // Return the canonical ticket card face for aggregate surfaces that own
     // their layout. No deck drag/reorder behavior is attached here.
     createCard: (ticket, options = {}) => {
@@ -2668,6 +2736,8 @@
       const card = document.createElement("div");
       card.className = "tk-card tk-card-ticket";
       card.dataset.id = ticket?.id || "";
+      card.dataset.recordEntity = "tickets"; card.dataset.crmSizeKey = cardSizeKey(ticket?.id);
+      window.crmObjectSizing?.scan?.(card);
       card.style.width = `${CARD_W}px`; card.style.height = `${CARD_H}px`;
       card.style.backgroundColor = baseColor();
       card.style.backgroundImage = cardBg(ticket);

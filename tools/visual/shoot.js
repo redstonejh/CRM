@@ -15,7 +15,7 @@ const puppeteer = require('puppeteer-core');
 
 const { start } = require('./harness.js');
 
-const WORKSPACES = ['home', 'desk', 'people', 'cases', 'money', 'planner', 'assignments'];
+const WORKSPACES = ['home', 'people', 'cases', 'planner', 'assignments'];
 
 function chromePath() {
   const candidates = [

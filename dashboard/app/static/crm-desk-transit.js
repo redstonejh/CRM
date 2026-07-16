@@ -6,7 +6,7 @@
 // setActive remain the instant commit primitive, called only at choreography
 // boundaries (and at boot/restore, which is not navigation).
 (() => {
-  const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "money", "cases"]);
+  const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
   let temporalContext = null;
   const TRANSIT_Z = "2500";        // below the untouched native drag strip/chrome
 
@@ -63,10 +63,8 @@
     return layer?.querySelector?.(`.crm-home-bucket[data-module="${key}"]`) || null;
   };
   const destinationFor = (key) => ({
-    desk: window.crmDesk,
     people: window.peopleCards,
     cases: window.ticketStacks,
-    money: window.crmMoneyRoom,
     planner: window.crmPlanner,
     assignments: window.crmAssignments,
   })[key];
@@ -176,7 +174,6 @@
   };
 
   const driveTo = (key) => new Promise((resolve) => {
-    if (key === "bills" || key === "invoices") { window.crmMoneyRoom?.select?.(key); key = "money"; }
     const ws = window.crmWorkspaces;
     if (!ws || !(ws.modules?.() || []).some((module) => module.key === key)) { resolve(false); return; }
     const current = ws.active?.();

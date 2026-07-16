@@ -12,3 +12,4 @@ out/
 
 # visual harness working output (goldens ARE committed)
 tools/visual/candidate/
+tools/visual/electron-actual/

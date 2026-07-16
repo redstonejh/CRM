@@ -1,14 +1,13 @@
-// crm-home.js — six inert screenshot LODs hosted by the original camera.
+// crm-home.js — four inert screenshot LODs hosted by the original camera.
 (() => {
   if (typeof window.createFractalCamera !== "function") return;
 
   const MODULES = [
-    { key: "desk", label: "Overview" }, { key: "people", label: "People" },
-    { key: "cases", label: "Tickets" }, { key: "money", label: "Money" },
+    { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v32";
+  const HOME_PREVIEW_VERSION = "filtered-home-v33";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -35,8 +34,8 @@
   const prewarmedFactories = new Set();
   const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
-  const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "crmMoneyRoom", "crmPlanner", "crmAssignments"];
-  const FACTORY_API_BY_MODULE = { desk:"crmDesk", people:"peopleCards", cases:"ticketStacks", money:"crmMoneyRoom", planner:"crmPlanner", assignments:"crmAssignments" };
+  const FACTORY_PREWARM_APIS = ["peopleCards", "ticketStacks", "crmPlanner", "crmAssignments"];
+  const FACTORY_API_BY_MODULE = { people:"peopleCards", cases:"ticketStacks", planner:"crmPlanner", assignments:"crmAssignments" };
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -85,9 +84,9 @@
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket>.crm-home-preview{
         visibility:hidden}
       .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style;
-        grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
+        grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
       .crm-home-title-layer{position:absolute;z-index:4;display:grid;pointer-events:none;contain:layout style;
-        grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
+        grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
       .crm-home-title-slot{position:relative;min-width:0;min-height:0}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
         cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
@@ -95,7 +94,7 @@
         -webkit-backdrop-filter:blur(28px) saturate(140%);backdrop-filter:blur(28px) saturate(140%);
         box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.18),0 14px 26px -16px rgba(0,0,0,.72);
         transition:box-shadow .18s ease,background .18s ease}
-      /* Home consumes the canonical glass material, but its six adjacent
+      /* Home consumes the canonical glass material, but its four adjacent
          surfaces cannot also consume the menu's large floating shadow. That
          shadow overlaps into a single clipped rectangle around the grid. */
       .crm-home-bucket.crm-menu-surface{box-shadow:inset 0 1px 0 var(--crm-menu-highlight),0 14px 26px -16px rgba(0,0,0,.72)!important}
@@ -169,7 +168,7 @@
         overflow:visible;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
         will-change:transform,opacity;backface-visibility:hidden}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
-      /* Freeze only the six resting tiles. The expander is also a
+      /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
       .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{transition:none!important}
       .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3}
@@ -438,7 +437,8 @@
     const link = priorityLink(item);
     if (link?.entityType === "workItems" && link.recordId) window.crmPlanner?.openItem?.(link.recordId);
     else if (link?.entityType && link?.recordId) window.crmRecordWorld?.open?.(link.entityType, link.recordId, sourceCard);
-    else window.crmDeskTransit?.driveTo?.("assignments") || window.crmWorkspaces?.setActive?.("assignments");
+    else Promise.resolve(window.crmDeskTransit?.driveTo?.("assignments") || window.crmWorkspaces?.setActive?.("assignments"))
+      .then(() => window.crmAssignments?.open?.(item.id));
   };
   const closeTodoPopover = () => { todoPopover?.remove(); todoPopover = null; };
   const placeTodoPopover = (element, anchor, x, y) => {
@@ -741,9 +741,9 @@
     const handReserve = Math.min(320, Math.max(254, innerWidth * .16 + 32));
     hand?.style.setProperty("--home-hand-reserve", `${handReserve.toFixed(1)}px`);
     const area = { x: OUTER, y: top, w: full.w - 2 * OUTER, h: Math.max(220, full.h - top - OUTER - handReserve) };
-    const aspect = innerWidth / innerHeight; let cellW = (area.w - GAP * 2) / 3; let cellH = cellW / aspect;
+    const aspect = Math.min(2.3, Math.max(1.9, innerWidth / innerHeight * 1.35)); let cellW = (area.w - GAP) / 2; let cellH = cellW / aspect;
     if (2 * cellH + GAP > area.h) { cellH = (area.h - GAP) / 2; cellW = cellH * aspect; }
-    const gridW = 3 * cellW + GAP * 2, gridH = 2 * cellH + GAP;
+    const gridW = 2 * cellW + GAP, gridH = 2 * cellH + GAP;
     const gridGeometry = { left:`${area.x + (area.w-gridW)/2}px`, top:`${area.y + (area.h-gridH)/2}px`, width:`${gridW}px`, height:`${gridH}px` };
     Object.assign(grid.style, gridGeometry);
     const titleLayer = surface?.querySelector(".crm-home-title-layer");
@@ -902,8 +902,8 @@
     });
   });
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
-    const started = performance.now(); const theater = key === "cases" ? "tickets" : key === "money" ? "money-room" : key;
-    const selector = {desk:".crm-overview-project,.crm-overview-ticket,.crm-overview-update",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const started = performance.now(); const theater = key === "cases" ? "tickets" : key;
+    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
       const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
       const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
@@ -917,8 +917,8 @@
       stable=next&&next===last?stable+1:0;last=next;if(stable>=3||performance.now()-started>=timeoutMs)resolve({stable:stable>=3,signature:next});else requestAnimationFrame(tick)};requestAnimationFrame(tick);
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
-    const theater = key === "cases" ? "tickets" : key === "money" ? "money-room" : key;
-    const selector = {desk:".crm-overview-project,.crm-overview-ticket,.crm-overview-update",people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",money:".tk-zone,.tk-card",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.tk-card"}[key]||"*";
+    const theater = key === "cases" ? "tickets" : key;
+    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });

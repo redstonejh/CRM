@@ -50,8 +50,7 @@
     return root;
   };
   const homeKeyFor = (element) => ({
-    desk: "desk", people: "people", tickets: "cases", cases: "cases", bills: "money", invoices: "money",
-    "money-room": "money", planner: "planner", assignments: "assignments",
+    people: "people", tickets: "cases", cases: "cases", planner: "planner", assignments: "assignments",
   }[theaterOf(element)] || "");
   const refreshPreview = (homeKey) => {
     if (!homeKey || window.crmHomePreviews?.isCaptureWorker) return;

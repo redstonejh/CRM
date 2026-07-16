@@ -31,7 +31,9 @@
   let handoffSequence = 0;
   let handoffPromise = Promise.resolve();
   let handoffResolve = null;
+  let todoPopover = null;
   const prewarmedFactories = new Set();
+  const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
   const FACTORY_PREWARM_APIS = ["crmDesk", "peopleCards", "ticketStacks", "crmMoneyRoom", "crmPlanner", "crmAssignments"];
   const FACTORY_API_BY_MODULE = { desk:"crmDesk", people:"peopleCards", cases:"ticketStacks", money:"crmMoneyRoom", planner:"crmPlanner", assignments:"crmAssignments" };
@@ -128,6 +130,19 @@
       .crm-home-priority-hand{position:absolute;z-index:9;left:0;right:0;bottom:0;height:var(--home-hand-reserve,280px);
         overflow:visible;pointer-events:none;contain:layout style}
       .crm-home-priority-hand[hidden]{display:none}
+      .crm-home-todo-toolbar{position:absolute;z-index:1200;left:50%;top:7px;transform:translateX(-50%);height:31px;
+        display:flex;align-items:center;gap:3px;padding:0 3px 0 11px;border:1px solid rgba(255,255,255,.12);border-radius:12px;
+        background:linear-gradient(180deg,rgba(24,31,42,.62),rgba(13,18,26,.55));-webkit-backdrop-filter:blur(20px) saturate(125%);backdrop-filter:blur(20px) saturate(125%);
+        box-shadow:inset 0 1px rgba(255,255,255,.12),0 10px 24px rgba(0,0,0,.18);pointer-events:auto}
+      .crm-home-todo-label{font:600 var(--crm-type-caption,11px)/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+        letter-spacing:.025em;color:rgba(240,245,252,.74);white-space:nowrap}
+      .crm-home-todo-add.crm-menu-action{width:25px;height:25px;padding:0!important;display:grid;place-items:center;font-size:16px!important;line-height:1;color:rgba(238,245,254,.7)!important}
+      .crm-home-todo-popover{position:fixed;z-index:9360;width:min(340px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}
+      .crm-home-todo-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}
+      .crm-home-todo-fields{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:7px}.crm-home-todo-fields>.crm-menu-input:first-child{grid-column:1/-1}
+      .crm-home-todo-target{grid-column:1/-1}.crm-home-todo-actions{display:flex;justify-content:flex-end;gap:2px;padding-top:1px}
+      .crm-home-todo-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
+      .crm-home-todo-menu{position:fixed;z-index:9365;width:166px;padding:6px;display:grid;gap:1px}.crm-home-todo-menu .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       .crm-home-hand-trigger{position:absolute;z-index:1;left:50%;bottom:0;width:var(--home-hand-span,760px);height:92px;
         transform:translateX(-50%);pointer-events:auto}
       .crm-home-priority-hand>.crm-home-hand-card.tk-card{position:absolute;left:50%;right:auto;bottom:52px;z-index:var(--hand-z,10);
@@ -350,46 +365,22 @@
     return score;
   };
   const choosePriorityItems = (records, username = "") => {
-    const userKey = String(username || "").trim().toLowerCase(); const horizon = startOfToday() + 15 * DAY_MS;
+    const userKey = String(username || "").trim().toLowerCase();
     return records.filter((item) => {
       if (!item || item.deletedAt || isDone(item)) return false;
       const assignee = String(item.assignee || "").trim().toLowerCase();
       if (userKey && assignee && assignee !== userKey) return false;
-      const due = dueTime(item); const important = priorityWeight(item) >= 620;
-      return assignedTo(item, userKey) || important || (Number.isFinite(due) && due < horizon);
+      return true;
     }).sort((a, b) => priorityScore(b, userKey) - priorityScore(a, userKey) || dueTime(a) - dueTime(b)).slice(0, HAND_LIMIT);
   };
-  const signalKind = (reason) => ({
-    "next-touch": "Needs response", "cold-front": "Relationship", "contact-touch": "Follow up",
-    "invoice-overdue": "Invoice overdue", "invoice-due": "Bill due", task: "Task", calendar: "Calendar",
-  }[reason] || "Priority");
-  const signalPriority = (reason) => ({
-    "invoice-overdue": "critical", "invoice-due": "high", "next-touch": "high", "cold-front": "high",
-    "contact-touch": "high", task: "normal", calendar: "normal",
-  }[reason] || "normal");
-  const signalAttention = (reason) => ({
-    "next-touch": "Response due", "cold-front": "Needs attention", "contact-touch": "Reach out today",
-    "invoice-overdue": "Payment overdue", "invoice-due": "Payment due", task: "Due today", calendar: "Today",
-  }[reason] || "Up next");
-  const todaySignals = (summary) => (summary?.summary?.datasets?.todayHand || []).map((row) => {
-    const entity = firstText(row.entity, row.type); const reason = String(row.reason || "").toLowerCase();
-    return {
-      id: `signal:${entity}:${row.id}`, title: firstText(row.title, row.name, row.companyLabel, "Important next action"),
-      kind: signalKind(reason), status: "open", dueAt: firstText(row.dueAt, row.dueDate),
-      assignee: firstText(row.assignee, row.owner), assignedBy: firstText(row.assignedBy), priority: signalPriority(reason),
-      todayReason: reason, attentionLabel: signalAttention(reason), context: firstText(row.companyLabel, row.stageLabel, row.description),
-      links: entity && row.id ? [{ entityType: entity, recordId: row.id, relation: "regarding" }] : [],
-    };
-  });
-  const priorityLink = (item) => item?.sourceEntity && item?.sourceId
-    ? { entityType: item.sourceEntity, recordId: item.sourceId, relation: "source" }
-    : item?.links?.[0] || null;
-  const mergePrioritySources = (commitments, signals) => {
-    const merged = new Map();
-    const keyOf = (item) => { const link = priorityLink(item); return link ? `${link.entityType}:${link.recordId}` : `commitment:${item.id}`; };
-    commitments.forEach((item) => merged.set(keyOf(item), item));
-    signals.forEach((item) => { const key = keyOf(item); if (!merged.has(key)) merged.set(key, item); });
-    return [...merged.values()];
+  const priorityLink = (item) => {
+    if (item?.sourceEntity && item?.sourceId && TODO_LINK_ENTITIES.has(item.sourceEntity)) {
+      return { entityType: item.sourceEntity, recordId: item.sourceId, relation: "source" };
+    }
+    const links = Array.isArray(item?.links) ? item.links : [];
+    return ["workItems", "tickets", "contacts", "tasks"]
+      .map((entityType) => links.find((link) => link?.entityType === entityType && link?.recordId))
+      .find(Boolean) || null;
   };
   const dueLabel = (item) => {
     const due = dueTime(item); if (!Number.isFinite(due)) return firstText(item.attentionLabel, item.assignee ? "Assigned" : "Up next");
@@ -406,7 +397,11 @@
     if (assignedTo(item, String(username).toLowerCase())) return "Assigned to you";
     if (item.assignee) return `Assigned to ${item.assignee}`;
     const link = priorityLink(item);
-    return link ? `${String(link.entityType || "CRM").replace(/s$/, "")} record` : "Important next action";
+    if (link?.entityType === "workItems") return firstText(item.projectTitle, item.stageLabel, "Pipeline card");
+    if (link?.entityType === "contacts") return "Person follow-up";
+    if (link?.entityType === "tickets") return "Ticket work";
+    if (link?.entityType === "tasks") return "Task";
+    return "Personal task";
   };
   const cardReasonOf = (item) => {
     if (item.todayReason) return item.todayReason;
@@ -441,8 +436,80 @@
   };
   const openPriorityItem = (item, sourceCard) => {
     const link = priorityLink(item);
-    if (link?.entityType && link?.recordId) window.crmRecordWorld?.open?.(link.entityType, link.recordId, sourceCard);
-    else window.crmDeskTransit?.driveTo?.("desk") || window.crmWorkspaces?.setActive?.("desk");
+    if (link?.entityType === "workItems" && link.recordId) window.crmPlanner?.openItem?.(link.recordId);
+    else if (link?.entityType && link?.recordId) window.crmRecordWorld?.open?.(link.entityType, link.recordId, sourceCard);
+    else window.crmDeskTransit?.driveTo?.("assignments") || window.crmWorkspaces?.setActive?.("assignments");
+  };
+  const closeTodoPopover = () => { todoPopover?.remove(); todoPopover = null; };
+  const placeTodoPopover = (element, anchor, x, y) => {
+    document.body.appendChild(element);
+    const anchorRect = anchor?.getBoundingClientRect(); const bounds = element.getBoundingClientRect();
+    const left = Math.max(10, Math.min(innerWidth - bounds.width - 10, Number.isFinite(x) ? x : (anchorRect?.left || innerWidth / 2) - bounds.width / 2));
+    const top = Math.max(48, Math.min(innerHeight - bounds.height - 12, Number.isFinite(y) ? y : (anchorRect?.top || innerHeight / 2) - bounds.height - 7));
+    element.style.left = `${left}px`; element.style.top = `${top}px`;
+  };
+  const armTodoOutsideClose = (element) => setTimeout(() => {
+    const close = (event) => {
+      if (element.contains(event.target)) return;
+      closeTodoPopover(); document.removeEventListener("pointerdown", close, true);
+    };
+    document.addEventListener("pointerdown", close, true);
+  }, 0);
+  const recordName = (record) => firstText(record?.title, record?.name, record?.companyLabel, record?.description, record?.id, "Untitled");
+  const createTodo = async ({ title, dueAt = null, priority = "normal", link = null } = {}) => {
+    const fields = { title:firstText(title, "New task"), kind:link?.entityType === "workItems" ? "pipeline-work" : link?.entityType === "contacts" ? "follow-up" : link?.entityType === "tickets" ? "ticket-work" : "task", status:"open", dueAt, priority };
+    if (priorityUsername) fields.assignee = priorityUsername;
+    if (link?.entityType && link?.recordId) fields.links = [{ entityType:link.entityType, recordId:link.recordId, relation:"regarding" }];
+    const result = await window.crmDomain?.create?.("commitments", fields);
+    if (result?.record) { handDirty = true; await refreshPriorityHand(); return result.record; }
+    return null;
+  };
+  const openTodoComposer = async (anchor) => {
+    closeTodoPopover();
+    const targets = [];
+    const groups = [
+      ["tasks", "Tasks"], ["contacts", "People"], ["tickets", "Tickets"], ["workItems", "Pipeline cards"],
+    ];
+    await Promise.all(groups.map(async ([entityType, label]) => {
+      try {
+        const result = await window.crmStore?.list?.(entityType, { includeDeleted:false });
+        targets.push({ entityType, label, records:(result?.records || []).filter((record) => !record.deletedAt).slice(0, 80) });
+      } catch { targets.push({ entityType, label, records:[] }); }
+    }));
+    todoPopover = document.createElement("form"); todoPopover.className = "crm-home-todo-popover crm-menu-surface";
+    todoPopover.innerHTML = `<div class="crm-home-todo-popover-title">New to do</div><div class="crm-home-todo-fields">
+      <input class="crm-menu-input" name="title" placeholder="What needs doing?" autocomplete="off" required>
+      <select class="crm-menu-input crm-home-todo-target" name="target"><option value="">Personal task</option>${targets.map((group) => `<optgroup label="${esc(group.label)}">${group.records.map((record) => `<option value="${esc(`${group.entityType}:${record.id}`)}">${esc(recordName(record))}</option>`).join("")}</optgroup>`).join("")}</select>
+      <input class="crm-menu-input" name="dueAt" type="date" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+      </div><div class="crm-home-todo-actions"><button type="button" class="crm-menu-action" data-todo-cancel>Cancel</button><button type="submit" class="crm-menu-action">Add</button></div>`;
+    todoPopover.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(todoPopover); const rawTarget = String(data.get("target") || ""); const [entityType, ...idParts] = rawTarget.split(":");
+      const due = String(data.get("dueAt") || ""); const created = await createTodo({ title:data.get("title"), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal"), link:rawTarget ? { entityType, recordId:idParts.join(":") } : null });
+      if (created) closeTodoPopover();
+    });
+    todoPopover.querySelector("[data-todo-cancel]")?.addEventListener("click", closeTodoPopover);
+    placeTodoPopover(todoPopover, anchor); armTodoOutsideClose(todoPopover);
+    requestAnimationFrame(() => todoPopover?.elements?.title?.focus());
+  };
+  const updateTodo = async (item, fields) => {
+    if (!item?.id || String(item.id).startsWith("signal:")) return false;
+    const result = await window.crmDomain?.update?.("commitments", item.id, fields, item.version);
+    if (result?.record) { scheduleHandRefresh(); return true; }
+    return false;
+  };
+  const openTodoMenu = (item, card, x, y) => {
+    closeTodoPopover(); todoPopover = document.createElement("div"); todoPopover.className = "crm-home-todo-menu crm-menu-surface";
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(17, 0, 0, 0);
+    [
+      { label:"Open", run:() => openPriorityItem(item, card) },
+      { label:"Due tomorrow", run:() => updateTodo(item, { dueAt:tomorrow.toISOString() }) },
+      { label:"Complete", run:() => updateTodo(item, { status:"completed", completedAt:new Date().toISOString(), outcome:"Completed from Home" }) },
+    ].forEach((action) => {
+      const button = document.createElement("button"); button.type = "button"; button.className = "crm-menu-action"; button.textContent = action.label;
+      button.addEventListener("click", () => { closeTodoPopover(); action.run(); }); todoPopover.appendChild(button);
+    });
+    placeTodoPopover(todoPopover, card, x, y); armTodoOutsideClose(todoPopover);
   };
   const layoutPriorityHand = (hand = camera?.layers?.()[0]?.querySelector?.(".crm-home-priority-hand")) => {
     if (!hand) return; const cards = [...hand.querySelectorAll(".crm-home-hand-card.tk-card")];
@@ -469,8 +536,12 @@
     hand.dataset.renderSignature = renderSignature;
     hand.classList.toggle("is-empty", priorityItems.length === 0);
     hand.replaceChildren();
+    const toolbar = document.createElement("div"); toolbar.className = "crm-home-todo-toolbar";
+    toolbar.innerHTML = `<span class="crm-home-todo-label">To do</span><button type="button" class="crm-home-todo-add crm-menu-action" aria-label="Add to do">+</button>`;
+    toolbar.querySelector("button")?.addEventListener("click", (event) => { event.stopPropagation(); openTodoComposer(event.currentTarget); });
+    hand.appendChild(toolbar);
     if (!priorityItems.length) {
-      const empty = document.createElement("div"); empty.className = "crm-home-hand-empty"; empty.textContent = "Nothing pressing"; hand.appendChild(empty); return;
+      const empty = document.createElement("div"); empty.className = "crm-home-hand-empty"; empty.textContent = "Nothing to do"; hand.appendChild(empty); return;
     }
     const renderer = window.crmToday?.createCard;
     if (typeof renderer !== "function") {
@@ -487,12 +558,8 @@
       card.dataset.priorityId = String(item.id || "");
       if (link?.entityType) card.dataset.recordEntity = link.entityType;
       if (link?.recordId) card.dataset.recordId = link.recordId;
-      if (["ticket", "tickets", "case", "cases"].includes(String(link?.entityType || "").toLowerCase())) {
-        card.addEventListener("contextmenu", async (event) => {
-          event.preventDefault(); event.stopPropagation();
-          await window.ticketStacks?.contextMenu?.(link.recordId, card, event.clientX, event.clientY);
-        });
-      }
+      card.dataset.commitmentId = String(item.id || "");
+      card.addEventListener("contextmenu", (event) => { event.preventDefault(); event.stopPropagation(); openTodoMenu(item, card, event.clientX, event.clientY); });
       card.style.setProperty("--hand-z", String(20 + index));
       hand.appendChild(card);
     });
@@ -519,14 +586,13 @@
     if (!camera?.isActive?.() || !window.crmDomain?.list) return;
     const generation = ++handRefreshGeneration;
     try {
-      const [result, summary, session] = await Promise.all([
+      const [result, session] = await Promise.all([
         window.crmDomain.list("commitments", { includeDeleted: false, limit: 300 }),
-        window.crmReportsApi?.summary?.().catch?.(() => null) || null,
         window.auth?.session?.().catch?.(() => null) || null,
       ]);
       if (generation !== handRefreshGeneration) return;
       priorityUsername = session?.user?.username || "";
-      priorityItems = choosePriorityItems(mergePrioritySources(result?.records || [], todaySignals(summary)), priorityUsername);
+      priorityItems = choosePriorityItems(result?.records || [], priorityUsername);
       handDirty = false;
       renderPriorityHand();
     } catch {}
@@ -755,6 +821,7 @@
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
+    ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-toolbar,.crm-home-todo-popover,.crm-home-todo-menu",
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
     contractExpanderAbove:true,holdContractEndpointFrame:true,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
@@ -865,7 +932,7 @@
     if (apiName) prewarmedFactories.add(apiName);
   };
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,createTodo,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);return{key,state:preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),

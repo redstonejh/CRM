@@ -108,6 +108,8 @@ contextBridge.exposeInMainWorld('tasks', entityBridge('tasks'));
 contextBridge.exposeInMainWorld('bills', entityBridge('bills'));
 contextBridge.exposeInMainWorld('invoices', entityBridge('invoices'));
 contextBridge.exposeInMainWorld('interactions', entityBridge('interactions'));
+contextBridge.exposeInMainWorld('projects', entityBridge('projects'));
+contextBridge.exposeInMainWorld('workItems', entityBridge('workItems'));
 
 // ─── Misc shell ──────────────────────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('electron', {

@@ -7,9 +7,11 @@ const { WebSocket, WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.PORT || process.env.CRM_API_PORT || 3899);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/crm';
-const VALID_ENTITIES = new Set(['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions']);
+const VALID_ENTITIES = new Set(['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions', 'projects', 'workItems']);
 const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'updatedAt', 'version']);
-const REPORT_ENTITIES = [...VALID_ENTITIES];
+// Operational project records participate in the shared store, but they are
+// intentionally excluded from the legacy sales/finance report projection.
+const REPORT_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions'];
 const CREATE_BODY_KEYS = new Set(['fields', 'actor', 'options']);
 const PATCH_BODY_KEYS = new Set(['fields', 'actor', 'options', 'expectedVersion']);
 const CLOSED_STATES = new Set(['resolved', 'done', 'closed', 'complete', 'completed', 'cancelled', 'archived']);

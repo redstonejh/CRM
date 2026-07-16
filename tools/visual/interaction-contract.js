@@ -21,9 +21,9 @@ async function main() {
   await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting') && window.crmWorkspaces && window.crmDesk, { timeout: 30000 });
   await sleep(1800);
   let failures = 0;
-  const check = async (name, fn) => {
+  const check = async (name, fn, arg) => {
     let result; let ok = false;
-    try { result = await page.evaluate(fn); ok = result === true || result?.ok === true; } catch (error) { result = { detail: error.message }; }
+    try { result = await page.evaluate(fn, arg); ok = result === true || result?.ok === true; } catch (error) { result = { detail: error.message }; }
     console.log(`${ok ? ' ok ' : 'FAIL'} ${name}${result?.detail ? ` — ${result.detail}` : ''}`);
     if (!ok) failures++;
   };
@@ -107,20 +107,51 @@ async function main() {
     return cards.length > 0 && cards.every((card) => card.matches('.tk-card.tk-card-today') && !!card.querySelector('.ticket-body'))
       && !document.querySelector('.crm-home-priority-card');
   });
+  await page.click('.crm-home-todo-add');
+  await page.waitForSelector('.crm-home-todo-popover.crm-menu-surface', { timeout:10000 });
+  await check('Home exposes a compact linked to-do composer', () => {
+    const form = document.querySelector('.crm-home-todo-popover.crm-menu-surface');
+    return !!form && !!form.elements.title && !!form.elements.dueAt && !!form.elements.priority
+      && !!form.querySelector('optgroup[label="Pipeline cards"]')
+      && [...form.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
+  });
+  await page.click('[data-todo-cancel]');
+  const linkedHomeTodo = await page.evaluate(async () => {
+    const task = (await window.crmStore.list('tasks', { includeDeleted:false })).records?.[0];
+    if (!task) return null;
+    const record = await window.crmHome.createTodo({ title:'Home linked to-do contract', priority:'urgent', dueAt:new Date().toISOString(), link:{ entityType:'tasks', recordId:task.id } });
+    return record ? { id:record.id, taskId:task.id } : null;
+  });
+  if (!linkedHomeTodo) throw new Error('Could not create linked Home to-do contract record');
+  await page.waitForFunction((id) => !!document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(id)}"]`), { timeout:10000 }, linkedHomeTodo.id);
+  await check('Home hand is the persistent linked to-do list', (todo) => {
+    const toolbar = document.querySelector('.crm-home-todo-toolbar');
+    const cards = [...document.querySelectorAll('.crm-home-hand-card')];
+    const created = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.id)}"]`);
+    return toolbar?.querySelector('.crm-home-todo-label')?.textContent.trim() === 'To do'
+      && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && !card.dataset.commitmentId.startsWith('signal:'))
+      && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId;
+  }, linkedHomeTodo);
   await check('Home reserves room for a curved priority hand', () => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card.tk-card')];
     const grid = document.querySelector('.crm-home-grid')?.getBoundingClientRect();
     const rotations = new Set(cards.map((card) => card.style.getPropertyValue('--hand-rot')));
     const positions = new Set(cards.map((card) => card.style.getPropertyValue('--hand-x')));
-    const peeking = cards.every((card) => { const visible = innerHeight - card.getBoundingClientRect().top; return visible >= 110 && visible <= 170; });
-    return cards.length > 0 && cards.length <= 7 && rotations.size > 1 && positions.size === cards.length && peeking && grid?.bottom < innerHeight - 145;
+    const visible = cards.map((card) => innerHeight - card.getBoundingClientRect().top);
+    const peeking = visible.every((value) => value >= 110 && value <= 170);
+    return { ok:cards.length > 0 && cards.length <= 7 && rotations.size > 1 && positions.size === cards.length && peeking && grid?.bottom < innerHeight - 145,
+      detail:JSON.stringify({ count:cards.length, rotations:rotations.size, positions:positions.size, visible, gridBottom:grid?.bottom,
+        gridInline:document.querySelector('.crm-home-grid')?.getAttribute('style'), viewport:[innerWidth,innerHeight], scrollY,
+        level:window.crmHomeCamera?.level?.(), moving:window.crmHomeCamera?.isTransitioning?.(), rootTransform:getComputedStyle(window.crmHomeCamera?.layers?.()[0]).transform,
+        surface:window.crmHomeCamera?.surface?.().className, active:document.activeElement?.className, popover:!!document.querySelector('.crm-home-todo-popover') }) };
   });
   await page.hover('.crm-home-hand-trigger');
   await sleep(460);
   await check('Hovering the hand reveals every priority card', () => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card.tk-card')];
-    return cards.length > 0 && cards.every((card) => { const rect = card.getBoundingClientRect(); return rect.top > 0 && rect.bottom <= innerHeight + 1; })
-      && Math.min(...cards.map((card) => card.getBoundingClientRect().top)) < innerHeight - 150;
+    const rects = cards.map((card) => { const rect=card.getBoundingClientRect(); return { top:rect.top,bottom:rect.bottom }; });
+    return { ok:cards.length > 0 && rects.every((rect) => rect.top > 0 && rect.bottom <= innerHeight + 1)
+      && Math.min(...rects.map((rect) => rect.top)) < innerHeight - 150, detail:JSON.stringify(rects) };
   });
   await page.evaluate(() => { window.__homeHandTargetTop = document.querySelector('.crm-home-hand-card.tk-card')?.getBoundingClientRect().top || 0; });
   await page.hover('.crm-home-hand-card.tk-card');

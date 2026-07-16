@@ -11,7 +11,7 @@
 (() => {
   const API_URL = (window.__CRM_API_URL__ || 'http://127.0.0.1:3899').replace(/\/+$/, '');
   const ACTOR = window.__CRM_ACTOR__ || 'rosa';
-  const ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions'];
+  const ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions', 'projects', 'workItems'];
   const IMMUTABLE_FIELDS = new Set(['id', 'entityType', 'createdAt', 'history', 'version']);
 
   // ─── Channel bus (replaces ipcRenderer events) ─────────────────────────────

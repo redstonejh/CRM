@@ -85,6 +85,15 @@ async function main() {
       && title('planner')?.textContent.trim() === 'Planner'
       && title('assignments')?.textContent.trim() === 'Assignments';
   });
+  await check('Every Home preview is a proportional viewport of its destination', () => {
+    const expected = innerWidth / innerHeight;
+    const tiles = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')].map((tile) => {
+      const rect = tile.getBoundingClientRect(); return { width:rect.width, height:rect.height, ratio:rect.width / rect.height };
+    });
+    const widths = tiles.map((tile) => tile.width); const heights = tiles.map((tile) => tile.height);
+    return tiles.length === 4 && tiles.every((tile) => Math.abs(tile.ratio - expected) <= .01)
+      && Math.max(...widths) - Math.min(...widths) < 1 && Math.max(...heights) - Math.min(...heights) < 1;
+  });
   await check('Home tile titles use a sharp live type layer', () => {
     const titles = [...document.querySelectorAll('.crm-home-title-layer > .crm-home-title-slot .crm-home-title')];
     return titles.length === 4 && titles.every((title) => {

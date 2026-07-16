@@ -77,10 +77,12 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v33';
+const HOME_PREVIEW_VERSION = 'filtered-home-v34';
 const homePreviewCache = new Map();
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;
+let homePreviewResizeTimer = null;
+let homePreviewBoundsKey = '';
 let homePreviewQueue = Promise.resolve();
 let homePreviewRefreshTimer = null;
 
@@ -139,10 +141,17 @@ function createMainWindow() {
     mainWindow.webContents.send('tickets:changed', ticketsPayload());
     mainWindow.webContents.send('tickets:connection', ticketConnectionState());
     broadcastStore();
+    homePreviewBoundsKey = previewBoundsKey(mainWindow);
+    mainWindow.on('resize', scheduleHomePreviewBoundsRefresh);
     setTimeout(() => capturePreviewKeys(HOME_PREVIEW_KEYS, 'startup'), 250);
   });
 
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    clearTimeout(homePreviewResizeTimer);
+    homePreviewResizeTimer = null;
+    homePreviewBoundsKey = '';
+    mainWindow = null;
+  });
   return mainWindow;
 }
 
@@ -387,6 +396,27 @@ function scheduleHomePreviewRefresh(label = 'store change', delay = 700) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     capturePreviewKeys(HOME_PREVIEW_KEYS, label);
   }, delay);
+}
+
+function previewBoundsKey(win) {
+  if (!win || win.isDestroyed()) return '';
+  const { width, height } = win.getContentBounds();
+  return `${width}x${height}`;
+}
+
+function scheduleHomePreviewBoundsRefresh() {
+  clearTimeout(homePreviewResizeTimer);
+  homePreviewResizeTimer = setTimeout(() => {
+    homePreviewResizeTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const nextBoundsKey = previewBoundsKey(mainWindow);
+    if (!nextBoundsKey || nextBoundsKey === homePreviewBoundsKey) return;
+    homePreviewBoundsKey = nextBoundsKey;
+    // Keep the existing pixels on screen while their correctly-sized
+    // replacements are prepared; the renderer rejects them for motion as soon
+    // as its viewport signature changes, so no stale raster can enter a dive.
+    capturePreviewKeys(HOME_PREVIEW_KEYS, 'window resize');
+  }, 260);
 }
 
 function storePayload(entity, options = {}) {

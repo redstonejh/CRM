@@ -7,7 +7,7 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v33';
+const HOME_PREVIEW_VERSION = 'filtered-home-v34';
 const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
@@ -272,7 +272,9 @@ async function main() {
       const loader = host.querySelector(':scope > .crm-home-preview-state');
       const style = getComputedStyle(bucket);
       const titleStyle = title && getComputedStyle(title);
+      const rect = bucket.getBoundingClientRect();
       return { key: bucket.dataset.module, version: host.dataset.previewVersion, images: host.querySelectorAll(':scope > img').length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
+        renderedWidth:rect.width, renderedHeight:rect.height, aspectError:Math.abs(rect.width / rect.height - image.naturalWidth / image.naturalHeight),
         loader: { exists: !!loader, role: loader?.getAttribute('role'), hiddenAtReady: loader ? getComputedStyle(loader).visibility === 'hidden' : false },
         variant: image?.dataset.previewVariant, previewFilter: getComputedStyle(image).filter, titleOpacity: Number(getComputedStyle(titleGlass).opacity),
         titleSize: titleStyle?.fontSize, titleWeight: titleStyle?.fontWeight, titleFamily: titleStyle?.fontFamily, titleShadow: titleStyle?.textShadow,
@@ -294,7 +296,7 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 4 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 4 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.liveTrees)) {
     throw new Error(`Home is not four inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER)
@@ -307,6 +309,32 @@ async function main() {
     || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 4
     || startup.homeLayers.rootWillChange !== 'auto' || startup.homeLayers.snapshots !== 1 || startup.homeLayers.snapshotDisplay !== 'none') {
     throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
+  }
+  const initialPreviewTime = Math.max(...await page.evaluate(() => window.crmHome.previewStatus().map((item) => item.capturedAt || 0)));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setContentSize(1360, 900));
+  try {
+    await page.waitForFunction((capturedAt) => innerWidth === 1360 && innerHeight === 900
+      && window.crmHome?.motionStatus?.().ready
+      && window.crmHome.previewStatus().every((item) => item.capturedAt > capturedAt)
+      && [...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')].every((image) => image.naturalWidth === innerWidth && image.naturalHeight === innerHeight), initialPreviewTime, { timeout:60000 });
+  } catch (error) {
+    const resizeState = await page.evaluate(() => ({ viewport:[innerWidth,innerHeight], motion:window.crmHome?.motionStatus?.(), previews:window.crmHome?.previewStatus?.(), images:[...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')].map((image) => [image.naturalWidth,image.naturalHeight]) }));
+    throw new Error(`Home previews did not recapture after resize: ${JSON.stringify(resizeState)} (${error.message})`);
+  }
+  const resizedPreviewTime = Math.max(...await page.evaluate(() => window.crmHome.previewStatus().map((item) => item.capturedAt || 0)));
+  const resizedAlignment = await page.evaluate(() => [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')].map((bucket) => {
+    const image = bucket.querySelector('.crm-home-preview-foreground'); const rect = bucket.getBoundingClientRect();
+    return { key:bucket.dataset.module, tile:rect.width / rect.height, preview:image.naturalWidth / image.naturalHeight };
+  }));
+  if (resizedAlignment.some((item) => Math.abs(item.tile - item.preview) > .01)) throw new Error(`Resized previews are stretched: ${JSON.stringify(resizedAlignment)}`);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setContentSize(1280, 860));
+  try {
+    await page.waitForFunction((capturedAt) => innerWidth === 1280 && innerHeight === 860
+      && window.crmHome?.motionStatus?.().ready
+      && window.crmHome.previewStatus().every((item) => item.capturedAt > capturedAt), resizedPreviewTime, { timeout:60000 });
+  } catch (error) {
+    const restoreState = await page.evaluate(() => ({ viewport:[innerWidth,innerHeight], motion:window.crmHome?.motionStatus?.(), currentMotionSignature:window.crmHome?.motionLayoutSignature?.(), previews:window.crmHome?.previewStatus?.(), images:[...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')].map((image) => [image.naturalWidth,image.naturalHeight]) }));
+    throw new Error(`Home previews did not recapture after restoring size: ${JSON.stringify(restoreState)} (${error.message})`);
   }
   const loadingSignal = await page.evaluate(() => {
     const source = document.querySelector('.crm-home-preview');

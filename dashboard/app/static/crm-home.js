@@ -7,7 +7,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v33";
+  const HOME_PREVIEW_VERSION = "filtered-home-v34";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -22,6 +22,7 @@
   let handDirty = true;
   let activeRefreshPending = false;
   let motionSnapshot = null;
+  let motionSnapshotSettleTimer = 0;
   let factoryPrewarmHandle = 0;
   let factoryPrewarmTimer = 0;
   let factoryPrewarmRunning = false;
@@ -251,6 +252,8 @@
     host.dataset.previewState = isCurrentPreview(preview) ? "ready" : "stale";
     host.dataset.previewVersion = preview.version;
     host.dataset.capturedAt = String(preview.capturedAt || 0);
+    host.dataset.previewWidth = String(preview.width || 0);
+    host.dataset.previewHeight = String(preview.height || 0);
     host.closest(".crm-home-bucket")?.setAttribute("data-preview-ready", "true");
     return true;
   };
@@ -272,12 +275,20 @@
   const acceptPreview = (preview, replaceCurrent = false) => {
     if (!isRenderablePreview(preview)) return false;
     const existing = previews.get(preview.key);
+    const existingAspect = Number(existing?.width) > 0 && Number(existing?.height) > 0 ? existing.width / existing.height : 0;
+    const nextAspect = Number(preview.width) > 0 && Number(preview.height) > 0 ? preview.width / preview.height : 0;
     // Renderer-only reloads can briefly straddle Electron host versions. Keep a
     // current image when one exists, but render an older valid image instead of
     // turning the tile into an empty rectangle while the host catches up.
     if (!replaceCurrent && isCurrentPreview(existing) && !isCurrentPreview(preview)) return true;
     previews.set(preview.key, preview);
-    if (camera?.isActive?.() && camera.level() === 0) mountPreview(preview.key);
+    if (camera?.isActive?.() && camera.level() === 0) {
+      mountPreview(preview.key);
+      if (nextAspect && Math.abs(nextAspect - existingAspect) > .0005 && !camera.isTransitioning?.()) {
+        camera.layout();
+        requestAnimationFrame(() => syncMotionSnapshot());
+      }
+    }
     return true;
   };
   const motionLayoutSignature = (root = camera?.layers?.()[0]) => {
@@ -334,7 +345,17 @@
     if (!snapshot?.src || !snapshot?.layoutSignature) return false;
     if (motionSnapshot?.version === HOME_PREVIEW_VERSION && snapshot.version !== HOME_PREVIEW_VERSION) return true;
     motionSnapshot = snapshot;
-    syncMotionSnapshot();
+    clearTimeout(motionSnapshotSettleTimer);
+    const settle = (attempt = 0) => {
+      const root = camera?.layers?.()[0];
+      syncMotionSnapshot(root);
+      if (root?.dataset?.motionSnapshotReady === "true" || attempt >= 10) return;
+      // A resize can deliver the new raster in the same task that lays out the
+      // hand. Recheck across the short seating window instead of permanently
+      // rejecting an otherwise exact snapshot on that boundary frame.
+      motionSnapshotSettleTimer = setTimeout(() => settle(attempt + 1), 48);
+    };
+    settle();
     return true;
   };
   const requestMotionSnapshot = async () => {
@@ -741,8 +762,13 @@
     const handReserve = Math.min(320, Math.max(254, innerWidth * .16 + 32));
     hand?.style.setProperty("--home-hand-reserve", `${handReserve.toFixed(1)}px`);
     const area = { x: OUTER, y: top, w: full.w - 2 * OUTER, h: Math.max(220, full.h - top - OUTER - handReserve) };
-    const aspect = Math.min(2.3, Math.max(1.9, innerWidth / innerHeight * 1.35)); let cellW = (area.w - GAP) / 2; let cellH = cellW / aspect;
-    if (2 * cellH + GAP > area.h) { cellH = (area.h - GAP) / 2; cellW = cellH * aspect; }
+    // Every tile is a geometrically faithful viewport of the room it opens.
+    // Artificially widening the 2x2 cells made the cached room look stretched
+    // and guaranteed a scale change at the camera endpoint.
+    const captured = MODULES.map(({ key }) => previews.get(key)).find((preview) => Number(preview?.width) > 0 && Number(preview?.height) > 0);
+    const aspect = captured ? captured.width / captured.height : innerWidth / innerHeight;
+    const cellW = Math.max(1, Math.min((area.w - GAP) / 2, ((area.h - GAP) / 2) * aspect));
+    const cellH = Math.max(1, cellW / aspect);
     const gridW = 2 * cellW + GAP, gridH = 2 * cellH + GAP;
     const gridGeometry = { left:`${area.x + (area.w-gridW)/2}px`, top:`${area.y + (area.h-gridH)/2}px`, width:`${gridW}px`, height:`${gridH}px` };
     Object.assign(grid.style, gridGeometry);

@@ -191,6 +191,7 @@
       colorLast: "crm-invoice-color-last",
     },
     stages,
+    zoneGap: 22,
     stageFields,
     createFields,
     createStageLabel: "New invoice",

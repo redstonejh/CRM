@@ -32,7 +32,7 @@
       .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:38px;display:flex;align-items:center;gap:10px;text-align:left}
       .crm-assignment-source-pool-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-assignment-stage{position:relative;min-width:0;min-height:0;overflow:visible}
-      .crm-assignment-grid{position:absolute;left:0;right:0;top:22px;height:336px;display:grid;grid-template-columns:repeat(4,202px);gap:var(--crm-object-gap,18px);place-content:start center}
+      .crm-assignment-grid{position:absolute;left:0;right:0;top:0;height:336px;display:grid;grid-template-columns:repeat(4,202px);gap:var(--crm-object-gap,18px);place-content:start center}
       .crm-assignment-bucket.tk-zone{position:relative;inset:auto;width:202px;height:336px;box-sizing:border-box}
       .crm-assignment-bucket .tk-zone-body{min-height:0}.crm-assignment-bucket .tk-zone-track{position:relative;min-height:100%}
       .crm-assignment-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}

@@ -58,6 +58,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const zoneColumns = Number.isFinite(Number(config.zoneColumns)) && Number(config.zoneColumns) > 0
     ? Math.max(1, Math.floor(Number(config.zoneColumns)))
     : 0;
+  const zoneGap = Number.isFinite(Number(config.zoneGap)) && Number(config.zoneGap) >= 0
+    ? Number(config.zoneGap)
+    : null;
   const reserveStackSpace = config.reserveStackSpace !== false;
   const resolvedPulse = config.resolvedPulse === true;
   const autoFanOncePerDayKey = String(config.autoFanOncePerDayKey || "");
@@ -2641,7 +2644,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const columns = Math.min(n, zoneColumns || n);
     const rows = Math.ceil(n / columns);
     const bucketW = Math.min(CARD_W + 60, (region.width - MARGIN * (columns + 1)) / columns);  // one full card + room for the scrollbar
-    const gap = (region.width - bucketW * columns) / (columns + 1);          // equal gap incl. both ends
+    const gap = zoneGap == null
+      ? (region.width - bucketW * columns) / (columns + 1)                  // default: equal gap incl. both ends
+      : Math.min(zoneGap, Math.max(0, (region.width - bucketW * columns) / Math.max(1, columns - 1)));
+    const blockW = bucketW * columns + gap * Math.max(0, columns - 1);
+    const blockLeft = zoneGap == null ? region.left + gap : region.left + Math.max(0, (region.width - blockW) / 2);
     const rowGap = rows > 1 ? metric("--crm-object-gap", 18) : 0;
     const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
     const bucketH = Math.max(180, Math.min(CARD_H + 80, (availableH - rowGap * (rows - 1)) / rows));
@@ -2651,7 +2658,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     STAGES.forEach((s, i) => {
       const column = i % columns;
       const row = Math.floor(i / columns);
-      const left = region.left + gap * (column + 1) + bucketW * column;
+      const left = blockLeft + (bucketW + gap) * column;
       lefts.push(left);
       const panel = zoneBody[s.key]?.parentElement;
       if (!panel) return;

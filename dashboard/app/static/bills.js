@@ -127,6 +127,7 @@
       ],
     },
     stages,
+    zoneGap: 22,
     stageFields,
     createFields,
     createStageLabel: "New bill",

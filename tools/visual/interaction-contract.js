@@ -227,9 +227,13 @@ async function main() {
     const tickets = [...document.querySelectorAll('.crm-overview-ticket')];
     const updates = [...document.querySelectorAll('.crm-overview-update')];
     const list = document.querySelector('.crm-overview-project-list');
+    const bucket = document.querySelector('.crm-overview-bucket');
+    const scroll = document.querySelector('.crm-overview-scroll');
     return {
       ok: projects.length >= 3 && maps.length === projects.length && tickets.length >= 4 && updates.length >= 3
         && !!list && getComputedStyle(list).overflowX === 'auto' && getComputedStyle(list).overflowY === 'hidden'
+        && !!bucket && getComputedStyle(bucket).backgroundColor === 'rgba(0, 0, 0, 0)'
+        && !!scroll && getComputedStyle(scroll).overflowY === 'auto'
         && !document.querySelector('.crm-overview-pocket,.crm-overview-worlds,.crm-overview-featured,.crm-overview-map')
         && !!document.querySelector('.crm-overview-ticket-section') && !!document.querySelector('.crm-overview-recent'),
       detail: `${projects.length} projects / ${tickets.length} tickets / ${updates.length} recent items`,
@@ -342,12 +346,15 @@ async function main() {
     const expected = getComputedStyle(reference);
     const button = pools.find((pool) => !pool.classList.contains('is-selected'));
     const actual = getComputedStyle(button);
+    const panelRect = theater?.querySelector('.crm-assignment-pools')?.getBoundingClientRect();
+    const bucketRect = buckets[0]?.getBoundingClientRect();
     const sameButton = ['backgroundColor','borderTopWidth','borderRadius','color','fontSize','fontWeight','boxShadow','paddingLeft','paddingRight']
       .every((property) => actual[property] === expected[property]);
     return pools.length === 8 && buckets.length > 0 && people.length === 10
       && people.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.assignmentContactId)
       && pools.filter((pool) => pool.classList.contains('is-selected')).length === 1
       && sameButton && !theater.querySelector('.crm-assignment-source-pool.tk-zone')
+      && !!panelRect && !!bucketRect && Math.abs(panelRect.top - bucketRect.top) <= 1
       && buckets.every((bucket) => !!bucket.dataset.assignmentCommitment)
       && !theater.querySelector('.crm-assignment-source-pool-count,.crm-assignment-count,.crm-assignment-hand-label')
       && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head');
@@ -572,9 +579,17 @@ async function main() {
   await activate('money');
   await check('Money uses one vertical selector for Bills and Invoices', () => {
     const room = document.querySelector('[data-crm-theater="money-room"]');
+    const selector = room?.querySelector('.crm-money-switcher')?.getBoundingClientRect();
+    const zones = [...(room?.querySelectorAll('[data-crm-subtheater="money"]:not([hidden]) .tk-zone') || [])]
+      .map((zone) => zone.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    const gaps = zones.slice(1).map((zone, index) => zone.left - zones[index].right);
     return !!room && room.querySelectorAll('.crm-money-view').length === 2
       && room.querySelectorAll('.crm-money-view.is-selected').length === 1
-      && room.querySelectorAll('[data-crm-subtheater="money"]:not([hidden])').length === 1;
+      && room.querySelectorAll('[data-crm-subtheater="money"]:not([hidden])').length === 1
+      && !!selector && selector.width >= 145 && zones.length === 3
+      && Math.abs(selector.top - zones[0].top) <= 1
+      && zones[0].left - selector.right >= 12 && zones[0].left - selector.right <= 28
+      && gaps.every((gap) => gap >= 16 && gap <= 28);
   });
   await page.click('.crm-money-view[data-money-view="bills"]');
   await page.waitForFunction(() => window.crmMoneyRoom?.selected?.() === 'bills');

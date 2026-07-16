@@ -12,11 +12,11 @@
     style.id = "crm-money-room-styles";
     style.textContent = `
       .crm-money-room{position:fixed;inset:0;z-index:836;pointer-events:none;color:#fff}.crm-money-room[hidden]{display:none}
-      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:max(18px,calc(var(--crm-canvas-x,64px) - 30px));top:var(--crm-money-switcher-top,132px);width:94px;
-        box-sizing:border-box;padding:4px;pointer-events:auto;overflow:hidden}
-      .crm-money-switcher-list{display:flex;flex-direction:column;gap:1px}
-      .crm-money-view.crm-menu-action{position:relative;width:100%;height:30px;text-align:left;padding-left:18px!important;font-size:.68rem!important;letter-spacing:0}
-      .crm-money-view::before{content:"";position:absolute;left:7px;top:13px;width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.16)}
+      .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:var(--crm-money-switcher-left,var(--crm-canvas-x,64px));top:var(--crm-money-switcher-top,132px);width:154px;
+        box-sizing:border-box;padding:7px 6px;pointer-events:auto;overflow:hidden}
+      .crm-money-switcher-list{display:flex;flex-direction:column;gap:2px}
+      .crm-money-view.crm-menu-action{position:relative;width:100%;height:38px;text-align:left;padding-left:25px!important;letter-spacing:0}
+      .crm-money-view::before{content:"";position:absolute;left:10px;top:17px;width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.16)}
       .crm-money-view.is-selected::before{background:rgba(174,207,250,.86);box-shadow:0 0 7px rgba(91,151,236,.4)}
     `;
     document.head.appendChild(style);
@@ -56,7 +56,13 @@
     const theater = root?.querySelector(`[data-crm-subtheater="money"][data-crm-theater="${selected === "invoices" ? "money" : "bills"}"]`);
     const zone = [...(theater?.querySelectorAll?.(".tk-zone") || [])].find((node) => node.getBoundingClientRect().height > 0);
     if (!zone) return;
-    root.style.setProperty("--crm-money-switcher-top", `${Math.round(zone.getBoundingClientRect().top)}px`);
+    const zoneRect = zone.getBoundingClientRect();
+    const switcher = root.querySelector(".crm-money-switcher");
+    const rootStyle = getComputedStyle(document.documentElement);
+    const metric = (name, fallback) => parseFloat(rootStyle.getPropertyValue(name)) || fallback;
+    const left = Math.max(metric("--crm-canvas-x", 64), zoneRect.left - (switcher?.offsetWidth || 154) - metric("--crm-object-gap", 18));
+    root.style.setProperty("--crm-money-switcher-left", `${Math.round(left)}px`);
+    root.style.setProperty("--crm-money-switcher-top", `${Math.round(zoneRect.top)}px`);
   };
 
   const sync = () => {

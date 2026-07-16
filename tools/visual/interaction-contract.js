@@ -249,14 +249,13 @@ async function main() {
     const room = document.querySelector('.crm-overview-surface:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
   });
-  await page.evaluate(() => {
-    ['Project A', 'Project B', 'Project C'].forEach((title) => {
-      const project = window.crmPlanner.createProject(title);
-      ['One', 'Two', 'Three'].forEach((bucketTitle, index) => {
-        const bucket = window.crmPlanner.createBucket(project.id, bucketTitle);
-        if (index < 2) window.crmPlanner.createCard(project.id, bucket.id, `${title} item ${index + 1}`);
-      });
-    });
+  await page.evaluate(async () => {
+    for (const title of ['Project A', 'Project B', 'Project C']) {
+      const project = await window.crmPlanner.createProject(title);
+      for (const [index, stage] of project.stages.entries()) {
+        if (index < 2) await window.crmPlanner.createCard(project.id, stage.id, `${title} item ${index + 1}`);
+      }
+    }
   });
   await page.waitForFunction(() => document.querySelectorAll('.crm-overview-project').length >= 3
     && document.querySelectorAll('.crm-overview-mini-world').length >= 3
@@ -898,29 +897,52 @@ async function main() {
   await page.type('.crm-planner-popover input[name="value"]', 'Interaction plan');
   await page.click('.crm-planner-popover button[type="submit"]');
   await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
-  await page.click('[data-planner-action="new-bucket"]');
+  await page.click('[data-planner-action="new-stage"]');
   await page.type('.crm-planner-popover input[name="value"]', 'Review');
   await page.click('.crm-planner-popover button[type="submit"]');
-  await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 1);
+  await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
   await page.click('.crm-planner-bucket:last-child [data-planner-action="new-card"]');
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
   await page.click('.crm-planner-popover button[type="submit"]');
+  await page.waitForFunction(() => [...document.querySelectorAll('.crm-planner-card-title')].some((node) => node.textContent.trim() === 'Ship the polished flow'), { timeout:10000 });
   await check('Planner creates projects, custom buckets, and fully functional items', () => {
     const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
     const review = project?.buckets.find((bucket) => bucket.title === 'Review');
-    const stored = JSON.parse(localStorage.getItem('crm-planner-projects-v1') || '[]');
-    return !!project && project.buckets.length === 1 && review?.cards.some((card) => card.title === 'Ship the polished flow')
-      && stored.some((item) => item.id === project.id)
-      && !!document.querySelector('.crm-planner-card');
+    const item = review?.cards.find((card) => card.title === 'Ship the polished flow');
+    const commitment = item && window.crmHome?.handStatus?.();
+    return { ok:!!project && project.buckets.length === 4 && !!item && item.entityType === 'workItems'
+      && !!item.commitmentId && !!item.workflowEntryId && !!commitment
+      && !!document.querySelector('.crm-planner-card[data-record-entity="workItems"]'),
+      detail:JSON.stringify({ project:!!project, buckets:project?.buckets.length, item:item && { entityType:item.entityType, commitmentId:item.commitmentId, workflowEntryId:item.workflowEntryId }, card:!!document.querySelector('.crm-planner-card[data-record-entity="workItems"]') }) };
   });
+  const plannerStageMove = await page.evaluate(async () => {
+    const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
+    const review = project?.buckets.find((bucket) => bucket.title === 'Review');
+    const done = project?.buckets.find((bucket) => bucket.kind === 'done');
+    const item = review?.cards.find((card) => card.title === 'Ship the polished flow');
+    if (!project || !review || !done || !item) return null;
+    await window.crmPlanner.moveCard(item.id, done.id);
+    const movedItem = (await window.crmStore.list('workItems', { includeDeleted:false })).records.find((record) => record.id === item.id);
+    const commitment = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((record) => record.id === movedItem.commitmentId);
+    const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, limit:1000 })).records.find((record) => record.recordId === item.id && record.workflowKey === `project:${project.id}`);
+    const completed = { itemStage:movedItem.stageId, itemStatus:movedItem.status, commitmentStatus:commitment?.status, flowStage:flow?.stage };
+    await window.crmPlanner.moveCard(item.id, review.id);
+    return { ...completed, restored:window.crmPlanner.items().find((record) => record.id === item.id)?.stageId };
+  });
+  await check('Planner moves one real work object through its custom workflow and to-do', (state) => ({
+    ok:!!state && state.itemStatus === 'completed' && state.commitmentStatus === 'completed'
+      && state.itemStage === state.flowStage && state.restored && state.restored !== state.itemStage,
+    detail:JSON.stringify(state),
+  }), plannerStageMove);
   await page.click('.crm-planner-bucket:last-child', { button: 'right' });
+  await page.waitForSelector('.crm-planner-context', { timeout:10000 });
   await check('Planner edits use a compact canonical anchored menu', () => {
     const menu = document.querySelector('.crm-planner-context');
     const reference = document.querySelector('.auth-profile-menu');
     if (!menu || !reference) return false;
     const actual = getComputedStyle(menu); const expected = getComputedStyle(reference);
     const rect = menu.getBoundingClientRect();
-    return menu.classList.contains('crm-menu-surface') && rect.width < 200 && rect.height < 130
+    return menu.classList.contains('crm-menu-surface') && rect.width < 200 && rect.height < 260
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
   });
   await page.click('.crm-planner-context .crm-menu-action');
@@ -956,7 +978,7 @@ async function main() {
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-overview-project-name')].some((element) => element.textContent.trim() === 'Interaction plan'));
   await check('Overview immediately reflects Planner projects as low-cost mini layouts', () => {
     const row = [...document.querySelectorAll('.crm-overview-project')].find((element) => element.querySelector('.crm-overview-project-name')?.textContent.trim() === 'Interaction plan');
-    return !!row && row.querySelectorAll('.crm-overview-mini-lane').length === 1 && !row.querySelector('.crm-planner-bucket,.tk-card');
+    return !!row && row.querySelectorAll('.crm-overview-mini-lane').length === 4 && !row.querySelector('.crm-planner-bucket,.tk-card');
   });
   await activate('home');
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0

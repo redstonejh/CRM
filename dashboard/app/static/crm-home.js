@@ -50,12 +50,11 @@
     style.id = "crm-home-styles";
     style.textContent = `
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
-      .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
-        will-change:transform;backface-visibility:hidden}
+      .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0}
       .crm-home-scene-backdrop{display:none;position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
       .crm-home-motion-snapshot.crm-home-preview-image{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
         pointer-events:none;user-select:none;backface-visibility:hidden}
-      .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint}
+      .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint;will-change:transform;backface-visibility:hidden}
       .crm-home-surface.crm-home-camera-moving .crm-home-scene-backdrop{display:block}
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{display:block}
       /* At the contract endpoint the exact Home raster remains above the live
@@ -66,6 +65,7 @@
         display:block;z-index:30;opacity:.999;transform:translateZ(0);will-change:opacity;transition:opacity 112ms linear}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
         opacity:0}
+      .crm-home-surface.crm-home-camera-handoff .crm-home-level>.crm-home-title-layer{z-index:31}
       /* Removing .crm-home-camera-moving restores each tile's background and
          shadow underneath the endpoint raster. Keep that restoration atomic:
          otherwise the normal 180ms hover transition rebuilds the shadow after
@@ -84,6 +84,9 @@
         visibility:hidden}
       .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style;
         grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
+      .crm-home-title-layer{position:absolute;z-index:4;display:grid;pointer-events:none;contain:layout style;
+        grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
+      .crm-home-title-slot{position:relative;min-width:0;min-height:0}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
         cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
         background:linear-gradient(180deg,rgba(22,26,36,.34),rgba(12,16,24,.28));
@@ -97,17 +100,25 @@
       .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(40,55,76,.27),rgba(18,26,38,.23));
         box-shadow:inset 0 0 0 1px rgba(166,196,236,.27),inset 0 1px rgba(255,255,255,.15),0 14px 26px -16px rgba(0,0,0,.72)}
       .crm-home-title-glass{position:absolute;z-index:4;left:17px;bottom:16px;max-width:calc(100% - 34px);
-        padding:0;text-align:left;pointer-events:none;contain:layout style;opacity:.92;background:none;border:0;box-shadow:none;
+        padding:0;text-align:left;pointer-events:none;opacity:.94;background:none;border:0;box-shadow:none;
         transition:opacity .16s ease;display:block}
-      .crm-home-title{font:650 var(--crm-type-tile,15px)/1.15 system-ui;letter-spacing:.005em;
+      .crm-home-title{font:600 var(--crm-type-tile,15px)/1.2 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;letter-spacing:.008em;
         max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(246,249,253,.91);
-        text-shadow:0 1px 2px rgba(0,0,0,.92),0 3px 12px rgba(0,0,0,.72)}
-      .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-title-glass{opacity:.28}
+        text-rendering:geometricPrecision;font-synthesis:none;text-shadow:0 1px 1px rgba(0,0,0,.86)}
+      .crm-home-title-slot.is-deemphasized .crm-home-title-glass{opacity:.28}
       .crm-home-preview{position:absolute;inset:0;z-index:1;overflow:hidden;contain:paint;border-radius:inherit;color:rgba(255,255,255,.62)}
-      .crm-home-preview-state{position:absolute;inset:0;display:grid;place-items:center;font-size:.68rem;font-weight:760;
-        letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.38)}
+      .crm-home-preview-state{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;gap:9px;
+        pointer-events:none;opacity:1;visibility:visible;transition:opacity .18s ease,visibility 0s linear 0s;
+        font:600 10px/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;letter-spacing:.075em;text-transform:uppercase;
+        color:rgba(225,234,246,.6)}
+      .crm-home-preview-state-mark{position:relative;width:14px;height:14px;border:1px solid rgba(224,235,249,.26);border-radius:50%}
+      .crm-home-preview-state-mark::after{content:"";position:absolute;inset:-1px;border:1px solid transparent;border-top-color:rgba(229,239,252,.68);
+        border-radius:inherit;animation:crm-home-preview-turn 1.05s linear infinite}
+      .crm-home-preview[data-preview-state="ready"]>.crm-home-preview-state,
+      .crm-home-preview[data-preview-state="stale"]>.crm-home-preview-state{opacity:0;visibility:hidden;transition:opacity .18s ease,visibility 0s linear .18s}
+      @keyframes crm-home-preview-turn{to{transform:rotate(1turn)}}
       .crm-home-preview-image{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;
-        user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
+        z-index:1;user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
       /* Each tile is one inert raster. A small GPU filter provides the resting
          depth cue and is the only visual property released on hover. */
       .crm-home-preview-foreground{filter:blur(1.8px) saturate(.9) brightness(.82);transition:filter .18s ease}
@@ -134,6 +145,7 @@
       @media(prefers-reduced-motion:reduce){
         .crm-home-priority-hand>.crm-home-hand-card.tk-card,
         .crm-home-title-glass{transition-duration:.01ms}
+        .crm-home-preview-state-mark::after{animation:none}
       }
       /* The transition lid is full-viewport. It must stay neutral in Electron's
          native app-region map or its temporary rectangle can cancel (and on
@@ -172,9 +184,11 @@
     document.head.appendChild(style);
   };
 
-  const bucketHTML = (module) => `
-    <div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-label="Loading preview"></div>
-    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div>`;
+  const previewStateHTML = () => `<div class="crm-home-preview-state" role="status" aria-live="polite">
+    <i class="crm-home-preview-state-mark" aria-hidden="true"></i><span>Preparing view</span></div>`;
+  const bucketHTML = (module) => `<div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-label="Loading preview">${previewStateHTML()}</div>`;
+  const titleHTML = (module) => `<div class="crm-home-title-slot" data-module="${esc(module.key)}">
+    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div></div>`;
 
   const farShift = (preview) => {
     const bounds = preview?.foregroundBounds;
@@ -190,8 +204,16 @@
     image.alt = ""; image.draggable = false;
     return image;
   };
+  const ensurePreviewState = (host) => {
+    if (!host || host.querySelector(":scope > .crm-home-preview-state")) return;
+    host.insertAdjacentHTML("afterbegin", previewStateHTML());
+  };
+  const isRenderablePreview = (preview) => !!preview?.foregroundSrc && !!preview?.exactSrc
+    && MODULES.some(({ key }) => key === preview.key);
+  const isCurrentPreview = (preview) => preview?.version === HOME_PREVIEW_VERSION;
   const mountHost = (host, preview, exact = false, exactOnly = false) => {
-    if (!host || !preview?.foregroundSrc) return false;
+    if (!host || !isRenderablePreview(preview)) return false;
+    ensurePreviewState(host);
     host.style.setProperty("--far-shift-y", `${farShift(preview).toFixed(3)}%`);
     let foreground = host.querySelector(":scope > .crm-home-preview-foreground");
     if (exactOnly) {
@@ -199,7 +221,7 @@
       foreground = null;
     } else if (!foreground) {
       foreground = imageNode("crm-home-preview-foreground", preview.foregroundSrc);
-      host.replaceChildren(foreground);
+      host.appendChild(foreground);
     } else {
       if (foreground.src !== preview.foregroundSrc) foreground.src = preview.foregroundSrc;
     }
@@ -212,7 +234,7 @@
       if (!full) { full = imageNode("crm-home-preview-exact", preview.exactSrc, "sync"); host.appendChild(full); }
       else if (full.src !== preview.exactSrc) full.src = preview.exactSrc;
     }
-    host.dataset.previewState = "ready";
+    host.dataset.previewState = isCurrentPreview(preview) ? "ready" : "stale";
     host.dataset.previewVersion = preview.version;
     host.dataset.capturedAt = String(preview.capturedAt || 0);
     host.closest(".crm-home-bucket")?.setAttribute("data-preview-ready", "true");
@@ -226,12 +248,20 @@
   const revealSharpPreview = (bucket) => {
     if (!bucket) return;
     bucket.classList.add("is-preview-hovered");
+    bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"]`)?.classList.add("is-deemphasized");
   };
   const restSharpPreview = (bucket) => {
-    if (!bucket?.matches(":focus-visible")) bucket?.classList?.remove("is-preview-hovered");
+    if (!bucket || bucket.matches(":focus-visible")) return;
+    bucket.classList.remove("is-preview-hovered");
+    bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"]`)?.classList.remove("is-deemphasized");
   };
-  const acceptPreview = (preview) => {
-    if (preview?.version !== HOME_PREVIEW_VERSION || !preview?.foregroundSrc || !preview?.exactSrc || !MODULES.some(({ key }) => key === preview.key)) return false;
+  const acceptPreview = (preview, replaceCurrent = false) => {
+    if (!isRenderablePreview(preview)) return false;
+    const existing = previews.get(preview.key);
+    // Renderer-only reloads can briefly straddle Electron host versions. Keep a
+    // current image when one exists, but render an older valid image instead of
+    // turning the tile into an empty rectangle while the host catches up.
+    if (!replaceCurrent && isCurrentPreview(existing) && !isCurrentPreview(preview)) return true;
     previews.set(preview.key, preview);
     if (camera?.isActive?.() && camera.level() === 0) mountPreview(preview.key);
     return true;
@@ -287,7 +317,8 @@
     } else if (image.complete) ready();
   };
   const acceptMotionSnapshot = (snapshot) => {
-    if (snapshot?.version !== HOME_PREVIEW_VERSION || !snapshot?.src || !snapshot?.layoutSignature) return false;
+    if (!snapshot?.src || !snapshot?.layoutSignature) return false;
+    if (motionSnapshot?.version === HOME_PREVIEW_VERSION && snapshot.version !== HOME_PREVIEW_VERSION) return true;
     motionSnapshot = snapshot;
     syncMotionSnapshot();
     return true;
@@ -299,7 +330,7 @@
     clearTimeout(retryTimer);
     if (reset) retryAttempt = 0;
     try { (await window.crmHomePreviews?.list?.())?.previews?.forEach(acceptPreview); } catch {}
-    if (previews.size === MODULES.length) return;
+    if (MODULES.every(({ key }) => isCurrentPreview(previews.get(key)))) return;
     retryTimer = setTimeout(() => requestPreviews(false), RETRY_MS[Math.min(retryAttempt++, RETRY_MS.length - 1)]);
   };
   const priorityWeight = (item) => ({ critical: 900, urgent: 800, high: 650, overdue: 620, medium: 180, normal: 0 }
@@ -611,6 +642,8 @@
     const scene = document.createElement("div"); scene.className = "crm-home-scene-backdrop"; root.appendChild(scene);
     const snapshot = imageNode("crm-home-motion-snapshot", ""); root.appendChild(snapshot);
     const grid = document.createElement("div"); grid.className = "crm-home-grid";
+    const titleLayer = document.createElement("div"); titleLayer.className = "crm-home-title-layer";
+    titleLayer.innerHTML = MODULES.map(titleHTML).join("");
     MODULES.forEach((module) => {
       const bucket = document.createElement("button"); bucket.type = "button"; bucket.className = "crm-home-bucket";
       bucket.dataset.module = module.key; bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
@@ -628,7 +661,7 @@
       grid.appendChild(bucket);
     });
     const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important things coming up");
-    fillPriorityHand(hand); root.append(grid, hand); syncSceneBackdrop(root); syncMotionSnapshot(root); requestAnimationFrame(mountAll); return root;
+    fillPriorityHand(hand); root.append(grid, titleLayer, hand); syncSceneBackdrop(root); syncMotionSnapshot(root); requestAnimationFrame(mountAll); return root;
   };
   const layout = ({ expRect }) => {
     const surface = camera?.surface?.(); const grid = surface?.querySelector(".crm-home-grid"); const hand = surface?.querySelector(".crm-home-priority-hand"); if (!grid) return;
@@ -645,7 +678,10 @@
     const aspect = innerWidth / innerHeight; let cellW = (area.w - GAP * 2) / 3; let cellH = cellW / aspect;
     if (2 * cellH + GAP > area.h) { cellH = (area.h - GAP) / 2; cellW = cellH * aspect; }
     const gridW = 3 * cellW + GAP * 2, gridH = 2 * cellH + GAP;
-    Object.assign(grid.style, { left:`${area.x + (area.w-gridW)/2}px`, top:`${area.y + (area.h-gridH)/2}px`, width:`${gridW}px`, height:`${gridH}px` });
+    const gridGeometry = { left:`${area.x + (area.w-gridW)/2}px`, top:`${area.y + (area.h-gridH)/2}px`, width:`${gridW}px`, height:`${gridH}px` };
+    Object.assign(grid.style, gridGeometry);
+    const titleLayer = surface?.querySelector(".crm-home-title-layer");
+    if (titleLayer) Object.assign(titleLayer.style, gridGeometry);
     surface.style.setProperty("--home-r", `${Math.min(64,Math.max(2,16/245*Math.min(cellW,cellH)*2)).toFixed(1)}px`);
     layoutPriorityHand(hand);
   };
@@ -829,8 +865,8 @@
     if (apiName) prewarmedFactories.add(apiName);
   };
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,
-    previewStatus:()=>MODULES.map(({key})=>({key,state:previews.has(key)?"ready":"waiting",version:previews.get(key)?.version||null,capturedAt:previews.get(key)?.capturedAt||0,layoutSignature:previews.get(key)?.layoutSignature||null})),
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
+    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);return{key,state:preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};

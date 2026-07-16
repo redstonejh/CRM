@@ -15,7 +15,9 @@ const readyHome = () => document.body.dataset.crmModule === 'home'
   && window.crmHome?.motionStatus?.().ready
   && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
     const image = host.querySelector(':scope > .crm-home-preview-foreground');
-    return host.children.length === 1 && image?.complete && image.naturalWidth > 0;
+    return host.dataset.previewState === 'ready'
+      && !!host.querySelector(':scope > .crm-home-preview-state[role="status"]')
+      && image?.complete && image.naturalWidth > 0;
   });
 
 async function frameRate(page, duration = 1200) {
@@ -257,11 +259,17 @@ async function main() {
 
   const startup = await page.evaluate(() => ({
     buckets: [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')].map((bucket) => {
-      const host = bucket.querySelector('.crm-home-preview'); const image = host.querySelector(':scope > img');
+      const host = bucket.querySelector('.crm-home-preview'); const image = host.querySelector(':scope > .crm-home-preview-foreground');
+      const title = document.querySelector(`.crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"] .crm-home-title`);
+      const titleGlass = title?.closest('.crm-home-title-glass');
+      const loader = host.querySelector(':scope > .crm-home-preview-state');
       const style = getComputedStyle(bucket);
-      return { key: bucket.dataset.module, version: host.dataset.previewVersion, children: host.children.length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
-        variant: image?.dataset.previewVariant, previewFilter: getComputedStyle(image).filter, titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
-        titleSize: getComputedStyle(bucket.querySelector('.crm-home-title')).fontSize,
+      const titleStyle = title && getComputedStyle(title);
+      return { key: bucket.dataset.module, version: host.dataset.previewVersion, images: host.querySelectorAll(':scope > img').length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
+        loader: { exists: !!loader, role: loader?.getAttribute('role'), hiddenAtReady: loader ? getComputedStyle(loader).visibility === 'hidden' : false },
+        variant: image?.dataset.previewVariant, previewFilter: getComputedStyle(image).filter, titleOpacity: Number(getComputedStyle(titleGlass).opacity),
+        titleSize: titleStyle?.fontSize, titleWeight: titleStyle?.fontWeight, titleFamily: titleStyle?.fontFamily, titleShadow: titleStyle?.textShadow,
+        titleOutsideFilteredTile: !!title && !title.closest('.crm-home-bucket'),
         shift: getComputedStyle(host).getPropertyValue('--far-shift-y').trim(), liveTrees: host.querySelectorAll('.crm-home-lod-scene,.crm-home-lod-root,[data-crm-theater]').length,
         glass: { backdrop: style.webkitBackdropFilter || style.backdropFilter, background: style.backgroundImage } };
     }),
@@ -271,20 +279,61 @@ async function main() {
       hands: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand').length,
       cards: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand > .crm-home-hand-card').length,
       uniqueCards: new Set([...document.querySelectorAll('.crm-home-level > .crm-home-priority-hand > .crm-home-hand-card')].map((card) => card.dataset.priorityId)).size,
+      titleLayers: document.querySelectorAll('.crm-home-level > .crm-home-title-layer').length,
+      titles: document.querySelectorAll('.crm-home-level > .crm-home-title-layer .crm-home-title').length,
+      rootWillChange: getComputedStyle(document.querySelector('.crm-home-level')).willChange,
       snapshots: document.querySelectorAll('.crm-home-level > .crm-home-motion-snapshot').length,
       snapshotDisplay: getComputedStyle(document.querySelector('.crm-home-level > .crm-home-motion-snapshot')).display,
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
-  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER) || item.titleOpacity < .9 || item.titleSize !== '15px')) {
+  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER)
+    || !item.loader.exists || item.loader.role !== 'status' || !item.loader.hiddenAtReady
+    || item.titleOpacity < .9 || item.titleSize !== '15px' || item.titleWeight !== '600'
+    || !item.titleFamily.includes('Segoe UI Variable Text') || item.titleShadow.includes('12px') || !item.titleOutsideFilteredTile)) {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
-    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.snapshots !== 1 || startup.homeLayers.snapshotDisplay !== 'none') {
+    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 6
+    || startup.homeLayers.rootWillChange !== 'auto' || startup.homeLayers.snapshots !== 1 || startup.homeLayers.snapshotDisplay !== 'none') {
     throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
+  }
+  const loadingSignal = await page.evaluate(() => {
+    const source = document.querySelector('.crm-home-preview');
+    const probe = source?.cloneNode(true);
+    if (!probe) return null;
+    probe.dataset.previewState = 'waiting';
+    Object.assign(probe.style, { position:'fixed', left:'-1000px', top:'0', width:'240px', height:'160px' });
+    document.body.appendChild(probe);
+    const state = probe.querySelector(':scope > .crm-home-preview-state');
+    const mark = state?.querySelector('.crm-home-preview-state-mark');
+    const result = { opacity:Number(getComputedStyle(state).opacity), visibility:getComputedStyle(state).visibility,
+      label:state?.textContent.trim(), animation:getComputedStyle(mark, '::after').animationName };
+    probe.remove();
+    return result;
+  });
+  if (!loadingSignal || loadingSignal.opacity !== 1 || loadingSignal.visibility !== 'visible'
+    || loadingSignal.label !== 'Preparing view' || loadingSignal.animation !== 'crm-home-preview-turn') {
+    throw new Error(`Home preview loading signal is not visibly progressive: ${JSON.stringify(loadingSignal)}`);
+  }
+  const stalePreviewFallback = await page.evaluate(async () => {
+    const preview = (await window.crmHomePreviews.list()).previews.find((item) => item.key === 'desk');
+    if (!preview) return null;
+    window.crmHome.acceptPreview({ ...preview, version:'previous-renderer-build' }, true);
+    const host = document.querySelector('.crm-home-bucket[data-module="desk"] .crm-home-preview');
+    const image = host?.querySelector(':scope > .crm-home-preview-foreground');
+    const stale = { status:window.crmHome.previewStatus().find((item) => item.key === 'desk')?.state,
+      hostState:host?.dataset.previewState, visible:!!image?.complete && image.naturalWidth > 0 && getComputedStyle(image).display !== 'none' };
+    window.crmHome.acceptPreview(preview, true);
+    stale.restored = window.crmHome.previewStatus().find((item) => item.key === 'desk')?.state;
+    return stale;
+  });
+  if (!stalePreviewFallback || stalePreviewFallback.status !== 'stale' || stalePreviewFallback.hostState !== 'stale'
+    || !stalePreviewFallback.visible || stalePreviewFallback.restored !== 'ready') {
+    throw new Error(`Renderer/host preview version skew blanks Home: ${JSON.stringify(stalePreviewFallback)}`);
   }
   if (startup.buckets.some((item) => !item.glass.backdrop.includes('blur(26px)')
     || !item.glass.background.includes('rgba(22, 26, 36, 0.62)')
@@ -297,14 +346,14 @@ async function main() {
   await page.waitForFunction(() => {
     const bucket = document.querySelector('.crm-home-grid > .crm-home-bucket');
     const image = bucket?.querySelector('.crm-home-preview-foreground');
-    const title = bucket?.querySelector('.crm-home-title-glass');
+    const title = document.querySelector('.crm-home-title-layer > .crm-home-title-slot[data-module="desk"] .crm-home-title-glass');
     const titleOpacity = Number(getComputedStyle(title).opacity);
     return image?.complete && getComputedStyle(image).filter.includes('blur(0px)')
       && titleOpacity >= .23 && titleOpacity < .33;
   });
   const hoveredTileState = await hoverTile.evaluate((bucket) => ({
     images: bucket.querySelectorAll('.crm-home-preview > img').length,
-    titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
+    titleOpacity: Number(getComputedStyle(document.querySelector(`.crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"] .crm-home-title-glass`)).opacity),
     previewFilter: getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter,
   }));
   if (hoveredTileState.images !== 1 || !hoveredTileState.previewFilter.includes('blur(0px)') || hoveredTileState.titleOpacity < .23 || hoveredTileState.titleOpacity >= .33) {
@@ -315,7 +364,7 @@ async function main() {
     const bucket = document.querySelector('.crm-home-grid > .crm-home-bucket');
     return bucket?.querySelectorAll('.crm-home-preview > img').length === 1
       && getComputedStyle(bucket.querySelector('.crm-home-preview-foreground')).filter.includes(restFilter)
-      && Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity) > .9;
+      && Number(getComputedStyle(document.querySelector('.crm-home-title-layer > .crm-home-title-slot[data-module="desk"] .crm-home-title-glass')).opacity) > .9;
   }, HOME_PREVIEW_REST_FILTER);
   let nativeDrag;
   if (process.env.CRM_ALLOW_SYNTHETIC_DRAG_MISS === '1') {

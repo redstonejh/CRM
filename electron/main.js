@@ -534,7 +534,7 @@ ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) mainWi
 ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
 ipcMain.handle('home-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
-  return { ok: true, previews: [...homePreviewCache.values()] };
+  return { ok: true, version: HOME_PREVIEW_VERSION, previews: [...homePreviewCache.values()] };
 });
 ipcMain.handle('home-preview:motion', (event) => {
   if (!isMainSender(event)) return { ok: false, snapshot: null };

@@ -76,25 +76,30 @@ async function main() {
   }));
   await check('Home combines money and makes room for Planner', () => {
     const keys = ['desk','people','cases','money','planner','assignments'];
-    const overviewTile = document.querySelector('.crm-home-bucket[data-module="desk"]');
-    const ticketTile = document.querySelector('.crm-home-bucket[data-module="cases"]');
-    const moneyTile = document.querySelector('.crm-home-bucket[data-module="money"]');
-    const plannerTile = document.querySelector('.crm-home-bucket[data-module="planner"]');
-    const assignmentTile = document.querySelector('.crm-home-bucket[data-module="assignments"]');
+    const title = (key) => document.querySelector(`.crm-home-title-layer > .crm-home-title-slot[data-module="${key}"] .crm-home-title`);
     return keys.every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`))
       && !document.querySelector('.crm-home-bucket[data-module="calendar"]')
       && !document.querySelector('.crm-home-bucket[data-module="pipeline"]')
       && !document.querySelector('.crm-home-bucket[data-module="jobs"],.crm-home-bucket[data-module="bills"],.crm-home-bucket[data-module="invoices"]')
-      && overviewTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Overview'
-      && ticketTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Tickets'
-      && moneyTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Money'
-      && plannerTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Planner'
-      && assignmentTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Assignments';
+      && title('desk')?.textContent.trim() === 'Overview'
+      && title('cases')?.textContent.trim() === 'Tickets'
+      && title('money')?.textContent.trim() === 'Money'
+      && title('planner')?.textContent.trim() === 'Planner'
+      && title('assignments')?.textContent.trim() === 'Assignments';
   });
-  await check('Home tile titles use the shared, readable tile role', () => {
-    const sizes = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket .crm-home-title')]
-      .map((title) => getComputedStyle(title).fontSize);
-    return sizes.length === 6 && new Set(sizes).size === 1 && sizes[0] === '15px';
+  await check('Home tile titles use a sharp live type layer', () => {
+    const titles = [...document.querySelectorAll('.crm-home-title-layer > .crm-home-title-slot .crm-home-title')];
+    return titles.length === 6 && titles.every((title) => {
+      const style = getComputedStyle(title);
+      return style.fontSize === '15px' && style.fontWeight === '600'
+        && style.fontFamily.includes('Segoe UI Variable Text') && !style.textShadow.includes('12px')
+        && !title.closest('.crm-home-bucket');
+    }) && getComputedStyle(document.querySelector('.crm-home-level')).willChange === 'auto';
+  });
+  await check('Home has a visible progressive state while previews prepare', () => {
+    const states = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-state[role="status"]')];
+    return states.length === 6 && states.every((state) => state.textContent.trim() === 'Preparing view'
+      && getComputedStyle(state).visibility === 'visible' && Number(getComputedStyle(state).opacity) === 1);
   });
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0 && document.querySelectorAll('.crm-home-hand-card.tk-card').length > 0, { timeout: 10000 });
   await check('Home hand uses card-system card objects', () => {
@@ -151,7 +156,7 @@ async function main() {
   await check('Hover sharpens tile objects and de-emphasizes its title', () => {
     const tile = document.querySelector('.crm-home-grid > .crm-home-bucket[data-module="desk"]');
     const foreground = tile?.querySelector('.crm-home-preview-foreground');
-    const title = tile?.querySelector('.crm-home-title-glass');
+    const title = document.querySelector('.crm-home-title-layer > .crm-home-title-slot[data-module="desk"] .crm-home-title-glass');
     const filter = foreground && getComputedStyle(foreground).filter;
     const titleStyle = title && getComputedStyle(title);
     return !!foreground && !!title && filter.includes('blur(0px)') && filter.includes('saturate(0.96)')

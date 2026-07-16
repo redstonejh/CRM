@@ -139,6 +139,25 @@ async function main() {
       && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && !card.dataset.commitmentId.startsWith('signal:'))
       && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId;
   }, linkedHomeTodo);
+  await page.click(`.crm-home-hand-card[data-commitment-id="${linkedHomeTodo.id}"]`, { button:'right' });
+  await page.waitForSelector('.crm-home-todo-menu [data-todo-action="edit"]', { timeout:10000 });
+  await check('A linked to-do remains editable and can enter the Assignment pipeline', () => !!document.querySelector('[data-todo-action="edit"]')
+    && !!document.querySelector('[data-todo-action="assignments"]') && !!document.querySelector('[data-todo-action="open"]'));
+  await page.click('.crm-home-todo-menu [data-todo-action="edit"]');
+  await page.waitForSelector('.crm-home-todo-popover input[name="title"]', { timeout:10000 });
+  await check('To-do editing keeps its exact linked record selected', (todo) => {
+    const form = document.querySelector('.crm-home-todo-popover');
+    return form?.querySelector('.crm-home-todo-popover-title')?.textContent.trim() === 'Edit to do'
+      && form.elements.target.value === `tasks:${todo.taskId}` && form.elements.title.value === 'Home linked to-do contract';
+  }, linkedHomeTodo);
+  await page.$eval('.crm-home-todo-popover input[name="title"]', (input) => { input.value = 'Edited linked to-do'; input.dispatchEvent(new Event('input', { bubbles:true })); });
+  await page.click('.crm-home-todo-popover button[type="submit"]');
+  await page.waitForFunction(async (id) => (await window.crmDomain.list('commitments', { includeDeleted:false, limit:300 })).records?.find((item) => item.id === id)?.title === 'Edited linked to-do', { timeout:10000 }, linkedHomeTodo.id);
+  await check('Editing a to-do persists without severing its task link', async (todo) => {
+    const item = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:300 })).records?.find((record) => record.id === todo.id);
+    return item?.title === 'Edited linked to-do' && item.links?.some((link) => link.entityType === 'tasks' && link.recordId === todo.taskId);
+  }, linkedHomeTodo);
+  await page.mouse.move(1, 1); await sleep(430);
   await check('Home reserves room for a curved priority hand', () => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card.tk-card')];
     const grid = document.querySelector('.crm-home-grid')?.getBoundingClientRect();
@@ -347,6 +366,7 @@ async function main() {
     const expected = getComputedStyle(reference); const actual = getComputedStyle(filters.find((filter) => !filter.classList.contains('is-selected')));
     const panelRect = theater?.querySelector('.crm-assignment-rail')?.getBoundingClientRect();
     const bucketRect = buckets[0]?.getBoundingClientRect();
+    const pipeline = theater?.querySelector('.crm-assignment-pipeline');
     const sameButton = ['backgroundColor','borderTopWidth','borderRadius','color','fontSize','fontWeight','boxShadow','paddingLeft','paddingRight']
       .every((property) => actual[property] === expected[property]);
     const ids = cards.map((card) => card.dataset.assignmentCard);
@@ -358,8 +378,9 @@ async function main() {
       && getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize === '14px'
       && buckets.every((bucket) => !!bucket.dataset.assignmentStage && getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize === '14px')
       && theater.querySelectorAll('.crm-assignment-stack-toggle').length === 5
+      && !!pipeline && pipeline.scrollWidth <= pipeline.clientWidth + 1
       && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head'),
-      detail: JSON.stringify({ sameButton, panelTop: panelRect?.top, bucketTop: bucketRect?.top, cards:cards.length, unique:new Set(ids).size }) };
+      detail: JSON.stringify({ sameButton, panelTop: panelRect?.top, bucketTop: bucketRect?.top, cards:cards.length, unique:new Set(ids).size, overflow:pipeline?.scrollWidth - pipeline?.clientWidth }) };
   });
   await page.click('.crm-assignment-filter[data-assignment-filter="unassigned"]');
   await check('Assignment filters change scope without manufacturing another card collection', () => {
@@ -855,9 +876,15 @@ async function main() {
       heading: getComputedStyle(document.querySelector('.crm-planner-heading')).fontSize,
       buckets: [...new Set(buckets.map((bucket) => getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize))],
     };
+    const snapshots = window.crmPlanner.projects();
     return { ok: projects.length >= 3 && buckets.length === 3
       && !document.querySelector('.crm-project-minimap,.crm-planner-universe')
-      && projects.every((project) => !project.querySelector('*'))
+      && projects.every((project) => {
+        const snapshot = snapshots.find((item) => item.id === project.dataset.plannerProject);
+        return !!project.querySelector('.crm-planner-project-name')
+          && project.querySelectorAll('.crm-planner-project-segment').length === snapshot?.buckets.length
+          && !project.querySelector('.tk-card,.crm-planner-card,.crm-planner-bucket');
+      })
       && buckets.every((bucket) => bucket.classList.contains('tk-zone') && !!bucket.querySelector('.tk-zone-title'))
       && plannerType.heading === '17px'
       && plannerType.buckets.every((size) => size === '14px')
@@ -865,7 +892,13 @@ async function main() {
       detail: JSON.stringify(plannerType) };
   });
   await page.click('[data-planner-action="new-project"]');
-  await page.type('.crm-planner-popover input[name="value"]', 'Interaction plan');
+  await page.waitForSelector('.crm-planner-project-creator input[name="stages"]');
+  await check('A new Planner project defines its initial pipeline in one compact action', () => {
+    const form = document.querySelector('.crm-planner-project-creator');
+    return !!form && form.classList.contains('crm-menu-surface') && form.elements.title
+      && form.elements.stages.value === 'Backlog, In progress, Done' && form.getBoundingClientRect().width <= 300;
+  });
+  await page.type('.crm-planner-project-creator input[name="title"]', 'Interaction plan');
   await page.click('.crm-planner-popover button[type="submit"]');
   await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
   await page.click('[data-planner-action="new-stage"]');
@@ -876,6 +909,14 @@ async function main() {
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
   await page.click('.crm-planner-popover button[type="submit"]');
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-planner-card-title')].some((node) => node.textContent.trim() === 'Ship the polished flow'), { timeout:10000 });
+  await page.click('.crm-planner-card');
+  await page.waitForSelector('.crm-planner-item-editor select[name="stage"]', { timeout:10000 });
+  await check('A Planner item can change stage, owner, priority, due date, and linked record in one compact editor', () => {
+    const form = document.querySelector('.crm-planner-item-editor');
+    return !!form && form.elements.stage.options.length === 4 && form.elements.assignee
+      && form.elements.priority && form.elements.dueAt && form.elements.target && form.getBoundingClientRect().width < 400;
+  });
+  await page.click('.crm-planner-item-editor [data-cancel]');
   await check('Planner creates projects, custom buckets, and fully functional items', () => {
     const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
     const review = project?.buckets.find((bucket) => bucket.title === 'Review');
@@ -883,6 +924,7 @@ async function main() {
     const commitment = item && window.crmHome?.handStatus?.();
     return { ok:!!project && project.buckets.length === 4 && !!item && item.entityType === 'workItems'
       && !!item.commitmentId && !!item.workflowEntryId && !!commitment
+      && document.querySelectorAll(`.crm-planner-project[data-planner-project="${CSS.escape(project.id)}"] .crm-planner-project-segment[data-occupied="true"]`).length >= 1
       && !!document.querySelector('.crm-planner-card[data-record-entity="workItems"]'),
       detail:JSON.stringify({ project:!!project, buckets:project?.buckets.length, item:item && { entityType:item.entityType, commitmentId:item.commitmentId, workflowEntryId:item.workflowEntryId }, card:!!document.querySelector('.crm-planner-card[data-record-entity="workItems"]') }) };
   });

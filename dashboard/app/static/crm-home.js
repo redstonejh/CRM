@@ -32,6 +32,7 @@
   let handoffPromise = Promise.resolve();
   let handoffResolve = null;
   let todoPopover = null;
+  let todoOutsideClose = null;
   const prewarmedFactories = new Set();
   const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
@@ -461,7 +462,10 @@
     else Promise.resolve(window.crmDeskTransit?.driveTo?.("assignments") || window.crmWorkspaces?.setActive?.("assignments"))
       .then(() => window.crmAssignments?.open?.(item.id));
   };
-  const closeTodoPopover = () => { todoPopover?.remove(); todoPopover = null; };
+  const closeTodoPopover = () => {
+    if (todoOutsideClose) document.removeEventListener("pointerdown", todoOutsideClose, true);
+    todoOutsideClose = null; todoPopover?.remove(); todoPopover = null;
+  };
   const placeTodoPopover = (element, anchor, x, y) => {
     document.body.appendChild(element);
     const anchorRect = anchor?.getBoundingClientRect(); const bounds = element.getBoundingClientRect();
@@ -470,11 +474,12 @@
     element.style.left = `${left}px`; element.style.top = `${top}px`;
   };
   const armTodoOutsideClose = (element) => setTimeout(() => {
-    const close = (event) => {
+    if (todoPopover !== element) return;
+    todoOutsideClose = (event) => {
       if (element.contains(event.target)) return;
-      closeTodoPopover(); document.removeEventListener("pointerdown", close, true);
+      closeTodoPopover();
     };
-    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("pointerdown", todoOutsideClose, true);
   }, 0);
   const recordName = (record) => firstText(record?.title, record?.name, record?.companyLabel, record?.description, record?.id, "Untitled");
   const createTodo = async ({ title, dueAt = null, priority = "normal", link = null } = {}) => {
@@ -485,29 +490,39 @@
     if (result?.record) { handDirty = true; await refreshPriorityHand(); return result.record; }
     return null;
   };
-  const openTodoComposer = async (anchor) => {
+  const openTodoComposer = async (anchor, item = null) => {
     closeTodoPopover();
-    const targets = [];
     const groups = [
       ["tasks", "Tasks"], ["contacts", "People"], ["tickets", "Tickets"], ["workItems", "Pipeline cards"],
     ];
-    await Promise.all(groups.map(async ([entityType, label]) => {
+    const targets = await Promise.all(groups.map(async ([entityType, label]) => {
       try {
         const result = await window.crmStore?.list?.(entityType, { includeDeleted:false });
-        targets.push({ entityType, label, records:(result?.records || []).filter((record) => !record.deletedAt).slice(0, 80) });
-      } catch { targets.push({ entityType, label, records:[] }); }
+        return { entityType, label, records:(result?.records || []).filter((record) => !record.deletedAt).slice(0, 80) };
+      } catch { return { entityType, label, records:[] }; }
     }));
+    const linked = priorityLink(item); const selectedTarget = linked ? `${linked.entityType}:${linked.recordId}` : "";
+    const pipelineLinked = linked?.entityType === "workItems";
+    const dueValue = item?.dueAt && Number.isFinite(Date.parse(item.dueAt)) ? new Date(item.dueAt).toISOString().slice(0, 10) : "";
+    const rawPriority = String(item?.priority || "normal").toLowerCase();
+    const priorityValue = ["critical","overdue"].includes(rawPriority) ? "urgent" : ["urgent","high","normal"].includes(rawPriority) ? rawPriority : "normal";
     todoPopover = document.createElement("form"); todoPopover.className = "crm-home-todo-popover crm-menu-surface";
-    todoPopover.innerHTML = `<div class="crm-home-todo-popover-title">New to do</div><div class="crm-home-todo-fields">
-      <input class="crm-menu-input" name="title" placeholder="What needs doing?" autocomplete="off" required>
-      <select class="crm-menu-input crm-home-todo-target" name="target"><option value="">Personal task</option>${targets.map((group) => `<optgroup label="${esc(group.label)}">${group.records.map((record) => `<option value="${esc(`${group.entityType}:${record.id}`)}">${esc(recordName(record))}</option>`).join("")}</optgroup>`).join("")}</select>
-      <input class="crm-menu-input" name="dueAt" type="date" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
-      </div><div class="crm-home-todo-actions"><button type="button" class="crm-menu-action" data-todo-cancel>Cancel</button><button type="submit" class="crm-menu-action">Add</button></div>`;
+    todoPopover.innerHTML = `<div class="crm-home-todo-popover-title">${item ? "Edit to do" : "New to do"}</div><div class="crm-home-todo-fields">
+      <input class="crm-menu-input" name="title" value="${esc(item?.title || "")}" placeholder="What needs doing?" autocomplete="off" required>
+      <select class="crm-menu-input crm-home-todo-target" name="target"${pipelineLinked ? " disabled" : ""}><option value="">Personal task</option>${targets.map((group) => `<optgroup label="${esc(group.label)}">${group.records.map((record) => { const value = `${group.entityType}:${record.id}`; return `<option value="${esc(value)}"${selectedTarget === value ? " selected" : ""}>${esc(recordName(record))}</option>`; }).join("")}</optgroup>`).join("")}</select>
+      <input class="crm-menu-input" name="dueAt" type="date" value="${esc(dueValue)}" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority">${["normal","high","urgent"].map((value) => `<option value="${value}"${priorityValue === value ? " selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select>
+      </div><div class="crm-home-todo-actions"><button type="button" class="crm-menu-action" data-todo-cancel>Cancel</button><button type="submit" class="crm-menu-action">${item ? "Save" : "Add"}</button></div>`;
     todoPopover.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = new FormData(todoPopover); const rawTarget = String(data.get("target") || ""); const [entityType, ...idParts] = rawTarget.split(":");
-      const due = String(data.get("dueAt") || ""); const created = await createTodo({ title:data.get("title"), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal"), link:rawTarget ? { entityType, recordId:idParts.join(":") } : null });
-      if (created) closeTodoPopover();
+      const data = new FormData(todoPopover); const rawTarget = String(data.get("target") || (pipelineLinked ? selectedTarget : "")); const [entityType, ...idParts] = rawTarget.split(":"); const recordId = idParts.join(":");
+      const due = String(data.get("dueAt") || ""); const fields = { title:String(data.get("title") || "").trim(), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal") };
+      let saved;
+      if (item) {
+        const links = (item.links || []).filter((link) => !TODO_LINK_ENTITIES.has(link.entityType) || (link.entityType === "workItems" && link.relation === "regarding"));
+        if (entityType && recordId && !links.some((link) => link.entityType === entityType && String(link.recordId) === recordId)) links.push({ entityType, recordId, relation:"regarding" });
+        saved = await updateTodo(item, { ...fields, links });
+      } else saved = await createTodo({ ...fields, link:rawTarget ? { entityType, recordId } : null });
+      if (saved) closeTodoPopover();
     });
     todoPopover.querySelector("[data-todo-cancel]")?.addEventListener("click", closeTodoPopover);
     placeTodoPopover(todoPopover, anchor); armTodoOutsideClose(todoPopover);
@@ -515,19 +530,31 @@
   };
   const updateTodo = async (item, fields) => {
     if (!item?.id || String(item.id).startsWith("signal:")) return false;
-    const result = await window.crmDomain?.update?.("commitments", item.id, fields, item.version);
+    let result = await window.crmDomain?.update?.("commitments", item.id, fields, item.version);
+    if (!result?.record) {
+      const latest = (await window.crmDomain?.list?.("commitments", { includeDeleted:false, limit:300 }))?.records?.find((record) => String(record.id) === String(item.id));
+      if (latest) result = await window.crmDomain?.update?.("commitments", item.id, fields, latest.version);
+    }
     if (result?.record) { scheduleHandRefresh(); return true; }
     return false;
+  };
+  const openTodoInAssignments = async (item) => {
+    await (window.crmDeskTransit?.driveTo?.("assignments") || Promise.resolve(window.crmWorkspaces?.setActive?.("assignments")));
+    return window.crmAssignments?.open?.(item.id) || false;
   };
   const openTodoMenu = (item, card, x, y) => {
     closeTodoPopover(); todoPopover = document.createElement("div"); todoPopover.className = "crm-home-todo-menu crm-menu-surface";
     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(17, 0, 0, 0);
+    const link = priorityLink(item);
     [
-      { label:"Open", run:() => openPriorityItem(item, card) },
-      { label:"Due tomorrow", run:() => updateTodo(item, { dueAt:tomorrow.toISOString() }) },
-      { label:"Complete", run:() => updateTodo(item, { status:"completed", completedAt:new Date().toISOString(), outcome:"Completed from Home" }) },
-    ].forEach((action) => {
+      { key:"open", label:link ? "Open linked item" : "Open assignment", run:() => openPriorityItem(item, card) },
+      link?.entityType !== "workItems" && { key:"edit", label:"Edit to do", run:() => openTodoComposer(card, item) },
+      link && { key:"assignments", label:"Open in Assignments", run:() => openTodoInAssignments(item) },
+      { key:"tomorrow", label:"Due tomorrow", run:() => updateTodo(item, { dueAt:tomorrow.toISOString() }) },
+      { key:"complete", label:"Complete", run:() => updateTodo(item, { status:"completed", completedAt:new Date().toISOString(), outcome:"Completed from Home" }) },
+    ].filter(Boolean).forEach((action) => {
       const button = document.createElement("button"); button.type = "button"; button.className = "crm-menu-action"; button.textContent = action.label;
+      button.dataset.todoAction = action.key;
       button.addEventListener("click", () => { closeTodoPopover(); action.run(); }); todoPopover.appendChild(button);
     });
     placeTodoPopover(todoPopover, card, x, y); armTodoOutsideClose(todoPopover);

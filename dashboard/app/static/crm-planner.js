@@ -80,10 +80,10 @@
       .crm-planner-projects-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 7px 0 10px}.crm-planner-projects-title{font-size:var(--crm-type-object,14px);font-weight:680}
       .crm-planner-new-project.crm-menu-action{width:29px;height:29px;padding:0!important;font-size:17px!important}.crm-planner-project-list{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}
       .crm-planner-project-list:empty::after{content:"No projects";padding:9px 10px 12px;color:rgba(255,255,255,.3);font-size:var(--crm-type-meta,10px)}
-      .crm-planner-project.crm-menu-action{position:relative;width:100%;min-height:39px;padding:0 10px!important;text-align:left;font-size:var(--crm-type-body,12px)!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project.is-selected:before{content:"";position:absolute;left:3px;top:12px;width:3px;height:15px;border-radius:2px;background:rgba(166,202,249,.72)}
+      .crm-planner-project.crm-menu-action{position:relative;width:100%;min-height:49px;padding:7px 10px!important;text-align:left;font-size:var(--crm-type-body,12px)!important;display:grid;grid-template-rows:auto 5px;gap:6px;overflow:hidden}.crm-planner-project.is-selected:before{content:"";position:absolute;left:3px;top:12px;width:3px;height:15px;border-radius:2px;background:rgba(166,202,249,.72)}.crm-planner-project-name{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-map{display:flex;align-items:stretch;gap:2px;min-width:0;height:5px}.crm-planner-project-segment{flex:1 1 0;min-width:3px;border-radius:2px;background:rgba(214,229,248,.09);box-shadow:inset 0 0 0 1px rgba(225,237,251,.045)}.crm-planner-project-segment[data-occupied="true"]{background:rgba(160,193,234,.28)}.crm-planner-project-segment[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.34)}.crm-planner-project.is-selected .crm-planner-project-segment{box-shadow:inset 0 0 0 1px rgba(226,238,252,.08)}
       .crm-planner-stage{min-width:0;min-height:0;display:grid;grid-template-rows:42px minmax(0,1fr);gap:12px}.crm-planner-topline{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 4px}.crm-planner-heading{min-width:0;font-size:var(--crm-type-room,17px);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .crm-planner-head-actions{display:flex;align-items:center;gap:2px}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
-      .crm-planner-buckets{min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:safe center;gap:var(--crm-object-gap,18px);overflow-x:auto;overflow-y:hidden;padding:clamp(18px,4vh,34px) 12px 28px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+      .crm-planner-buckets{min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:var(--crm-object-gap,18px);overflow-x:auto;overflow-y:hidden;padding:clamp(18px,4vh,34px) 4px 28px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
       .crm-planner-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 226px;width:226px;height:min(500px,calc(100vh - 210px));min-height:342px;box-sizing:border-box;padding:12px 14px;overflow:hidden;transition:width .16s ease,flex-basis .16s ease,height .16s ease}
       .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-hd-r{right:0;top:1px;gap:1px;pointer-events:auto;opacity:.72}
       .crm-planner-stage-menu.crm-menu-action,.crm-planner-stack-toggle.crm-menu-action{width:28px;height:27px;padding:0!important;display:grid;place-items:center;font-size:14px!important}.crm-planner-stack-toggle svg{width:13px;height:13px}.crm-planner-stack-toggle path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}.crm-planner-stack-toggle[aria-expanded="true"]{color:rgba(193,220,255,.96)!important;background:rgba(124,175,241,.1)!important}
@@ -131,11 +131,20 @@
       priority:options.priority || "normal", assignee:options.assignee || null, projectId:project.id, projectTitle:project.title,
       stageId:stage.id, stageLabel:stage.title, links,
     });
+    const commitment = commitmentResult?.record;
+    if (!commitment) { await window.crmStore.remove("workItems", item.id); return null; }
     const flowResult = await window.crmDomain.create("workflow-entries", {
       workflowKey:`project:${project.id}`, entityType:"workItems", recordId:item.id, stage:stage.id, rank, owner:options.assignee || null,
     });
-    const linkedResult = await window.crmStore.update("workItems", item.id, { commitmentId:commitmentResult?.record?.id || null, workflowEntryId:flowResult?.record?.id || null });
-    return linkedResult?.record || { ...item, commitmentId:commitmentResult?.record?.id || null, workflowEntryId:flowResult?.record?.id || null };
+    const flow = flowResult?.record;
+    if (!flow) { await window.crmDomain.remove("commitments", commitment.id); await window.crmStore.remove("workItems", item.id); return null; }
+    const linkage = { commitmentId:commitment.id, workflowEntryId:flow.id };
+    let linkedResult = await window.crmStore.update("workItems", item.id, linkage);
+    if (!linkedResult?.record) linkedResult = await window.crmStore.update("workItems", item.id, linkage);
+    if (!linkedResult?.record) {
+      await window.crmDomain.remove("workflow-entries", flow.id); await window.crmDomain.remove("commitments", commitment.id); await window.crmStore.remove("workItems", item.id); return null;
+    }
+    return linkedResult.record;
   }
 
   async function migrateLegacy() {
@@ -175,7 +184,7 @@
     if (!root) return;
     const project = selectedProject(); const stages = stagesOf(project);
     root.innerHTML = `<div class="crm-planner-frame">
-      <aside class="crm-planner-projects crm-menu-surface"><header class="crm-planner-projects-head crm-menu-item"><span class="crm-planner-projects-title">Projects</span><button type="button" class="crm-planner-new-project crm-menu-action" data-planner-action="new-project" aria-label="Create project">+</button></header><nav class="crm-planner-project-list" aria-label="Projects">${model.projects.map((item) => `<button type="button" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}">${esc(item.title)}</button>`).join("")}</nav></aside>
+      <aside class="crm-planner-projects crm-menu-surface"><header class="crm-planner-projects-head crm-menu-item"><span class="crm-planner-projects-title">Projects</span><button type="button" class="crm-planner-new-project crm-menu-action" data-planner-action="new-project" aria-label="Create project">+</button></header><nav class="crm-planner-project-list" aria-label="Projects">${model.projects.map((item) => `<button type="button" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}"><span class="crm-planner-project-name">${esc(item.title)}</span>${projectMapHTML(item)}</button>`).join("")}</nav></aside>
       <section class="crm-planner-stage"><header class="crm-planner-topline"><div class="crm-planner-heading">${esc(project?.title || "Planner")}</div><div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button>' : ""}</div></header>
       ${project ? `<div class="crm-planner-buckets">${stages.map((stage) => {
         const items = model.items.filter((item) => item.projectId === project.id && item.stageId === stage.id).sort((a, b) => a.rank - b.rank || String(a.createdAt).localeCompare(String(b.createdAt)));
@@ -184,6 +193,9 @@
           <div class="crm-planner-card-list${expanded ? " is-expanded" : ""}">${items.length ? items.map(cardHTML).join("") : '<div class="crm-planner-empty">No work yet</div>'}</div><button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add work</button></section>`;
       }).join("")}</div>` : '<div class="crm-planner-zero"><button type="button" class="crm-menu-action" data-planner-action="new-project">Create project</button></div>'}</section></div>`;
     window.crmObjectSizing?.scan?.(root);
+  }
+  function projectMapHTML(project) {
+    return `<span class="crm-planner-project-map" aria-hidden="true">${stagesOf(project).map((stage) => `<i class="crm-planner-project-segment" data-kind="${esc(stage.kind)}" data-occupied="${model.items.some((item) => item.projectId === project.id && item.stageId === stage.id)}"></i>`).join("")}</span>`;
   }
   function cardHTML(item) {
     const due = item.dueAt ? new Date(item.dueAt) : null; const dueLabel = due && !Number.isNaN(due.getTime()) ? due.toLocaleDateString([], { month:"short", day:"numeric" }) : "No due date";
@@ -208,6 +220,16 @@
     floating.addEventListener("submit", async (event) => { event.preventDefault(); const input = floating.elements.value.value.trim(); if (!input) return; await onSubmit(input); closeFloating(); });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.value?.focus());
   }
+  function openProjectCreator(anchor) {
+    closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-planner-project-creator crm-menu-surface";
+    floating.innerHTML = `<div class="crm-planner-popover-title">New project</div><input class="crm-menu-input" name="title" placeholder="Project name" autocomplete="off" required><input class="crm-menu-input" name="stages" value="Backlog, In progress, Done" aria-label="Stages" autocomplete="off"><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create</button></div>`;
+    floating.addEventListener("submit", async (event) => {
+      event.preventDefault(); const data = new FormData(floating); const title = String(data.get("title") || "").trim();
+      const stageTitles = String(data.get("stages") || "").split(/[,\n>]+/).map((value) => value.trim()).filter(Boolean);
+      if (!title) return; await createProject(title, "", stageTitles); closeFloating();
+    });
+    floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
+  }
   function openMenu(anchor, actions, x, y) {
     closeFloating(); floating = document.createElement("div"); floating.className = "crm-planner-context crm-menu-surface";
     actions.filter(Boolean).forEach((action) => { const button = document.createElement("button"); button.type = "button"; button.className = `crm-menu-action${action.danger ? " tk-menu-danger" : ""}`; button.textContent = action.label; button.addEventListener("click", () => { closeFloating(); action.run(); }); floating.appendChild(button); });
@@ -218,17 +240,19 @@
     closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-item-editor crm-menu-surface";
     const targets = [["", "No linked record"], ...model.tasks.map((record) => [`tasks:${record.id}`, `Task · ${recordName(record)}`]), ...model.contacts.map((record) => [`contacts:${record.id}`, `Person · ${recordName(record)}`]), ...model.tickets.map((record) => [`tickets:${record.id}`, `Ticket · ${recordName(record)}`])];
     const selectedTarget = item.linkedEntityType && item.linkedRecordId ? `${item.linkedEntityType}:${item.linkedRecordId}` : "";
-    floating.innerHTML = `<div class="crm-planner-popover-title">Work item</div><div class="crm-planner-item-fields"><input class="crm-menu-input" name="title" value="${esc(item.title)}" required><textarea class="crm-menu-input" name="note" placeholder="What does done look like?">${esc(item.note)}</textarea><input class="crm-menu-input" name="dueAt" type="date" value="${esc(String(item.dueAt || "").slice(0, 10))}" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority">${["normal","high","urgent"].map((value) => `<option value="${value}"${item.priority === value ? " selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select><select class="crm-menu-input crm-planner-wide" name="assignee" aria-label="Assignee"><option value="">Unassigned</option>${model.contacts.map((contact) => `<option value="${esc(contact.id)}"${String(item.assignedContactId || "") === String(contact.id) ? " selected" : ""}>${esc(contactName(contact))}</option>`).join("")}</select><select class="crm-menu-input crm-planner-wide" name="target" aria-label="Linked record">${targets.map(([value, label]) => `<option value="${esc(value)}"${selectedTarget === value ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Save</button></div>`;
+    floating.innerHTML = `<div class="crm-planner-popover-title">Work item</div><div class="crm-planner-item-fields"><input class="crm-menu-input" name="title" value="${esc(item.title)}" required><textarea class="crm-menu-input" name="note" placeholder="What does done look like?">${esc(item.note)}</textarea><select class="crm-menu-input" name="stage" aria-label="Stage">${stagesOf(project).map((stage) => `<option value="${esc(stage.id)}"${stage.id === item.stageId ? " selected" : ""}>${esc(stage.title)}</option>`).join("")}</select><input class="crm-menu-input" name="dueAt" type="date" value="${esc(String(item.dueAt || "").slice(0, 10))}" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority">${["normal","high","urgent"].map((value) => `<option value="${value}"${item.priority === value ? " selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select><select class="crm-menu-input" name="assignee" aria-label="Assignee"><option value="">Unassigned</option>${model.contacts.map((contact) => `<option value="${esc(contact.id)}"${String(item.assignedContactId || "") === String(contact.id) ? " selected" : ""}>${esc(contactName(contact))}</option>`).join("")}</select><select class="crm-menu-input crm-planner-wide" name="target" aria-label="Linked record">${targets.map(([value, label]) => `<option value="${esc(value)}"${selectedTarget === value ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Save</button></div>`;
     floating.addEventListener("submit", async (event) => {
       event.preventDefault(); const data = new FormData(floating); const contact = model.contacts.find((record) => String(record.id) === String(data.get("assignee") || "")); const rawTarget = String(data.get("target") || ""); const [linkedEntityType, ...parts] = rawTarget.split(":"); const due = String(data.get("dueAt") || "");
-      await updateItem(item.id, { title:String(data.get("title") || "").trim(), note:String(data.get("note") || ""), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal"), assignedContactId:contact?.id || null, assignee:contact ? contactName(contact) : null, linkedEntityType:rawTarget ? linkedEntityType : null, linkedRecordId:rawTarget ? parts.join(":") : null, linkedLabel:rawTarget ? recordName([...model.tasks, ...model.contacts, ...model.tickets].find((record) => String(record.id) === parts.join(":"))) : null });
+      await updateItem(item.id, { title:String(data.get("title") || "").trim(), note:String(data.get("note") || ""), stageId:String(data.get("stage") || item.stageId), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal"), assignedContactId:contact?.id || null, assignee:contact ? contactName(contact) : null, linkedEntityType:rawTarget ? linkedEntityType : null, linkedRecordId:rawTarget ? parts.join(":") : null, linkedLabel:rawTarget ? recordName([...model.tasks, ...model.contacts, ...model.tickets].find((record) => String(record.id) === parts.join(":"))) : null });
       closeFloating();
     });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
   }
 
-  async function createProject(title, note = "") {
-    const result = await window.crmStore.create("projects", { title, note, stages:clone(DEFAULT_STAGES) });
+  async function createProject(title, note = "", stageTitles = null) {
+    const names = Array.isArray(stageTitles) ? [...new Set(stageTitles.map((value) => String(value || "").trim()).filter(Boolean))] : [];
+    const stages = names.length ? names.map((name, index) => normalizeStage({ id:uid("stage"), title:name, kind:index === 0 ? "queue" : index === names.length - 1 ? "done" : "active", rank:index }, index)) : clone(DEFAULT_STAGES);
+    const result = await window.crmStore.create("projects", { title, note, stages });
     if (!result?.record) return null; selectedId = result.record.id; await refresh(true); publish("project-created"); return clone(projectById(selectedId));
   }
   async function createStage(projectId, title) {
@@ -246,12 +270,24 @@
   async function updateProject(projectId, fields, reason = "project-updated") {
     const project = projectById(projectId); if (!project) return false; const result = await window.crmStore.update("projects", project.id, fields); if (!result?.record) return false; await refresh(true); publish(reason); return true;
   }
-  async function updateItem(itemId, fields) {
-    const item = itemById(itemId); if (!item) return false; const project = projectById(item.projectId); const result = await window.crmStore.update("workItems", item.id, fields); if (!result?.record) return false;
+  async function updateItem(itemId, fields, reason = "item-updated") {
+    const item = itemById(itemId); if (!item) return false; const project = projectById(item.projectId); if (!project) return false;
+    const stageRequested = Object.prototype.hasOwnProperty.call(fields, "stageId");
+    const nextStage = stageRequested ? stageById(project, fields.stageId) : stageById(project, item.stageId);
+    if (stageRequested && !nextStage) return false;
+    const moving = !!nextStage && nextStage.id !== item.stageId;
+    const completed = nextStage?.kind === "done";
+    const normalizedFields = { ...fields };
+    if (moving) Object.assign(normalizedFields, {
+      stageId:nextStage.id, stageLabel:nextStage.title,
+      rank:Number.isFinite(Number(fields.rank)) ? Number(fields.rank) : model.items.filter((record) => record.projectId === project.id && record.stageId === nextStage.id && record.id !== item.id).length,
+      status:completed ? "completed" : "open", completedAt:completed ? nowIso() : null,
+    });
+    const result = await window.crmStore.update("workItems", item.id, normalizedFields); if (!result?.record) return false;
     const commitment = commitmentFor(item); if (commitment) {
       const commitmentFields = {};
-      ["title","dueAt","priority","assignee","status"].forEach((key) => { if (Object.prototype.hasOwnProperty.call(fields, key)) commitmentFields[key] = fields[key]; });
-      if (fields.stageId) { const stage = stageById(project, fields.stageId); commitmentFields.stageId = fields.stageId; commitmentFields.stageLabel = stage?.title || ""; }
+      ["title","dueAt","priority","assignee","status"].forEach((key) => { if (Object.prototype.hasOwnProperty.call(normalizedFields, key)) commitmentFields[key] = normalizedFields[key]; });
+      if (moving) Object.assign(commitmentFields, { stageId:nextStage.id, stageLabel:nextStage.title, completedAt:completed ? nowIso() : null, outcome:completed ? `Completed in ${project.title}` : null });
       if (Object.prototype.hasOwnProperty.call(fields, "linkedEntityType") || Object.prototype.hasOwnProperty.call(fields, "linkedRecordId")) {
         const entityType = Object.prototype.hasOwnProperty.call(fields, "linkedEntityType") ? fields.linkedEntityType : item.linkedEntityType;
         const recordId = Object.prototype.hasOwnProperty.call(fields, "linkedRecordId") ? fields.linkedRecordId : item.linkedRecordId;
@@ -260,16 +296,17 @@
       }
       if (Object.keys(commitmentFields).length) await window.crmDomain.update("commitments", commitment.id, commitmentFields, commitment.version);
     }
-    await refresh(true); publish("item-updated"); return true;
+    if (moving) {
+      const flow = flowFor(item); const flowFields = { stage:nextStage.id, rank:normalizedFields.rank, owner:Object.prototype.hasOwnProperty.call(normalizedFields, "assignee") ? normalizedFields.assignee : item.assignee || null };
+      if (flow) await window.crmDomain.update("workflow-entries", flow.id, flowFields, flow.version);
+      else await window.crmDomain.create("workflow-entries", { workflowKey:`project:${project.id}`, entityType:"workItems", recordId:item.id, ...flowFields });
+    }
+    await refresh(true); publish(moving ? "item-moved" : reason); return true;
   }
   async function moveCard(itemId, stageId) {
     const item = itemById(itemId); const project = projectById(item?.projectId); const stage = stageById(project, stageId); if (!item || !project || !stage) return false;
-    const completed = stage.kind === "done"; const rank = model.items.filter((record) => record.projectId === project.id && record.stageId === stage.id && record.id !== item.id).length;
-    const itemResult = await window.crmStore.update("workItems", item.id, { stageId:stage.id, stageLabel:stage.title, rank, status:completed ? "completed" : "open" }); if (!itemResult?.record) return false;
-    const flow = flowFor(item); if (flow) await window.crmDomain.update("workflow-entries", flow.id, { stage:stage.id, rank, owner:item.assignee || null }, flow.version);
-    else await window.crmDomain.create("workflow-entries", { workflowKey:`project:${project.id}`, entityType:"workItems", recordId:item.id, stage:stage.id, rank, owner:item.assignee || null });
-    const commitment = commitmentFor(item); if (commitment) await window.crmDomain.update("commitments", commitment.id, { status:completed ? "completed" : "open", completedAt:completed ? nowIso() : null, outcome:completed ? `Completed in ${project.title}` : null, stageId:stage.id, stageLabel:stage.title }, commitment.version);
-    await refresh(true); publish("item-moved"); return true;
+    const rank = model.items.filter((record) => record.projectId === project.id && record.stageId === stage.id && record.id !== item.id).length;
+    return updateItem(item.id, { stageId:stage.id, rank }, "item-moved");
   }
   async function deleteItem(itemId) {
     const item = itemById(itemId); if (!item) return false; const commitment = commitmentFor(item); const flow = flowFor(item);
@@ -317,7 +354,7 @@
       const projectButton = event.target.closest("[data-planner-project]"); if (projectButton) { selectProject(projectButton.dataset.plannerProject); return; }
       const card = event.target.closest("[data-planner-card]"); if (card) { const item = itemById(card.dataset.plannerCard); if (item) openItemEditor(item, card); return; }
       const action = event.target.closest("[data-planner-action]"); if (!action) return; const project = selectedProject(); const stageElement = action.closest("[data-planner-bucket]"); const stage = stageById(project, stageElement?.dataset.plannerBucket);
-      if (action.dataset.plannerAction === "new-project") openTextEditor({ title:"New project", placeholder:"Project name", submit:"Create", anchor:action, onSubmit:(value) => createProject(value) });
+      if (action.dataset.plannerAction === "new-project") openProjectCreator(action);
       if (action.dataset.plannerAction === "project-menu") projectMenu(action);
       if (action.dataset.plannerAction === "new-stage" && project) openTextEditor({ title:"New stage", placeholder:"Stage name", submit:"Add", anchor:action, onSubmit:(value) => createStage(project.id, value) });
       if (action.dataset.plannerAction === "toggle-stack" && project && stage) setStageExpanded(project.id, stage.id);

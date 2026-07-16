@@ -66,22 +66,22 @@
       .crm-person-history-shell[hidden]{display:none}
       .crm-person-history{position:fixed;width:min(354px,calc(100vw - 28px));max-height:min(540px,calc(100vh - 118px));overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:#fff}
       .crm-person-history-head{min-height:54px;display:flex;align-items:center;gap:9px;padding:9px 9px 8px 12px!important}
-      .crm-person-history-heading{min-width:0;flex:1}.crm-person-history-kicker{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:rgba(210,222,240,.43)}
-      .crm-person-history-title{margin-top:4px;font:680 14px/1.15 system-ui,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .crm-person-history-heading{min-width:0;flex:1}.crm-person-history-kicker{font-size:var(--crm-type-micro,9px);letter-spacing:.1em;text-transform:uppercase;color:rgba(210,222,240,.43)}
+      .crm-person-history-title{margin-top:4px;font:680 var(--crm-type-object,14px)/1.15 system-ui,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-person-history-close.crm-menu-action{width:28px!important;min-width:28px!important;height:28px!important;padding:0!important;text-align:center!important;font-size:16px!important}
       .crm-person-history-thread{min-height:0;overflow-y:auto;display:grid;align-content:start;gap:1px;padding:2px 7px 7px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
       .crm-person-history-event{position:relative;min-height:45px;padding:7px 35px 8px 11px!important}
       .crm-person-history-event:before{content:"";position:absolute;left:3px;top:11px;bottom:11px;width:2px;border-radius:2px;background:rgba(134,180,241,.4)}
-      .crm-person-history-event-kind{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:rgba(190,211,241,.48)}
-      .crm-person-history-event-content{margin-top:4px;font-size:10px;line-height:1.4;color:rgba(242,245,250,.72);white-space:pre-wrap;overflow-wrap:anywhere}
-      .crm-person-history-event-when{position:absolute;right:7px;top:8px;font-size:8px;color:rgba(215,225,239,.34)}
-      .crm-person-history-event-direction{margin-left:6px;font-size:8px;color:rgba(215,225,239,.3)}
-      .crm-person-history-empty{padding:18px 12px;color:rgba(221,229,242,.42);font-size:10px;line-height:1.45}
+      .crm-person-history-event-kind{font-size:var(--crm-type-micro,9px);font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:rgba(190,211,241,.48)}
+      .crm-person-history-event-content{margin-top:4px;font-size:var(--crm-type-caption,11px);line-height:1.4;color:rgba(242,245,250,.72);white-space:pre-wrap;overflow-wrap:anywhere}
+      .crm-person-history-event-when{position:absolute;right:7px;top:8px;font-size:var(--crm-type-micro,9px);color:rgba(215,225,239,.34)}
+      .crm-person-history-event-direction{margin-left:6px;font-size:var(--crm-type-micro,9px);color:rgba(215,225,239,.3)}
+      .crm-person-history-empty{padding:18px 12px;color:rgba(221,229,242,.42);font-size:var(--crm-type-caption,11px);line-height:1.45}
       .crm-person-history-foot{display:grid;gap:1px;padding:6px 7px 8px;border-top:1px solid rgba(255,255,255,.07)}
-      .crm-person-history-compose.crm-menu-action{width:100%;min-height:31px!important;padding:0 7px!important;text-align:left!important;font-size:.7rem!important}
+      .crm-person-history-compose.crm-menu-action{width:100%;min-height:31px!important;padding:0 7px!important;text-align:left!important;font-size:var(--crm-type-body,12px)!important}
       .crm-person-history-composer{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:7px!important}.crm-person-history-composer[hidden]{display:none}
       .crm-person-history-composer textarea{grid-column:1/-1;min-height:58px;resize:vertical}.crm-person-history-composer-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:3px}
-      .crm-person-history-composer-actions .crm-menu-action{min-height:28px!important;padding:0 7px!important;font-size:.68rem!important}
+      .crm-person-history-composer-actions .crm-menu-action{min-height:28px!important;padding:0 7px!important;font-size:var(--crm-type-caption,11px)!important}
       .crm-person-history-status{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
       @media(max-width:600px){.crm-person-history{width:calc(100vw - 28px);max-height:calc(100vh - 112px)}}
     `;

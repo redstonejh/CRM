@@ -121,9 +121,9 @@
 
       /* Header: "name | ip" on top, then "Down <time> | <opened timestamp>". */
       .td-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; }
-      .td-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 0.95rem; font-weight: 700; line-height: 1.2; }
+      .td-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--crm-type-object,14px); font-weight: 700; line-height: 1.2; }
       .td-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .td-ip { font-size: 0.8rem; font-weight: 500; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .td-ip { font-size: var(--crm-type-caption,11px); font-weight: 500; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
       .td-sep { color: rgba(255,255,255,0.28); font-weight: 400; }
       /* Editable title/subtitle inputs styled to read like the header text until focused. */
       .td-edit { font: inherit; color: inherit; background: transparent; border: 0; border-radius: 6px;
@@ -137,14 +137,14 @@
       .td-x { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0 2px; margin: 0;
         color: rgba(255,255,255,0.5); font-size: 17px; line-height: 1; cursor: pointer; transition: color .14s ease; }
       .td-x:hover { color: #fff; }
-      .td-meta { padding: 0 4px; font-size: 0.78rem; color: rgba(255,255,255,0.6); }
-      .td-time { padding: 0 4px; margin-top: -4px; font-size: 0.74rem; color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
+      .td-meta { padding: 0 4px; font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.6); }
+      .td-time { padding: 0 4px; margin-top: -4px; font-size: var(--crm-type-meta,10px); color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
 
       /* Accordion section: dropdown header + a body that animates open below it. */
       .td-acc { display: flex; flex-direction: column; }
       .td-acc-head { -webkit-appearance: none; appearance: none; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
         width: 100%; border: 0; background: transparent; cursor: pointer; padding: 0 4px; margin: 0; text-align: left;
-        font: inherit; font-size: 0.9rem; font-weight: 600; color: rgba(255,255,255,0.6); transition: color .14s ease; }
+        font: inherit; font-size: var(--crm-type-control,13px); font-weight: 600; color: rgba(255,255,255,0.6); transition: color .14s ease; }
       .td-acc-head:hover { color: #fff; }
       .td-acc.is-open > .td-acc-head { color: #fff; }
       .td-acc-caret { display: inline-block; width: 9px; font-size: 0.72rem; color: rgba(255,255,255,0.4); transition: transform .14s ease; }
@@ -161,7 +161,7 @@
       .td-prio-opt.is-active { color: #fff; font-weight: 700; }
 
       .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
-        background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px; }
+        background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: var(--crm-type-body,12px); padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
       .td-ta { resize: vertical; min-height: 0; height: auto; line-height: 1.4; }
 
@@ -176,11 +176,11 @@
 
       .td-log { display: flex; flex-direction: column; gap: 7px; max-height: 160px; overflow: auto;
         background: rgba(255,255,255,0.05); border-radius: 9px; padding: 8px 9px; }
-      .td-ev { font-size: 0.8rem; color: rgba(255,255,255,0.78); }
+      .td-ev { font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.78); }
       .td-ev b { font-weight: 700; }
       .td-ev .td-at { color: rgba(255,255,255,0.4); }
       .td-ev-note { color: rgba(255,255,255,0.6); margin-top: 1px; }
-      .td-log-empty, .td-empty { color: rgba(255,255,255,0.45); font-size: 0.82rem; }
+      .td-log-empty, .td-empty { color: rgba(255,255,255,0.45); font-size: var(--crm-type-caption,11px); }
     `;
     document.head.appendChild(style);
   };

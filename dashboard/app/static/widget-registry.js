@@ -3148,18 +3148,18 @@
       .widget-card[data-widget-runtime-type="deal"][data-severity="none"]   { --panel-accent-rgb: 120, 130, 140 !important; --panel-accent: rgb(120,130,140) !important; }
       .widget-card[data-widget-runtime-type="contact"] { --panel-accent-rgb: 100, 116, 139 !important; --panel-accent: rgb(100,116,139) !important; }
       .contact-status { display: inline-flex; align-items: center; gap: 6px; margin-top: auto;
-        font-size: 0.78rem; font-weight: 650; color: rgba(255,255,255,0.74); }
+        font-size: var(--crm-type-caption,11px); font-weight: 650; color: rgba(255,255,255,0.74); }
       .contact-status-dot { width: 8px; height: 8px; border-radius: 999px; flex: 0 0 auto;
         background: rgba(111,201,154,0.9); box-shadow: 0 0 0 3px rgba(111,201,154,0.14); }
       .contact-status[data-attention="due"] .contact-status-dot {
         background: rgba(212,171,99,0.94); box-shadow: 0 0 0 3px rgba(212,171,99,0.16);
       }
       .ticket-body { display: flex; flex-direction: column; gap: 4px; height: 100%; }
-      .ticket-company { font-size: 0.98rem; font-weight: 700; line-height: 1.25;
+      .ticket-company { font-size: var(--crm-type-card-title,.98rem); font-weight: 700; line-height: 1.25;
         display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-      .ticket-host { font-size: 0.74rem; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
-      .ticket-down { margin-top: auto; font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.82); }
-      .ticket-empty { color: rgba(255,255,255,0.55); font-size: 0.8rem; line-height: 1.45; padding: 4px; }
+      .ticket-host { font-size: var(--crm-type-card-caption,.74rem); color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
+      .ticket-down { margin-top: auto; font-size: var(--crm-type-body,12px); font-weight: 600; color: rgba(255,255,255,0.82); }
+      .ticket-empty { color: rgba(255,255,255,0.55); font-size: var(--crm-type-body,12px); line-height: 1.45; padding: 4px; }
     `;
     document.head.appendChild(style);
   };

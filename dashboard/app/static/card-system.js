@@ -730,14 +730,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       /* Activity view — a scrollable trail in the same frosted shell. */
       .tk-activity { width: 285px; max-height: 330px; overflow-y: auto; overscroll-behavior: contain;
         scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.5) transparent; }
-      .tk-act-hd { font-size: 0.82rem; font-weight: 700; color: rgba(255,255,255,0.88); padding: 4px 8px 7px;
+      .tk-act-hd { font-size: var(--crm-type-object,14px); font-weight: 700; color: rgba(255,255,255,0.88); padding: 4px 8px 7px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .tk-act-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 8px; }
       .tk-act-row:hover { background: rgba(255,255,255,0.05); }
-      .tk-act-when { font-size: 0.68rem; color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
-      .tk-act-text { font-size: 0.8rem; line-height: 1.35; color: rgba(255,255,255,0.82); }
+      .tk-act-when { font-size: var(--crm-type-meta,10px); color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
+      .tk-act-text { font-size: var(--crm-type-body,12px); line-height: 1.35; color: rgba(255,255,255,0.82); }
       .tk-act-by { color: rgba(255,255,255,0.5); }
-      .tk-act-none { color: rgba(255,255,255,0.45); font-size: 0.8rem; }
+      .tk-act-none { color: rgba(255,255,255,0.45); font-size: var(--crm-type-body,12px); }
 
       .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
         border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
@@ -843,9 +843,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone.is-target { border-color: rgba(125,180,255,0.92);
         background: linear-gradient(180deg, rgba(70,110,190,0.34), rgba(40,70,130,0.26));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.5), 0 0 30px rgba(90,150,255,0.42); }
-      .tk-zone-hd { position:relative;display:block;box-sizing:border-box;height:30px;min-width:0;padding:3px 44px 8px 4px;font-size:.82rem;font-weight:700;
-        line-height:1.1;letter-spacing:.005em;color:rgba(255,255,255,.84);white-space:nowrap;overflow:hidden;text-overflow:ellipsis }
-      .tk-zone-title{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tk-zone-hd { position:relative;display:block;box-sizing:border-box;height:30px;min-width:0;padding:2px 44px 8px 4px;font-size:var(--crm-type-object,14px);font-weight:700;
+        line-height:1;letter-spacing:.005em;color:rgba(255,255,255,.84);white-space:nowrap;overflow:hidden;text-overflow:ellipsis }
+      .tk-zone-title{display:block;height:17px;line-height:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tk-zone-count{display:none!important}
       .tk-zone-hd-r{position:absolute;right:4px;top:6px;display:inline-flex;align-items:center;opacity:.46;pointer-events:none}
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
@@ -858,7 +858,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       /* Snug under the bars (bars: top 11 + 4 tall) and tight-leaded so BOTH lines (incident date +
          resolution date/time) sit inside the ${ZCARD_PEEK}px header band a stacked card leaves visible. */
       .tk-date-under { position: absolute; top: 16px; right: 13px; z-index: 7; pointer-events: none;
-        font-size: 0.6rem; font-weight: 600; line-height: 1.3; letter-spacing: .02em; white-space: nowrap;
+        font-size: var(--crm-type-micro,9px); font-weight: 600; line-height: 1.3; letter-spacing: .02em; white-space: nowrap;
         text-align: right; color: rgba(255,255,255,0.6); }
       /* Census D3: seeded names get two readable lines before ellipsis while
          retaining the original's clear top-right progress/date column. */
@@ -881,13 +881,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .ticket-fields { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; min-height: 0; overflow: hidden; }
       /* Smart-fit: entries WRAP to show their full text by default; fitCardFields() clamps the longest
          one (line by line, gaining an ellipsis) only once the card's content overflows its fixed height. */
-      .ticket-field { font-size: 0.75rem; line-height: 1.35; color: rgba(255,255,255,0.82);
+      .ticket-field { font-size: var(--crm-type-body,12px); line-height: 1.35; color: rgba(255,255,255,0.82);
         flex: 0 0 auto;   /* keep the natural height — rows must OVERFLOW (measurably), not silently squash */
         white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
       .ticket-field-l { color: rgba(255,255,255,0.42); font-weight: 600; margin-right: 5px; }
       .ticket-face-badges { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; }
       .ticket-face-chip { display: inline-flex; align-items: center; max-width: 100%; min-width: 0; border-radius: 999px;
-        padding: 3px 8px; font-size: 0.68rem; line-height: 1.15; font-weight: 800; color: rgba(255,255,255,0.72);
+        padding: 3px 8px; font-size: var(--crm-type-meta,10px); line-height: 1.15; font-weight: 800; color: rgba(255,255,255,0.72);
         background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.10);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .ticket-face-chip[data-tone="warn"] { color: rgba(255,230,180,0.88); background: rgba(234,88,12,0.18); border-color: rgba(234,88,12,0.22); }
@@ -908,7 +908,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zth { position: absolute; left: 0; width: 8px; border-radius: 999px; background: rgba(255,255,255,0.66);
         box-shadow: 0 1px 4px rgba(0,0,0,0.4); cursor: grab; transition: background .15s ease; }
       .tk-zth:hover { background: rgba(255,255,255,0.88); } .tk-zth:active { cursor: grabbing; background: #fff; }
-      .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: 0.8rem; line-height: 1.4; }
+      .tk-zone-empty { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center; color: rgba(255,255,255,0.38); font-size: var(--crm-type-body,12px); line-height: 1.4; }
       /* Scroll-edge shadow lives INSIDE each clipped ticket (a child div). The ticket's own overflow:hidden
          + border-radius clip it, so it's a square 90° band through the ticket body but follows the REAL
          rounded corners exactly where the viewport edge nears a corner — and it can never land in the gaps

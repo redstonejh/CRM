@@ -75,6 +75,24 @@ Always use these vars; never hardcode a hex that a token already covers.
 **Z-index** `--z-header 1500` · `--z-popover 1600` · `--z-modal 1700` · `--z-menu-overlay 2600`
 **Text weight** `--ui-text-weight 760` (the UI runs heavy/semibold by default)
 
+**Spatial CRM type ladder** (`base.css`; choose by meaning, never by visual guess)
+
+| Role | Token | Size |
+|---|---|---:|
+| Room heading | `--crm-type-room` | 17px |
+| Home tile heading | `--crm-type-tile` | 15px |
+| Bucket / object heading | `--crm-type-object` | 14px |
+| Menu / control label | `--crm-type-control` | 13px |
+| Reading copy / section label | `--crm-type-body` | 12px |
+| Supporting caption | `--crm-type-caption` | 11px |
+| Timestamp / quiet metadata | `--crm-type-meta` | 10px |
+| Dense micro-label | `--crm-type-micro` | 9px |
+
+Card faces retain their proven physical proportions through the semantic
+`--crm-type-card-title` and `--crm-type-card-caption` tokens. Responsive or
+container-relative sizes are reserved for camera content whose physical scale
+actually changes; ordinary interface text does not invent local `rem` values.
+
 ---
 
 ## 3. Status colours (THREE context-specific palettes — do not mix them)

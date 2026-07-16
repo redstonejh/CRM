@@ -8,7 +8,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v31";
+  const HOME_PREVIEW_VERSION = "filtered-home-v32";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -99,7 +99,7 @@
       .crm-home-title-glass{position:absolute;z-index:4;left:17px;bottom:16px;max-width:calc(100% - 34px);
         padding:0;text-align:left;pointer-events:none;contain:layout style;opacity:.92;background:none;border:0;box-shadow:none;
         transition:opacity .16s ease;display:block}
-      .crm-home-title{font:620 clamp(11px,2.9cqh,13px)/1.1 system-ui;letter-spacing:.015em;
+      .crm-home-title{font:650 var(--crm-type-tile,15px)/1.15 system-ui;letter-spacing:.005em;
         max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(246,249,253,.91);
         text-shadow:0 1px 2px rgba(0,0,0,.92),0 3px 12px rgba(0,0,0,.72)}
       .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-title-glass{opacity:.28}

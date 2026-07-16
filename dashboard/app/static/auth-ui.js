@@ -625,9 +625,9 @@
          vertical padding. Both canonical references use padding-block(9) and gap(9).
          Want looser/tighter? Change both references and this documented contract. */
       .auth-profile-head { display: flex; flex-direction: column; padding: 0 12px; }
-      /* Match the menu items' size (0.95rem) — the name was smaller than the
+      /* Match the menu items' shared control role — the name was smaller than the
          items below it. Bold still sets it apart as the header. */
-      .auth-profile-name { font-size: 0.95rem; font-weight: 700; color: #ffffff; }
+      .auth-profile-name { font-size: var(--crm-type-control, 13px); font-weight: 700; color: #ffffff; }
       .auth-role-badge {
         align-self: flex-start; font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
         text-transform: uppercase; padding: 1px 8px; border-radius: 999px;
@@ -639,7 +639,7 @@
         text-align: left; border: 0; outline: 0; box-shadow: none;
         border-radius: 8px; padding: 0 12px; margin: 0; width: 100%; cursor: pointer;
         background: transparent; color: rgba(255, 255, 255, 0.62);
-        font: inherit; font-size: 0.95rem; font-weight: 600; white-space: nowrap;
+        font: inherit; font-size: var(--crm-type-control, 13px); font-weight: 600; white-space: nowrap;
         transition: color 0.14s ease;
       }
       .auth-menu-item:hover, .auth-menu-item:focus-visible { background: transparent; color: #ffffff; }

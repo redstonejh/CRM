@@ -31,18 +31,18 @@
       .record-world-shell[hidden]{display:none}
       .record-world{position:fixed;width:min(292px,calc(100vw - 28px));max-height:min(420px,calc(100vh - 118px));overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);color:#fff}
       .record-world-head{min-height:52px;display:flex;align-items:center;gap:9px;padding:9px 9px 8px 12px}
-      .record-world-heading{min-width:0;flex:1}.record-world-kicker{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:rgba(210,222,240,.43)}
-      .record-world-title{margin-top:4px;font:680 14px/1.15 system-ui,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .record-world-heading{min-width:0;flex:1}.record-world-kicker{font-size:var(--crm-type-micro,9px);letter-spacing:.1em;text-transform:uppercase;color:rgba(210,222,240,.43)}
+      .record-world-title{margin-top:4px;font:680 var(--crm-type-object,14px)/1.15 system-ui,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .record-world-close.crm-menu-action{width:28px!important;min-width:28px!important;height:28px!important;padding:0!important;text-align:center!important;font-size:16px!important}
       .record-world-body{min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 7px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
       .record-world-facts{display:grid;gap:1px;padding:3px 0 6px}.record-world-fact{min-height:31px;display:grid;grid-template-columns:66px minmax(0,1fr);gap:8px;align-items:center;padding:4px 7px!important}
-      .record-world-fact-label{font-size:9px;color:rgba(217,225,239,.38)}.record-world-fact-value{font-size:10px;color:rgba(245,247,251,.76);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .record-world-fact-label{font-size:var(--crm-type-micro,9px);color:rgba(217,225,239,.38)}.record-world-fact-value{font-size:var(--crm-type-caption,11px);color:rgba(245,247,251,.76);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .record-world-actions{display:grid;gap:1px;padding-top:6px;border-top:1px solid rgba(255,255,255,.07)}
-      .record-world-action.crm-menu-action{width:100%;min-height:31px!important;padding:0 7px!important;text-align:left!important;font-size:.7rem!important}
+      .record-world-action.crm-menu-action{width:100%;min-height:31px!important;padding:0 7px!important;text-align:left!important;font-size:var(--crm-type-body,12px)!important}
       .record-world-editor{display:grid;gap:7px;margin-top:6px;padding:7px!important}.record-world-editor[hidden]{display:none}
       .record-world-editor textarea{min-height:58px;resize:vertical}.record-world-editor-actions{display:flex;justify-content:flex-end;gap:3px}
-      .record-world-editor-actions .crm-menu-action{min-height:28px!important;padding:0 7px!important;font-size:.68rem!important}
-      .record-world-empty{padding:18px 12px;color:rgba(221,229,242,.42);font-size:10px;line-height:1.45}
+      .record-world-editor-actions .crm-menu-action{min-height:28px!important;padding:0 7px!important;font-size:var(--crm-type-caption,11px)!important}
+      .record-world-empty{padding:18px 12px;color:rgba(221,229,242,.42);font-size:var(--crm-type-caption,11px);line-height:1.45}
       @media(max-width:600px){.record-world{width:calc(100vw - 28px);max-height:calc(100vh - 112px)}}
     `;
     document.head.appendChild(style);

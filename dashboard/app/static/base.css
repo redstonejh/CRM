@@ -14,6 +14,20 @@ html {
   --crm-canvas-bottom: 78px;
   --crm-object-gap: 18px;
   --crm-section-gap: 28px;
+  /* One typographic ladder for the spatial CRM. Components choose a semantic
+     role instead of inventing a nearby rem or pixel value. */
+  --crm-type-room: 17px;
+  --crm-type-tile: 15px;
+  --crm-type-object: 14px;
+  --crm-type-control: 13px;
+  --crm-type-body: 12px;
+  --crm-type-caption: 11px;
+  --crm-type-meta: 10px;
+  --crm-type-micro: 9px;
+  /* Card faces are a denser physical object species; retain their proven
+     proportions while naming the roles instead of scattering rem literals. */
+  --crm-type-card-title: .98rem;
+  --crm-type-card-caption: .74rem;
   color-scheme: light;
   scrollbar-gutter: auto;
   background: var(--page-background) fixed;
@@ -27,6 +41,8 @@ html {
     --crm-canvas-top: 70px;
     --crm-canvas-bottom: 74px;
     --crm-section-gap: 20px;
+    --crm-type-room: 16px;
+    --crm-type-tile: 14px;
   }
 }
 

@@ -84,7 +84,7 @@
         display: inline-grid; place-items: center; background: transparent; color: rgba(255,255,255,0.62);
         font: inherit; font-size: 16px; font-weight: 800; cursor: pointer; }
       .fc-year-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
-      .fc-year-label { min-width: 4.5ch; text-align: center; font-size: 12px; font-weight: 800; letter-spacing: .02em; }
+      .fc-year-label { min-width: 4.5ch; text-align: center; font-size: var(--crm-type-body,12px); font-weight: 800; letter-spacing: .02em; }
       .fc-bucket { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
         overflow: hidden; color: #fff; border: 0; container-type: size;
         border-radius: calc(var(--mon-r, 16px) * var(--kx, 1)) / calc(var(--mon-r, 16px) * var(--ky, 1));
@@ -100,7 +100,7 @@
       .fc-expander[data-kind="day"] .fc-hd { font-size: clamp(1.05rem, 2.8cqh, 1.45rem); }
       .fc-dowrow { flex: 0 0 5%; display: grid; grid-template-columns: repeat(7, 1fr); column-gap: 1.6%;
         align-items: center; min-height: 0; }
-      .fc-dowrow span { text-align: center; font-size: 0.72rem; font-weight: 700; color: rgba(255,255,255,0.4);
+      .fc-dowrow span { text-align: center; font-size: var(--crm-type-caption,11px); font-weight: 700; color: rgba(255,255,255,0.4);
         white-space: nowrap; overflow: hidden; }
       .fc-days { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(7, 1fr);
         grid-template-rows: repeat(6, 1fr); column-gap: 1.6%; row-gap: 2%; }
@@ -110,7 +110,7 @@
         background: linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035));
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.08);
         transition: box-shadow .18s ease, background .18s ease; }
-      .fc-day-num { position: absolute; top: 6%; left: 7%; font-size: 0.85rem; font-weight: 700;
+      .fc-day-num { position: absolute; top: 6%; left: 7%; font-size: var(--crm-type-body,12px); font-weight: 700;
         color: rgba(255,255,255,0.78); line-height: 1; }
       .fc-day-body { position: absolute; inset: 24% 5% 5%; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
       .fc-scheduled-list { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: hidden; }
@@ -118,7 +118,7 @@
          k-scale (glass body, left edge accent), stacked flush like a peeking
          pile, never colored pills. Red stays money-only (data-hot). */
       .fc-chip { position: relative; border-radius: 3px; margin-top: -1px; padding: 2px 6px 2px 9px;
-        font-size: 0.64rem; line-height: 1.2; color: rgba(255,255,255,0.88);
+        font-size: var(--crm-type-micro,9px); line-height: 1.2; color: rgba(255,255,255,0.88);
         background: linear-gradient(180deg, rgba(83,95,117,0.6), rgba(33,41,56,0.55));
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 6px rgba(0,0,0,0.22);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -131,9 +131,9 @@
       .fc-chip[data-type="invoice"]::before { background: rgba(56,189,248,0.85); }
       .fc-chip[data-type="contact"]::before, .fc-chip[data-type="calendar"]::before { background: rgba(148,163,184,0.35); }
       .fc-chip[data-hot="true"]::before { background: rgba(220,38,38,0.95); }   /* overdue invoice — the only red */
-      .fc-chip-more { font-size: 0.6rem; padding: 1px 6px; color: rgba(255,255,255,0.5); }
+      .fc-chip-more { font-size: var(--crm-type-micro,9px); padding: 1px 6px; color: rgba(255,255,255,0.5); }
       /* Inside the day dive the same bands read near-card-size and open on click. */
-      .fc-day-detail .fc-chip { font-size: 0.82rem; padding: 9px 12px 9px 14px; border-radius: 6px;
+      .fc-day-detail .fc-chip { font-size: var(--crm-type-body,12px); padding: 9px 12px 9px 14px; border-radius: 6px;
         margin-top: 3px; cursor: pointer; }
       .fc-day-detail .fc-chip:hover { background: linear-gradient(180deg, rgba(103,115,137,0.66), rgba(53,61,76,0.6));
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.4), inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 8px rgba(0,0,0,0.28); }
@@ -144,13 +144,13 @@
       /* The drag-to-day / chip-tap flight: a shrinking glass card that seats
          into the day cell (house ease, opaque body — no backdrop under transform). */
       .fc-fly-card { position: fixed; z-index: 6000; pointer-events: none; box-sizing: border-box;
-        border-radius: 12px; padding: 10px 12px; color: #fff; font-size: 0.9rem; font-weight: 700;
+        border-radius: 12px; padding: 10px 12px; color: #fff; font-size: var(--crm-type-control,13px); font-weight: 700;
         overflow: hidden; background-color: rgb(74, 84, 101);
         background-image: linear-gradient(180deg, rgba(83,95,117,0.85), rgba(33,41,56,0.9));
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 18px 42px rgba(0,0,0,0.4);
         transition: transform 460ms ${EASE}, opacity 220ms ease 300ms; }
       .fc-empty, .fc-day-detail { width: 100%; margin: auto 0; padding: 14px 8px; text-align: center;
-        color: rgba(255,255,255,0.42); font-size: 0.8rem; line-height: 1.4; }
+        color: rgba(255,255,255,0.42); font-size: var(--crm-type-body,12px); line-height: 1.4; }
       .fc-day-detail { margin: 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; text-align: left; }
       .fc-day-detail .fc-scheduled-list { overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.5) transparent; }
       .fc-drop-hint { margin-top: auto; text-align: center; color: rgba(255,255,255,0.42); }

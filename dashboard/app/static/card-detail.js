@@ -142,9 +142,9 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
 
       /* Header: "name | ip" on top, then "Down <time> | <opened timestamp>". */
       .td-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; }
-      .td-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 0.95rem; font-weight: 700; line-height: 1.2; }
+      .td-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--crm-type-object,14px); font-weight: 700; line-height: 1.2; }
       .td-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .td-ip { font-size: 0.8rem; font-weight: 500; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .td-ip { font-size: var(--crm-type-caption,11px); font-weight: 500; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
       .td-sep { color: rgba(255,255,255,0.28); font-weight: 400; }
       /* Editable title/subtitle inputs styled to read like the header text until focused. */
       .td-edit { font: inherit; color: inherit; background: transparent; border: 0; border-radius: 6px;
@@ -158,15 +158,15 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       .td-x { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0 2px; margin: 0;
         color: rgba(255,255,255,0.5); font-size: 17px; line-height: 1; cursor: pointer; transition: color .14s ease; }
       .td-x:hover { color: #fff; }
-      .td-meta { padding: 0 4px; font-size: 0.78rem; color: rgba(255,255,255,0.6); }
-      .td-stage { padding: 4px 4px 0; font-size: 0.72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(160,190,255,0.85); }
-      .td-time { padding: 0 4px; margin-top: -4px; font-size: 0.74rem; color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
+      .td-meta { padding: 0 4px; font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.6); }
+      .td-stage { padding: 4px 4px 0; font-size: var(--crm-type-meta,10px); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(160,190,255,0.85); }
+      .td-time { padding: 0 4px; margin-top: -4px; font-size: var(--crm-type-meta,10px); color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
 
       /* Accordion section: dropdown header + a body that animates open below it. */
       .td-acc { display: flex; flex-direction: column; }
       .td-acc-head { -webkit-appearance: none; appearance: none; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
         width: 100%; border: 0; background: transparent; cursor: pointer; padding: 0 4px; margin: 0; text-align: left;
-        font: inherit; font-size: 0.9rem; font-weight: 600; color: rgba(255,255,255,0.6); transition: color .14s ease; }
+        font: inherit; font-size: var(--crm-type-control,13px); font-weight: 600; color: rgba(255,255,255,0.6); transition: color .14s ease; }
       .td-acc-head:hover { color: #fff; }
       .td-acc.is-open > .td-acc-head { color: #fff; }
       .td-acc-caret { display: inline-block; width: 9px; font-size: 0.72rem; color: rgba(255,255,255,0.4); transition: transform .14s ease; }
@@ -187,10 +187,10 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
          field's label shares the row with the close × (.td-field-head). */
       .td-field { display: flex; flex-direction: column; gap: 5px; padding: 1px 4px; }
       .td-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-      .td-field-label { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.72); }
+      .td-field-label { font-size: var(--crm-type-body,12px); font-weight: 600; color: rgba(255,255,255,0.72); }
       .td-req { color: rgba(255,140,140,0.95); font-weight: 700; }
       .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
-        background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: 0.85rem; padding: 7px 10px; }
+        background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: var(--crm-type-body,12px); padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
       .td-date { color-scheme: dark; }   /* render the native date picker + its glyph on the dark field */
       .td-ta { resize: none; min-height: 2.4em; line-height: 1.4; overflow-y: auto; max-height: 200px; }   /* auto-grown in JS, scrolls past max */
@@ -200,11 +200,11 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       .td-save { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer;
         font: inherit; font-size: 0.85rem; font-weight: 700; color: rgba(255,255,255,0.55); transition: color .14s ease; }
       .td-save:hover { color: #fff; }
-      .td-msg { padding: 1px 4px; font-size: 0.76rem; color: rgba(255,160,160,0.95); }
+      .td-msg { padding: 1px 4px; font-size: var(--crm-type-caption,11px); color: rgba(255,160,160,0.95); }
 
       .td-next-touch { display: flex; flex-direction: column; gap: 7px; margin-top: auto; padding: 7px 4px 0;
         border-top: 1px solid rgba(255,255,255,0.10); }
-      .td-next-touch-title { font-size: 0.78rem; font-weight: 700; color: rgba(255,255,255,0.72); }
+      .td-next-touch-title { font-size: var(--crm-type-caption,11px); font-weight: 700; color: rgba(255,255,255,0.72); }
       .td-next-touch-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
       .td-touch-chip { appearance: none; border: 0; border-radius: 999px; padding: 0; margin: 0;
         background: transparent; color: rgba(255,255,255,0.58); cursor: pointer;
@@ -224,11 +224,11 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
 
       .td-log { display: flex; flex-direction: column; gap: 7px; max-height: 160px; overflow: auto;
         background: rgba(255,255,255,0.05); border-radius: 9px; padding: 8px 9px; }
-      .td-ev { font-size: 0.8rem; color: rgba(255,255,255,0.78); }
+      .td-ev { font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.78); }
       .td-ev b { font-weight: 700; }
       .td-ev .td-at { color: rgba(255,255,255,0.4); }
       .td-ev-note { color: rgba(255,255,255,0.6); margin-top: 1px; }
-      .td-log-empty, .td-empty { color: rgba(255,255,255,0.45); font-size: 0.82rem; }
+      .td-log-empty, .td-empty { color: rgba(255,255,255,0.45); font-size: var(--crm-type-caption,11px); }
     `;
     document.head.appendChild(style);
   };

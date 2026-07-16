@@ -15,7 +15,7 @@
       .crm-money-stage{display:contents}.crm-money-switcher{position:fixed;z-index:1100;left:var(--crm-money-switcher-left,var(--crm-canvas-x,64px));top:var(--crm-money-switcher-top,132px);width:154px;
         box-sizing:border-box;padding:7px 6px;pointer-events:auto;overflow:hidden}
       .crm-money-switcher-list{display:flex;flex-direction:column;gap:2px}
-      .crm-money-view.crm-menu-action{position:relative;width:100%;height:38px;text-align:left;padding-left:25px!important;letter-spacing:0}
+      .crm-money-view.crm-menu-action{position:relative;width:100%;height:38px;text-align:left;padding-left:25px!important;font-size:var(--crm-type-control,13px)!important;letter-spacing:0}
       .crm-money-view::before{content:"";position:absolute;left:10px;top:17px;width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.16)}
       .crm-money-view.is-selected::before{background:rgba(174,207,250,.86);box-shadow:0 0 7px rgba(91,151,236,.4)}
     `;

@@ -4073,11 +4073,11 @@ body.workspace-page-swipe-dragging{
   background: transparent !important; min-height: 22px !important;
   padding: 0 12px !important; margin: 0 !important; border-radius: 8px !important;
   /* Normalized to the ACCOUNT menu (.auth-menu-item — the source of truth): the
-     SAME 0.95rem / weight 600 and the same muted→white colour, so the background
+     SAME control role / weight 600 and the same muted→white colour, so the background
      picker, account menu, and search menu all read identically. !important keeps
      this shared rule authoritative over the legacy per-option blocks. */
   color: rgba(255, 255, 255, 0.62) !important; font: inherit;
-  font-family: inherit !important; font-size: 0.95rem !important; font-weight: 600 !important; letter-spacing: 0 !important;
+  font-family: inherit !important; font-size: var(--crm-type-control, 13px) !important; font-weight: 600 !important; letter-spacing: 0 !important;
   text-align: left; cursor: pointer; white-space: nowrap; transition: color .14s ease;
   display: flex; align-items: center; gap: 9px; width: 100%;
 }

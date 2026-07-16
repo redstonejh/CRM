@@ -91,6 +91,11 @@ async function main() {
       && plannerTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Planner'
       && assignmentTile?.querySelector('.crm-home-title')?.textContent.trim() === 'Assignments';
   });
+  await check('Home tile titles use the shared, readable tile role', () => {
+    const sizes = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket .crm-home-title')]
+      .map((title) => getComputedStyle(title).fontSize);
+    return sizes.length === 6 && new Set(sizes).size === 1 && sizes[0] === '15px';
+  });
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0 && document.querySelectorAll('.crm-home-hand-card.tk-card').length > 0, { timeout: 10000 });
   await check('Home hand uses card-system card objects', () => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card')];
@@ -229,11 +234,17 @@ async function main() {
     const list = document.querySelector('.crm-overview-project-list');
     const bucket = document.querySelector('.crm-overview-bucket');
     const scroll = document.querySelector('.crm-overview-scroll');
+    const type = {
+      room: getComputedStyle(document.querySelector('.crm-overview-title')).fontSize,
+      section: getComputedStyle(document.querySelector('.crm-overview-section-title')).fontSize,
+      body: getComputedStyle(document.querySelector('.crm-overview-update-title')).fontSize,
+    };
     return {
       ok: projects.length >= 3 && maps.length === projects.length && tickets.length >= 4 && updates.length >= 3
         && !!list && getComputedStyle(list).overflowX === 'auto' && getComputedStyle(list).overflowY === 'hidden'
         && !!bucket && getComputedStyle(bucket).backgroundColor === 'rgba(0, 0, 0, 0)'
         && !!scroll && getComputedStyle(scroll).overflowY === 'auto'
+        && type.room === '17px' && type.section === '12px' && type.body === '12px'
         && !document.querySelector('.crm-overview-pocket,.crm-overview-worlds,.crm-overview-featured,.crm-overview-map')
         && !!document.querySelector('.crm-overview-ticket-section') && !!document.querySelector('.crm-overview-recent'),
       detail: `${projects.length} projects / ${tickets.length} tickets / ${updates.length} recent items`,
@@ -350,14 +361,21 @@ async function main() {
     const bucketRect = buckets[0]?.getBoundingClientRect();
     const sameButton = ['backgroundColor','borderTopWidth','borderRadius','color','fontSize','fontWeight','boxShadow','paddingLeft','paddingRight']
       .every((property) => actual[property] === expected[property]);
-    return pools.length === 8 && buckets.length > 0 && people.length === 10
+    const assignmentType = {
+      title: getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize,
+      buckets: [...new Set(buckets.map((bucket) => getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize))],
+    };
+    return { ok: pools.length === 8 && buckets.length > 0 && people.length === 10
       && people.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.assignmentContactId)
       && pools.filter((pool) => pool.classList.contains('is-selected')).length === 1
       && sameButton && !theater.querySelector('.crm-assignment-source-pool.tk-zone')
       && !!panelRect && !!bucketRect && Math.abs(panelRect.top - bucketRect.top) <= 1
+      && assignmentType.title === '14px'
+      && assignmentType.buckets.every((size) => size === '14px')
       && buckets.every((bucket) => !!bucket.dataset.assignmentCommitment)
       && !theater.querySelector('.crm-assignment-source-pool-count,.crm-assignment-count,.crm-assignment-hand-label')
-      && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head');
+      && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head'),
+      detail: JSON.stringify({ sameButton, panelTop: panelRect?.top, bucketTop: bucketRect?.top, assignmentType }) };
   });
   await check('The grouping panel clips to its buttons and scrolls only when the list outgrows its cap', () => {
     const panel = document.querySelector('.crm-assignment-pools')?.getBoundingClientRect();
@@ -587,6 +605,7 @@ async function main() {
       && room.querySelectorAll('.crm-money-view.is-selected').length === 1
       && room.querySelectorAll('[data-crm-subtheater="money"]:not([hidden])').length === 1
       && !!selector && selector.width >= 145 && zones.length === 3
+      && getComputedStyle(room.querySelector('.crm-money-view')).fontSize === '13px'
       && Math.abs(selector.top - zones[0].top) <= 1
       && zones[0].left - selector.right >= 12 && zones[0].left - selector.right <= 28
       && gaps.every((gap) => gap >= 16 && gap <= 28);
@@ -826,11 +845,18 @@ async function main() {
   await check('Planner uses one established selector and aligned custom buckets', () => {
     const projects = [...document.querySelectorAll('.crm-planner-project')];
     const buckets = [...document.querySelectorAll('.crm-planner-bucket')];
-    return projects.length >= 3 && buckets.length === 3
+    const plannerType = {
+      heading: getComputedStyle(document.querySelector('.crm-planner-heading')).fontSize,
+      buckets: [...new Set(buckets.map((bucket) => getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize))],
+    };
+    return { ok: projects.length >= 3 && buckets.length === 3
       && !document.querySelector('.crm-project-minimap,.crm-planner-universe')
       && projects.every((project) => !project.querySelector('*'))
       && buckets.every((bucket) => bucket.classList.contains('tk-zone') && !!bucket.querySelector('.tk-zone-title'))
-      && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1;
+      && plannerType.heading === '17px'
+      && plannerType.buckets.every((size) => size === '14px')
+      && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1,
+      detail: JSON.stringify(plannerType) };
   });
   await page.click('[data-planner-action="new-project"]');
   await page.type('.crm-planner-popover input[name="value"]', 'Interaction plan');

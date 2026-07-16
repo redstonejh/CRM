@@ -99,7 +99,7 @@
       .tk-zcard.crm-object-small,.crm-assignment-bucket-card.crm-object-small,.crm-planner-card.crm-object-small{transform-origin:top center}
       .tk-card.crm-object-small:not(.crm-assignment-bucket-card){transform-origin:bottom center}
       .tk-zone.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:.82;transform-origin:center}
-      .crm-size-menu{position:fixed;z-index:9320;width:154px;padding:6px;display:grid}.crm-size-menu .crm-menu-action{height:34px;text-align:left;font-size:.74rem!important}
+      .crm-size-menu{position:fixed;z-index:9320;width:154px;padding:6px;display:grid}.crm-size-menu .crm-menu-action{height:34px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       @media(prefers-reduced-motion:reduce){.crm-object-small{transition-duration:.01ms!important}}
     `; document.head.appendChild(style);
   };

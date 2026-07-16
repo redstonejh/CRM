@@ -7,7 +7,7 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v31';
+const HOME_PREVIEW_VERSION = 'filtered-home-v32';
 const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
@@ -261,6 +261,7 @@ async function main() {
       const style = getComputedStyle(bucket);
       return { key: bucket.dataset.module, version: host.dataset.previewVersion, children: host.children.length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
         variant: image?.dataset.previewVariant, previewFilter: getComputedStyle(image).filter, titleOpacity: Number(getComputedStyle(bucket.querySelector('.crm-home-title-glass')).opacity),
+        titleSize: getComputedStyle(bucket.querySelector('.crm-home-title')).fontSize,
         shift: getComputedStyle(host).getPropertyValue('--far-shift-y').trim(), liveTrees: host.querySelectorAll('.crm-home-lod-scene,.crm-home-lod-root,[data-crm-theater]').length,
         glass: { backdrop: style.webkitBackdropFilter || style.backdropFilter, background: style.backgroundImage } };
     }),
@@ -278,7 +279,7 @@ async function main() {
   if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.children !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.liveTrees)) {
     throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
-  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER) || item.titleOpacity < .9)) {
+  if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER) || item.titleOpacity < .9 || item.titleSize !== '15px')) {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1

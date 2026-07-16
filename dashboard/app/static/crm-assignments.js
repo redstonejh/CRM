@@ -24,9 +24,9 @@
     style.id = "crm-assignments-styles";
     style.textContent = `
       .crm-assignments-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-assignments-surface[hidden]{display:none}
-      .crm-assignments-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) 0;max-width:1450px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:var(--crm-section-gap,28px)}
+      .crm-assignments-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) 0;max-width:1150px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:var(--crm-section-gap,28px)}
       .crm-assignment-pools{align-self:start;min-height:0;max-height:calc(100vh - 154px);display:flex;flex-direction:column;padding:9px 6px;overflow:hidden}
-      .crm-assignment-head{display:flex;align-items:center;padding:0 12px}.crm-assignment-title{font-size:.95rem;font-weight:700}
+      .crm-assignment-head{display:flex;align-items:center;padding:0 12px}.crm-assignment-title{font-size:var(--crm-type-object,14px);font-weight:700}
       .crm-assignment-pools-head{height:38px;flex:0 0 38px;box-sizing:border-box}
       .crm-assignment-pool-stack{min-height:0;display:flex;flex-direction:column;gap:1px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}
       .crm-assignment-source-pool.crm-menu-action{width:100%;min-height:38px;display:flex;align-items:center;gap:10px;text-align:left}

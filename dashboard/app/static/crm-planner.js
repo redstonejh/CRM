@@ -407,6 +407,40 @@
   }
   const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); if (!active) closeFloating(); return api; };
   const baseline = async () => { mount(); if (dirty || !model.projects.length) await refresh(); render(); root.hidden = !active; return root; };
+  const homePreviewState = () => {
+    const scroller = root?.querySelector(".crm-planner-buckets");
+    const tabs = root?.querySelector(".crm-planner-project-list");
+    if (scroller?.dataset.plannerScrollProject) plannerScrollPositions.set(scroller.dataset.plannerScrollProject, scroller.scrollLeft);
+    return {
+      selectedId,
+      expandedStages:[...expandedStacks],
+      scrollPositions:Object.fromEntries(plannerScrollPositions),
+      tabsScrollLeft:tabs?.scrollLeft || 0,
+    };
+  };
+  const applyHomePreviewState = async (state = {}) => {
+    mount();
+    if (dirty || !model.projects.length) await refresh();
+    if (projectById(state.selectedId)) selectedId = String(state.selectedId);
+    if (Array.isArray(state.expandedStages)) expandedStacks = new Set(state.expandedStages.map(String));
+    if (state.scrollPositions && typeof state.scrollPositions === "object") {
+      Object.entries(state.scrollPositions).forEach(([projectId, value]) => {
+        const position = Number(value); if (Number.isFinite(position)) plannerScrollPositions.set(String(projectId), Math.max(0, position));
+      });
+    }
+    render();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const scroller = root?.querySelector(".crm-planner-buckets");
+    if (scroller) {
+      const requested = Number(state.scrollPositions?.[scroller.dataset.plannerScrollProject]);
+      if (Number.isFinite(requested)) scroller.scrollLeft = Math.min(Math.max(0, requested), Math.max(0, scroller.scrollWidth - scroller.clientWidth));
+    }
+    const tabs = root?.querySelector(".crm-planner-project-list");
+    const tabsLeft = Number(state.tabsScrollLeft);
+    if (tabs && Number.isFinite(tabsLeft)) tabs.scrollLeft = Math.min(Math.max(0, tabsLeft), Math.max(0, tabs.scrollWidth - tabs.clientWidth));
+    updatePlannerScrollEdges();
+    return homePreviewState();
+  };
   async function miniature() { await baseline(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater"); Object.assign(copy.style, { position:"absolute", left:"50%", top:"50%", width:"1280px", height:"860px", transform:"translate(-50%,-50%) scale(.285)", transformOrigin:"center", pointerEvents:"none" }); return copy; }
   async function openItem(itemId) {
     if (dirty || !itemById(itemId)) await refresh(); const item = itemById(itemId); if (!item) return false; selectedId = item.projectId; publish("item-selected");
@@ -414,7 +448,7 @@
     requestAnimationFrame(() => { const card = root?.querySelector(`[data-planner-card="${cssValue(item.id)}"]`); card?.classList.add("is-focus-target"); card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); setTimeout(() => card?.classList.remove("is-focus-target"), 1600); });
     return true;
   }
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, projects:projectsSnapshot, items:() => clone(model.items), createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, projects:projectsSnapshot, items:() => clone(model.items), createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], homePreviewState, applyHomePreviewState, onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmPlanner = api;

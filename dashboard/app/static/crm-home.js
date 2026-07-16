@@ -7,10 +7,12 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v34";
+  const HOME_PREVIEW_VERSION = "filtered-home-v35";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
+  const pendingPreviews = new Map();
+  const previewSyncs = new Set();
   let camera = null;
   let subscribed = false;
   let retryTimer = 0;
@@ -33,6 +35,8 @@
   let handoffResolve = null;
   let todoPopover = null;
   let todoOutsideClose = null;
+  let previewCommitTimer = 0;
+  let previewDecodeSequence = 0;
   const prewarmedFactories = new Set();
   const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
@@ -273,15 +277,19 @@
     bucket.classList.remove("is-preview-hovered");
     bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"]`)?.classList.remove("is-deemphasized");
   };
-  const acceptPreview = (preview, replaceCurrent = false) => {
-    if (!isRenderablePreview(preview)) return false;
+  const previewCommitBlocked = () => !!camera?.isTransitioning?.()
+    || !!camera?.surface?.()?.classList.contains("crm-home-camera-moving")
+    || !!camera?.surface?.()?.classList.contains("crm-home-camera-handoff");
+  const preloadSource = (src) => new Promise((resolve) => {
+    const image = new Image(); let settled = false;
+    const finish = () => { if (settled) return; settled = true; resolve(); };
+    image.onload = finish; image.onerror = finish; image.src = src;
+    image.decode?.().then(finish).catch(() => {});
+  });
+  const commitPreview = (preview) => {
     const existing = previews.get(preview.key);
     const existingAspect = Number(existing?.width) > 0 && Number(existing?.height) > 0 ? existing.width / existing.height : 0;
     const nextAspect = Number(preview.width) > 0 && Number(preview.height) > 0 ? preview.width / preview.height : 0;
-    // Renderer-only reloads can briefly straddle Electron host versions. Keep a
-    // current image when one exists, but render an older valid image instead of
-    // turning the tile into an empty rectangle while the host catches up.
-    if (!replaceCurrent && isCurrentPreview(existing) && !isCurrentPreview(preview)) return true;
     previews.set(preview.key, preview);
     if (camera?.isActive?.() && camera.level() === 0) {
       mountPreview(preview.key);
@@ -290,6 +298,42 @@
         requestAnimationFrame(() => syncMotionSnapshot());
       }
     }
+    return true;
+  };
+  const flushPendingPreviews = () => {
+    clearTimeout(previewCommitTimer); previewCommitTimer = 0;
+    if (previewCommitBlocked()) {
+      previewCommitTimer = setTimeout(flushPendingPreviews, 48);
+      return;
+    }
+    pendingPreviews.forEach((entry, key) => {
+      if (!entry.ready) return;
+      pendingPreviews.delete(key);
+      commitPreview(entry.preview);
+    });
+  };
+  const acceptPreview = (preview, replaceCurrent = false) => {
+    if (!isRenderablePreview(preview)) return false;
+    const existing = previews.get(preview.key);
+    const pending = pendingPreviews.get(preview.key)?.preview;
+    const newest = pending && Number(pending.capturedAt || 0) >= Number(existing?.capturedAt || 0) ? pending : existing;
+    // Renderer-only reloads can briefly straddle Electron host versions. Keep a
+    // current image when one exists, but render an older valid image instead of
+    // turning the tile into an empty rectangle while the host catches up.
+    if (!replaceCurrent && isCurrentPreview(newest) && !isCurrentPreview(preview)) return true;
+    if (newest?.version === preview.version && newest?.capturedAt === preview.capturedAt
+      && newest?.foregroundSrc === preview.foregroundSrc && newest?.exactSrc === preview.exactSrc) return true;
+    if (!pending && existing?.foregroundSrc === preview.foregroundSrc && existing?.exactSrc === preview.exactSrc) {
+      return commitPreview(preview);
+    }
+    const sequence = ++previewDecodeSequence;
+    const entry = { preview, sequence, ready:false };
+    pendingPreviews.set(preview.key, entry);
+    Promise.all([preloadSource(preview.foregroundSrc), preloadSource(preview.exactSrc)]).then(() => {
+      if (pendingPreviews.get(preview.key)?.sequence !== sequence) return;
+      entry.ready = true;
+      flushPendingPreviews();
+    });
     return true;
   };
   const motionLayoutSignature = (root = camera?.layers?.()[0]) => {
@@ -837,6 +881,7 @@
     const resolve = handoffResolve;
     handoffResolve = null;
     resolve?.();
+    flushPendingPreviews();
   };
   const beginHomeHandoff = (context, sequence) => {
     const surface = context.surface;
@@ -975,18 +1020,47 @@
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });
-  const captureBaseline = async (key) => {
-    if (window.crmHomePreviews?.isCaptureWorker) return previews.get(key)||null;
-    try { const result=await window.crmHomePreviews?.capture?.(key); if(result?.preview)acceptPreview(result.preview); } catch {}
-    return previews.get(key)||null;
+  const previewApiFor = (key) => window[FACTORY_API_BY_MODULE[key]] || null;
+  const captureDisplayedState = (key) => {
+    const api = previewApiFor(key);
+    let state = null;
+    try { state = api?.homePreviewState?.() || null; } catch {}
+    try { return JSON.parse(JSON.stringify({ revision:1, ...(state || {}) })); }
+    catch { return { revision:1 }; }
+  };
+  const applyCaptureState = async (key, state = {}) => {
+    const api = previewApiFor(key);
+    if (!api) return false;
+    try {
+      await api.baseline?.();
+      await api.applyHomePreviewState?.(state);
+      await waitForModuleSettled(key);
+      return true;
+    } catch { return false; }
+  };
+  const captureBaseline = (key, viewState = captureDisplayedState(key)) => {
+    if (window.crmHomePreviews?.isCaptureWorker) return Promise.resolve(previews.get(key)||null);
+    const request = (async () => {
+      try { const result=await window.crmHomePreviews?.capture?.(key, viewState); if(result?.preview)acceptPreview(result.preview); } catch {}
+      return previews.get(key)||null;
+    })();
+    previewSyncs.add(request);
+    request.finally(() => previewSyncs.delete(request)).catch(() => {});
+    return request;
+  };
+  const waitForPreviewSync = async () => {
+    while (previewSyncs.size) await Promise.allSettled([...previewSyncs]);
+    const result = await window.crmHomePreviews?.waitForIdle?.().catch?.(() => null);
+    if (result?.ok === false) throw new Error(result.error || "Preview synchronization failed");
+    return true;
   };
   const noteModuleReady = (key) => {
     const apiName = FACTORY_API_BY_MODULE[key];
     if (apiName) prewarmedFactories.add(apiName);
   };
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,createTodo,
-    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);return{key,state:preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,createTodo,
+    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:pending?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};

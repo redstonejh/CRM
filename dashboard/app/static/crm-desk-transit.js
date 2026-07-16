@@ -156,6 +156,10 @@
   // back into its Home slot — the identical camera move, reversed.
   const diveOut = (fromKey, done) => {
     const cam = camera();
+    // Snapshot the room's actual selected tab, expansion and scroll state while
+    // it is still visible. The hidden preview renderer receives this state and
+    // replaces the Home raster only after the return handoff has completed.
+    try { window.crmHome?.refreshDisplayedPreview?.(fromKey); } catch {}
     try { window.crmHome?.setActive?.(true); } catch {}
     if (!cam) { commit("home"); done(); return; }
     if (cam.level() > 0) cam.rebuildRoot();

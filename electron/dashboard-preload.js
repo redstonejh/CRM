@@ -157,7 +157,8 @@ contextBridge.exposeInMainWorld('dashboardWindowControls', {
 contextBridge.exposeInMainWorld('crmHomePreviews', {
   isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
   list: () => ipcRenderer.invoke('home-preview:list'),
-  capture: (key) => ipcRenderer.invoke('home-preview:capture', { key }),
+  capture: (key, viewState = null) => ipcRenderer.invoke('home-preview:capture', { key, viewState }),
+  waitForIdle: () => ipcRenderer.invoke('home-preview:idle'),
   motionSnapshot: () => ipcRenderer.invoke('home-preview:motion'),
   onChanged: (cb) => ipcRenderer.on('home-preview:changed', (_event, preview) => cb(preview)),
   onMotionSnapshotChanged: (cb) => ipcRenderer.on('home-preview:motion-changed', (_event, snapshot) => cb(snapshot)),

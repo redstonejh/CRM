@@ -346,9 +346,30 @@
   }
   const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); else if (active) requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); }); if (!active) { closeFloating(); stopBoardAutoScroll(); } return api; };
   const baseline = async () => { mount(); if (dirty || !model.commitments.length) await refresh(); render(); root.hidden = !active; return root; };
+  const homePreviewState = () => ({
+    selectedFilter,
+    expandedStages:[...expandedStages],
+    scrollX:clamp(boardScroll.x, boardMinimum(), 0),
+  });
+  const applyHomePreviewState = async (state = {}) => {
+    mount();
+    if (dirty || !model.commitments.length) await refresh();
+    const filter = FILTERS.find((item) => item.id === String(state.selectedFilter || ""));
+    if (filter) selectedFilter = filter.id;
+    if (Array.isArray(state.expandedStages)) {
+      expandedStages = new Set(state.expandedStages.map(String).filter((stage) => !!stageById(stage)));
+    }
+    render();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const x = Number(state.scrollX);
+    boardScroll.x = boardScroll.target = clamp(Number.isFinite(x) ? x : 0, boardMinimum(), 0);
+    boardScroll.wheeling = false;
+    positionBoard();
+    return homePreviewState();
+  };
   async function miniature() { await baseline(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater"); Object.assign(copy.style, { position:"absolute", left:"50%", top:"50%", width:"1320px", height:"860px", transform:"translate(-50%,-50%) scale(.285)", transformOrigin:"center", pointerEvents:"none" }); return copy; }
   const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; revealStage(stageOf(item)); requestAnimationFrame(() => openEditor(item, anchor || root?.querySelector(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`))); return true; };
-  const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), selectFilter, setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), isActive:() => active };
+  const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), selectFilter, setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), homePreviewState, applyHomePreviewState, isActive:() => active };
   document.addEventListener("crm:theater-switch", closeFloating);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmAssignments = api;

@@ -2759,6 +2759,32 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     layoutZones();
     return expandedStages.has(stage);
   };
+  const homePreviewState = () => ({
+    expandedStages:[...expandedStages],
+    zoneScroll:Object.fromEntries(STAGE_KEYS.map((stage) => [stage, zoneScroll[stage]?.sy || 0])),
+  });
+  const applyHomePreviewState = async (state = {}) => {
+    ensureZones();
+    if (Array.isArray(state.expandedStages)) {
+      expandedStages.clear();
+      state.expandedStages.map(String).filter((stage) => STAGE_KEYS.includes(stage)).forEach((stage) => expandedStages.add(stage));
+      renderZones();
+      layoutZones();
+    }
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (state.zoneScroll && typeof state.zoneScroll === "object") {
+      STAGE_KEYS.forEach((stage) => {
+        const scroll = zoneScroll[stage]; const requested = Number(state.zoneScroll[stage]);
+        if (!scroll || !Number.isFinite(requested)) return;
+        if (scroll.raf) cancelAnimationFrame(scroll.raf);
+        clearTimeout(scroll.releaseT);
+        scroll.raf = 0; scroll.wheeling = false;
+        scroll.sy = scroll.ty = clamp(requested, zMin(stage), 0);
+        positionZone(stage);
+      });
+    }
+    return homePreviewState();
+  };
   const ensureZones = () => {
     if (!zonesEnabled) return;
     if (zonesRoot) return;
@@ -3513,6 +3539,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     setStageExpanded: setZoneExpanded,
     toggleStageExpanded: (stage) => setZoneExpanded(stage),
     expandedStages: () => [...expandedStages],
+    homePreviewState,
+    applyHomePreviewState,
     // Product-level contract used by the interaction audit. These semantics
     // are deliberately explicit: a company grouping is not a pipeline, and a
     // hand/search collection must not acquire lifecycle chrome by accident.

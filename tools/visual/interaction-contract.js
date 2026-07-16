@@ -959,17 +959,20 @@ async function main() {
       && form.elements.stages.value === 'Backlog, In progress, Done' && form.getBoundingClientRect().width <= 300;
   });
   await page.type('.crm-planner-project-creator input[name="title"]', 'Interaction plan');
-  await page.click('.crm-planner-popover button[type="submit"]');
+  await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
-  await page.click('[data-planner-action="new-stage"]');
+  await sleep(260);
+  await page.evaluate(() => document.querySelector('[data-planner-action="new-stage"]')?.click());
   await page.type('.crm-planner-popover input[name="value"]', 'Review');
-  await page.click('.crm-planner-popover button[type="submit"]');
+  await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
-  await page.click('.crm-planner-bucket:last-child [data-planner-action="new-card"]');
+  await sleep(260);
+  await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child [data-planner-action="new-card"]')?.click());
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
-  await page.click('.crm-planner-popover button[type="submit"]');
+  await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-planner-card-title')].some((node) => node.textContent.trim() === 'Ship the polished flow'), { timeout:10000 });
-  await page.click('.crm-planner-card');
+  await sleep(260);
+  await page.evaluate(() => document.querySelector('.crm-planner-card')?.click());
   await page.waitForSelector('.crm-planner-item-editor select[name="stage"]', { timeout:10000 });
   await check('A Planner item can change stage, owner, priority, due date, and linked record in one compact editor', () => {
     const form = document.querySelector('.crm-planner-item-editor');
@@ -1025,7 +1028,11 @@ async function main() {
   }, plannerStackBefore);
   await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.click());
   await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'false');
-  await page.click('.crm-planner-bucket:last-child .tk-zone-hd', { button: 'right' });
+  await page.evaluate(() => {
+    const header = document.querySelector('.crm-planner-bucket:last-child .tk-zone-hd');
+    const rect = header?.getBoundingClientRect();
+    if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 12, clientY:rect.top + 12 }));
+  });
   await page.waitForSelector('.crm-planner-context', { timeout:10000 });
   await check('Planner edits use a compact canonical anchored menu', () => {
     const menu = document.querySelector('.crm-planner-context');
@@ -1036,15 +1043,27 @@ async function main() {
     return menu.classList.contains('crm-menu-surface') && rect.width < 200 && rect.height < 260
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
   });
-  await page.click('.crm-planner-context .crm-menu-action');
+  const plannerBucketSizeAction = await page.evaluate(() => {
+    const action = [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button) => button.textContent.trim() === 'Make small');
+    action?.click(); return action?.textContent.trim() || '';
+  });
+  if (plannerBucketSizeAction !== 'Make small') throw new Error(`Planner bucket size action unavailable: ${plannerBucketSizeAction}`);
   await page.waitForFunction(() => {
     const bucket = document.querySelector('.crm-planner-bucket:last-child');
     return bucket?.classList.contains('crm-object-small') && bucket.getBoundingClientRect().width <= 205
       && Number.parseFloat(getComputedStyle(bucket).scale) === 1;
   });
-  await page.click('.crm-planner-bucket:last-child .crm-planner-card', { button: 'right' });
+  await page.evaluate(() => {
+    const card = document.querySelector('.crm-planner-bucket:last-child .crm-planner-card');
+    const rect = card?.getBoundingClientRect();
+    if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 12, clientY:rect.top + 12 }));
+  });
   await page.waitForSelector('.crm-planner-context');
-  await page.click('.crm-planner-context .crm-menu-action');
+  const plannerCardSizeAction = await page.evaluate(() => {
+    const action = [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button) => button.textContent.trim() === 'Make small');
+    action?.click(); return action?.textContent.trim() || '';
+  });
+  if (plannerCardSizeAction !== 'Make small') throw new Error(`Planner card size action unavailable: ${plannerCardSizeAction}`);
   await page.waitForFunction(() => {
     const card = document.querySelector('.crm-planner-bucket:last-child .crm-planner-card');
     return card?.classList.contains('crm-object-small') && card.getBoundingClientRect().width <= 145

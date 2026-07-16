@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v34';
+const HOME_PREVIEW_VERSION = 'filtered-home-v35';
 const homePreviewCache = new Map();
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;
@@ -85,6 +85,8 @@ let homePreviewResizeTimer = null;
 let homePreviewBoundsKey = '';
 let homePreviewQueue = Promise.resolve();
 let homePreviewRefreshTimer = null;
+let homePreviewStartupTimer = null;
+let homePreviewActivityGeneration = 0;
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —
@@ -143,12 +145,21 @@ function createMainWindow() {
     broadcastStore();
     homePreviewBoundsKey = previewBoundsKey(mainWindow);
     mainWindow.on('resize', scheduleHomePreviewBoundsRefresh);
-    setTimeout(() => capturePreviewKeys(HOME_PREVIEW_KEYS, 'startup'), 250);
+    clearTimeout(homePreviewStartupTimer);
+    homePreviewActivityGeneration += 1;
+    homePreviewStartupTimer = setTimeout(() => {
+      homePreviewStartupTimer = null;
+      capturePreviewKeys(HOME_PREVIEW_KEYS, 'startup');
+    }, 250);
   });
 
   mainWindow.on('closed', () => {
     clearTimeout(homePreviewResizeTimer);
+    clearTimeout(homePreviewRefreshTimer);
+    clearTimeout(homePreviewStartupTimer);
     homePreviewResizeTimer = null;
+    homePreviewRefreshTimer = null;
+    homePreviewStartupTimer = null;
     homePreviewBoundsKey = '';
     mainWindow = null;
   });
@@ -289,7 +300,7 @@ function waitForRenderer(win, expression, timeoutMs = 30000) {
 async function createPreviewWindow() {
   if (previewWindow && !previewWindow.isDestroyed()) return previewWindow;
   const bounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentBounds() : { width: 1280, height: 860 };
-  previewWindow = new BrowserWindow({
+  const worker = new BrowserWindow({
     width: bounds.width, height: bounds.height, show: false, frame: false,
     backgroundColor: '#10141c', paintWhenInitiallyHidden: true,
     webPreferences: {
@@ -297,19 +308,26 @@ async function createPreviewWindow() {
       sandbox: false, offscreen: true, backgroundThrottling: false,
     },
   });
-  previewWindow.on('closed', () => { previewWindow = null; });
-  await previewWindow.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } });
-  await waitForRenderer(previewWindow, `!document.documentElement.hasAttribute('data-dashboard-booting') && !!window.crmWorkspaces`);
-  return previewWindow;
+  previewWindow = worker;
+  worker.on('closed', () => { if (previewWindow === worker) previewWindow = null; });
+  try {
+    await worker.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } });
+    await waitForRenderer(worker, `!document.documentElement.hasAttribute('data-dashboard-booting') && !!window.crmWorkspaces`);
+    return worker;
+  } catch (error) {
+    if (!worker.isDestroyed()) worker.destroy();
+    if (previewWindow === worker) previewWindow = null;
+    throw error;
+  }
 }
 
-function publishHomePreview(key, capture, layoutSignature) {
+function publishHomePreview(key, capture, layoutSignature, viewState = null) {
   if (!capture?.foreground || !capture?.exact) return null;
   const size = capture.exact.getSize();
   const preview = {
     key, version: HOME_PREVIEW_VERSION, width: size.width, height: size.height, capturedAt: Date.now(),
     foregroundSrc: capture.foreground.toDataURL(), exactSrc: capture.exact.toDataURL(),
-    foregroundBounds: capture.bounds, layoutSignature,
+    foregroundBounds: capture.bounds, layoutSignature, viewState,
   };
   homePreviewCache.set(key, preview);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:changed', preview);
@@ -353,8 +371,9 @@ async function captureHomeMotionSnapshot(worker) {
   return homeMotionSnapshot;
 }
 
-function capturePreviewKeys(keys, label = 'refresh') {
+function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
   const requested = keys.filter((key) => HOME_PREVIEW_KEYS.includes(key));
+  homePreviewActivityGeneration += 1;
   homePreviewQueue = homePreviewQueue.then(async () => {
     let worker;
     let activeCaptureKey = 'boot';
@@ -364,13 +383,17 @@ function capturePreviewKeys(keys, label = 'refresh') {
         activeCaptureKey = key;
         await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive(${JSON.stringify(key)})`, true);
         await waitForRenderer(worker, `document.body.dataset.crmModule === ${JSON.stringify(key)} && !!document.querySelector('[data-crm-theater]:not([hidden])')`);
+        const viewState = viewStates?.[key] ?? null;
+        if (viewState) {
+          await worker.webContents.executeJavaScript(`window.crmHome?.applyCaptureState?.(${JSON.stringify(key)}, ${JSON.stringify(viewState)})`, true);
+        }
         await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
         const layoutSignature = await worker.webContents.executeJavaScript(`(() => {
           const theater = document.querySelector('[data-crm-theater]:not([hidden])');
           return { module: document.body.dataset.crmModule || '', text: String(theater?.innerText || '').replace(/\\s+/g,' ').trim(),
             elements: theater?.querySelectorAll('*').length || 0, calendarYear: window.fractalCalendar?.year?.() || null };
         })()`, true);
-        publishHomePreview(key, await captureRoom(worker), layoutSignature);
+        publishHomePreview(key, await captureRoom(worker), layoutSignature, viewState);
       }
       // A one-room refresh (for example after a Large/Small choice) must also
       // refresh the resting Home composite. Otherwise the reverse camera would
@@ -384,6 +407,7 @@ function capturePreviewKeys(keys, label = 'refresh') {
       console.error(`[home-preview] ${label} capture failed at ${activeCaptureKey}:`, error?.message || error);
     } finally {
       if (worker && !worker.isDestroyed()) worker.destroy();
+      if (previewWindow === worker) previewWindow = null;
     }
     return requested.length === 1 ? homePreviewCache.get(requested[0]) || null : null;
   });
@@ -392,7 +416,9 @@ function capturePreviewKeys(keys, label = 'refresh') {
 
 function scheduleHomePreviewRefresh(label = 'store change', delay = 700) {
   clearTimeout(homePreviewRefreshTimer);
+  homePreviewActivityGeneration += 1;
   homePreviewRefreshTimer = setTimeout(() => {
+    homePreviewRefreshTimer = null;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     capturePreviewKeys(HOME_PREVIEW_KEYS, label);
   }, delay);
@@ -406,6 +432,7 @@ function previewBoundsKey(win) {
 
 function scheduleHomePreviewBoundsRefresh() {
   clearTimeout(homePreviewResizeTimer);
+  homePreviewActivityGeneration += 1;
   homePreviewResizeTimer = setTimeout(() => {
     homePreviewResizeTimer = null;
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -566,13 +593,39 @@ ipcMain.handle('home-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
   return { ok: true, version: HOME_PREVIEW_VERSION, previews: [...homePreviewCache.values()] };
 });
+ipcMain.handle('home-preview:idle', async (event) => {
+  if (!isMainSender(event)) return { ok: false };
+  const started = Date.now();
+  let quietGeneration = -1;
+  let quietSince = 0;
+  while (Date.now() - started < 30000) {
+    const queue = homePreviewQueue;
+    await queue.catch(() => null);
+    const capturing = !!previewWindow && !previewWindow.isDestroyed();
+    if (homePreviewStartupTimer || homePreviewResizeTimer || homePreviewRefreshTimer || capturing || queue !== homePreviewQueue) {
+      quietGeneration = -1;
+      quietSince = 0;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      continue;
+    }
+    if (quietGeneration !== homePreviewActivityGeneration) {
+      quietGeneration = homePreviewActivityGeneration;
+      quietSince = Date.now();
+    }
+    if (Date.now() - quietSince >= 900) {
+      return { ok: true, capturing: false };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  return { ok: false, capturing: !!previewWindow && !previewWindow.isDestroyed(), error: 'Preview engine did not become idle' };
+});
 ipcMain.handle('home-preview:motion', (event) => {
   if (!isMainSender(event)) return { ok: false, snapshot: null };
   return { ok: true, snapshot: homeMotionSnapshot, error: homeMotionSnapshotError };
 });
-ipcMain.handle('home-preview:capture', async (event, { key } = {}) => {
+ipcMain.handle('home-preview:capture', async (event, { key, viewState = null } = {}) => {
   if (!isMainSender(event) || !HOME_PREVIEW_KEYS.includes(key)) return { ok: false, error: 'Invalid preview key' };
-  const preview = await capturePreviewKeys([key], 'room refresh');
+  const preview = await capturePreviewKeys([key], 'room refresh', { [key]: viewState });
   return preview ? { ok: true, preview } : { ok: false, error: 'Preview capture failed' };
 });
 ipcMain.handle('dashboard:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });

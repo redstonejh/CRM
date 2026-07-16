@@ -7,7 +7,7 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v34';
+const HOME_PREVIEW_VERSION = 'filtered-home-v35';
 const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
@@ -481,6 +481,12 @@ async function main() {
   const transitions=[];
   for (const room of rooms) {
     const before = await page.evaluate((key)=>window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0,room.key);
+    const previewNodeToken = await page.evaluate((key) => {
+      const image = document.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview-foreground`);
+      const token = `${key}-${Date.now()}-${Math.random()}`;
+      if (image) image.dataset.liveSyncProbe = token;
+      return token;
+    }, room.key);
     const selector=`.crm-home-grid > .crm-home-bucket[data-module="${room.key}"]`;
     await page.hover(selector); await sleep(160);
     await page.evaluate(() => { const p=window.__fps={start:performance.now(),frames:0,fps:0}; const tick=(now)=>{p.frames+=1;if(now-p.start<1100)requestAnimationFrame(tick);else p.fps=p.frames*1000/(now-p.start)};requestAnimationFrame(tick); });
@@ -522,6 +528,32 @@ async function main() {
     const badHeader=state.bucketHeaders.some((header)=>!header.title||header.whiteSpace!=='nowrap'||!header.singleLine||header.count||header.barsPosition!=='absolute'||header.barsRight<8||header.barsRight>60);
     const badAssignmentScroller=room.key==='assignments'&&(!state.assignmentScroller?.on||state.assignmentOverflow<100||state.assignmentScroller.thumb<28||state.assignmentScroller.thumb>=state.assignmentScroller.track-10);
     if(!state.visible||state.count!==room.expected||state.arrows||badBucket||badHeader||badAssignmentScroller||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||probe.settled.fps<40||probe.transition.fps<45)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,probe})}`);
+    const synchronization = await page.evaluate((key) => {
+      let changed = false;
+      if (key === 'people') {
+        const api = window.peopleCards; const stage = api?.contract?.().stages?.[0]?.key;
+        if (stage) { api.setStageExpanded(stage, !api.expandedStages().includes(stage)); changed = true; }
+      } else if (key === 'cases') {
+        const api = window.ticketStacks; const stage = document.querySelector('[data-crm-theater="tickets"] .tk-zone[data-stage]')?.dataset.stage;
+        if (stage) { api.setStageExpanded(stage, !api.expandedStages().includes(stage)); changed = true; }
+      } else if (key === 'planner') {
+        const api = window.crmPlanner; const projects = api?.projects?.() || []; const selected = api?.selected?.();
+        const alternate = projects.find((project) => project.id !== selected);
+        if (alternate) { api.selectProject(alternate.id); changed = true; }
+        else {
+          const stage = document.querySelector('[data-crm-theater="planner"] .crm-planner-bucket')?.dataset.plannerBucket;
+          if (selected && stage) { api.setStageExpanded(selected, stage, !api.expandedStages().includes(`${selected}:${stage}`)); changed = true; }
+        }
+      } else if (key === 'assignments') {
+        const api = window.crmAssignments; const current = document.querySelector('.crm-assignment-filter.is-selected')?.dataset.assignmentFilter || 'all';
+        api.selectFilter(current === 'unassigned' ? 'all' : 'unassigned');
+        api.scrollBy(190, true); changed = true;
+      }
+      return { changed };
+    }, room.key);
+    await page.mouse.move(1,1); await sleep(280);
+    const expectedViewState = await page.evaluate((key) => window.crmHome.captureDisplayedState(key), room.key);
+    const synchronizedLiveBuffer = await page.screenshot({path:path.join(out,`room-${room.key}-synchronized.png`)});
     await startMotionProbe(page,`out-${room.key}`);
     await startEndpointProbe(page,`out-${room.key}`,room,'out');
     const outboundReaction=await page.evaluate(()=>{const started=performance.now();window.__homeDrive=window.crmDeskTransit.driveTo('home');return{elapsedMs:performance.now()-started,busy:window.crmDeskTransit?.isBusy?.(),level:window.crmHomeCamera?.level?.(),module:document.body.dataset.crmModule}});
@@ -535,10 +567,14 @@ async function main() {
     const outbound=await finishMotionProbe(page,`out-${room.key}`);
     assertMotion(`${room.key} outbound`,outbound);
     const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
-    const after=await page.evaluate((key)=>window.crmHome.previewStatus().find((item)=>item.key===key)?.capturedAt||0,room.key);
+    await page.waitForFunction(({key,before})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);return status?.state==='ready'&&status.capturedAt>before;},{key:room.key,before},{timeout:60000});
+    const synchronizedPreview=await page.evaluate(async({key,token})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===key);const host=document.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);const image=host?.querySelector(':scope > .crm-home-preview-foreground');return{after:status?.capturedAt||0,state:status?.state,sameNode:image?.dataset.liveSyncProbe===token,hostCapturedAt:Number(host?.dataset.capturedAt||0),viewState:preview?.viewState||null,exactSrc:preview?.exactSrc||''};},{key:room.key,token:previewNodeToken});
+    const after=synchronizedPreview.after;
+    const synchronizedExactBuffer=Buffer.from(synchronizedPreview.exactSrc.split(',')[1]||'','base64');
+    const synchronizedPixelMae=imageDifference(synchronizedExactBuffer,synchronizedLiveBuffer,{left:50,right:1230,top:105,bottom:755});
     if(outboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after returning Home: ${JSON.stringify(outboundStability)}`);
-    if(after!==before)throw new Error(`${room.key} preview was replaced after returning Home: ${JSON.stringify({before,after})}`);
-    transitions.push({key:room.key,mid,outboundMid,pixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewPreserved:after===before});
+    if(after<=before||synchronizedPreview.state!=='ready'||!synchronizedPreview.sameNode||synchronizedPreview.hostCapturedAt!==after||JSON.stringify(synchronizedPreview.viewState)!==JSON.stringify(expectedViewState)||synchronizedPixelMae>12)throw new Error(`${room.key} Home tile did not synchronize with the displayed room: ${JSON.stringify({before,after,synchronization,expectedViewState,actualViewState:synchronizedPreview.viewState,sameNode:synchronizedPreview.sameNode,hostCapturedAt:synchronizedPreview.hostCapturedAt,synchronizedPixelMae})}`);
+    transitions.push({key:room.key,mid,outboundMid,pixelMae,synchronizedPixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewRefreshed:after>before,previewNodePreserved:synchronizedPreview.sameNode});
   }
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   const unsettled=transitTimings.filter((item)=>item.settled===false);
@@ -554,7 +590,7 @@ async function main() {
   await page.click('[data-person-history-close]');
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:15000});
   const settledFps=await frameRate(page); if(settledFps<45)throw new Error(`Settled Home FPS ${settledFps}`);
-  await sleep(100); const windows=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).length); if(windows!==1)throw new Error(`${windows} BrowserWindows remain`);
+  await page.evaluate(()=>window.crmHome.waitForPreviewSync()); await sleep(100); const windowDetails=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).map((win)=>({id:win.id,url:win.webContents.getURL(),visible:win.isVisible(),loading:win.webContents.isLoading(),bounds:win.getBounds()}))); const windows=windowDetails.length; if(windows!==1)throw new Error(`${windows} BrowserWindows remain after preview synchronization: ${JSON.stringify(windowDetails)}`);
   const finalChrome=await page.evaluate(()=>{const drag=document.querySelector('.app-window-drag-region');return{drag:getComputedStyle(drag).webkitAppRegion,top:document.elementsFromPoint(520,20)[0]===drag,controls:document.querySelectorAll('.window-control-cluster .window-glass-control').length}});
   if(finalChrome.drag!=='drag'||!finalChrome.top||finalChrome.controls<3)throw new Error(`Chrome stale after camera cycles: ${JSON.stringify(finalChrome)}`);
   await page.click('.window-minimize-control'); await sleep(350);

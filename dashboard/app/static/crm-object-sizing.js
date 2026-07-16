@@ -1,7 +1,7 @@
 // crm-object-sizing.js — one persistent Large/Small contract for cards and buckets.
 (() => {
   const STORE_KEY = "crm-object-sizing-v1";
-  const CARD_SELECTOR = ".tk-card:not(.td-card):not(.td-flyer),.tk-zcard,.crm-planner-card";
+  const CARD_SELECTOR = ".tk-card:not(.td-card):not(.td-flyer),.tk-zcard,.crm-planner-card,.crm-assignment-work-card";
   const BUCKET_SELECTOR = ".tk-zone,.crm-planner-bucket,.crm-company-bucket";
   let state = { cards: {}, buckets: {} };
   let menu = null;
@@ -18,7 +18,7 @@
   const write = () => { if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(STORE_KEY, JSON.stringify(state)); };
   const theaterOf = (element) => element?.closest?.("[data-crm-theater]")?.dataset?.crmTheater || "workspace";
   const entityFor = (element, theater) => element?.dataset?.recordEntity || ({
-    tickets: "tickets", people: "contacts", assignments: "contacts", pipeline: "deals", jobs: "jobs",
+    tickets: "tickets", people: "contacts", assignments: "commitments", pipeline: "deals", jobs: "jobs",
     bills: "bills", invoices: "invoices", planner: "planner",
   }[theater] || theater);
   const idFor = (element, kind) => {
@@ -97,7 +97,7 @@
     const style = document.createElement("style"); style.id = "crm-object-sizing-styles"; style.textContent = `
       .crm-object-small{transition:width .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1),flex-basis .18s cubic-bezier(.22,1,.26,1),scale .18s cubic-bezier(.22,1,.26,1)!important}
       .tk-card.crm-object-small:not(.crm-assignment-bucket-card){scale:.8;transform-origin:bottom center}
-      .tk-zcard.crm-object-small,.tk-zone.crm-object-small,.crm-assignment-bucket-card.crm-object-small,.crm-planner-card.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:1!important}
+      .tk-zcard.crm-object-small,.tk-zone.crm-object-small,.crm-assignment-work-card.crm-object-small,.crm-planner-card.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:1!important}
       .crm-size-menu{position:fixed;z-index:9320;width:154px;padding:6px;display:grid}.crm-size-menu .crm-menu-action{height:34px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       @media(prefers-reduced-motion:reduce){.crm-object-small{transition-duration:.01ms!important}}
     `; document.head.appendChild(style);

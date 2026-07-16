@@ -381,134 +381,136 @@ async function main() {
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home', { timeout: 10000 });
 
   await activate('assignments');
-  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-source-pool').length === 8
-    && document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-hand-card.tk-card').length === 10, { timeout: 10000 });
-  await check('Assignments uses ordinary canonical buttons for grouping and real cards for people', () => {
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-bucket').length === 5
+    && document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-work-card').length > 0, { timeout: 10000 });
+  await check('Assignments is one real commitment pipeline, not a hand of copied people cards', () => {
     const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
-    const pools = [...(theater?.querySelectorAll('button.crm-assignment-source-pool.crm-menu-action') || [])];
+    const filters = [...(theater?.querySelectorAll('button.crm-assignment-filter.crm-menu-action') || [])];
     const buckets = [...(theater?.querySelectorAll('.crm-assignment-bucket.tk-zone') || [])];
-    const people = [...(theater?.querySelectorAll('.crm-assignment-hand-card.tk-card') || [])];
+    const cards = [...(theater?.querySelectorAll('.crm-assignment-work-card') || [])];
     const reference = document.querySelector('.auth-menu-item');
-    const expected = getComputedStyle(reference);
-    const button = pools.find((pool) => !pool.classList.contains('is-selected'));
-    const actual = getComputedStyle(button);
-    const panelRect = theater?.querySelector('.crm-assignment-pools')?.getBoundingClientRect();
+    const expected = getComputedStyle(reference); const actual = getComputedStyle(filters.find((filter) => !filter.classList.contains('is-selected')));
+    const panelRect = theater?.querySelector('.crm-assignment-rail')?.getBoundingClientRect();
     const bucketRect = buckets[0]?.getBoundingClientRect();
     const sameButton = ['backgroundColor','borderTopWidth','borderRadius','color','fontSize','fontWeight','boxShadow','paddingLeft','paddingRight']
       .every((property) => actual[property] === expected[property]);
-    const assignmentType = {
-      title: getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize,
-      buckets: [...new Set(buckets.map((bucket) => getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize))],
-    };
-    return { ok: pools.length === 8 && buckets.length > 0 && people.length === 10
-      && people.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.assignmentContactId)
-      && pools.filter((pool) => pool.classList.contains('is-selected')).length === 1
-      && sameButton && !theater.querySelector('.crm-assignment-source-pool.tk-zone')
+    const ids = cards.map((card) => card.dataset.assignmentCard);
+    return { ok: filters.length === 4 && buckets.length === 5 && cards.length === window.crmAssignments.items().length
+      && cards.every((card) => card.dataset.recordEntity === 'commitments' && card.dataset.recordId === card.dataset.assignmentCard)
+      && new Set(ids).size === ids.length && filters.filter((filter) => filter.classList.contains('is-selected')).length === 1
+      && sameButton && !theater.querySelector('.crm-assignment-hand,.crm-assignment-hand-card,.crm-assignment-source-pool')
       && !!panelRect && !!bucketRect && Math.abs(panelRect.top - bucketRect.top) <= 1
-      && assignmentType.title === '14px'
-      && assignmentType.buckets.every((size) => size === '14px')
-      && buckets.every((bucket) => !!bucket.dataset.assignmentCommitment)
-      && !theater.querySelector('.crm-assignment-source-pool-count,.crm-assignment-count,.crm-assignment-hand-label')
+      && getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize === '14px'
+      && buckets.every((bucket) => !!bucket.dataset.assignmentStage && getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize === '14px')
+      && theater.querySelectorAll('.crm-assignment-stack-toggle').length === 5
       && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head'),
-      detail: JSON.stringify({ sameButton, panelTop: panelRect?.top, bucketTop: bucketRect?.top, assignmentType }) };
+      detail: JSON.stringify({ sameButton, panelTop: panelRect?.top, bucketTop: bucketRect?.top, cards:cards.length, unique:new Set(ids).size }) };
   });
-  await check('The grouping panel clips to its buttons and scrolls only when the list outgrows its cap', () => {
-    const panel = document.querySelector('.crm-assignment-pools')?.getBoundingClientRect();
-    const stack = document.querySelector('.crm-assignment-pool-stack');
-    const buttons = [...(stack?.querySelectorAll('.crm-assignment-source-pool') || [])];
-    const last = buttons.at(-1)?.getBoundingClientRect();
-    return !!panel && !!last && panel.bottom - last.bottom <= 12
-      && getComputedStyle(stack).overflowY === 'auto';
+  await page.click('.crm-assignment-filter[data-assignment-filter="unassigned"]');
+  await check('Assignment filters change scope without manufacturing another card collection', () => {
+    const cards = [...document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-work-card')];
+    return document.querySelector('.crm-assignment-filter.is-selected')?.dataset.assignmentFilter === 'unassigned'
+      && cards.every((card) => card.closest('[data-assignment-stage]')?.dataset.assignmentStage === 'unassigned')
+      && new Set(cards.map((card) => card.dataset.assignmentCard)).size === cards.length;
   });
-  const firstPool = await page.$eval('.crm-assignment-source-pool.is-selected', (pool) => pool.dataset.assignmentPool);
-  await page.click('.crm-assignment-source-pool:not(.is-selected)');
-  await page.waitForFunction((previous) => document.querySelector('.crm-assignment-source-pool.is-selected')?.dataset.assignmentPool !== previous
-    && document.querySelectorAll('.crm-assignment-hand-card.tk-card').length === 10, {}, firstPool);
-  await check('Selecting another pool replaces the hand with that pool’s people', () => {
-    const selected = document.querySelector('.crm-assignment-source-pool.is-selected');
-    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
-    return !!selected && cards.length === 10 && !selected.querySelector('.crm-assignment-source-pool-count');
+  await page.click('.crm-assignment-filter[data-assignment-filter="all"]');
+
+  const assignmentMove = await page.evaluate(async () => {
+    const item = window.crmAssignments.items().find((candidate) => !['completed','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
+    const original = item.assignmentStage || (item.assignee ? 'assigned' : 'unassigned'); const target = original === 'blocked' ? 'active' : 'blocked';
+    const ok = await window.crmAssignments.move(item.id, target);
+    const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === item.id);
+    const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
+    return { id:item.id, original, target, ok, recordStage:record?.assignmentStage, flowStage:flow?.stage };
   });
-  await page.mouse.move(2, 2);
-  await sleep(430);
-  await check('The Assignments hand rests as the same card-top peek used on Home', () => {
-    const stage = document.querySelector('.crm-assignment-stage')?.getBoundingClientRect();
-    const hand = document.querySelector('.crm-assignment-hand')?.getBoundingClientRect();
-    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
-    return !!stage && !!hand && Math.abs(stage.bottom - innerHeight) <= 1
-      && Math.abs(hand.left + hand.width / 2 - innerWidth / 2) <= 1
-      && cards.length === 10 && cards.every((card) => {
-      const exposed = stage.bottom - card.getBoundingClientRect().top;
-      return exposed >= 108 && exposed <= 160;
-    });
-  });
-  const assignmentHandHoverPoint = await page.$eval('.crm-assignment-hand-trigger', (trigger) => {
-    const rect = trigger.getBoundingClientRect();
-    return { x: rect.left + 28, y: rect.bottom - 24 };
-  });
-  await page.mouse.move(assignmentHandHoverPoint.x, assignmentHandHoverPoint.y);
-  await sleep(460);
-  await check('Hovering the Assignments hand reveals the complete arc', () => {
-    const stage = document.querySelector('.crm-assignment-stage')?.getBoundingClientRect();
-    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
-    return !!stage && cards.length === 10 && cards.every((card) => {
-      const rect = card.getBoundingClientRect();
-      return rect.top >= stage.top && rect.bottom <= stage.bottom + 1;
-    });
-  });
-  await page.evaluate(() => { window.__assignmentHandTargetTop = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')].at(-1)?.getBoundingClientRect().top || 0; });
-  await page.hover('.crm-assignment-hand-card.tk-card:last-child');
-  await sleep(220);
-  await check('The person card under the cursor lifts slightly above the revealed hand', () => {
-    const card = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')].at(-1);
-    return !!card && card.getBoundingClientRect().top <= window.__assignmentHandTargetTop - 4;
-  });
-  const homeDeadzonePoint = await page.$eval('.crm-home-control-deadzone', (deadzone) => {
-    const rect = deadzone.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + 16 };
-  });
-  await page.mouse.move(homeDeadzonePoint.x, homeDeadzonePoint.y);
-  await sleep(430);
-  await check('The Home route is a deadzone for hand and ticket hover reactions', () => {
-    const deadzone = document.querySelector('.crm-home-control-deadzone');
-    const control = document.querySelector('.crm-home-control');
-    const hand = document.querySelector('.crm-assignment-hand');
-    const cards = [...document.querySelectorAll('.crm-assignment-hand-card.tk-card')];
-    const deadzoneRect = deadzone?.getBoundingClientRect();
-    const controlRect = control?.getBoundingClientRect();
-    if (!deadzoneRect || !controlRect || !hand || cards.length === 0) return false;
-    const routeX = deadzoneRect.left + deadzoneRect.width / 2;
-    const routeY = deadzoneRect.top + 16;
-    const buttonX = controlRect.left + controlRect.width / 2;
-    const buttonY = controlRect.top + controlRect.height / 2;
-    const routeHit = document.elementFromPoint(routeX, routeY);
-    const buttonHit = document.elementFromPoint(buttonX, buttonY);
-    return routeHit === deadzone && (buttonHit === control || control.contains(buttonHit))
-      && deadzoneRect.top <= controlRect.top - 80 && !hand.matches(':hover')
-      && cards.every((card) => {
-        const exposed = innerHeight - card.getBoundingClientRect().top;
-        return exposed >= 108 && exposed <= 160;
-      });
-  });
-  await page.mouse.move(2, 2);
+  await check('Dragging logic moves one commitment through a persisted assignment workflow', (state) => {
+    const cards = [...document.querySelectorAll(`[data-assignment-card="${CSS.escape(state.id)}"]`)];
+    return { ok:state.ok && state.recordStage === state.target && state.flowStage === state.target && cards.length === 1
+      && cards[0].closest('[data-assignment-stage]')?.dataset.assignmentStage === state.target, detail:JSON.stringify(state) };
+  }, assignmentMove);
+  await page.evaluate((state) => window.crmAssignments.move(state.id, state.original), assignmentMove);
+
   const assignment = await page.evaluate(async () => {
-    const bucket = document.querySelector('.crm-assignment-bucket');
-    const person = document.querySelector('.crm-assignment-hand-card');
-    const commitmentId = bucket?.dataset.assignmentCommitment || '';
-    const contactId = person?.dataset.assignmentContactId || '';
-    const ok = await window.crmAssignments.assign(commitmentId, contactId);
-    const record = (await window.crmDomain.list('commitments', { includeDeleted: false, limit: 100 })).records.find((item) => String(item.id) === commitmentId);
-    window.__assignmentContract = { ok, commitmentId, contactId, persisted: String(record?.assignedContactId || '') === contactId };
-    return window.__assignmentContract;
+    const item = window.crmAssignments.items().find((candidate) => !['completed','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
+    const contact = (await window.crmStore.list('contacts', { includeDeleted:false })).records[0]; const ok = await window.crmAssignments.assign(item.id, contact.id);
+    const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === item.id);
+    const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
+    return { id:item.id, contactId:contact.id, ok, assignedContactId:record?.assignedContactId, stage:record?.assignmentStage, flowStage:flow?.stage };
   });
-  await page.waitForFunction((id) => !!document.querySelector(`[data-assignment-commitment="${CSS.escape(id)}"] .crm-assignment-bucket-card`), {}, assignment.commitmentId);
-  await check('Assigning a person persists the activity relationship and seats the card in its bucket', () => {
-    const probe = window.__assignmentContract;
-    return !!probe?.ok && !!probe.persisted
-      && !!document.querySelector(`[data-assignment-commitment="${CSS.escape(probe.commitmentId)}"] .crm-assignment-bucket-card[data-assignment-contact-id="${CSS.escape(probe.contactId)}"]`);
+  await check('Assigning a person updates that commitment and its workflow membership', (state) => {
+    const cards = [...document.querySelectorAll(`[data-assignment-card="${CSS.escape(state.id)}"]`)];
+    return { ok:state.ok && state.assignedContactId === state.contactId && state.stage === 'assigned' && state.flowStage === 'assigned'
+      && cards.length === 1 && cards[0].closest('[data-assignment-stage]')?.dataset.assignmentStage === 'assigned', detail:JSON.stringify(state) };
+  }, assignment);
+  await page.evaluate((id) => window.crmAssignments.unassign(id), assignment.id);
+
+  const assignmentStageSelector = await page.$eval('.crm-assignment-bucket:has(.crm-assignment-work-card + .crm-assignment-work-card)', (bucket) => `[data-assignment-stage="${bucket.dataset.assignmentStage}"]`);
+  const assignmentStackBefore = await page.$eval(`${assignmentStageSelector}`, (bucket) => { const cards = [...bucket.querySelectorAll('.crm-assignment-work-card')]; return { ids:cards.map((card) => card.dataset.assignmentCard), step:cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top }; });
+  await page.evaluate((selector) => document.querySelector(`${selector} .crm-assignment-stack-toggle`)?.click(), assignmentStageSelector);
+  await sleep(260);
+  await check('Assignments can spread the exact same commitment stack outward', ({ selector, before }) => {
+    const bucket = document.querySelector(selector); const cards = [...bucket.querySelectorAll('.crm-assignment-work-card')]; const step = cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top;
+    return { ok:bucket.querySelector('.crm-assignment-stack-toggle')?.getAttribute('aria-expanded') === 'true' && JSON.stringify(cards.map((card) => card.dataset.assignmentCard)) === JSON.stringify(before.ids) && step > before.step + 45, detail:`${Math.round(before.step)}→${Math.round(step)}px` };
+  }, { selector:assignmentStageSelector, before:assignmentStackBefore });
+  await page.evaluate((selector) => document.querySelector(`${selector} .crm-assignment-stack-toggle`)?.click(), assignmentStageSelector);
+  await sleep(260);
+
+  const assignmentCardSelector = '.crm-assignment-bucket:has(.crm-assignment-work-card) .crm-assignment-work-card:last-child';
+  await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
+  await page.waitForSelector('.crm-assignment-menu');
+  await check('Assignment actions use the canonical compact menu, never a full-screen console', () => {
+    const menu = document.querySelector('.crm-assignment-menu'); const reference = document.querySelector('.auth-profile-menu'); if (!menu || !reference) return false;
+    const actual = getComputedStyle(menu); const expected = getComputedStyle(reference); const rect = menu.getBoundingClientRect();
+    return rect.width < 200 && rect.height < 260 && menu.classList.contains('crm-menu-surface')
+      && ['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow'].every((property) => actual[property] === expected[property]);
   });
-  await page.evaluate((id) => window.crmAssignments.unassign(id), assignment.commitmentId);
-  await page.waitForFunction((id) => !document.querySelector(`[data-assignment-commitment="${CSS.escape(id)}"] .crm-assignment-bucket-card`), {}, assignment.commitmentId);
+  await page.click('.crm-assignment-menu .crm-menu-action');
+  await page.waitForSelector('.crm-assignment-editor');
+  await check('Assignment editing stays anchored, compact, and fully linked', () => {
+    const editor = document.querySelector('.crm-assignment-editor'); const rect = editor?.getBoundingClientRect();
+    return !!rect && rect.width <= 390 && rect.height < 430 && !!editor.querySelector('[name="assignee"]') && !!editor.querySelector('[name="target"]')
+      && !!editor.querySelector('[name="stage"]') && !document.querySelector('.crm-record-scrim:not([hidden])');
+  });
+  await page.click('.crm-assignment-editor [data-cancel]');
+
+  const assignmentCardTier = await page.$eval(assignmentCardSelector, (card) => ({ id:card.dataset.assignmentCard, width:card.getBoundingClientRect().width, stage:card.closest('[data-assignment-stage]')?.dataset.assignmentStage }));
+  await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
+  await page.waitForSelector('.crm-assignment-menu');
+  await page.evaluate(() => [...document.querySelectorAll('.crm-assignment-menu .crm-menu-action')].find((button) => button.textContent.trim().toLowerCase() === 'make small')?.click());
+  await page.waitForFunction((id, width) => { const card = document.querySelector(`[data-assignment-card="${CSS.escape(id)}"]`); return card?.classList.contains('crm-object-small') && card.getBoundingClientRect().width < width * .82; }, {}, assignmentCardTier.id, assignmentCardTier.width);
+  await check('Assignment cards have a true Small tier with the same identity and behavior', (before) => {
+    const card = document.querySelector(`[data-assignment-card="${CSS.escape(before.id)}"]`); const rect = card?.getBoundingClientRect();
+    return !!card && card.dataset.recordId === before.id && card.closest('[data-assignment-stage]')?.dataset.assignmentStage === before.stage
+      && Number.parseFloat(getComputedStyle(card).scale) === 1 && card.offsetWidth === Math.round(rect.width) && rect.width < before.width * .82;
+  }, assignmentCardTier);
+  await page.evaluate((id) => { const card = document.querySelector(`[data-assignment-card="${CSS.escape(id)}"]`); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 6, clientY:rect.top + 10 })); }, assignmentCardTier.id);
+  await page.waitForSelector('.crm-assignment-menu');
+  await page.evaluate(() => [...document.querySelectorAll('.crm-assignment-menu .crm-menu-action')].find((button) => button.textContent.trim().toLowerCase() === 'make large')?.click());
+  await page.waitForFunction((id) => !document.querySelector(`[data-assignment-card="${CSS.escape(id)}"]`)?.classList.contains('crm-object-small'), {}, assignmentCardTier.id);
+
+  const assignmentBucketTier = await page.$eval('.crm-assignment-bucket:first-child', (bucket) => ({ width:bucket.getBoundingClientRect().width, ids:[...bucket.querySelectorAll('.crm-assignment-work-card')].map((card) => card.dataset.assignmentCard) }));
+  await page.evaluate(() => { const header = document.querySelector('.crm-assignment-bucket:first-child .tk-zone-hd'); const rect = header?.getBoundingClientRect(); if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 30, clientY:rect.top + 12 })); });
+  await page.waitForSelector('.crm-size-menu'); await page.click('.crm-size-menu .crm-menu-action');
+  await page.waitForFunction((width) => { const bucket = document.querySelector('.crm-assignment-bucket:first-child'); return bucket?.classList.contains('crm-object-small') && bucket.getBoundingClientRect().width < width * .85; }, {}, assignmentBucketTier.width);
+  await check('Assignment buckets have a true Small cell without replacing their commitments', (before) => {
+    const bucket = document.querySelector('.crm-assignment-bucket:first-child'); const ids = [...bucket.querySelectorAll('.crm-assignment-work-card')].map((card) => card.dataset.assignmentCard);
+    return !!bucket && Number.parseFloat(getComputedStyle(bucket).scale) === 1 && JSON.stringify(ids) === JSON.stringify(before.ids) && bucket.getBoundingClientRect().width < before.width * .85;
+  }, assignmentBucketTier);
+  await page.evaluate(() => { const header = document.querySelector('.crm-assignment-bucket:first-child .tk-zone-hd'); const rect = header?.getBoundingClientRect(); if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 30, clientY:rect.top + 12 })); });
+  await page.waitForSelector('.crm-size-menu'); await page.click('.crm-size-menu .crm-menu-action');
+
+  const createdAssignmentTitle = `Interaction assignment ${Date.now()}`;
+  await page.click('.crm-assignment-new');
+  await page.type('.crm-assignment-editor [name="title"]', createdAssignmentTitle);
+  await page.select('.crm-assignment-editor [name="stage"]', 'active');
+  await page.click('.crm-assignment-editor button[type="submit"]');
+  await page.waitForFunction((title) => window.crmAssignments.items().some((item) => item.title === title), {}, createdAssignmentTitle);
+  await check('Creating an assignment produces one commitment plus one workflow entry', async (title) => {
+    const item = window.crmAssignments.items().find((candidate) => candidate.title === title); if (!item) return false;
+    const flows = await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 });
+    const cards = [...document.querySelectorAll(`[data-assignment-card="${CSS.escape(item.id)}"]`)]; const flow = flows.records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
+    return { ok:cards.length === 1 && flow?.stage === 'active' && cards[0].closest('[data-assignment-stage]')?.dataset.assignmentStage === 'active', detail:`${item.id} / ${flow?.id}` };
+  }, createdAssignmentTitle);
 
   await activate('people');
   await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8

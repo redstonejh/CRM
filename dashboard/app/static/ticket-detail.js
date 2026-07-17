@@ -289,11 +289,14 @@
     overlay.appendChild(panel);
     render(ticket);
     const naturalPanelH = Math.ceil(panel.scrollHeight + Math.max(0, panel.offsetHeight - panel.clientHeight));
-    const panelH = Math.max(naturalPanelH, Math.min(vh - 20, sourceH + 34));
+    const panelH = Math.min(vh - 20, Math.max(naturalPanelH, 168));
+    // A short stage should not inherit an entire card's empty height. Start it
+    // tucked and smaller, then let it unfold in both axes to its content size.
+    const panelSourceH = Math.min(sourceH, Math.max(96, panelH - 32));
     const sharedHalf = Math.max(cardH, panelH) / 2;
     const centerY = Math.round(Math.max(10 + sharedHalf, Math.min(tT + cardH / 2, vh - 10 - sharedHalf)));
     const targetTop = Math.round(centerY - cardH / 2);
-    geo = { targetLeft, targetTop, cardW, cardH, sourceW, sourceH, panelW:PANEL_W, panelH, panelSourceW:Math.min(sourceW, PANEL_W), panelSourceH:sourceH, centerY };
+    geo = { targetLeft, targetTop, cardW, cardH, sourceW, sourceH, panelW:PANEL_W, panelH, panelSourceW:Math.min(sourceW, PANEL_W), panelSourceH, centerY };
 
     // Build the flyer FRESH (not a clone). A clone drags along every widget class +
     // backdrop-filter, which is what washed it brighter-than-hover mid-flight. A plain

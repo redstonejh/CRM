@@ -45,7 +45,9 @@
     if (!button) return;
     button.querySelector(".crm-viewport-date-month").textContent = date.toLocaleDateString([], { month:"short" }).replace(/\.$/, "");
     button.querySelector(".crm-viewport-date-day").textContent = String(date.getDate());
-    button.title = date.toLocaleDateString([], { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+    const fullDate = date.toLocaleDateString([], { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+    button.title = fullDate;
+    button.setAttribute("aria-label", `Open calendar for ${fullDate}`);
   };
   const mount = () => {
     let button = document.querySelector(".crm-viewport-date");

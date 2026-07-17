@@ -332,10 +332,13 @@ async function main() {
       && !document.querySelector('[data-crm-theater="pipeline"]:not([hidden])')
   ));
   await check('Pipeline rooms are explicitly focused on the current day', () => {
-    const context = document.querySelector('.crm-temporal-context:not([hidden])');
+    const control = document.querySelector('.crm-viewport-date');
     const today = new Date();
     const localIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    return !!context && context.textContent.includes('Today') && document.body.dataset.crmTemporalDate === localIso;
+    return !!control && control.querySelector('.crm-viewport-date-day')?.textContent === String(today.getDate())
+      && /open calendar for/i.test(control.getAttribute('aria-label') || '')
+      && !document.querySelector('.crm-temporal-context')
+      && document.body.dataset.crmTemporalDate === localIso;
   });
   await page.waitForFunction(() => !window.crmDeskTransit?.isBusy?.(), { timeout: 5000 });
   await page.keyboard.press('KeyB');
@@ -818,7 +821,7 @@ async function main() {
     const reference = document.querySelector('.auth-profile-menu');
     if (!overlay || !panel || !reference) return false;
     const rect = panel.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const overlayStyle = getComputedStyle(overlay);
-    const ok = panel.classList.contains('crm-menu-surface') && rect.width >= 340 && rect.width <= 440 && rect.height > 279
+    const ok = panel.classList.contains('crm-menu-surface') && rect.width >= 340 && rect.width <= 440 && rect.height >= 160 && rect.height <= 240
       && panel.scrollHeight <= panel.clientHeight + 1 && !['auto','scroll'].includes(actual.overflowY)
       && overlayStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(overlayStyle.backdropFilter)
       && (!scrim || getComputedStyle(scrim).display === 'none')

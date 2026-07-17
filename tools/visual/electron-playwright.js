@@ -475,7 +475,7 @@ async function main() {
   }
 
   const rooms = [
-    {key:'people',theater:'people',content:'.tk-zone',expected:8}, {key:'cases',theater:'tickets',content:'.tk-zone',expected:3},
+    {key:'people',theater:'people',content:'.tk-zone',expected:12}, {key:'cases',theater:'tickets',content:'.tk-zone',expected:3},
     {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:0}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:5},
   ];
   const transitions=[];

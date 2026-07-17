@@ -556,6 +556,13 @@ async function main() {
   }, createdAssignmentTitle);
 
   await page.setViewport({ width:1600, height:1000, deviceScaleFactor:1 });
+  await sleep(220);
+  await check('Assignments balances its fitted rail against equal viewport edge insets', () => {
+    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect(); const first=theater?.querySelector('.crm-assignment-bucket:first-child')?.getBoundingClientRect(); const last=theater?.querySelector('.crm-assignment-bucket:last-child')?.getBoundingClientRect(); const state=window.crmAssignments.scrollState();
+    const inset=bar&&clip?bar.left-clip.left:0;
+    return { ok:state.min===0&&!!clip&&!!first&&!!last&&inset>=20&&inset<=32&&Math.abs((first.left-clip.left)-inset)<=1&&Math.abs((clip.right-last.right)-inset)<=1,
+      detail:JSON.stringify({state,inset,edges:first&&last&&clip?[first.left-clip.left,clip.right-last.right]:null}) };
+  });
   await activate('people');
   await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 12
     && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 120, { timeout: 10000 });

@@ -118,21 +118,33 @@ async function main() {
     && typeof window.crmHome.createTodo === 'undefined');
   const linkedHomeTodo = await page.evaluate(async () => {
     const task = (await window.crmStore.list('tasks', { includeDeleted:false })).records?.[0];
-    if (!task) return null;
+    const ticket = (await window.crmStore.list('tickets', { includeDeleted:false })).records?.find((record) => record.id === 'tkt_bluepeak_mail');
+    if (!task || !ticket) return null;
     const linked = await window.crmDomain.create('commitments', { title:'Home linked to-do contract', kind:'task', status:'open', priority:'urgent', dueAt:new Date().toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'regarding' }] });
+    const ticketLinked = await window.crmDomain.create('commitments', { title:'Home linked ticket contract', kind:'ticket-work', status:'open', priority:'urgent', dueAt:new Date().toISOString(), links:[{ entityType:'tickets', recordId:ticket.id, relation:'regarding' }] });
     const orphan = await window.crmDomain.create('commitments', { title:'Orphan Home task contract', kind:'task', status:'open', priority:'urgent', dueAt:new Date().toISOString() });
+    const future = new Date(); future.setDate(future.getDate() + 3);
+    const futureLinked = await window.crmDomain.create('commitments', { title:'Future linked work contract', kind:'task', status:'open', priority:'urgent', dueAt:future.toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'regarding' }] });
     await window.crmHome.ensureHandReady();
-    return linked?.record && orphan?.record ? { id:linked.record.id, taskId:task.id, orphanId:orphan.record.id } : null;
+    return linked?.record && ticketLinked?.record && orphan?.record && futureLinked?.record
+      ? { id:linked.record.id, taskId:task.id, ticketId:ticket.id, ticketCommitmentId:ticketLinked.record.id, orphanId:orphan.record.id, futureId:futureLinked.record.id } : null;
   });
   if (!linkedHomeTodo) throw new Error('Could not create linked-work Home contract records');
   await page.waitForFunction((id) => !!document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(id)}"]`), { timeout:10000 }, linkedHomeTodo.id);
-  await check('Home hand is only the persistent projection of linked work', (todo) => {
+  await check('Home hand is only today and overdue linked work', (todo) => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card')];
     const created = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.id)}"]`);
+    const ticket = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.ticketCommitmentId)}"]`);
     const orphan = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.orphanId)}"]`);
-    return !document.querySelector('.crm-home-todo-toolbar,.crm-home-todo-add') && !orphan
+    const future = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.futureId)}"]`);
+    const seededTicket = document.querySelector('.crm-home-hand-card[data-commitment-id="legacy_commitment_tasks_tk_clear_bluepeak_queue"]');
+    const status = window.crmHome.handStatus();
+    return !document.querySelector('.crm-home-todo-toolbar,.crm-home-todo-add') && !orphan && !future
       && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && card.dataset.recordEntity && card.dataset.recordId && !card.dataset.commitmentId.startsWith('signal:'))
-      && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId;
+      && status.targets.length === cards.length && status.targets.every((target) => target?.entityType && target?.recordId)
+      && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId
+      && ticket?.dataset.recordEntity === 'tickets' && ticket?.dataset.recordId === todo.ticketId
+      && seededTicket?.dataset.recordEntity === 'tickets' && seededTicket?.dataset.recordId === 'tkt_bluepeak_mail';
   }, linkedHomeTodo);
   await page.click(`.crm-home-hand-card[data-commitment-id="${linkedHomeTodo.id}"]`, { button:'right' });
   await page.waitForSelector('.crm-home-todo-menu [data-todo-action="edit"]', { timeout:10000 });

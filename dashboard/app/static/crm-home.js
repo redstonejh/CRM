@@ -7,7 +7,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v36";
+  const HOME_PREVIEW_VERSION = "filtered-home-v37";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -49,6 +49,15 @@
   const firstText = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
   const startOfToday = () => { const date = new Date(); date.setHours(0, 0, 0, 0); return date.getTime(); };
   const dueTime = (item) => { const value = Date.parse(item?.dueAt || ""); return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY; };
+  const dayKey = (value) => {
+    const raw = String(value || ""); const prefix = /^\d{4}-\d{2}-\d{2}/.exec(raw)?.[0] || "";
+    if (!prefix || !raw.includes("T") || /T00:00:00(?:\.000)?Z$/i.test(raw)) return prefix;
+    const date = new Date(raw); return Number.isFinite(date.getTime()) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : prefix;
+  };
+  const dayNumber = (key) => { const [year, month, day] = String(key).split("-").map(Number); return year && month && day ? Date.UTC(year, month - 1, day) / DAY_MS : Number.POSITIVE_INFINITY; };
+  const todayKey = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
+  const plateDayOffset = (item) => dayNumber(dayKey(item?.dueAt)) - dayNumber(todayKey());
+  const isOnTodaysPlate = (item) => Number.isFinite(plateDayOffset(item)) && plateDayOffset(item) <= 0;
   const isDone = (item) => ["completed", "cancelled", "canceled"].includes(String(item?.status || "").toLowerCase());
 
   const ensureStyles = () => {
@@ -409,7 +418,7 @@
     [String(item?.priority || "").toLowerCase()] || 0);
   const assignedTo = (item, username) => !!username && String(item?.assignee || "").trim().toLowerCase() === username;
   const priorityScore = (item, username) => {
-    const due = dueTime(item); const today = startOfToday(); const days = Number.isFinite(due) ? (due - today) / DAY_MS : Number.POSITIVE_INFINITY;
+    const days = plateDayOffset(item);
     let score = priorityWeight(item);
     if (assignedTo(item, username)) score += 1100;
     if (days < 0) score += 1600 + Math.min(500, Math.abs(days) * 24);
@@ -424,26 +433,31 @@
   const choosePriorityItems = (records, username = "") => {
     const userKey = String(username || "").trim().toLowerCase();
     return records.filter((item) => {
-      if (!item || item.deletedAt || isDone(item) || !priorityLink(item)) return false;
+      if (!item || item.deletedAt || isDone(item) || !priorityLink(item) || !isOnTodaysPlate(item)) return false;
       const assignee = String(item.assignee || "").trim().toLowerCase();
       if (userKey && assignee && assignee !== userKey) return false;
       return true;
     }).sort((a, b) => priorityScore(b, userKey) - priorityScore(a, userKey) || dueTime(a) - dueTime(b)).slice(0, HAND_LIMIT);
   };
   const priorityLink = (item) => {
+    const links = Array.isArray(item?.links) ? item.links : [];
+    const explicit = ["workItems", "tickets", "contacts", "tasks"]
+      .map((entityType) => links.find((link) => link?.entityType === entityType && link?.recordId))
+      .find(Boolean) || null;
+    if (explicit) return explicit;
     if (item?.sourceEntity && item?.sourceId && TODO_LINK_ENTITIES.has(item.sourceEntity)) {
       return { entityType: item.sourceEntity, recordId: item.sourceId, relation: "source" };
     }
-    const links = Array.isArray(item?.links) ? item.links : [];
-    return ["workItems", "tickets", "contacts", "tasks"]
-      .map((entityType) => links.find((link) => link?.entityType === entityType && link?.recordId))
-      .find(Boolean) || null;
+    return null;
   };
   const dueLabel = (item) => {
     const due = dueTime(item); if (!Number.isFinite(due)) return firstText(item.attentionLabel, item.assignee ? "Assigned" : "Up next");
-    const today = startOfToday(); const day = Math.floor((due - today) / DAY_MS);
-    if (due < today) return `${Math.max(1, Math.ceil((today - due) / DAY_MS))}d overdue`;
-    if (day === 0) return `Today · ${new Date(due).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    const day = plateDayOffset(item);
+    if (day < 0) return `${Math.abs(day)}d overdue`;
+    if (day === 0) {
+      const time = new Date(due);
+      return time.getHours() || time.getMinutes() ? `Today · ${time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Today";
+    }
     if (day === 1) return "Tomorrow";
     return new Date(due).toLocaleDateString([], { month: "short", day: "numeric" });
   };
@@ -490,6 +504,10 @@
       todayReason: cardReasonOf(item),
       todayRow: { ...(item.todayRow || {}), dueDate: item.dueAt || "", stageLabel: firstText(item.attentionLabel, reason), assignee: item.assignee || "" },
     };
+  };
+  const prioritySignature = (item) => {
+    const link = priorityLink(item);
+    return [item.id, item.title, item.status, item.priority, item.dueAt, item.assignee, item.attentionLabel, item.context, link?.entityType || "", link?.recordId || ""];
   };
   const openPriorityItem = (item, sourceCard) => {
     const link = priorityLink(item);
@@ -585,15 +603,13 @@
   };
   const fillPriorityHand = (hand) => {
     if (!hand) return;
-    const renderSignature = JSON.stringify(priorityItems.map((item) => [
-      item.id, item.title, item.status, item.priority, item.dueAt, item.assignee, item.attentionLabel, item.context,
-    ]));
+    const renderSignature = JSON.stringify(priorityItems.map(prioritySignature));
     hand.dataset.username = priorityUsername;
     hand.dataset.renderSignature = renderSignature;
     hand.classList.toggle("is-empty", priorityItems.length === 0);
     hand.replaceChildren();
     if (!priorityItems.length) {
-      const empty = document.createElement("div"); empty.className = "crm-home-hand-empty"; empty.textContent = "Nothing to do"; hand.appendChild(empty); return;
+      const empty = document.createElement("div"); empty.className = "crm-home-hand-empty"; empty.textContent = "Nothing due today"; hand.appendChild(empty); return;
     }
     const renderer = window.crmToday?.createCard;
     if (typeof renderer !== "function") {
@@ -618,9 +634,7 @@
   };
   const renderPriorityHand = () => {
     const hand = camera?.layers?.()[0]?.querySelector?.(".crm-home-priority-hand"); if (!hand) return;
-    const renderSignature = JSON.stringify(priorityItems.map((item) => [
-      item.id, item.title, item.status, item.priority, item.dueAt, item.assignee, item.attentionLabel, item.context,
-    ]));
+    const renderSignature = JSON.stringify(priorityItems.map(prioritySignature));
     if (hand.dataset.renderSignature === renderSignature && hand.dataset.username === priorityUsername) {
       layoutPriorityHand(hand); camera?.layout?.(); syncMotionSnapshot(); return;
     }
@@ -778,7 +792,7 @@
       bucket.addEventListener("blur", () => restSharpPreview(bucket));
       grid.appendChild(bucket);
     });
-    const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important things coming up");
+    const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important linked work due today");
     fillPriorityHand(hand); root.append(grid, titleLayer, hand); syncSceneBackdrop(root); syncMotionSnapshot(root); requestAnimationFrame(mountAll); return root;
   };
   const layout = ({ expRect }) => {
@@ -1021,7 +1035,7 @@
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:pending?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
-    handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
+    handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};
 })();

@@ -255,12 +255,25 @@ function rosaDataset() {
     {
       id: 'tk_call_marta', title: 'Call Marta about the retainer', client: 'Call Marta about the retainer',
       state: 'open', dueDate: day(0), assignee: 'rosa', companyId: 'co_harborlane',
+      contactId: 'ct_marta', priority: 'high',
       description: 'Walk through the proposal before Thursday.',
     },
     {
       id: 'tk_prep_deck', title: 'Prep Bluepeak pilot deck', client: 'Prep Bluepeak pilot deck',
       state: 'open', dueDate: day(2), assignee: 'rosa', companyId: 'co_bluepeak',
       description: 'Two slides: scope and the 90-day timeline.',
+    },
+    {
+      id: 'tk_clear_bluepeak_queue', title: 'Clear the Bluepeak mail queue', client: 'Clear the Bluepeak mail queue',
+      state: 'open', dueDate: day(0), assignee: 'rosa', priority: 'urgent', companyId: 'co_bluepeak',
+      ticketId: 'tkt_bluepeak_mail',
+      description: 'Restore outbound flow and confirm the queue is draining normally.',
+    },
+    {
+      id: 'tk_confirm_patch', title: 'Confirm patch validation', client: 'Confirm patch validation',
+      state: 'open', dueDate: day(0), assignee: 'rosa', priority: 'high', companyId: 'co_pinevale',
+      ticketId: 'tkt_demo_resolution_1',
+      description: 'Get the user confirmation needed to close the staged patch ticket.',
     },
   ];
   const tickets = [

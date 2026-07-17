@@ -315,13 +315,15 @@
       .crm-company-surface[hidden] { display: none; }
       .crm-company-level { position: absolute; inset: 0; transform-origin: 0 0; }
       .crm-company-grid { position: absolute; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
-        grid-template-columns: repeat(4, minmax(220px, 245px)); grid-auto-rows: minmax(300px, 1fr);
-        justify-content: center; align-content: center; gap: 14px; }
+        grid-template-columns: repeat(4, minmax(220px, 245px)); grid-auto-rows: 300px;
+        justify-content: center; align-content: start; gap: 14px; padding: 12px 18px 16px 12px; box-sizing: border-box;
+        overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.24) transparent; }
       @media (max-width: 860px) {
         .crm-company-grid { grid-template-columns: repeat(2, minmax(220px, 245px)); }
       }
       .crm-company-bucket { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
         overflow: hidden; color: #fff; cursor: pointer; border: 0; text-align: left;
+        content-visibility: auto; contain-intrinsic-size: 245px 300px;
         border-radius: 16px; padding: 14px 16px;
         background: linear-gradient(180deg, rgba(22,26,36,0.54), rgba(12,16,24,0.46));
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);

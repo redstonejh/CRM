@@ -568,16 +568,16 @@ async function main() {
       detail:JSON.stringify({state,inset,edges:first&&last&&clip?[first.left-clip.left,clip.right-last.right]:null}) };
   });
   await activate('people');
-  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8
-    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 80, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 16
+    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 160, { timeout: 10000 });
   await page.evaluate(() => window.peopleCards.expandedStages().forEach((stage) => window.peopleCards.setStageExpanded(stage, false)));
   await check('People are shared card objects grouped inside company buckets, never a pipeline', () => {
     const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
     const cards = [...(theater?.querySelectorAll('.tk-zone .tk-zcard') || [])];
     return {
-      ok: buckets.length === 8 && cards.length === 80 && window.peopleCards.contract().horizontalZones === false
-        && window.peopleCards.contract().lazyZoneCards === true && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
+      ok: buckets.length === 16 && cards.length === 160 && window.peopleCards.contract().horizontalZones === false
+        && window.peopleCards.contract().scrollZoneRows === true && window.peopleCards.contract().lazyZoneCards === true && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
         && !theater.querySelector('svg.tk-flow, .tk-flow-shaft, .tk-flow-head, .tk-bars')
         && [...theater.querySelectorAll('.tk-deck-left, .tk-empty-left')].every((element) => getComputedStyle(element).display === 'none')
         && !document.querySelector('.crm-company-account, [data-crm-theater="relationships"]'),
@@ -586,28 +586,29 @@ async function main() {
   });
   await check('People company buckets stay proportional to the shared card object', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')];
-    return buckets.length === 8 && buckets.every((bucket) => {
+    return buckets.length === 16 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
   });
-  await check('Eight company buckets form two aligned rows of four', () => {
+  await check('Sixteen company buckets preserve four aligned columns across four rows', () => {
     const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')]; const rows=new Map();
     buckets.forEach((bucket) => { const rect=bucket.getBoundingClientRect(); const top=Math.round(rect.top); if(!rows.has(top))rows.set(top,[]); rows.get(top).push(Math.round(rect.left)); });
     const values=[...rows.values()].map((row)=>row.sort((a,b)=>a-b));
-    return { ok:values.length===2&&values.every((row)=>row.length===4)&&values[0].every((left,index)=>Math.abs(left-values[1][index])<=1)
+    return { ok:values.length===4&&values.every((row)=>row.length===4)&&values.slice(1).every((row)=>row.every((left,index)=>Math.abs(left-values[0][index])<=1))
+      && !!document.querySelector('[data-crm-theater="people"] .tk-zone-vrail,[data-crm-theater="people"] .tk-zone-vsb')
       && !document.querySelector('[data-crm-theater="people"] .tk-zone-hrail,[data-crm-theater="people"] .tk-zone-hsb'), detail:JSON.stringify(values) };
   });
   await check('Every company keeps its scrollbar inside the right bucket border', () => {
     const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')];
     const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
-    return { ok:geometry.length===8&&geometry.every((item)=>item.on&&item.inset>=16&&item.inset<=20&&item.gap>=2), detail:JSON.stringify(geometry) };
+    return { ok:geometry.length===16&&geometry.every((item)=>item.on&&item.inset>=16&&item.inset<=20&&item.gap>=2), detail:JSON.stringify(geometry) };
   });
-  await check('Collapsed People stacks paint only the eight visible faces', () => {
+  await check('People LOD paints only the visible rows plus one restrained overscan row', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
     const perf=window.peopleCards.performanceState();
-    return { ok:cards.length===80&&deferred.length===72&&full.length===8&&perf.deferredFaces===72&&perf.theaterElements<700
-      && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host')), detail:JSON.stringify({deferred:deferred.length,full:full.length,elements:perf.theaterElements}) };
+    return { ok:cards.length===160&&full.length>=8&&full.length<=12&&deferred.length===160-full.length&&perf.deferredFaces===deferred.length&&perf.parkedBuckets>=4&&perf.theaterElements<1400
+      && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host')), detail:JSON.stringify({deferred:deferred.length,full:full.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
   });
   const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
   await page.focus(`[data-crm-theater="people"] .tk-zcard[data-id="${peopleShell}"]`);
@@ -630,11 +631,25 @@ async function main() {
     const state={transform:getComputedStyle(track).transform,thumbTop:thumb.getBoundingClientRect().top};
     return { ok:state.transform!==before.transform&&state.thumbTop>before.thumbTop+2&&activeShadow, detail:JSON.stringify({before,state,activeShadow}) };
   }, peopleScrollBefore);
+  const companyRowsBefore = await page.evaluate(() => { const clip=document.querySelector('[data-crm-theater="people"] .tk-zone-vclip'); const thumb=document.querySelector('[data-crm-theater="people"] .tk-zone-vth'); return{state:window.peopleCards.rowScrollState(),thumbTop:thumb?.getBoundingClientRect().top||0,scrollHeight:clip?.scrollHeight||0,clientHeight:clip?.clientHeight||0}; });
+  await page.evaluate(() => window.peopleCards.scrollRowsBy(650, true));
+  await sleep(120);
+  await check('The company world scrolls by rows with adaptive shadows and viewport LOD', (before) => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-vrail'); const clip=theater?.querySelector('.tk-zone-vclip'); const thumb=theater?.querySelector('.tk-zone-vth'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const first=buckets[0],last=buckets.at(-1); const state=window.peopleCards.rowScrollState();
+    const topShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-top')); const bottomShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-bottom'));
+    const lastTop=last?.querySelector('.tk-zcard:last-child');
+    return { ok:state.max>0&&state.y>before.state.y+200&&before.scrollHeight>before.clientHeight&&thumb.getBoundingClientRect().top>before.thumbTop+2&&topShadow>.2&&bottomShadow>.2
+      && first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&clip.scrollTop===state.y,
+      detail:JSON.stringify({before,state,shadows:[topShadow,bottomShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod]}) };
+  }, companyRowsBefore);
+  await page.evaluate(() => window.peopleCards.scrollRowsBy(-9999, true));
+  await sleep(80);
   await page.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); });
-  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 8, { timeout: 10000 });
-  await check('Company-dive buckets use the same ticket-like proportions', () => {
+  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 16, { timeout: 10000 });
+  await check('Company-dive buckets keep their proportions and use native viewport LOD', () => {
     const buckets = [...document.querySelectorAll('.crm-company-bucket')];
-    return buckets.length === 8 && buckets.every((bucket) => {
+    const grid=document.querySelector('.crm-company-grid');
+    return buckets.length === 16 && grid.scrollHeight>grid.clientHeight && getComputedStyle(buckets.at(-1)).contentVisibility === 'auto' && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 280 && height <= 410 && width / height >= .55 && width / height <= .85;
     });

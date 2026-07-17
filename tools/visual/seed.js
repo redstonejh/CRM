@@ -1,6 +1,6 @@
 // seed.js — the Rosa dataset.
 //
-// A small, deliberately shaped book of business: companies, contacts (one of
+// A deliberately shaped book of business: companies, contacts (one of
 // them 24 days stale so the cold front is visible), deals across
 // lead/proposal/won, bills and invoices across their separate lifecycles, tasks for today
 // and +2 days, a fully occupied ticket board, calendar items, and interactions. Dates are
@@ -29,6 +29,14 @@ function rosaDataset() {
     { id: 'co_cascade', name: 'Cascade Fieldworks', title: 'Cascade Fieldworks', industry: 'Environmental services', city: 'Bend' },
     { id: 'co_meridian', name: 'Meridian Fabrication', title: 'Meridian Fabrication', industry: 'Manufacturing', city: 'Kent' },
     { id: 'co_solace', name: 'Solace Property Group', title: 'Solace Property Group', industry: 'Property management', city: 'Spokane' },
+    { id: 'co_pinevale', name: 'Pine & Vale Construction', title: 'Pine & Vale Construction', industry: 'Construction', city: 'Vancouver' },
+    { id: 'co_juniperlegal', name: 'Juniper Legal Group', title: 'Juniper Legal Group', industry: 'Legal services', city: 'Seattle' },
+    { id: 'co_atlasmarine', name: 'Atlas Marine Systems', title: 'Atlas Marine Systems', industry: 'Marine technology', city: 'Anacortes' },
+    { id: 'co_hearthside', name: 'Hearthside Community Bank', title: 'Hearthside Community Bank', industry: 'Financial services', city: 'Everett' },
+    { id: 'co_vesperlabs', name: 'Vesper Research Labs', title: 'Vesper Research Labs', industry: 'Life sciences', city: 'Redmond' },
+    { id: 'co_kestrel', name: 'Kestrel Outdoor Supply', title: 'Kestrel Outdoor Supply', industry: 'Retail distribution', city: 'Bellingham' },
+    { id: 'co_orchardlearning', name: 'Orchard Learning Network', title: 'Orchard Learning Network', industry: 'Education', city: 'Kirkland' },
+    { id: 'co_tidewell', name: 'Tidewell Hospitality', title: 'Tidewell Hospitality', industry: 'Hospitality', city: 'Astoria' },
   ];
   const contacts = [
     {
@@ -103,8 +111,9 @@ function rosaDataset() {
   const supportingFirstNames = [
     'Avery', 'Maya', 'Theo', 'Nina', 'Elias', 'Cora', 'Julian', 'Zoe', 'Miles', 'Leah',
     'Caleb', 'Amara', 'Finn', 'Elena', 'Rowan', 'Sofia', 'Micah', 'Talia', 'Nolan', 'Maeve',
+    'Noor', 'Ezra', 'Inez', 'Dario',
   ];
-  const supportingLastNames = ['Stone', 'Bennett', 'Navarro', 'Whitaker'];
+  const supportingLastNames = ['Stone', 'Bennett', 'Navarro', 'Whitaker', 'Cho', 'Mensah', 'Dubois', 'Patel'];
   const supportingRoles = [
     'Account lead', 'Operations manager', 'Finance manager', 'IT administrator', 'Project coordinator',
     'Office manager', 'Service director', 'Procurement lead', 'Program manager', 'Executive sponsor',

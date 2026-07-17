@@ -958,19 +958,37 @@ async function main() {
   await page.evaluate((projectId) => window.crmPlanner.selectProject(projectId), plannerTabStart);
   await page.click('[data-planner-action="new-project"]');
   await page.waitForSelector('.crm-planner-project-creator input[name="title"]');
-  await check('A new pipeline asks only for its name and creates the standard stages automatically', () => {
+  await check('A new pipeline offers restrained presets and an explicit custom structure', () => {
     const form = document.querySelector('.crm-planner-project-creator');
     return !!form && form.classList.contains('crm-menu-surface') && form.elements.title
-      && !form.elements.stages && /created automatically/i.test(form.querySelector('.crm-planner-popover-hint')?.textContent || '')
-      && form.querySelector('[type="submit"]')?.textContent.trim() === 'Create pipeline' && form.getBoundingClientRect().width <= 300;
+      && [...form.querySelectorAll('[data-planner-preset]')].map((button) => button.textContent.trim().split(/\s/)[0]).join('|') === 'Simple|Review|Custom'
+      && form.querySelector('[data-planner-preset="simple"]')?.getAttribute('aria-checked') === 'true'
+      && form.querySelector('.crm-planner-custom-builder')?.hidden === true
+      && form.querySelector('[type="submit"]')?.textContent.trim() === 'Create pipeline' && form.getBoundingClientRect().width <= 380;
   });
   await page.type('.crm-planner-project-creator input[name="title"]', 'Interaction plan');
+  await page.click('[data-planner-preset="custom"]');
+  await check('Custom reveals a one-at-a-time stage builder', () => {
+    const form = document.querySelector('.crm-planner-project-creator');
+    return form?.querySelector('[data-planner-preset="custom"]')?.getAttribute('aria-checked') === 'true'
+      && form.querySelector('.crm-planner-custom-builder')?.hidden === false
+      && !!form.elements.stageName && !!form.querySelector('[data-add-stage]');
+  });
+  for (const stage of ['Backlog', 'In progress', 'Review', 'Done']) {
+    await page.type('.crm-planner-project-creator input[name="stageName"]', stage);
+    await page.click('.crm-planner-project-creator [data-add-stage]');
+  }
+  await page.type('.crm-planner-project-creator input[name="stageName"]', 'review');
+  await page.click('.crm-planner-project-creator [data-add-stage]');
+  await check('Custom stage names are unique before the pipeline is created', () => {
+    const form = document.querySelector('.crm-planner-project-creator');
+    const names = [...(form?.querySelectorAll('.crm-planner-stage-pill > span') || [])].map((node) => node.textContent.trim());
+    return names.join('|') === 'Backlog|In progress|Review|Done'
+      && /unique/i.test(form?.querySelector('.crm-planner-creator-status')?.textContent || '');
+  });
   await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
   await sleep(260);
-  await page.evaluate(() => document.querySelector('[data-planner-action="new-stage"]')?.click());
-  await page.type('.crm-planner-popover input[name="value"]', 'Review');
-  await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
   const plannerReviewStageId = await page.evaluate(() => window.crmPlanner.projects().find((item) => item.title === 'Interaction plan')?.buckets.find((bucket) => bucket.title === 'Review')?.id || '');
   await sleep(260);

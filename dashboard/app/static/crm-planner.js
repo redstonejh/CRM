@@ -17,6 +17,11 @@
     { id:"active", title:"In progress", kind:"active" },
     { id:"done", title:"Done", kind:"done" },
   ];
+  const PIPELINE_PRESETS = [
+    { id:"simple", label:"Simple", stages:["Backlog", "In progress", "Done"] },
+    { id:"review", label:"Review", stages:["Backlog", "In progress", "Review", "Done"] },
+    { id:"custom", label:"Custom", stages:[] },
+  ];
 
   let root = null;
   let active = false;
@@ -97,6 +102,8 @@
       .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;height:90px;padding:11px 12px}.crm-planner-card.crm-object-small+.crm-planner-card{margin-top:-50px}.crm-planner-card-list.is-expanded .crm-planner-card.crm-object-small+.crm-planner-card{margin-top:0}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{padding-right:40px;font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{padding-top:7px}.crm-planner-card.crm-object-small .crm-planner-card-progress{top:10px;right:10px;width:36px;gap:1px}.crm-planner-card.crm-object-small .crm-planner-card-progress .tk-seg{height:3px}
       .crm-planner-add-card.crm-menu-action{flex:0 0 31px;width:100%;height:31px;text-align:left;padding-left:4px!important;font-size:var(--crm-type-caption,11px)!important;color:rgba(255,255,255,.48)!important}.crm-planner-add-card:hover{color:#fff!important}.crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:var(--crm-type-caption,11px)}
       .crm-planner-popover{position:fixed;z-index:9300;width:min(280px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-planner-popover-hint{padding:0 3px 3px;color:rgba(255,255,255,.48);font-size:var(--crm-type-meta,10px);line-height:1.4}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
+      .crm-planner-project-creator{width:min(360px,calc(100vw - 28px));gap:9px}.crm-planner-preset-label{padding:1px 3px 0;color:rgba(255,255,255,.46);font-size:var(--crm-type-meta,10px);font-weight:700;letter-spacing:.045em;text-transform:uppercase}.crm-planner-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px}.crm-planner-preset.crm-menu-action{position:relative;height:48px!important;padding:7px 8px 6px!important;text-align:left;display:grid;align-content:center;gap:4px;color:rgba(255,255,255,.56)!important}.crm-planner-preset.is-selected{color:rgba(255,255,255,.96)!important;background:rgba(255,255,255,.08)!important}.crm-planner-preset-name{font-weight:700}.crm-planner-preset-map{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,.34);font-size:var(--crm-type-micro,9px);font-weight:500}.crm-planner-preset.is-selected .crm-planner-preset-map{color:rgba(255,255,255,.54)}
+      .crm-planner-custom-builder{display:grid;gap:7px;padding-top:1px}.crm-planner-custom-builder[hidden]{display:none}.crm-planner-stage-entry{display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:4px}.crm-planner-stage-entry .crm-menu-action{width:34px;padding:0!important;font-size:16px!important}.crm-planner-stage-list{display:flex;flex-wrap:wrap;gap:4px;min-height:0}.crm-planner-stage-pill{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:25px;padding:0 5px 0 8px;border-radius:8px;background:rgba(255,255,255,.065);color:rgba(255,255,255,.72);font-size:var(--crm-type-caption,11px)}.crm-planner-stage-pill span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.crm-planner-stage-remove{appearance:none;width:18px;height:18px;padding:0;border:0;border-radius:5px;background:transparent;color:rgba(255,255,255,.38);font:600 13px/1 system-ui;cursor:pointer}.crm-planner-stage-remove:hover,.crm-planner-stage-remove:focus-visible{outline:0;background:rgba(255,255,255,.08);color:#fff}.crm-planner-creator-status{min-height:14px;padding:0 3px;color:rgba(255,162,162,.9);font-size:var(--crm-type-meta,10px);line-height:1.35}.crm-planner-creator-status:empty{display:none}
       .crm-planner-context{position:fixed;z-index:9320;width:172px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}.crm-planner-card.is-focus-target{outline:1px solid rgba(159,199,250,.72);box-shadow:0 0 0 5px rgba(90,151,232,.12),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
       .crm-planner-zero{width:100%;height:100%;min-height:0;display:grid;place-items:center}.crm-planner-zero-copy{width:min(330px,calc(100vw - 48px));display:grid;justify-items:center;gap:7px;text-align:center}.crm-planner-zero-copy strong{font-size:var(--crm-type-object,14px)}.crm-planner-zero-copy span{color:rgba(255,255,255,.48);font-size:var(--crm-type-caption,11px);line-height:1.45}.crm-planner-zero .crm-menu-action{height:34px;margin-top:6px;padding-inline:13px!important;color:rgba(238,245,254,.86)!important;background:rgba(13,19,28,.62)!important;border-color:rgba(213,230,250,.18)!important;box-shadow:inset 0 1px rgba(255,255,255,.08),0 12px 26px -20px rgba(0,0,0,.9)!important;font-weight:650}
       @media(max-width:900px){.crm-planner-projects{gap:6px}.crm-planner-project.crm-menu-action{width:112px}.crm-planner-head-actions{padding-left:4px}.crm-planner-text-action.crm-menu-action{padding-inline:6px!important}}
@@ -354,10 +361,34 @@
   }
   function openProjectCreator(anchor) {
     closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-planner-project-creator crm-menu-surface";
-    floating.innerHTML = `<div class="crm-planner-popover-title">New pipeline</div><input class="crm-menu-input" name="title" placeholder="Pipeline name" autocomplete="off" required><div class="crm-planner-popover-hint">Backlog, In progress, and Done are created automatically.</div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create pipeline</button></div>`;
+    let presetId = "simple"; let customStages = [];
+    floating.innerHTML = `<div class="crm-planner-popover-title">New pipeline</div><input class="crm-menu-input" name="title" placeholder="Pipeline name" autocomplete="off" required><div class="crm-planner-preset-label">Structure</div><div class="crm-planner-presets" role="radiogroup" aria-label="Pipeline preset">${PIPELINE_PRESETS.map((preset) => `<button type="button" class="crm-planner-preset crm-menu-action${preset.id === presetId ? " is-selected" : ""}" data-planner-preset="${preset.id}" role="radio" aria-checked="${preset.id === presetId}"><span class="crm-planner-preset-name">${esc(preset.label)}</span><span class="crm-planner-preset-map">${preset.stages.length ? esc(preset.stages.join(" · ")) : "Add your stages"}</span></button>`).join("")}</div><div class="crm-planner-custom-builder" hidden><div class="crm-planner-stage-entry"><input class="crm-menu-input" name="stageName" placeholder="Stage name" autocomplete="off"><button type="button" class="crm-menu-action" data-add-stage aria-label="Add stage">+</button></div><div class="crm-planner-stage-list" aria-live="polite"></div><div class="crm-planner-popover-hint">Add each stage once, in the order work should move.</div></div><div class="crm-planner-creator-status" role="status" aria-live="polite"></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create pipeline</button></div>`;
+    const status = floating.querySelector(".crm-planner-creator-status"); const builder = floating.querySelector(".crm-planner-custom-builder"); const stageList = floating.querySelector(".crm-planner-stage-list"); const stageInput = floating.elements.stageName;
+    const showStatus = (message = "") => { status.textContent = message; };
+    const reposition = () => requestAnimationFrame(() => { if (floating?.isConnected) place(floating, anchor); });
+    const renderCustomStages = () => {
+      stageList.innerHTML = customStages.map((name, index) => `<span class="crm-planner-stage-pill"><span>${esc(name)}</span><button type="button" class="crm-planner-stage-remove" data-remove-stage="${index}" aria-label="Remove ${esc(name)}">&times;</button></span>`).join("");
+      reposition();
+    };
+    const addCustomStage = () => {
+      const name = String(stageInput.value || "").trim();
+      if (!name) { showStatus("Give this stage a name."); stageInput.focus(); return false; }
+      if (customStages.some((stage) => stage.localeCompare(name, undefined, { sensitivity:"accent" }) === 0)) { showStatus("Stage names must be unique."); stageInput.select(); return false; }
+      customStages.push(name); stageInput.value = ""; showStatus(); renderCustomStages(); stageInput.focus(); return true;
+    };
+    floating.querySelectorAll("[data-planner-preset]").forEach((button) => button.addEventListener("click", () => {
+      presetId = button.dataset.plannerPreset; floating.querySelectorAll("[data-planner-preset]").forEach((candidate) => { const selected = candidate === button; candidate.classList.toggle("is-selected", selected); candidate.setAttribute("aria-checked", String(selected)); });
+      builder.hidden = presetId !== "custom"; showStatus(); reposition(); if (!builder.hidden) requestAnimationFrame(() => stageInput.focus());
+    }));
+    floating.querySelector("[data-add-stage]")?.addEventListener("click", addCustomStage);
+    stageInput.addEventListener("keydown", (event) => { if (event.key !== "Enter") return; event.preventDefault(); addCustomStage(); });
+    stageList.addEventListener("click", (event) => { const button = event.target.closest("[data-remove-stage]"); if (!button) return; customStages.splice(Number(button.dataset.removeStage), 1); showStatus(); renderCustomStages(); });
     floating.addEventListener("submit", async (event) => {
       event.preventDefault(); const data = new FormData(floating); const title = String(data.get("title") || "").trim();
-      if (!title) return; await createProject(title); closeFloating();
+      if (!title) { showStatus("Give this pipeline a name."); floating.elements.title.focus(); return; }
+      const preset = PIPELINE_PRESETS.find((candidate) => candidate.id === presetId) || PIPELINE_PRESETS[0];
+      if (preset.id === "custom" && customStages.length < 2) { showStatus("Add at least two uniquely named stages."); stageInput.focus(); return; }
+      await createProject(title, "", preset.id === "custom" ? customStages : preset.stages); closeFloating();
     });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
   }
@@ -367,7 +398,8 @@
     place(floating, anchor, x, y); armOutside(floating);
   }
   async function createProject(title, note = "", stageTitles = null) {
-    const names = Array.isArray(stageTitles) ? [...new Set(stageTitles.map((value) => String(value || "").trim()).filter(Boolean))] : [];
+    const names = []; const seen = new Set();
+    if (Array.isArray(stageTitles)) stageTitles.forEach((value) => { const name = String(value || "").trim(); const key = name.toLocaleLowerCase(); if (name && !seen.has(key)) { seen.add(key); names.push(name); } });
     const stages = names.length ? names.map((name, index) => normalizeStage({ id:uid("stage"), title:name, kind:index === 0 ? "queue" : index === names.length - 1 ? "done" : "active", rank:index }, index)) : clone(DEFAULT_STAGES);
     const result = await window.crmStore.create("projects", { title, note, stages });
     if (!result?.record) return null; selectedId = result.record.id; await refresh(true, "project-created"); return clone(projectById(selectedId));

@@ -28,6 +28,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   const notFoundText = config.notFoundText || "Ticket not found.";
   const draftRequiredText = config.draftRequiredText || "A client, date of incident and description are all required to create the ticket.";
   const nextTouch = config.nextTouch && typeof config.nextTouch === "object" ? config.nextTouch : null;
+  const expandedCardHeight = Math.max(0, Number(config.expandedCardHeight) || 0);
   const GAP = 10;            // gap between the card and the panel — matches GAP_FAN (the fanned-stack gap)
   const PANEL_W = 300;       // panel width (matches .ticket-detail width)
   // Tuck distance: the panel must hide FAR enough left that even its drop shadow
@@ -93,10 +94,10 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
         pointer-events: none !important;   /* inert: cursor passes through to the overlay */
         /* border-box so width/height === the source card's border-box rect — the clone is a
            pixel-exact stand-in (no size-pop on open) and targetLeft+cardW is the TRUE edge. */
-        transition: transform ${FLY_MS}ms ${EASE} !important; will-change: transform; }
+        transition: transform ${FLY_MS}ms ${EASE}, height ${FLY_MS}ms ${EASE} !important; will-change: transform, height; }
       /* On close the card returns ONLY after the panel has fully retracted (delay = the
          panel's retract time), and faster. !important to beat the base .td-card transition. */
-      .td-card.returning { transition: transform ${CLOSE_FLY_MS}ms ${EASE} ${CLOSE_SLIDE_MS}ms !important; }
+      .td-card.returning { transition: transform ${CLOSE_FLY_MS}ms ${EASE} ${CLOSE_SLIDE_MS}ms, height ${CLOSE_FLY_MS}ms ${EASE} ${CLOSE_SLIDE_MS}ms !important; }
       .td-flyer { padding: 14px 15px; border-radius: 15px; color: #fff;
         display: flex; flex-direction: column; overflow: hidden;
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 22px rgba(0,0,0,0.18); }
@@ -237,6 +238,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     if (overlay) return;
     overlay = document.createElement("div");
     overlay.className = "ticket-detail-overlay";
+    overlay.dataset.cardDetail = apiName;
     overlay.hidden = true;
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) requestClose(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && overlay && !overlay.hidden) requestClose(); });
@@ -286,7 +288,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     // The real card is clipped by the bucket's scroll viewport (.tk-zone-clip, overflow:hidden); the
     // overlay clone isn't, so clip it to the SAME rect — otherwise the part of a front card that's
     // scrolled past the bucket's edge spills out below/above the bucket.
-    const clipEl = card.closest(".tk-zone-clip");
+    const clipEl = card.closest(".tk-zone-clip, [data-card-detail-clip]");
     if (clipEl) {
       const vr = clipEl.getBoundingClientRect();
       const t = Math.max(0, vr.top - r.top), b = Math.max(0, r.bottom - vr.bottom);
@@ -334,9 +336,9 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
   //   • anything else (grid widget / trash drawer) → fly to CENTRE.
   const contextOf = (srcEl) => {
     if (!srcEl || !srcEl.closest) return { motion: "center" };
-    if (srcEl.closest(".tk-zone")) {
-      const track = srcEl.closest(".tk-zone-track");
-      const cards = track ? track.querySelectorAll(".tk-zcard") : [];
+    if (srcEl.closest(".tk-zone, [data-card-detail-zone]")) {
+      const track = srcEl.closest(".tk-zone-track, [data-card-detail-track]");
+      const cards = track ? track.querySelectorAll(".tk-zcard, [data-card-detail-card]") : [];
       return { motion: cards.length && cards[cards.length - 1] === srcEl ? "stay" : "slide" };
     }
     const deck = srcEl.closest(".tk-deck");
@@ -357,14 +359,16 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     overlay.appendChild(scrim);
     const vw = window.innerWidth, vh = window.innerHeight;
     const sr = sourceEl ? sourceEl.getBoundingClientRect() : { left: vw / 2 - 93, top: vh / 2 - 140, width: 186, height: 279 };
-    const cardW = sr.width, cardH = sr.height;
+    const sourceW = sr.width, sourceH = sr.height;
+    const cardW = sourceW, cardH = Math.max(sourceH, expandedCardHeight);
     const ctx = contextOf(sourceEl);
     const motion = ctx.motion;
-    const moves = motion === "slide" || motion === "center";   // these reposition the card itself
-    cardStays = motion === "stay";
+    const expands = cardH > sourceH + 0.5;
+    const moves = motion === "slide" || motion === "center" || expands;   // these reposition or resize the card itself
+    cardStays = motion === "stay" && !expands;
 
     // Flyer destination from the motion (then clamped so the CARD stays on-screen).
-    let tT = sr.top, tL = sr.left;
+    let tT = expands ? sr.top - (cardH - sourceH) / 2 : sr.top, tL = sr.left;
     if (motion === "rise") tT = sr.top - cardH;          // bottom edge meets the resting row's top edge
     else if (motion === "slide") tL = sr.left + cardW;   // left edge clears the column's right edge
     else if (motion === "center") { tL = (vw - cardW) / 2; tT = (vh - cardH) / 2; }
@@ -383,7 +387,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       ? Math.round(Math.max(10 + GAP + PANEL_W, Math.min(targetLeft, vw - 10 - cardW)))
       : Math.round(Math.min(targetLeft, vw - 10 - cardW - GAP - PANEL_W));
     panelSide = side;
-    geo = { targetLeft, targetTop, cardW, cardH };
+    geo = { targetLeft, targetTop, cardW, cardH, sourceW, sourceH };
 
     // Build the flyer FRESH (not a clone). A clone drags along every widget class +
     // backdrop-filter, which is what washed it brighter-than-hover mid-flight. A plain
@@ -394,7 +398,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     flyCard.className = "td-card td-flyer";
     flyCard.innerHTML = flyerInner();   // body + progress bars
     backTransform = `translate(${Math.round(sr.left - targetLeft)}px, ${Math.round(sr.top - targetTop)}px)`;
-    flyCard.style.cssText = `position:fixed; left:${targetLeft}px; top:${targetTop}px; width:${cardW}px; height:${cardH}px; transform:${backTransform};`;
+    flyCard.style.cssText = `position:fixed; left:${targetLeft}px; top:${targetTop}px; width:${cardW}px; height:${sourceH}px; transform:${backTransform};`;
     paintFlyer(SEV_RGB[prio]);
     overlay.appendChild(flyCard);
 
@@ -403,8 +407,8 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     // panel then sits above those clones so it still covers the column once it's out.
     let panelZ = 0;   // 0 → leave the CSS default (panel below the flyer)
     if (motion === "slide" && sourceEl) {
-      const track = sourceEl.closest(".tk-zone-track");
-      const sibs = track ? Array.from(track.querySelectorAll(".tk-zcard")) : [];
+      const track = sourceEl.closest(".tk-zone-track, [data-card-detail-track]");
+      const sibs = track ? Array.from(track.querySelectorAll(".tk-zcard, [data-card-detail-card]")) : [];
       const fronts = sibs.slice(sibs.indexOf(sourceEl) + 1);
       fronts.forEach((c, i) => cloneFrontCard(c, 3 + i));   // flyer is z-index 2 → clones ride above it
       if (fronts.length) panelZ = 3 + fronts.length;        // panel above every front clone
@@ -568,10 +572,19 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     const label = (f) => `${esc(f.label)}${f.req === false ? "" : ` <span class="td-req">*</span>`}`;
     const input = (f) => {
       const val = (getStacks()?.fieldValue?.(t.id, f.key)) ?? "";
-      if (f.prio) { const pr = val; return `<span class="td-prio">${PRIORITIES.map((p) => `<button class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${p}">${p}</button>`).join("")}</span>`; }   // pr = the ticket's saved severity (meta-aware); unset → NO option highlighted
-      if (f.date) return `<input type="date" class="td-in td-date" data-field="${esc(f.key)}" value="${esc(val)}" />`;
-      if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
-      return `<input class="td-in" data-field="${esc(f.key)}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
+      const required = f.req === false ? "false" : "true";
+      if (f.prio) { const pr = val; return `<span class="td-prio">${PRIORITIES.map((p) => `<button type="button" class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${esc(p)}">${esc(p)}</button>`).join("")}</span>`; }   // pr = the ticket's saved severity (meta-aware); unset → NO option highlighted
+      if (f.options) {
+        const raw = typeof f.options === "function" ? f.options(t) : f.options;
+        const options = Array.isArray(raw) ? raw : [];
+        return `<select class="td-in" data-field="${esc(f.key)}" data-field-required="${required}">${options.map((option) => {
+          const pair = Array.isArray(option) ? option : [option?.value ?? option, option?.label ?? option?.value ?? option];
+          return `<option value="${esc(pair[0])}"${String(pair[0] ?? "") === String(val ?? "") ? " selected" : ""}>${esc(pair[1])}</option>`;
+        }).join("")}</select>`;
+      }
+      if (f.date) return `<input type="date" class="td-in td-date" data-field="${esc(f.key)}" data-field-required="${required}" value="${esc(val)}" />`;
+      if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" data-field-required="${required}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
+      return `<input class="td-in" data-field="${esc(f.key)}" data-field-required="${required}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
     };
     // The FIRST field's label shares the row with the close × (top-right); the rest are plain rows. A
     // "save" text-button at the bottom-right validates the required fields before it closes.
@@ -628,9 +641,9 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       el.onkeydown = (e) => {
         e.stopPropagation();   // typing never triggers dashboard-wide hotkeys…
         if (e.key === "Escape") { e.preventDefault(); requestClose(); return; }   // …but Escape still closes
-        const ta = el.tagName === "TEXTAREA", date = el.type === "date";
-        if (e.key === "ArrowDown" && !date && (!ta || el.selectionEnd >= el.value.length)) { e.preventDefault(); goFrom(el, 1); return; }
-        if (e.key === "ArrowUp" && !date && (!ta || el.selectionStart <= 0)) { e.preventDefault(); goFrom(el, -1); return; }
+        const ta = el.tagName === "TEXTAREA", choice = el.tagName === "SELECT", date = el.type === "date";
+        if (e.key === "ArrowDown" && !date && !choice && (!ta || el.selectionEnd >= el.value.length)) { e.preventDefault(); goFrom(el, 1); return; }
+        if (e.key === "ArrowUp" && !date && !choice && (!ta || el.selectionStart <= 0)) { e.preventDefault(); goFrom(el, -1); return; }
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           if (!goFrom(el, 1)) panel.querySelector("[data-act='save']")?.click();   // last prompt → save
@@ -651,7 +664,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       // because a ticket can't exist without a real client / date / description. Stage fields still allow n/a.
       const bad = (v) => String(v).trim() === "" || (draft && String(v).trim().toLowerCase() === "n/a");
       let blank = null;
-      panel.querySelectorAll(".td-field [data-field]").forEach((el) => { if (!blank && bad(el.value)) blank = el; });
+      panel.querySelectorAll('.td-field [data-field][data-field-required="true"]').forEach((el) => { if (!blank && bad(el.value)) blank = el; });
       if (blank) {
         if (msg) {
           msg.textContent = draft
@@ -699,6 +712,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     const dofMs = cardStays ? SLIDE_MS : SETTLE_MS;
     requestAnimationFrame(() => {
       if (flyCard) flyCard.style.transform = "translate(0, 0)";  // card flies smoothly to centre
+      if (flyCard) flyCard.style.height = `${geo.cardH}px`;      // compact cards disclose their complete work surface during the same flight
       if (wrap) wrap.classList.add("is-open");                   // panel slides out from behind (delayed in CSS)
       setBlur(DOF_BLUR, dofMs, "ease-out");
     });
@@ -770,7 +784,7 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       } else if (abandoning) {
         fc.style.transition = `opacity ${CLOSE_FLY_MS}ms ease`; fc.style.opacity = "0";   // no "+" rect → just fade out
       } else {
-        fc.classList.add("returning"); fc.style.transform = backTransform;   // normal close: card returns to its spot
+        fc.classList.add("returning"); fc.style.height = `${geo?.sourceH || geo?.cardH || fc.offsetHeight}px`; fc.style.transform = backTransform;   // normal close: card returns to its exact compact slot
       }
     }
     // Tear everything down the INSTANT the card lands. transitionend fires exactly on arrival;

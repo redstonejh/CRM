@@ -919,7 +919,7 @@ async function main() {
   await page.keyboard.press('Escape');
 
   await activate('planner');
-  await check('Planner uses top project tabs and aligned custom buckets', () => {
+  await check('Planner is a conventional custom pipeline with top tabs and aligned stages', () => {
     const theater = document.querySelector('[data-crm-theater="planner"]:not([hidden])');
     const projects = [...(theater?.querySelectorAll('.crm-planner-project') || [])];
     const buckets = [...(theater?.querySelectorAll('.crm-planner-bucket') || [])];
@@ -932,6 +932,8 @@ async function main() {
     return { ok: projects.length >= 3 && buckets.length === 3
       && !theater.querySelector('aside,.crm-menu-surface.crm-planner-projects,.crm-project-minimap,.crm-planner-universe')
       && tabs?.tagName === 'HEADER' && theater.querySelector('.crm-planner-heading')?.textContent.trim() === 'Planner'
+      && theater.querySelector('.crm-planner-project-list')?.getAttribute('aria-label') === 'Pipelines'
+      && theater.querySelector('[data-planner-action="new-project"]')?.textContent.trim() === 'New pipeline'
       && projects.every((project) => {
         const snapshot = snapshots.find((item) => item.id === project.dataset.plannerProject);
         return project.getAttribute('role') === 'tab' && !!project.querySelector('.crm-planner-project-name')
@@ -939,7 +941,10 @@ async function main() {
           && !project.querySelector('.tk-card,.crm-planner-card,.crm-planner-bucket');
       })
       && projects.filter((project) => project.getAttribute('aria-selected') === 'true').length === 1
-      && buckets.every((bucket) => bucket.classList.contains('tk-zone') && !!bucket.querySelector('.tk-zone-title'))
+      && buckets.every((bucket, index) => bucket.classList.contains('tk-zone') && !!bucket.querySelector('.tk-zone-title')
+        && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg').length === buckets.length
+        && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg.g').length === index + 1
+        && bucket.querySelector('[data-planner-action="new-card"]')?.textContent.trim() === '+ Add card')
       && plannerType.heading === '17px'
       && plannerType.buckets.every((size) => size === '14px')
       && !!tabsRect && !!bucketRect && bucketRect.top >= tabsRect.bottom + 8 && Math.abs(tabsRect.left - bucketRect.left) <= 1
@@ -949,14 +954,15 @@ async function main() {
   const plannerTabStart = await page.$eval('.crm-planner-project.is-selected', (tab) => tab.dataset.plannerProject);
   await page.focus('.crm-planner-project.is-selected'); await page.keyboard.press('ArrowRight');
   await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-planner-project') && document.activeElement?.classList.contains('is-selected') && document.activeElement.dataset.plannerProject !== start, {}, plannerTabStart);
-  await check('Planner project pseudo-tabs support horizontal keyboard navigation', () => document.activeElement?.getAttribute('role') === 'tab' && document.activeElement?.getAttribute('aria-selected') === 'true');
+  await check('Planner pipeline pseudo-tabs support horizontal keyboard navigation', () => document.activeElement?.getAttribute('role') === 'tab' && document.activeElement?.getAttribute('aria-selected') === 'true');
   await page.evaluate((projectId) => window.crmPlanner.selectProject(projectId), plannerTabStart);
   await page.click('[data-planner-action="new-project"]');
-  await page.waitForSelector('.crm-planner-project-creator input[name="stages"]');
-  await check('A new Planner project defines its initial pipeline in one compact action', () => {
+  await page.waitForSelector('.crm-planner-project-creator input[name="title"]');
+  await check('A new pipeline asks only for its name and creates the standard stages automatically', () => {
     const form = document.querySelector('.crm-planner-project-creator');
     return !!form && form.classList.contains('crm-menu-surface') && form.elements.title
-      && form.elements.stages.value === 'Backlog, In progress, Done' && form.getBoundingClientRect().width <= 300;
+      && !form.elements.stages && /created automatically/i.test(form.querySelector('.crm-planner-popover-hint')?.textContent || '')
+      && form.querySelector('[type="submit"]')?.textContent.trim() === 'Create pipeline' && form.getBoundingClientRect().width <= 300;
   });
   await page.type('.crm-planner-project-creator input[name="title"]', 'Interaction plan');
   await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
@@ -966,30 +972,101 @@ async function main() {
   await page.type('.crm-planner-popover input[name="value"]', 'Review');
   await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
+  const plannerReviewStageId = await page.evaluate(() => window.crmPlanner.projects().find((item) => item.title === 'Interaction plan')?.buckets.find((bucket) => bucket.title === 'Review')?.id || '');
   await sleep(260);
-  await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child [data-planner-action="new-card"]')?.click());
+  await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] [data-planner-action="new-card"]`)?.click(), plannerReviewStageId);
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
   await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-planner-card-title')].some((node) => node.textContent.trim() === 'Ship the polished flow'), { timeout:10000 });
   await sleep(260);
-  await page.evaluate(() => document.querySelector('.crm-planner-card')?.click());
-  await page.waitForSelector('.crm-planner-item-editor select[name="stage"]', { timeout:10000 });
-  await check('A Planner item can change stage, owner, priority, due date, and linked record in one compact editor', () => {
-    const form = document.querySelector('.crm-planner-item-editor');
-    return !!form && form.elements.stage.options.length === 4 && form.elements.assignee
-      && form.elements.priority && form.elements.dueAt && form.elements.target && form.getBoundingClientRect().width < 400;
+  await page.evaluate(async () => {
+    const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
+    const review = project?.buckets.find((bucket) => bucket.title === 'Review');
+    if (project && review) await window.crmPlanner.createCard(project.id, review.id, 'Review readiness');
   });
-  await page.click('.crm-planner-item-editor [data-cancel]');
-  await check('Planner creates projects, custom buckets, and fully functional items', () => {
+  await page.waitForFunction((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"]`)?.querySelectorAll('.crm-planner-card').length === 2, {}, plannerReviewStageId);
+  const plannerRevealSource = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.crm-planner-card')].find((node) => node.querySelector('.crm-planner-card-title')?.textContent.trim() === 'Ship the polished flow');
+    if (!card) return null; const rect = card.getBoundingClientRect(); const id = card.dataset.plannerCard; const progress = card.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length; card.click();
+    const initial = document.querySelector('.ticket-detail-overlay[data-card-detail="plannerDetail"]:not([hidden]) .td-card')?.getBoundingClientRect();
+    return { id, left:rect.left, right:rect.right, top:rect.top, width:rect.width, height:rect.height, progress,
+      initial:initial && [initial.left, initial.top, initial.width, initial.height] };
+  });
+  await page.waitForSelector('.ticket-detail-overlay[data-card-detail="plannerDetail"]:not([hidden]) .ticket-detail', { timeout:10000 });
+  await sleep(760);
+  await check('Planner cards use the exact stack-aware ticket reveal and side configuration system', (source) => {
+    const overlay = document.querySelector('.ticket-detail-overlay[data-card-detail="plannerDetail"]:not([hidden])');
+    const card = document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(source?.id || '')}"]`);
+    const flyer = overlay?.querySelector('.td-card.td-flyer'); const panel = overlay?.querySelector('.ticket-detail.crm-menu-surface'); const wrap = overlay?.querySelector('.td-wrap');
+    const flyerRect = flyer?.getBoundingClientRect(); const panelRect = panel?.getBoundingClientRect();
+    const scrim = overlay?.querySelector('.td-scrim'); const scrimStyle = scrim ? getComputedStyle(scrim) : null; const frontStyle = overlay?.querySelector('.td-frontclone') ? getComputedStyle(overlay.querySelector('.td-frontclone')) : null;
+    const depthOfField = scrim?.style.backdropFilter.includes('blur(4px)') || scrimStyle?.backdropFilter.includes('blur(4px)')
+      || frontStyle?.filter.includes('blur(4px)') || (document.body.dataset.background === 'photo-water2' && scrimStyle?.backgroundColor !== 'rgba(0, 0, 0, 0)');
+    return { ok:!!overlay && !!flyer && !!panel && !!wrap?.classList.contains('is-open') && !!wrap?.classList.contains('is-settled')
+      && card?.style.visibility === 'hidden' && overlay.querySelectorAll('.td-frontclone').length === 1
+      && source.initial && Math.abs(source.initial[0] - source.left) <= 1 && Math.abs(source.initial[1] - source.top) <= 1
+      && Math.abs(source.initial[2] - source.width) <= 1 && Math.abs(source.initial[3] - source.height) <= 1
+      && flyerRect.left >= source.right - 2 && Math.abs(flyerRect.height - 279) <= 1 && flyerRect.height > source.height * 2
+      && Math.abs(panelRect.height - flyerRect.height) <= 1 && Math.abs(panelRect.width - 300) <= 1
+      && flyer.querySelectorAll('.crm-planner-card-progress .tk-seg').length === 4
+      && flyer.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length === source.progress
+      && depthOfField
+      && !!panel.querySelector('[data-field="title"]') && !!panel.querySelector('[data-field="note"]')
+      && !!panel.querySelector('[data-field="dueAt"]') && panel.querySelector('[data-field="assignedContactId"]')?.tagName === 'SELECT'
+      && panel.querySelector('[data-field="linkedTarget"]')?.tagName === 'SELECT' && panel.querySelectorAll('.td-prio-opt').length === 3,
+      detail:JSON.stringify({ source, flyer:flyerRect && [flyerRect.left,flyerRect.top,flyerRect.width,flyerRect.height], panel:panelRect && [panelRect.left,panelRect.top,panelRect.width,panelRect.height],
+        open:wrap?.classList.contains('is-open'), settled:wrap?.classList.contains('is-settled'), hidden:card?.style.visibility, fronts:overlay?.querySelectorAll('.td-frontclone').length,
+        segments:flyer?.querySelectorAll('.crm-planner-card-progress .tk-seg').length, green:flyer?.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length,
+        depthOfField, fields:['title','note','dueAt','assignedContactId','linkedTarget'].map((key) => [key,panel?.querySelector(`[data-field="${key}"]`)?.tagName]), priorities:panel?.querySelectorAll('.td-prio-opt').length }) };
+  }, plannerRevealSource);
+  const plannerDetailEdit = await page.evaluate(() => {
+    const panel = document.querySelector('.ticket-detail-overlay[data-card-detail="plannerDetail"]:not([hidden]) .ticket-detail');
+    const note = panel?.querySelector('[data-field="note"]'); const due = panel?.querySelector('[data-field="dueAt"]');
+    const owner = panel?.querySelector('[data-field="assignedContactId"]'); const linked = panel?.querySelector('[data-field="linkedTarget"]');
+    if (note) { note.value = 'Ready for final stakeholder approval.'; note.dispatchEvent(new Event('input', { bubbles:true })); }
+    if (due) { due.value = '2026-08-15'; due.dispatchEvent(new Event('input', { bubbles:true })); }
+    if (owner && owner.options.length > 1) { owner.value = owner.options[1].value; owner.dispatchEvent(new Event('input', { bubbles:true })); }
+    if (linked && linked.options.length > 1) { linked.value = linked.options[1].value; linked.dispatchEvent(new Event('input', { bubbles:true })); }
+    [...(panel?.querySelectorAll('.td-prio-opt') || [])].find((button) => button.dataset.prio === 'high')?.click();
+    return { owner:owner?.value || '', linked:linked?.value || '' };
+  });
+  await sleep(260);
+  await page.click('.ticket-detail-overlay[data-card-detail="plannerDetail"] .td-x');
+  await page.waitForFunction(() => document.querySelector('.ticket-detail-overlay[data-card-detail="plannerDetail"]')?.hidden === true);
+  await sleep(320);
+  const plannerDetailPersisted = await page.evaluate(async (probe) => {
+    const item = (await window.crmStore.list('workItems', { includeDeleted:false })).records.find((record) => record.id === window.crmPlanner.items().find((record) => record.title === 'Ship the polished flow')?.id);
+    const commitment = item && (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((record) => record.id === item.commitmentId);
+    const due = item?.dueAt ? new Date(item.dueAt) : null; const pad = (value) => String(value).padStart(2, '0');
+    const dueLocal = due && !Number.isNaN(due.getTime()) ? `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}` : '';
+    return { note:item?.note, dueAt:item?.dueAt, dueLocal, assignedContactId:item?.assignedContactId, priority:item?.priority,
+      linked:`${item?.linkedEntityType || ''}:${item?.linkedRecordId || ''}`, commitmentAssignee:commitment?.assignee,
+      commitmentPriority:commitment?.priority, support:commitment?.links?.some((link) => `${link.entityType}:${link.recordId}` === probe.linked) };
+  }, plannerDetailEdit);
+  await check('Planner side configuration persists owner, due date, priority, link, and card detail', (state) => ({
+    ok:state.note === 'Ready for final stakeholder approval.' && state.dueLocal === '2026-08-15'
+      && state.assignedContactId && state.priority === 'high' && state.linked && state.linked !== ':'
+      && state.commitmentAssignee && state.commitmentPriority === 'high' && state.support === true,
+    detail:JSON.stringify(state),
+  }), plannerDetailPersisted);
+  await check('Planner card reveal contracts into the unchanged source slot without a replacement jump', (source) => {
+    const card = document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(source?.id || '')}"]`); const rect = card?.getBoundingClientRect();
+    return !!card && card.style.visibility === '' && Math.abs(rect.left - source.left) <= 1 && Math.abs(rect.top - source.top) <= 1
+      && Math.abs(rect.width - source.width) <= 1 && Math.abs(rect.height - source.height) <= 1;
+  }, plannerRevealSource);
+  await check('Planner creates pipelines, custom stages, and real linked cards with automatic progress', () => {
     const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
     const review = project?.buckets.find((bucket) => bucket.title === 'Review');
     const item = review?.cards.find((card) => card.title === 'Ship the polished flow');
+    const card = item && document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(item.id)}"]`);
     const commitment = item && window.crmHome?.handStatus?.();
     return { ok:!!project && project.buckets.length === 4 && !!item && item.entityType === 'workItems'
       && !!item.commitmentId && !!item.workflowEntryId && !!commitment
       && document.querySelectorAll(`.crm-planner-project[data-planner-project="${CSS.escape(project.id)}"] .crm-planner-project-segment[data-occupied="true"]`).length >= 1
-      && !!document.querySelector('.crm-planner-card[data-record-entity="workItems"]'),
-      detail:JSON.stringify({ project:!!project, buckets:project?.buckets.length, item:item && { entityType:item.entityType, commitmentId:item.commitmentId, workflowEntryId:item.workflowEntryId }, card:!!document.querySelector('.crm-planner-card[data-record-entity="workItems"]') }) };
+      && card?.getAttribute('data-record-entity') === 'workItems'
+      && card.querySelectorAll('.crm-planner-card-progress .tk-seg').length === project.buckets.length
+      && card.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length === review.rank + 1,
+      detail:JSON.stringify({ project:!!project, stages:project?.buckets.length, item:item && { entityType:item.entityType, commitmentId:item.commitmentId, workflowEntryId:item.workflowEntryId }, progress:card?.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length }) };
   });
   const plannerStageMove = await page.evaluate(async () => {
     const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
@@ -1001,21 +1078,26 @@ async function main() {
     const movedItem = (await window.crmStore.list('workItems', { includeDeleted:false })).records.find((record) => record.id === item.id);
     const commitment = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((record) => record.id === movedItem.commitmentId);
     const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, limit:1000 })).records.find((record) => record.recordId === item.id && record.workflowKey === `project:${project.id}`);
-    const completed = { itemStage:movedItem.stageId, itemStatus:movedItem.status, commitmentStatus:commitment?.status, flowStage:flow?.stage };
+    const completedCard = document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(item.id)}"]`);
+    const completed = { itemStage:movedItem.stageId, itemStatus:movedItem.status, commitmentStatus:commitment?.status, flowStage:flow?.stage,
+      progress:completedCard?.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length, expectedProgress:project.buckets.findIndex((bucket) => bucket.id === done.id) + 1 };
     await window.crmPlanner.moveCard(item.id, review.id);
-    return { ...completed, restored:window.crmPlanner.items().find((record) => record.id === item.id)?.stageId };
+    const restoredCard = document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(item.id)}"]`);
+    return { ...completed, restored:window.crmPlanner.items().find((record) => record.id === item.id)?.stageId,
+      restoredProgress:restoredCard?.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length, expectedRestored:project.buckets.findIndex((bucket) => bucket.id === review.id) + 1 };
   });
-  await check('Planner moves one real work object through its custom workflow and to-do', (state) => ({
+  await check('Planner moves one real card through its custom workflow and updates progress automatically', (state) => ({
     ok:!!state && state.itemStatus === 'completed' && state.commitmentStatus === 'completed'
-      && state.itemStage === state.flowStage && state.restored && state.restored !== state.itemStage,
+      && state.itemStage === state.flowStage && state.restored && state.restored !== state.itemStage
+      && state.progress === state.expectedProgress && state.restoredProgress === state.expectedRestored,
     detail:JSON.stringify(state),
   }), plannerStageMove);
-  const plannerStackBefore = await page.$eval('.crm-planner-bucket:last-child', (bucket) => ({
-    project:window.crmPlanner.selected(), stage:bucket.dataset.plannerBucket,
-    ids:[...bucket.querySelectorAll('.crm-planner-card')].map((card) => card.dataset.plannerCard),
-  }));
-  await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.click());
-  await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'true');
+  const plannerStackBefore = await page.evaluate((stageId) => { const bucket = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"]`); return {
+    project:window.crmPlanner.selected(), stage:bucket?.dataset.plannerBucket,
+    ids:[...(bucket?.querySelectorAll('.crm-planner-card') || [])].map((card) => card.dataset.plannerCard),
+  }; }, plannerReviewStageId);
+  await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.click(), plannerReviewStageId);
+  await page.waitForFunction((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.getAttribute('aria-expanded') === 'true', {}, plannerReviewStageId);
   await page.evaluate(() => {
     const current = window.crmPlanner.selected(); const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;
     if (other) window.crmPlanner.selectProject(other); window.crmPlanner.selectProject(current);
@@ -1026,13 +1108,13 @@ async function main() {
     return !!bucket && bucket.querySelector('.crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'true'
       && window.crmPlanner.expandedStages().includes(`${before.project}:${before.stage}`) && JSON.stringify(ids) === JSON.stringify(before.ids);
   }, plannerStackBefore);
-  await page.evaluate(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.click());
-  await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child .crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'false');
-  await page.evaluate(() => {
-    const header = document.querySelector('.crm-planner-bucket:last-child .tk-zone-hd');
+  await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.click(), plannerReviewStageId);
+  await page.waitForFunction((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.getAttribute('aria-expanded') === 'false', {}, plannerReviewStageId);
+  await page.evaluate((stageId) => {
+    const header = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .tk-zone-hd`);
     const rect = header?.getBoundingClientRect();
     if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 12, clientY:rect.top + 12 }));
-  });
+  }, plannerReviewStageId);
   await page.waitForSelector('.crm-planner-context', { timeout:10000 });
   await check('Planner edits use a compact canonical anchored menu', () => {
     const menu = document.querySelector('.crm-planner-context');
@@ -1048,42 +1130,42 @@ async function main() {
     action?.click(); return action?.textContent.trim() || '';
   });
   if (plannerBucketSizeAction !== 'Make small') throw new Error(`Planner bucket size action unavailable: ${plannerBucketSizeAction}`);
-  await page.waitForFunction(() => {
-    const bucket = document.querySelector('.crm-planner-bucket:last-child');
+  await page.waitForFunction((stageId) => {
+    const bucket = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"]`);
     return bucket?.classList.contains('crm-object-small') && bucket.getBoundingClientRect().width <= 205
       && Number.parseFloat(getComputedStyle(bucket).scale) === 1;
-  });
-  await page.evaluate(() => {
-    const card = document.querySelector('.crm-planner-bucket:last-child .crm-planner-card');
+  }, {}, plannerReviewStageId);
+  await page.evaluate((stageId) => {
+    const card = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-card`);
     const rect = card?.getBoundingClientRect();
     if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 12, clientY:rect.top + 12 }));
-  });
+  }, plannerReviewStageId);
   await page.waitForSelector('.crm-planner-context');
   const plannerCardSizeAction = await page.evaluate(() => {
     const action = [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button) => button.textContent.trim() === 'Make small');
     action?.click(); return action?.textContent.trim() || '';
   });
   if (plannerCardSizeAction !== 'Make small') throw new Error(`Planner card size action unavailable: ${plannerCardSizeAction}`);
-  await page.waitForFunction(() => {
-    const card = document.querySelector('.crm-planner-bucket:last-child .crm-planner-card');
+  await page.waitForFunction((stageId) => {
+    const card = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-card`);
     return card?.classList.contains('crm-object-small') && card.getBoundingClientRect().width <= 145
       && Number.parseFloat(getComputedStyle(card).scale) === 1;
-  });
+  }, {}, plannerReviewStageId);
   await page.evaluate(() => {
     const current = window.crmPlanner.selected();
     const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;
     if (other) window.crmPlanner.selectProject(other);
     window.crmPlanner.selectProject(current);
   });
-  await page.waitForFunction(() => document.querySelector('.crm-planner-bucket:last-child')?.classList.contains('crm-object-small')
-    && document.querySelector('.crm-planner-bucket:last-child .crm-planner-card')?.classList.contains('crm-object-small'));
-  await check('Planner bucket and item sizes persist when the project world is rebuilt', () => {
-    const bucket = document.querySelector('.crm-planner-bucket:last-child'); const card = bucket?.querySelector('.crm-planner-card');
+  await page.waitForFunction((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"]`)?.classList.contains('crm-object-small')
+    && document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-card`)?.classList.contains('crm-object-small'), {}, plannerReviewStageId);
+  await check('Planner bucket and item sizes persist when the project world is rebuilt', (stageId) => {
+    const bucket = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"]`); const card = bucket?.querySelector('.crm-planner-card');
     const stored = JSON.parse(localStorage.getItem('crm-object-sizing-v1') || '{}');
     return !!bucket && !!card && stored.buckets?.[window.crmObjectSizing.keyOf(bucket, 'bucket')] === 'small'
       && stored.cards?.[window.crmObjectSizing.keyOf(card, 'card')] === 'small'
       && bucket.getBoundingClientRect().width <= 205 && card.getBoundingClientRect().width <= 145;
-  });
+  }, plannerReviewStageId);
   await activate('home');
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0
     && document.querySelectorAll('.crm-home-hand-card.tk-card').length === window.crmHome?.handStatus?.().count, { timeout: 10000 });

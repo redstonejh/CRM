@@ -1,4 +1,4 @@
-// crm-planner.js — persistent, user-defined multi-stage project pipelines.
+// crm-planner.js — persistent, user-defined multi-stage pipelines.
 (() => {
   const SELECTED_KEY = "crm-planner-selected-v2";
   const LEGACY_KEY = "crm-planner-projects-v1";
@@ -28,7 +28,11 @@
   let selectedId = localStorage.getItem(SELECTED_KEY) || "";
   let dragItemId = "";
   let plannerResizeObserver = null;
+  let plannerDetail = null;
+  let detailSaveTimer = 0;
+  let detailSaveTail = Promise.resolve();
   const plannerScrollPositions = new Map();
+  const pendingDetailFields = new Map();
   let model = { projects:[], items:[], flows:[], commitments:[], contacts:[], tasks:[], tickets:[] };
   let expandedStacks = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
 
@@ -40,8 +44,8 @@
     const raw = Array.isArray(project?.stages) && project.stages.length ? project.stages : DEFAULT_STAGES;
     return raw.map(normalizeStage).sort((a, b) => a.rank - b.rank).map((stage, index) => ({ ...stage, rank:index }));
   };
-  const normalizeProject = (project = {}) => ({ ...project, id:String(project.id || ""), title:first(project.title, "Untitled project"), note:String(project.note || ""), stages:stagesOf(project) });
-  const normalizeItem = (item = {}) => ({ ...item, id:String(item.id || ""), projectId:String(item.projectId || ""), stageId:String(item.stageId || ""), title:first(item.title, "Untitled work"), note:String(item.note || ""), priority:String(item.priority || "normal"), status:String(item.status || "open"), rank:Number(item.rank) || 0 });
+  const normalizeProject = (project = {}) => ({ ...project, id:String(project.id || ""), title:first(project.title, "Untitled pipeline"), note:String(project.note || ""), stages:stagesOf(project) });
+  const normalizeItem = (item = {}) => ({ ...item, id:String(item.id || ""), projectId:String(item.projectId || ""), stageId:String(item.stageId || ""), title:first(item.title, "Untitled card"), note:String(item.note || ""), priority:String(item.priority || "normal"), status:String(item.status || "open"), rank:Number(item.rank) || 0 });
   const projectById = (id) => model.projects.find((project) => project.id === String(id));
   const itemById = (id) => model.items.find((item) => item.id === String(id));
   const selectedProject = () => projectById(selectedId) || model.projects[0] || null;
@@ -78,24 +82,23 @@
     const style = document.createElement("style"); style.id = "crm-planner-styles"; style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
       .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
-      .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:10px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 0 auto;font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}.crm-planner-project-list:empty::after{content:"No projects";padding:0 10px;color:rgba(255,255,255,.3);font-size:var(--crm-type-meta,10px);white-space:nowrap}
+      .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 0 auto;font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
       .crm-planner-project.crm-menu-action{position:relative;flex:0 0 auto;width:clamp(88px,12vw,176px);height:34px;padding:5px 10px 4px!important;text-align:left;font-size:var(--crm-type-body,12px)!important;display:grid;grid-template-rows:minmax(0,1fr) 3px;gap:4px;overflow:hidden;color:rgba(255,255,255,.5)!important}.crm-planner-project.is-selected{color:rgba(255,255,255,.96)!important}.crm-planner-project.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:rgba(175,211,255,.78);box-shadow:0 0 10px rgba(115,177,252,.22)}.crm-planner-project-name{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-map{display:flex;align-items:stretch;gap:2px;min-width:0;height:3px}.crm-planner-project-segment{flex:1 1 0;min-width:3px;border-radius:2px;background:rgba(214,229,248,.09);box-shadow:inset 0 0 0 1px rgba(225,237,251,.045)}.crm-planner-project-segment[data-occupied="true"]{background:rgba(160,193,234,.28)}.crm-planner-project-segment[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.34)}.crm-planner-project.is-selected .crm-planner-project-segment{box-shadow:inset 0 0 0 1px rgba(226,238,252,.08)}
-      .crm-planner-new-project.crm-menu-action{flex:0 0 29px;width:29px;height:29px;padding:0!important;font-size:17px!important}.crm-planner-head-actions{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding-left:8px;border-left:1px solid rgba(255,255,255,.1)}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
+      .crm-planner-new-project.crm-menu-action{flex:0 0 auto;width:auto;height:30px;padding:0 9px!important;font-size:var(--crm-type-caption,11px)!important;white-space:nowrap;color:rgba(255,255,255,.7)!important}.crm-planner-head-actions{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding-left:6px;border-left:1px solid rgba(255,255,255,.1)}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
       .crm-planner-stage{--crm-scroll-shadow-left:0;--crm-scroll-shadow-right:0;position:relative;min-width:0;min-height:0;margin-inline:calc(0px - var(--crm-canvas-x,64px));overflow:hidden}.crm-planner-stage:before,.crm-planner-stage:after{content:"";position:absolute;z-index:4;top:0;bottom:14px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-planner-stage:before{left:0;opacity:var(--crm-scroll-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-planner-stage:after{right:0;opacity:var(--crm-scroll-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .crm-planner-buckets{width:100%;height:100%;min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:var(--crm-object-gap,18px);overflow-x:auto;overflow-y:hidden;padding:clamp(12px,2.5vh,22px) 0 28px var(--crm-canvas-x,64px);box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent;scroll-padding-inline:0;-webkit-app-region:no-drag}
       .crm-planner-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 226px;width:226px;height:min(500px,calc(100vh - 210px));min-height:342px;box-sizing:border-box;padding:12px 14px;overflow:hidden;transition:width .16s ease,flex-basis .16s ease,height .16s ease}
-      .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-hd-r{right:0;top:1px;gap:1px;pointer-events:auto;opacity:.72}
+      .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-title{max-width:84px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-bucket .tk-zone-hd-r{right:0;top:1px;gap:1px;pointer-events:auto;opacity:.72}.crm-planner-stage-progress{width:48px;margin-right:3px;justify-content:flex-end;gap:2px}.crm-planner-stage-progress .tk-seg,.crm-planner-card-progress .tk-seg{flex:1 1 0;min-width:2px;max-width:9px;height:4px;border-radius:2px;background:rgba(255,255,255,.2);box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}.crm-planner-stage-progress .tk-seg.g,.crm-planner-card-progress .tk-seg.g{background:#2fd16b}
       .crm-planner-stage-menu.crm-menu-action,.crm-planner-stack-toggle.crm-menu-action{width:28px;height:27px;padding:0!important;display:grid;place-items:center;font-size:14px!important}.crm-planner-stack-toggle svg{width:13px;height:13px}.crm-planner-stack-toggle path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}.crm-planner-stack-toggle[aria-expanded="true"]{color:rgba(193,220,255,.96)!important;background:rgba(124,175,241,.1)!important}
       .crm-planner-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 2px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}.crm-planner-card-list.is-expanded{gap:8px}
-      .crm-planner-card{appearance:none;position:relative;flex:0 0 auto;width:188px;min-height:102px;box-sizing:border-box;padding:12px 13px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.94),rgba(62,74,94,.92));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:grab;transition:width .16s ease,min-height .16s ease,margin .2s cubic-bezier(.22,1,.26,1),box-shadow .14s ease,opacity .14s ease}.crm-planner-card+.crm-planner-card{margin-top:-58px}.crm-planner-card-list.is-expanded .crm-planner-card+.crm-planner-card{margin-top:0}.crm-planner-card:active{cursor:grabbing}.crm-planner-card.is-dragging{opacity:.32}
+      .crm-planner-card{appearance:none;position:relative;flex:0 0 auto;width:188px;height:128px;box-sizing:border-box;padding:14px 15px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.94),rgba(62,74,94,.92));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:grab;overflow:hidden;transition:width .16s ease,height .16s ease,margin .2s cubic-bezier(.22,1,.26,1),box-shadow .14s ease,opacity .14s ease}.crm-planner-card+.crm-planner-card{margin-top:-78px}.crm-planner-card-list.is-expanded .crm-planner-card+.crm-planner-card{margin-top:0}.crm-planner-card:active{cursor:grabbing}.crm-planner-card.is-dragging{opacity:.32}.crm-planner-card-body{display:flex;flex-direction:column;gap:0;height:100%;min-height:0}.crm-planner-card-progress{position:absolute;top:12px;right:13px;z-index:2;width:48px;display:inline-flex;align-items:center;justify-content:flex-end;gap:2px;pointer-events:none}
       .crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.1),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
-      .crm-planner-card-title{display:block;font-size:var(--crm-type-object,14px);font-weight:680;line-height:1.24;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:-webkit-box;margin-top:7px;color:rgba(255,255,255,.54);font-size:var(--crm-type-meta,10px);line-height:1.35;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.crm-planner-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;color:rgba(255,255,255,.5);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-planner-card-meta span{overflow:hidden;text-overflow:ellipsis}.crm-planner-card-link{color:rgba(211,227,249,.62)!important}
-      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;min-height:72px;padding:10px 11px}.crm-planner-card.crm-object-small+.crm-planner-card{margin-top:-34px}.crm-planner-card-list.is-expanded .crm-planner-card.crm-object-small+.crm-planner-card{margin-top:0}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{margin-top:8px}
-      .crm-planner-add-card.crm-menu-action{flex:0 0 29px;width:100%;height:29px;text-align:left;padding-left:4px!important;font-size:var(--crm-type-caption,11px)!important;color:rgba(255,255,255,.34)!important}.crm-planner-add-card:hover{color:#fff!important}.crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:var(--crm-type-caption,11px)}
-      .crm-planner-popover{position:fixed;z-index:9300;width:min(280px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
-      .crm-planner-item-editor{position:fixed;z-index:9310;width:min(370px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}.crm-planner-item-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}.crm-planner-item-fields>.crm-menu-input:first-child,.crm-planner-item-fields>textarea,.crm-planner-item-fields>.crm-planner-wide{grid-column:1/-1}.crm-planner-item-fields textarea{min-height:68px;resize:vertical;padding-top:9px}.crm-planner-item-editor .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
+      .crm-planner-card-title{display:block;padding-right:54px;font-size:var(--crm-type-object,14px);font-weight:700;line-height:1.24;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:-webkit-box;margin-top:8px;color:rgba(255,255,255,.6);font-size:var(--crm-type-body,12px);line-height:1.35;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.crm-planner-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:10px;color:rgba(255,255,255,.52);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-planner-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-link{display:block;margin-top:5px;color:rgba(211,227,249,.56);font-size:var(--crm-type-meta,10px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;height:90px;padding:11px 12px}.crm-planner-card.crm-object-small+.crm-planner-card{margin-top:-50px}.crm-planner-card-list.is-expanded .crm-planner-card.crm-object-small+.crm-planner-card{margin-top:0}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{padding-right:40px;font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{padding-top:7px}.crm-planner-card.crm-object-small .crm-planner-card-progress{top:10px;right:10px;width:36px;gap:1px}.crm-planner-card.crm-object-small .crm-planner-card-progress .tk-seg{height:3px}
+      .crm-planner-add-card.crm-menu-action{flex:0 0 31px;width:100%;height:31px;text-align:left;padding-left:4px!important;font-size:var(--crm-type-caption,11px)!important;color:rgba(255,255,255,.48)!important}.crm-planner-add-card:hover{color:#fff!important}.crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:var(--crm-type-caption,11px)}
+      .crm-planner-popover{position:fixed;z-index:9300;width:min(280px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-planner-popover-hint{padding:0 3px 3px;color:rgba(255,255,255,.48);font-size:var(--crm-type-meta,10px);line-height:1.4}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
       .crm-planner-context{position:fixed;z-index:9320;width:172px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}.crm-planner-card.is-focus-target{outline:1px solid rgba(159,199,250,.72);box-shadow:0 0 0 5px rgba(90,151,232,.12),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
-      .crm-planner-zero{width:100%;height:100%;min-height:0;display:grid;place-items:center}.crm-planner-zero .crm-menu-action{height:34px;padding-inline:13px!important;color:rgba(238,245,254,.86)!important;background:rgba(13,19,28,.62)!important;border-color:rgba(213,230,250,.18)!important;box-shadow:inset 0 1px rgba(255,255,255,.08),0 12px 26px -20px rgba(0,0,0,.9)!important;font-weight:650}
+      .crm-planner-zero{width:100%;height:100%;min-height:0;display:grid;place-items:center}.crm-planner-zero-copy{width:min(330px,calc(100vw - 48px));display:grid;justify-items:center;gap:7px;text-align:center}.crm-planner-zero-copy strong{font-size:var(--crm-type-object,14px)}.crm-planner-zero-copy span{color:rgba(255,255,255,.48);font-size:var(--crm-type-caption,11px);line-height:1.45}.crm-planner-zero .crm-menu-action{height:34px;margin-top:6px;padding-inline:13px!important;color:rgba(238,245,254,.86)!important;background:rgba(13,19,28,.62)!important;border-color:rgba(213,230,250,.18)!important;box-shadow:inset 0 1px rgba(255,255,255,.08),0 12px 26px -20px rgba(0,0,0,.9)!important;font-weight:650}
       @media(max-width:900px){.crm-planner-projects{gap:6px}.crm-planner-project.crm-menu-action{width:112px}.crm-planner-head-actions{padding-left:4px}.crm-planner-text-action.crm-menu-action{padding-inline:6px!important}}
     `; document.head.appendChild(style);
   }
@@ -178,7 +181,7 @@
     run.finally(() => { if (refreshPromise === run) refreshPromise = null; }).catch(() => {});
     return run;
   }
-  const schedule = () => { dirty = true; clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (active) refresh(); }, 100); };
+  const schedule = () => { dirty = true; clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (active && !plannerDetail?.isOpen?.()) refresh(); }, 100); };
 
   function render() {
     if (!root) return;
@@ -187,23 +190,132 @@
     plannerResizeObserver?.disconnect();
     const project = selectedProject(); const stages = stagesOf(project);
     root.innerHTML = `<div class="crm-planner-frame">
-      <header class="crm-planner-projects"><span class="crm-planner-heading">Planner</span><nav class="crm-planner-project-list" role="tablist" aria-label="Projects">${model.projects.map((item) => `<button type="button" role="tab" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}" aria-selected="${item.id === project?.id}"><span class="crm-planner-project-name">${esc(item.title)}</span>${projectMapHTML(item)}</button>`).join("")}</nav><button type="button" class="crm-planner-new-project crm-menu-action" data-planner-action="new-project" aria-label="Create project">+</button><div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button>' : ""}</div></header>
-      <section class="crm-planner-stage">${project ? `<div class="crm-planner-buckets" data-planner-scroll-project="${esc(project.id)}" tabindex="0" aria-label="Scrollable project stages">${stages.map((stage) => {
+      <header class="crm-planner-projects"><span class="crm-planner-heading">Planner</span><nav class="crm-planner-project-list" role="tablist" aria-label="Pipelines">${model.projects.map((item) => `<button type="button" role="tab" class="crm-planner-project crm-menu-action${item.id === project?.id ? " is-selected" : ""}" data-planner-project="${esc(item.id)}" aria-selected="${item.id === project?.id}"><span class="crm-planner-project-name">${esc(item.title)}</span>${projectMapHTML(item)}</button>`).join("")}</nav><button type="button" class="crm-planner-new-project crm-menu-action" data-planner-action="new-project">New pipeline</button><div class="crm-planner-head-actions">${project ? '<button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Pipeline options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button>' : ""}</div></header>
+      <section class="crm-planner-stage">${project ? `<div class="crm-planner-buckets" data-planner-scroll-project="${esc(project.id)}" tabindex="0" aria-label="Scrollable pipeline stages">${stages.map((stage) => {
         const items = model.items.filter((item) => item.projectId === project.id && item.stageId === stage.id).sort((a, b) => a.rank - b.rank || String(a.createdAt).localeCompare(String(b.createdAt)));
         const expanded = stageExpanded(project.id, stage.id);
-        return `<section class="crm-planner-bucket tk-zone${expanded ? " is-stack-expanded" : ""}" data-planner-bucket="${esc(stage.id)}" data-stage="${esc(stage.id)}" data-crm-size-key="${esc(`bucket:planner:${project.id}:${stage.id}`)}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-planner-stack-toggle crm-menu-action" data-planner-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button><button type="button" class="crm-planner-stage-menu crm-menu-action" data-planner-action="stage-menu" aria-label="${esc(stage.title)} options">···</button></span></header>
-          <div class="crm-planner-card-list${expanded ? " is-expanded" : ""}">${items.length ? items.map(cardHTML).join("") : '<div class="crm-planner-empty">No work yet</div>'}</div><button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add work</button></section>`;
-      }).join("")}</div>` : '<div class="crm-planner-zero"><button type="button" class="crm-menu-action" data-planner-action="new-project">Create project</button></div>'}</section></div>`;
+        return `<section class="crm-planner-bucket tk-zone${expanded ? " is-stack-expanded" : ""}" data-planner-bucket="${esc(stage.id)}" data-stage="${esc(stage.id)}" data-card-detail-zone data-crm-size-key="${esc(`bucket:planner:${project.id}:${stage.id}`)}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r">${stageProgressHTML(project, stage.id)}<button type="button" class="crm-planner-stack-toggle crm-menu-action" data-planner-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button><button type="button" class="crm-planner-stage-menu crm-menu-action" data-planner-action="stage-menu" aria-label="${esc(stage.title)} options">···</button></span></header>
+          <div class="crm-planner-card-list${expanded ? " is-expanded" : ""}" data-card-detail-track data-card-detail-clip>${items.length ? items.map(cardHTML).join("") : '<div class="crm-planner-empty">No cards yet</div>'}</div><button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add card</button></section>`;
+      }).join("")}</div>` : '<div class="crm-planner-zero"><div class="crm-planner-zero-copy"><strong>No pipelines yet</strong><span>Create a pipeline, then add or rename its stages as the work changes.</span><button type="button" class="crm-menu-action" data-planner-action="new-project">New pipeline</button></div></div>'}</section></div>`;
     window.crmObjectSizing?.scan?.(root);
     wirePlannerScroller(project?.id);
   }
   function projectMapHTML(project) {
     return `<span class="crm-planner-project-map" aria-hidden="true">${stagesOf(project).map((stage) => `<i class="crm-planner-project-segment" data-kind="${esc(stage.kind)}" data-occupied="${model.items.some((item) => item.projectId === project.id && item.stageId === stage.id)}"></i>`).join("")}</span>`;
   }
-  function cardHTML(item) {
+  function progressSegments(project, stageId) {
+    const stages = stagesOf(project); const current = Math.max(0, stages.findIndex((stage) => stage.id === String(stageId)));
+    return stages.map((_stage, index) => `<span class="tk-seg${index <= current ? " g" : ""}"></span>`).join("");
+  }
+  function stageProgressHTML(project, stageId) {
+    return `<span class="tk-bars crm-planner-stage-progress" aria-hidden="true">${progressSegments(project, stageId)}</span>`;
+  }
+  function cardInnerHTML(item) {
+    const project = projectById(item.projectId);
     const due = item.dueAt ? new Date(item.dueAt) : null; const dueLabel = due && !Number.isNaN(due.getTime()) ? due.toLocaleDateString([], { month:"short", day:"numeric" }) : "No due date";
-    const link = item.linkedEntityType ? `${String(item.linkedEntityType).replace(/s$/, "")} · ${first(item.linkedLabel, item.linkedRecordId)}` : "Pipeline work";
-    return `<button type="button" class="crm-planner-card" draggable="true" data-planner-card="${esc(item.id)}" data-record-entity="workItems" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:workItems:${item.id}`)}"><span class="crm-planner-card-title">${esc(item.title)}</span>${item.note ? `<span class="crm-planner-card-note">${esc(item.note)}</span>` : ""}<span class="crm-planner-card-meta"><span>${esc(first(item.assignee, "Unassigned"))}</span><span>${esc(dueLabel)}</span></span><span class="crm-planner-card-meta crm-planner-card-link"><span>${esc(link)}</span><span>${esc(item.priority)}</span></span></button>`;
+    const link = item.linkedEntityType ? `${String(item.linkedEntityType).replace(/s$/, "")} · ${first(item.linkedLabel, item.linkedRecordId)}` : "";
+    return `<span class="crm-planner-card-body ticket-body"><span class="crm-planner-card-title">${esc(item.title)}</span>${item.note ? `<span class="crm-planner-card-note">${esc(item.note)}</span>` : ""}<span class="crm-planner-card-meta"><span>${esc(first(item.assignee, "Unassigned"))}</span><span>${esc(dueLabel)}</span></span>${link ? `<span class="crm-planner-card-link">${esc(link)}</span>` : ""}</span><span class="tk-bars tk-bars-card crm-planner-card-progress" aria-hidden="true">${progressSegments(project, item.stageId)}</span>`;
+  }
+  function cardHTML(item) {
+    return `<button type="button" class="crm-planner-card" draggable="true" data-planner-card="${esc(item.id)}" data-card-detail-card data-record-entity="workItems" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:workItems:${item.id}`)}" aria-label="${esc(item.title)}">${cardInnerHTML(item)}</button>`;
+  }
+
+  const plannerDetailSource = {
+    list:async () => ({ records:clone(model.items) }),
+    onChanged:(callback) => { const listener = () => callback(); listeners.add(listener); return () => listeners.delete(listener); },
+  };
+  const linkedTargetOptions = () => [
+    ["", "Nothing linked"],
+    ...model.tasks.map((record) => [`tasks:${record.id}`, `Task · ${recordName(record)}`]),
+    ...model.contacts.map((record) => [`contacts:${record.id}`, `Person · ${recordName(record)}`]),
+    ...model.tickets.map((record) => [`tickets:${record.id}`, `Ticket · ${recordName(record)}`]),
+  ];
+  const plannerDetailFields = () => [
+    { key:"title", label:"Card title", q:"What needs to happen?" },
+    { key:"note", label:"Details", q:"Add context", area:true, req:false },
+    { key:"dueAt", label:"Due", date:true, req:false },
+    { key:"assignedContactId", label:"Owner", options:() => [["", "Unassigned"], ...model.contacts.map((contact) => [contact.id, contactName(contact)])], req:false },
+    { key:"linkedTarget", label:"Linked to", options:linkedTargetOptions, req:false },
+    { key:"priority", label:"Priority", prio:true, req:false },
+  ];
+  const dateInputValue = (value) => {
+    const raw = String(value || ""); if (!raw) return ""; if (!raw.includes("T")) return raw.slice(0, 10);
+    const date = new Date(raw); if (Number.isNaN(date.getTime())) return ""; const pad = (part) => String(part).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+  function plannerDetailValue(itemId, key) {
+    const item = itemById(itemId); if (!item) return "";
+    if (key === "dueAt") return dateInputValue(item.dueAt);
+    if (key === "linkedTarget") return item.linkedEntityType && item.linkedRecordId ? `${item.linkedEntityType}:${item.linkedRecordId}` : "";
+    return item[key] ?? "";
+  }
+  function patchPlannerCard(item) {
+    if (!item) return;
+    document.querySelectorAll(`[data-planner-card="${cssValue(item.id)}"]`).forEach((card) => {
+      card.innerHTML = cardInnerHTML(item);
+      card.setAttribute("aria-label", first(item.title, "Untitled card"));
+    });
+  }
+  function queuePlannerDetailFields(itemId, fields = {}) {
+    const item = itemById(itemId); if (!item) return false;
+    const display = {}; const persist = {};
+    if (Object.prototype.hasOwnProperty.call(fields, "title")) {
+      const raw = String(fields.title || ""); display.title = raw;
+      if (raw.trim()) persist.title = raw.trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, "note")) display.note = persist.note = String(fields.note || "");
+    if (Object.prototype.hasOwnProperty.call(fields, "dueAt")) {
+      const value = String(fields.dueAt || ""); display.dueAt = persist.dueAt = value ? new Date(`${value}T17:00:00`).toISOString() : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, "assignedContactId")) {
+      const contact = model.contacts.find((record) => String(record.id) === String(fields.assignedContactId || ""));
+      display.assignedContactId = persist.assignedContactId = contact?.id || null;
+      display.assignee = persist.assignee = contact ? contactName(contact) : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, "linkedTarget")) {
+      const raw = String(fields.linkedTarget || ""); const [entityType, ...parts] = raw.split(":"); const recordId = parts.join(":");
+      const record = raw ? [...model.tasks, ...model.contacts, ...model.tickets].find((candidate) => String(candidate.id) === recordId) : null;
+      display.linkedEntityType = persist.linkedEntityType = raw ? entityType : null;
+      display.linkedRecordId = persist.linkedRecordId = raw ? recordId : null;
+      display.linkedLabel = persist.linkedLabel = raw ? recordName(record) : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, "priority")) display.priority = persist.priority = String(fields.priority || "normal");
+    Object.assign(item, display); patchPlannerCard(item);
+    if (Object.keys(persist).length) pendingDetailFields.set(item.id, { ...(pendingDetailFields.get(item.id) || {}), ...persist });
+    clearTimeout(detailSaveTimer); detailSaveTimer = setTimeout(() => { flushPlannerDetailFields(); }, 180);
+    return true;
+  }
+  function flushPlannerDetailFields() {
+    clearTimeout(detailSaveTimer); detailSaveTimer = 0;
+    const batch = [...pendingDetailFields.entries()]; pendingDetailFields.clear();
+    if (!batch.length) return detailSaveTail;
+    detailSaveTail = detailSaveTail.catch(() => null).then(async () => {
+      for (const [itemId, fields] of batch) await updateItem(itemId, fields, "item-detail-updated", { deferRefresh:true });
+    });
+    return detailSaveTail;
+  }
+  const plannerDetailStacks = {
+    stageFields:(itemId) => { const item = itemById(itemId); const project = projectById(item?.projectId); const stage = stageById(project, item?.stageId); return { key:stage?.id || "card", label:stage?.title || "Card", fields:plannerDetailFields() }; },
+    fieldValue:plannerDetailValue,
+    setMeta:queuePlannerDetailFields,
+    setPriority:(itemId, priority) => queuePlannerDetailFields(itemId, { priority }),
+    onDetailClosed:() => { flushPlannerDetailFields().finally(() => refresh(true, "item-detail-saved")); },
+  };
+  function ensurePlannerDetail() {
+    if (plannerDetail) return plannerDetail;
+    if (typeof window.createCrmCardDetail !== "function") return null;
+    plannerDetail = window.createCrmCardDetail({
+      apiName:"plannerDetail", source:plannerDetailSource, stacks:plannerDetailStacks,
+      expandedCardHeight:279,
+      priorities:["normal", "high", "urgent"], intensityValues:["normal", "high", "urgent"], defaultIntensity:"normal",
+      severityRgb:{ normal:"120,130,140", high:"120,130,140", urgent:"120,130,140", none:"120,130,140" },
+      notFoundText:"Card not found.", draftRequiredText:"A title is required to create the card.",
+    });
+    return plannerDetail;
+  }
+  function openPlannerItem(item, card) {
+    if (!item || !card) return false;
+    closeFloating(); ensurePlannerDetail()?.open(item, card); return true;
   }
 
   function updatePlannerScrollEdges() {
@@ -242,11 +354,10 @@
   }
   function openProjectCreator(anchor) {
     closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-planner-project-creator crm-menu-surface";
-    floating.innerHTML = `<div class="crm-planner-popover-title">New project</div><input class="crm-menu-input" name="title" placeholder="Project name" autocomplete="off" required><input class="crm-menu-input" name="stages" value="Backlog, In progress, Done" aria-label="Stages" autocomplete="off"><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create</button></div>`;
+    floating.innerHTML = `<div class="crm-planner-popover-title">New pipeline</div><input class="crm-menu-input" name="title" placeholder="Pipeline name" autocomplete="off" required><div class="crm-planner-popover-hint">Backlog, In progress, and Done are created automatically.</div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create pipeline</button></div>`;
     floating.addEventListener("submit", async (event) => {
       event.preventDefault(); const data = new FormData(floating); const title = String(data.get("title") || "").trim();
-      const stageTitles = String(data.get("stages") || "").split(/[,\n>]+/).map((value) => value.trim()).filter(Boolean);
-      if (!title) return; await createProject(title, "", stageTitles); closeFloating();
+      if (!title) return; await createProject(title); closeFloating();
     });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
   }
@@ -255,20 +366,6 @@
     actions.filter(Boolean).forEach((action) => { const button = document.createElement("button"); button.type = "button"; button.className = `crm-menu-action${action.danger ? " tk-menu-danger" : ""}`; button.textContent = action.label; button.addEventListener("click", () => { closeFloating(); action.run(); }); floating.appendChild(button); });
     place(floating, anchor, x, y); armOutside(floating);
   }
-  function openItemEditor(item, anchor) {
-    const project = projectById(item.projectId); if (!project) return;
-    closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-item-editor crm-menu-surface";
-    const targets = [["", "No linked record"], ...model.tasks.map((record) => [`tasks:${record.id}`, `Task · ${recordName(record)}`]), ...model.contacts.map((record) => [`contacts:${record.id}`, `Person · ${recordName(record)}`]), ...model.tickets.map((record) => [`tickets:${record.id}`, `Ticket · ${recordName(record)}`])];
-    const selectedTarget = item.linkedEntityType && item.linkedRecordId ? `${item.linkedEntityType}:${item.linkedRecordId}` : "";
-    floating.innerHTML = `<div class="crm-planner-popover-title">Work item</div><div class="crm-planner-item-fields"><input class="crm-menu-input" name="title" value="${esc(item.title)}" required><textarea class="crm-menu-input" name="note" placeholder="What does done look like?">${esc(item.note)}</textarea><select class="crm-menu-input" name="stage" aria-label="Stage">${stagesOf(project).map((stage) => `<option value="${esc(stage.id)}"${stage.id === item.stageId ? " selected" : ""}>${esc(stage.title)}</option>`).join("")}</select><input class="crm-menu-input" name="dueAt" type="date" value="${esc(String(item.dueAt || "").slice(0, 10))}" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority">${["normal","high","urgent"].map((value) => `<option value="${value}"${item.priority === value ? " selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select><select class="crm-menu-input" name="assignee" aria-label="Assignee"><option value="">Unassigned</option>${model.contacts.map((contact) => `<option value="${esc(contact.id)}"${String(item.assignedContactId || "") === String(contact.id) ? " selected" : ""}>${esc(contactName(contact))}</option>`).join("")}</select><select class="crm-menu-input crm-planner-wide" name="target" aria-label="Linked record">${targets.map(([value, label]) => `<option value="${esc(value)}"${selectedTarget === value ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Save</button></div>`;
-    floating.addEventListener("submit", async (event) => {
-      event.preventDefault(); const data = new FormData(floating); const contact = model.contacts.find((record) => String(record.id) === String(data.get("assignee") || "")); const rawTarget = String(data.get("target") || ""); const [linkedEntityType, ...parts] = rawTarget.split(":"); const due = String(data.get("dueAt") || "");
-      await updateItem(item.id, { title:String(data.get("title") || "").trim(), note:String(data.get("note") || ""), stageId:String(data.get("stage") || item.stageId), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal"), assignedContactId:contact?.id || null, assignee:contact ? contactName(contact) : null, linkedEntityType:rawTarget ? linkedEntityType : null, linkedRecordId:rawTarget ? parts.join(":") : null, linkedLabel:rawTarget ? recordName([...model.tasks, ...model.contacts, ...model.tickets].find((record) => String(record.id) === parts.join(":"))) : null });
-      closeFloating();
-    });
-    floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
-  }
-
   async function createProject(title, note = "", stageTitles = null) {
     const names = Array.isArray(stageTitles) ? [...new Set(stageTitles.map((value) => String(value || "").trim()).filter(Boolean))] : [];
     const stages = names.length ? names.map((name, index) => normalizeStage({ id:uid("stage"), title:name, kind:index === 0 ? "queue" : index === names.length - 1 ? "done" : "active", rank:index }, index)) : clone(DEFAULT_STAGES);
@@ -276,8 +373,11 @@
     if (!result?.record) return null; selectedId = result.record.id; await refresh(true, "project-created"); return clone(projectById(selectedId));
   }
   async function createStage(projectId, title) {
-    const project = projectById(projectId); if (!project) return null; const stages = stagesOf(project); const stage = normalizeStage({ id:uid("stage"), title, kind:"active", rank:stages.length }, stages.length);
-    const result = await window.crmStore.update("projects", project.id, { stages:[...stages, stage] }); if (!result?.record) return null; await refresh(true, "stage-created"); return clone(stage);
+    const project = projectById(projectId); if (!project) return null; const stages = stagesOf(project);
+    const doneIndex = stages.findIndex((candidate) => candidate.kind === "done"); const insertAt = doneIndex >= 0 ? doneIndex : stages.length;
+    const stage = normalizeStage({ id:uid("stage"), title, kind:"active", rank:insertAt }, insertAt);
+    const next = [...stages.slice(0, insertAt), stage, ...stages.slice(insertAt)].map((candidate, rank) => ({ ...candidate, rank }));
+    const result = await window.crmStore.update("projects", project.id, { stages:next }); if (!result?.record) return null; await refresh(true, "stage-created"); return clone(stage);
   }
   const createBucket = createStage;
   async function createCard(projectId, stageId, title, note = "", options = {}) {
@@ -290,7 +390,7 @@
   async function updateProject(projectId, fields, reason = "project-updated") {
     const project = projectById(projectId); if (!project) return false; const result = await window.crmStore.update("projects", project.id, fields); if (!result?.record) return false; await refresh(true, reason); return true;
   }
-  async function updateItem(itemId, fields, reason = "item-updated") {
+  async function updateItem(itemId, fields, reason = "item-updated", options = {}) {
     const item = itemById(itemId); if (!item) return false; const project = projectById(item.projectId); if (!project) return false;
     const stageRequested = Object.prototype.hasOwnProperty.call(fields, "stageId");
     const nextStage = stageRequested ? stageById(project, fields.stageId) : stageById(project, item.stageId);
@@ -314,13 +414,17 @@
         commitmentFields.links = [{ entityType:"workItems", recordId:item.id, relation:"regarding" }];
         if (entityType && recordId) commitmentFields.links.push({ entityType, recordId, relation:"supports" });
       }
-      if (Object.keys(commitmentFields).length) await window.crmDomain.update("commitments", commitment.id, commitmentFields, commitment.version);
+      if (Object.keys(commitmentFields).length) {
+        const commitmentResult = await window.crmDomain.update("commitments", commitment.id, commitmentFields, commitment.version);
+        if (commitmentResult?.record) Object.assign(commitment, commitmentResult.record);
+      }
     }
     if (moving) {
       const flow = flowFor(item); const flowFields = { stage:nextStage.id, rank:normalizedFields.rank, owner:Object.prototype.hasOwnProperty.call(normalizedFields, "assignee") ? normalizedFields.assignee : item.assignee || null };
-      if (flow) await window.crmDomain.update("workflow-entries", flow.id, flowFields, flow.version);
+      if (flow) { const flowResult = await window.crmDomain.update("workflow-entries", flow.id, flowFields, flow.version); if (flowResult?.record) Object.assign(flow, flowResult.record); }
       else await window.crmDomain.create("workflow-entries", { workflowKey:`project:${project.id}`, entityType:"workItems", recordId:item.id, ...flowFields });
     }
+    if (options.deferRefresh) { Object.assign(item, normalizedFields); dirty = true; return true; }
     await refresh(true, moving ? "item-moved" : reason); return true;
   }
   async function moveCard(itemId, stageId) {
@@ -346,8 +450,8 @@
   function projectMenu(anchor) {
     const project = selectedProject(); if (!project) return;
     openMenu(anchor, [
-      { label:"Rename", run:() => openTextEditor({ title:"Rename project", value:project.title, anchor, onSubmit:(value) => updateProject(project.id, { title:value }, "project-renamed") }) },
-      { label:"Delete project", danger:true, run:() => deleteProject(project) },
+      { label:"Rename pipeline", run:() => openTextEditor({ title:"Rename pipeline", value:project.title, anchor, onSubmit:(value) => updateProject(project.id, { title:value }, "project-renamed") }) },
+      { label:"Delete pipeline", danger:true, run:() => deleteProject(project) },
     ]);
   }
   function stageMenu(stage, anchor, x, y) {
@@ -364,22 +468,22 @@
   function itemMenu(item, anchor, x, y) {
     openMenu(anchor, [
       { label:window.crmObjectSizing?.isSmall?.(anchor, "card") ? "Make large" : "Make small", run:() => window.crmObjectSizing?.toggle?.(anchor, "card") },
-      { label:"Edit", run:() => openItemEditor(item, anchor) },
-      { label:"Delete work", danger:true, run:() => deleteItem(item.id) },
+      { label:"Open card", run:() => openPlannerItem(item, anchor) },
+      { label:"Delete card", danger:true, run:() => deleteItem(item.id) },
     ], x, y);
   }
 
   function wire() {
     root.addEventListener("click", (event) => {
       const projectButton = event.target.closest("[data-planner-project]"); if (projectButton) { selectProject(projectButton.dataset.plannerProject); return; }
-      const card = event.target.closest("[data-planner-card]"); if (card) { const item = itemById(card.dataset.plannerCard); if (item) openItemEditor(item, card); return; }
+      const card = event.target.closest("[data-planner-card]"); if (card) { const item = itemById(card.dataset.plannerCard); if (item) openPlannerItem(item, card); return; }
       const action = event.target.closest("[data-planner-action]"); if (!action) return; const project = selectedProject(); const stageElement = action.closest("[data-planner-bucket]"); const stage = stageById(project, stageElement?.dataset.plannerBucket);
       if (action.dataset.plannerAction === "new-project") openProjectCreator(action);
       if (action.dataset.plannerAction === "project-menu") projectMenu(action);
       if (action.dataset.plannerAction === "new-stage" && project) openTextEditor({ title:"New stage", placeholder:"Stage name", submit:"Add", anchor:action, onSubmit:(value) => createStage(project.id, value) });
       if (action.dataset.plannerAction === "toggle-stack" && project && stage) setStageExpanded(project.id, stage.id);
       if (action.dataset.plannerAction === "stage-menu" && stage) stageMenu(stage, action);
-      if (action.dataset.plannerAction === "new-card" && project && stage) openTextEditor({ title:`Add to ${stage.title}`, placeholder:"Work item", submit:"Add", anchor:action, onSubmit:(value) => createCard(project.id, stage.id, value) });
+      if (action.dataset.plannerAction === "new-card" && project && stage) openTextEditor({ title:`New card · ${stage.title}`, placeholder:"Card title", submit:"Add card", anchor:action, onSubmit:(value) => createCard(project.id, stage.id, value) });
     });
     root.addEventListener("keydown", (event) => {
       const current = event.target.closest(".crm-planner-project"); if (!current || !["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
@@ -445,10 +549,10 @@
   async function openItem(itemId) {
     if (dirty || !itemById(itemId)) await refresh(); const item = itemById(itemId); if (!item) return false; selectedId = item.projectId; publish("item-selected");
     await (window.crmDeskTransit?.driveTo?.("planner") || Promise.resolve(window.crmWorkspaces?.setActive?.("planner")));
-    requestAnimationFrame(() => { const card = root?.querySelector(`[data-planner-card="${cssValue(item.id)}"]`); card?.classList.add("is-focus-target"); card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); setTimeout(() => card?.classList.remove("is-focus-target"), 1600); });
+    requestAnimationFrame(() => requestAnimationFrame(() => { const card = root?.querySelector(`[data-planner-card="${cssValue(item.id)}"]`); card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); if (card) openPlannerItem(item, card); }));
     return true;
   }
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, projects:projectsSnapshot, items:() => clone(model.items), createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], homePreviewState, applyHomePreviewState, onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), createProject, createPipeline:createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmPlanner = api;

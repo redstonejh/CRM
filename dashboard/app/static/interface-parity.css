@@ -149,8 +149,8 @@
 }
 
 .ticket-detail.crm-menu-surface {
-  max-width: min(300px, calc(100vw - 28px)) !important;
-  max-height: min(560px, calc(100vh - 92px)) !important;
+  max-width: min(440px, calc(100vw - 28px)) !important;
+  max-height: none !important;
   padding: 10px 9px !important;
   gap: 7px !important;
 }

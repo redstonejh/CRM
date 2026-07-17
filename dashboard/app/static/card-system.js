@@ -41,6 +41,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // the bucket layout and the card movement itself, not extra directional UI.
   const showFlow = false;
   const showDateUnder = config.showDateUnder !== false;
+  const cardDate = typeof config.cardDate === "function" ? config.cardDate : null;
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
   const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
@@ -886,13 +887,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
       .tk-seg { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.20); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
       .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
-      /* Incident date: pinned right under the top-right stage bars, right-aligned to them. A fixed spot that
-         never moves with the card's content, in a smaller, quieter font. */
-      /* Snug under the bars (bars: top 11 + 4 tall) and tight-leaded so BOTH lines (incident date +
-         resolution date/time) sit inside the ${ZCARD_PEEK}px header band a stacked card leaves visible. */
-      .tk-date-under { position: absolute; top: 16px; right: 13px; z-index: 7; pointer-events: none;
-        font-size: var(--crm-type-micro,9px); font-weight: 600; line-height: 1.3; letter-spacing: .02em; white-space: nowrap;
-        text-align: right; color: rgba(255,255,255,0.6); }
+      /* Every entity uses the shared calendar glyph in the same top-right seat. */
+      .tk-date-under.crm-card-date { top: 20px; right: 13px; }
       /* Census D3: seeded names get two readable lines before ellipsis while
          retaining the original's clear top-right progress/date column. */
       .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 2; padding-right: 56px; }
@@ -2216,6 +2212,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
+      if (e.target.closest?.("[data-crm-card-date]")) return;
       down = true; handedOff = false; dragging = false;
       startX = e.clientX; startY = e.clientY;
       pointerId = e.pointerId; pointerType = e.pointerType || "mouse";
@@ -2265,12 +2262,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const dateUnderHTML = (t) => {
     if (!showDateUnder) return "";
     const m = metaOf(t.id);
-    const dateS = fmtDate(m.incidentDate);
-    if (!dateS) return "";
-    const ok = (v) => v && !isNA(v) && String(v).trim() ? String(v).trim() : "";
-    const resD = ok(m.resolutionDate) ? fmtDate(m.resolutionDate) : "";
-    const second = resD ? (resD === dateS ? ok(m.duration) : resD) : "";
-    return `<div class="tk-date-under">${esc(dateS)}${second ? `<br>${esc(second)}` : ""}</div>`;
+    const value = cardDate ? cardDate(t) : m.incidentDate;
+    return global.crmCardDate?.html?.(value, { className:"tk-date-under", label:`Open ${titleOf(t)} date in Calendar` }) || "";
   };
 
   // Entity-specific body rows from the face contract. Each row fn returns a
@@ -3133,6 +3126,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
+      if (e.target.closest?.("[data-crm-card-date]")) return;
       down = true; dragging = false; sx = e.clientX; sy = e.clientY;
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });

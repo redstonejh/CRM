@@ -17,7 +17,7 @@
 (() => {
   const PRIORITIES = ["low", "medium", "high", "critical"];
   const GAP = 10;            // gap between the card and the panel — matches GAP_FAN (the fanned-stack gap)
-  const PANEL_W = 300;       // panel width (matches .ticket-detail width)
+  const PANEL_W = 360;
   // Tuck distance: the panel must hide FAR enough left that even its drop shadow
   // (blur 42px ⇒ ~60px reach) clears the clip-path's left edge — otherwise the
   // shadow peeks past the clip and sits frozen mid-screen while the card flies.
@@ -29,7 +29,7 @@
   const DOF_BLUR = 4, DOF_OUT_MS = 320;             // depth-of-field: peak blur of the world behind the open ticket + its detransition
   let overlay = null, panel = null, flyCard = null, wrap = null;
   let currentId = null, sourceEl = null, backTransform = "", subscribed = false, closing = false;
-  let geo = null, settleTimer = null, panelSide = "right";   // which side the panel emerges from
+  let geo = null, settleTimer = null, panelFitRaf = 0, panelSide = "right";   // which side the panel emerges from
   let cardStays = false;     // true when the card doesn't move (front/closed-pile card) → panel opens with no delay
   let scrim = null;          // full-screen backdrop-blur layer behind the flyer/panel (depth-of-field)
   const slideBack = () => `translateX(${panelSide === "left" ? "" : "-"}${TUCK}px)`;  // retract direction (mirrors per side)
@@ -88,7 +88,7 @@
       .td-wrap { position: fixed; z-index: 1; clip-path: inset(-260px -260px -260px 0); }
       .td-wrap.is-settled { clip-path: none; }
       .td-wrap .ticket-detail { margin-left: ${GAP}px; transform: translateX(-${TUCK}px);
-        transition: transform ${SLIDE_MS}ms ${EASE}; will-change: transform; }
+        transition: transform ${SLIDE_MS}ms ${EASE}, width ${SLIDE_MS}ms ${EASE}, height ${SLIDE_MS}ms ${EASE}; will-change: transform, width, height; }
       .td-wrap.is-open .ticket-detail { transform: translateX(0); transition-delay: ${SLIDE_DELAY}ms; }  /* slide out AFTER the card centres */
       /* LEFT-side panel (mirror image): the panel sits to the card's LEFT, tucks to the RIGHT
          behind the card, and slides out leftward. The wrap anchor + clip-path are set inline
@@ -102,7 +102,7 @@
       /* THE MENU shell — the .dashboard-search-popover / .auth-profile-menu recipe.
          Drop shadow alpha starts at 0 (invisible) so it can be transitioned in at settle —
          two matching shadow layers keep the box-shadow transition smooth. */
-      .ticket-detail { width: ${PANEL_W}px; box-sizing: border-box; overflow: auto;
+      .ticket-detail { width: ${PANEL_W}px; box-sizing: border-box; overflow: hidden;
         padding: 11px 10px; border-radius: 14px; color: #fff;
         display: flex; flex-direction: column; gap: 9px;
         background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
@@ -111,14 +111,6 @@
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 18px 42px rgba(0,0,0,0); }
       .td-wrap.is-settled .ticket-detail { box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 18px 42px rgba(0,0,0,0.4); }
       .ticket-detail :focus, .ticket-detail :focus-visible { outline: none !important; box-shadow: none !important; }
-      /* Sleek overlay scrollbar — same recipe as the search sub-menu. */
-      /* Scrollbars match the fanned decks / buckets: thin bright overlay thumb on a clear track. */
-      .ticket-detail, .td-ta { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.6) transparent; }
-      .ticket-detail::-webkit-scrollbar, .td-ta::-webkit-scrollbar { width: 8px; }
-      .ticket-detail::-webkit-scrollbar-track, .td-ta::-webkit-scrollbar-track { background: transparent; }
-      .ticket-detail::-webkit-scrollbar-thumb, .td-ta::-webkit-scrollbar-thumb { background: rgba(255,255,255,.55); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
-      .ticket-detail::-webkit-scrollbar-thumb:hover, .td-ta::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.72); background-clip: padding-box; }
-
       /* Header: "name | ip" on top, then "Down <time> | <opened timestamp>". */
       .td-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; }
       .td-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--crm-type-object,14px); font-weight: 700; line-height: 1.2; }
@@ -163,7 +155,7 @@
       .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
         background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: var(--crm-type-body,12px); padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
-      .td-ta { resize: vertical; min-height: 0; height: auto; line-height: 1.4; }
+      .td-ta { resize: none; min-height: 0; height: auto; line-height: 1.4; overflow:hidden; }
 
       /* Claim + Resolve share one row, pinned to the bottom of the card-height panel. */
       .td-acts { display: flex; flex-direction: row; gap: 20px; margin-top: auto; padding-top: 6px; }
@@ -174,7 +166,7 @@
       .td-act.td-danger { color: rgba(255,135,135,0.85); margin-left: auto; }   /* Delete/Restore sits at the far end */
       .td-act.td-danger:hover { color: #ff8a8a; }
 
-      .td-log { display: flex; flex-direction: column; gap: 7px; max-height: 160px; overflow: auto;
+      .td-log { display: flex; flex-direction: column; gap: 7px; max-height: none; overflow: visible;
         background: rgba(255,255,255,0.05); border-radius: 9px; padding: 8px 9px; }
       .td-ev { font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.78); }
       .td-ev b { font-weight: 700; }
@@ -253,7 +245,8 @@
   const flyerInner = () => {
     const body = sourceEl ? sourceEl.querySelector(".ticket-body, [data-ticket-mount]") : null;
     const bars = sourceEl ? sourceEl.querySelector(".tk-bars-card") : null;
-    return `<div class="ticket-body">${body ? body.innerHTML : ""}</div>` + (bars ? bars.outerHTML : "");
+    const date = sourceEl ? sourceEl.querySelector(".crm-card-date") : null;
+    return `<div class="ticket-body">${body ? body.innerHTML : ""}</div>` + (bars ? bars.outerHTML : "") + (date ? date.outerHTML : "");
   };
   // Mirror the (live-patched) source card onto the flyer: refresh its bars + body and recolour it, so
   // the flying card tracks edits in real time (a filled field greening a segment; a severity recolour).
@@ -309,18 +302,17 @@
     overlay.appendChild(scrim);
     const vw = window.innerWidth, vh = window.innerHeight;
     const sr = sourceEl ? sourceEl.getBoundingClientRect() : { left: vw / 2 - 93, top: vh / 2 - 140, width: 186, height: 279 };
-    const cardW = sr.width, cardH = sr.height;
+    const sourceW = sr.width, sourceH = sr.height, cardW = sr.width, cardH = sr.height;
     const ctx = contextOf(sourceEl);
     const motion = ctx.motion;
-    const moves = motion === "slide" || motion === "center";   // these reposition the card itself
     cardStays = motion === "stay";
 
-    // Flyer destination from the motion (then clamped so the CARD stays on-screen).
+    // Flyer destination from the motion; its shared vertical center is finalized
+    // after the complete panel content has been measured.
     let tT = sr.top, tL = sr.left;
     if (motion === "rise") tT = sr.top - cardH;          // bottom edge meets the resting row's top edge
     else if (motion === "slide") tL = sr.left + cardW;   // left edge clears the column's right edge
     else if (motion === "center") { tL = (vw - cardW) / 2; tT = (vh - cardH) / 2; }
-    const targetTop = Math.round(Math.max(10, Math.min(tT, vh - 10 - cardH)));
     let targetLeft = Math.round(Math.max(10, Math.min(tL, vw - 10 - cardW)));
 
     // Panel side: prefer LEFT; flip to RIGHT only when a left panel would fall off-screen (edges
@@ -331,11 +323,25 @@
       : left + cardW + GAP + PANEL_W <= vw - 10;
     let side = ctx.side || "left";   // ctx.side is forced for a fanned card with verified room beside it
     if (!ctx.side && !fits(targetLeft, "left") && fits(targetLeft, "right")) side = "right";
-    if (moves && !fits(targetLeft, side)) targetLeft = side === "left"
-      ? Math.round(Math.max(10 + GAP + PANEL_W, Math.min(targetLeft, vw - 10 - cardW)))
-      : Math.round(Math.min(targetLeft, vw - 10 - cardW - GAP - PANEL_W));
+    if (!fits(targetLeft, side)) {
+      targetLeft = side === "left"
+        ? Math.round(Math.max(10 + GAP + PANEL_W, Math.min(targetLeft, vw - 10 - cardW)))
+        : Math.round(Math.max(10, Math.min(targetLeft, vw - 10 - cardW - GAP - PANEL_W)));
+      cardStays = false;
+    }
     panelSide = side;
-    geo = { targetLeft, targetTop, cardW, cardH };
+
+    panel = document.createElement("div");
+    panel.className = "ticket-detail crm-menu-surface";
+    panel.style.cssText = `position:fixed;left:-10000px;top:0;width:${PANEL_W}px;height:auto;transition:none;`;
+    overlay.appendChild(panel);
+    render(ticket);
+    const naturalPanelH = Math.ceil(panel.scrollHeight + Math.max(0, panel.offsetHeight - panel.clientHeight));
+    const panelH = Math.max(naturalPanelH, Math.min(vh - 20, sourceH + 34));
+    const sharedHalf = Math.max(cardH, panelH) / 2;
+    const centerY = Math.round(Math.max(10 + sharedHalf, Math.min(tT + cardH / 2, vh - 10 - sharedHalf)));
+    const targetTop = Math.round(centerY - cardH / 2);
+    geo = { targetLeft, targetTop, cardW, cardH, sourceW, sourceH, panelW:PANEL_W, panelH, panelSourceW:Math.min(sourceW, PANEL_W), panelSourceH:sourceH, centerY };
 
     // Build the flyer FRESH (not a clone). A clone drags along every widget class +
     // backdrop-filter, which is what washed it brighter-than-hover mid-flight. A plain
@@ -375,13 +381,26 @@
     }
     wrap.style.top = `${targetTop + cardH / 2}px`;
     wrap.style.transform = "translateY(-50%)";
-    panel = document.createElement("div");
-    panel.className = "ticket-detail crm-menu-surface";
-    panel.style.height = `${Math.round(cardH)}px`;   // same vertical height as the ticket card
+    panel.style.cssText = `width:${Math.round(geo.panelSourceW)}px;height:${Math.round(geo.panelSourceH)}px;overflow:hidden;`;
     wrap.appendChild(panel);
     overlay.appendChild(wrap);
+  };
 
-    render(ticket);
+  const fitPanelToContent = () => {
+    if (!panel || !wrap || !geo || closing) return;
+    cancelAnimationFrame(panelFitRaf);
+    panelFitRaf = requestAnimationFrame(() => {
+      panelFitRaf = 0; if (!panel || !wrap || !geo || closing) return;
+      const required = Math.ceil(panel.scrollHeight + Math.max(0, panel.offsetHeight - panel.clientHeight));
+      if (required <= geo.panelH + 1) return;
+      geo.panelH = required;
+      const sharedHalf = Math.max(geo.cardH, geo.panelH) / 2;
+      geo.centerY = Math.round(Math.max(10 + sharedHalf, Math.min(geo.targetTop + geo.cardH / 2, innerHeight - 10 - sharedHalf)));
+      panel.style.transition = `height 240ms ${EASE}, box-shadow .25s ease`;
+      panel.style.height = `${geo.panelH}px`;
+      if (wrap.classList.contains("is-settled")) wrap.style.top = `${Math.round(geo.centerY - geo.panelH / 2)}px`;
+      else wrap.style.top = `${geo.centerY}px`;
+    });
   };
 
   const ticketById = async (id) => {
@@ -410,6 +429,7 @@
     if (!acc) return;
     if (focusSel) { const f = panel.querySelector(focusSel); if (f) f.focus(); }
     requestAnimationFrame(() => { try { acc.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch {} });
+    setTimeout(fitPanelToContent, 260);
   };
 
   const render = (t) => {
@@ -454,6 +474,7 @@
       <div class="td-acts">${actions.join("")}</div>`;
     wire(t);
     window.crmInterfaceParity?.scan?.(panel);
+    fitPanelToContent();
   };
 
   const refresh = async () => {
@@ -471,6 +492,7 @@
         const key = element.dataset.secToggle;
         const accordion = panel.querySelector(`.td-acc[data-sec="${key}"]`);
         if (accordion.classList.toggle("is-open")) openSections.add(key); else openSections.delete(key);
+        setTimeout(fitPanelToContent, 260);
       };
     });
     if (!t) return;
@@ -563,6 +585,7 @@
     const dofMs = cardStays ? SLIDE_MS : SETTLE_MS;
     requestAnimationFrame(() => {
       if (flyCard) flyCard.style.transform = "translate(0, 0)";  // card flies smoothly to centre
+      if (panel) { panel.style.width = `${geo.panelW}px`; panel.style.height = `${geo.panelH}px`; }
       if (wrap) wrap.classList.add("is-open");                   // panel slides out from behind (delayed in CSS)
       setBlur(DOF_BLUR, dofMs, "ease-out");
     });
@@ -578,7 +601,7 @@
       panel.style.transform = "none";
       panel.style.willChange = "auto";
       wrap.style.transform = "none";
-      wrap.style.top = `${Math.round(geo.targetTop + geo.cardH / 2 - panel.offsetHeight / 2)}px`;
+      wrap.style.top = `${Math.round(geo.centerY - panel.offsetHeight / 2)}px`;
     }, cardStays ? SLIDE_MS + 40 : SETTLE_MS);   // no fly → the panel is out a beat sooner
     if (!subscribed) { subscribed = true; window.tickets?.onChanged?.(() => refresh()); }
   };
@@ -589,20 +612,23 @@
     if (!overlay || overlay.hidden || closing) return;
     closing = true;
     clearTimeout(settleTimer);
+    cancelAnimationFrame(panelFitRaf); panelFitRaf = 0;
     setBlur(0, DOF_OUT_MS, "ease-in");   // smoothly pull the world back into focus as the panel leaves
     // Un-settle: re-clip + restore the centring transform, then tuck the panel back behind
     // the card. Removing .is-settled instantly drops the drop shadow (back to alpha 0) so
     // there's no shadow being dragged/clipped while it slides home, and re-enables the clip.
     if (wrap && panel && geo) {
       wrap.classList.remove("is-settled");
-      wrap.style.top = `${geo.targetTop + geo.cardH / 2}px`;
+      wrap.style.top = `${geo.centerY}px`;
       wrap.style.transform = "translateY(-50%)";
-      panel.style.willChange = "transform";
+      panel.style.willChange = "transform, width, height";
       panel.style.transition = "none";
       panel.style.transform = "translateX(0)";
       void panel.offsetWidth;                 // commit current position
-      panel.style.transition = `transform ${CLOSE_SLIDE_MS}ms ${EASE}`;
+      panel.style.transition = `transform ${CLOSE_SLIDE_MS}ms ${EASE}, width ${CLOSE_SLIDE_MS}ms ${EASE}, height ${CLOSE_SLIDE_MS}ms ${EASE}`;
       panel.style.transform = slideBack();    // retract fully behind the card (fast, mirrored per side)
+      panel.style.width = `${geo.panelSourceW}px`;
+      panel.style.height = `${geo.panelSourceH}px`;
     }
     if (wrap) wrap.classList.remove("is-open");
     const fc = flyCard;

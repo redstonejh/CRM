@@ -482,13 +482,27 @@ async function main() {
       && ['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow'].every((property) => actual[property] === expected[property]);
   });
   await page.click('.crm-assignment-menu .crm-menu-action');
-  await page.waitForSelector('.crm-assignment-editor');
-  await check('Assignment editing stays anchored, compact, and fully linked', () => {
-    const editor = document.querySelector('.crm-assignment-editor'); const rect = editor?.getBoundingClientRect();
-    return !!rect && rect.width <= 390 && rect.height < 430 && !!editor.querySelector('[name="assignee"]') && !!editor.querySelector('[name="target"]')
-      && !!editor.querySelector('[name="stage"]') && !document.querySelector('.crm-record-scrim:not([hidden])');
+  await page.waitForSelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]:not([hidden]) .ticket-detail');
+  await sleep(760);
+  await check('Assignment editing unfolds from its real card and fits every linked field without scrolling', () => {
+    const overlay = document.querySelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]:not([hidden])'); const panel = overlay?.querySelector('.ticket-detail'); const flyer = overlay?.querySelector('.td-flyer');
+    const panelRect = panel?.getBoundingClientRect(); const flyerRect = flyer?.getBoundingClientRect(); const style = panel && getComputedStyle(panel);
+    return !!panelRect && !!flyerRect && panelRect.width > flyerRect.width + 100 && panelRect.height > flyerRect.height
+      && panel.scrollHeight <= panel.clientHeight + 1 && !['auto','scroll'].includes(style.overflowY)
+      && ['title','context','stage','dueAt','assignedTarget','linkedTarget'].every((key) => !!panel.querySelector(`[data-field="${key}"]`))
+      && panel.querySelectorAll('.td-prio-opt').length === 3 && !document.querySelector('.crm-record-scrim:not([hidden])');
   });
-  await page.click('.crm-assignment-editor [data-cancel]');
+  await page.click('.ticket-detail-overlay[data-card-detail="assignmentDetail"] .td-x');
+  await page.waitForFunction(() => document.querySelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]')?.hidden === true);
+  const assignmentCalendarDate = await page.$eval(`${assignmentScope} [data-crm-card-date]`, (date) => { const value = date.dataset.crmCardDate; date.click(); return value; });
+  await sleep(700);
+  await check('The top calendar glyph opens the card date at its month pane', (value) => {
+    const date = new Date(`${value}T12:00:00`); const month = date.getMonth() + 1;
+    const pane = document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${month}"]`);
+    return { ok:document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1 && pane?.hidden === false && window.fractalCalendar.year() === date.getFullYear(),
+      detail:JSON.stringify({ value, module:document.body.dataset.crmModule, level:window.fractalCalendar?.level?.(), year:window.fractalCalendar?.year?.(), pane:!!pane, hidden:pane?.hidden }) };
+  }, assignmentCalendarDate);
+  await activate('assignments');
 
   const assignmentCardTier = await page.$eval(assignmentCardSelector, (card) => { const rect=card.getBoundingClientRect(),face=card.querySelector('.crm-assignment-card-face')?.getBoundingClientRect(); return { id:card.dataset.assignmentCard, width:rect.width, height:rect.height, faceWidth:face?.width, faceHeight:face?.height, stage:card.closest('[data-assignment-stage]')?.dataset.assignmentStage, details:card.querySelectorAll('.crm-assignment-card-meta').length, note:card.querySelector('.crm-assignment-card-note')?.textContent || '' }; });
   await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
@@ -730,6 +744,7 @@ async function main() {
   await page.waitForSelector(ticketCard, { timeout: 10000 });
   await page.click(ticketCard);
   await page.waitForSelector('.ticket-detail', { timeout: 5000 });
+  await sleep(760);
   await check('Left-click runs the ticket-reference card flight and guided work screen', () => (
     !!document.querySelector('.ticket-detail-overlay:not([hidden]) .td-card')
       && !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail')
@@ -738,19 +753,23 @@ async function main() {
       && !!document.querySelector('.ticket-detail .td-acts .td-act[data-act="delete"]')
       && !document.querySelector('.ticket-detail .td-field, .ticket-detail .td-save')
   ));
-  await check('Ticket detail is a compact canonical config menu with no full-screen visual scrim', () => {
+  await check('Ticket detail unfolds beyond its card, fits its work surface, and keeps the canonical glass', () => {
     const overlay = document.querySelector('.ticket-detail-overlay:not([hidden])');
     const panel = overlay?.querySelector('.ticket-detail');
     const scrim = overlay?.querySelector('.td-scrim');
     const reference = document.querySelector('.auth-profile-menu');
     if (!overlay || !panel || !reference) return false;
     const rect = panel.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const overlayStyle = getComputedStyle(overlay);
-    return panel.classList.contains('crm-menu-surface') && rect.width <= 310 && rect.height <= 570
+    const ok = panel.classList.contains('crm-menu-surface') && rect.width >= 340 && rect.width <= 440 && rect.height > 279
+      && panel.scrollHeight <= panel.clientHeight + 1 && !['auto','scroll'].includes(actual.overflowY)
       && overlayStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(overlayStyle.backdropFilter)
       && (!scrim || getComputedStyle(scrim).display === 'none')
       && [...panel.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'))
       && [...panel.querySelectorAll('input,textarea,select')].every((input) => input.classList.contains('crm-menu-input'))
       && ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderRadius', 'boxShadow'].every((property) => actual[property] === expected[property]);
+    return { ok, detail:JSON.stringify({ rect:[rect.width,rect.height], scroll:[panel.scrollHeight,panel.clientHeight,actual.overflowY], overlay:[overlayStyle.backgroundColor,overlayStyle.backdropFilter], scrim:scrim&&getComputedStyle(scrim).display,
+      buttons:[...panel.querySelectorAll('button')].filter((button)=>!button.classList.contains('crm-menu-action')).map((button)=>button.className), inputs:[...panel.querySelectorAll('input,textarea,select')].filter((input)=>!input.classList.contains('crm-menu-input')).map((input)=>input.className),
+      parity:['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow'].filter((property)=>actual[property]!==expected[property]).map((property)=>[property,actual[property],expected[property]]) }) };
   });
   await page.keyboard.press('Escape');
   await sleep(520);
@@ -961,7 +980,7 @@ async function main() {
   await check('A new pipeline offers restrained presets and an explicit custom structure', () => {
     const form = document.querySelector('.crm-planner-project-creator');
     return !!form && form.classList.contains('crm-menu-surface') && form.elements.title
-      && [...form.querySelectorAll('[data-planner-preset]')].map((button) => button.textContent.trim().split(/\s/)[0]).join('|') === 'Simple|Review|Custom'
+      && [...form.querySelectorAll('[data-planner-preset] .crm-planner-preset-name')].map((label) => label.textContent.trim()).join('|') === 'Simple|Review|Custom'
       && form.querySelector('[data-planner-preset="simple"]')?.getAttribute('aria-checked') === 'true'
       && form.querySelector('.crm-planner-custom-builder')?.hidden === true
       && form.querySelector('[type="submit"]')?.textContent.trim() === 'Create pipeline' && form.getBoundingClientRect().width <= 380;
@@ -1025,7 +1044,8 @@ async function main() {
       && source.initial && Math.abs(source.initial[0] - source.left) <= 1 && Math.abs(source.initial[1] - source.top) <= 1
       && Math.abs(source.initial[2] - source.width) <= 1 && Math.abs(source.initial[3] - source.height) <= 1
       && flyerRect.left >= source.right - 2 && Math.abs(flyerRect.height - 279) <= 1 && flyerRect.height > source.height * 2
-      && Math.abs(panelRect.height - flyerRect.height) <= 1 && Math.abs(panelRect.width - 300) <= 1
+      && panelRect.height > flyerRect.height && panelRect.width > source.width + 100
+      && panel.scrollHeight <= panel.clientHeight + 1 && !['auto','scroll'].includes(getComputedStyle(panel).overflowY)
       && flyer.querySelectorAll('.crm-planner-card-progress .tk-seg').length === 4
       && flyer.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length === source.progress
       && depthOfField

@@ -247,7 +247,8 @@
     attentionDeckFilter: () => false,
     rightDeckEnabled: false,
     showProgressBars: false,
-    showDateUnder: false,
+    showDateUnder: true,
+    cardDate: (contact) => valueOf(contact, "nextTouchAt"),
     stageMovement: "free",
     stageUpdateFields: (_id, stage) => {
       const company = companies.find((item) => String(item.id) === String(stage));

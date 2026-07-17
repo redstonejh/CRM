@@ -51,6 +51,10 @@
   let refreshPromise = null;
   let refreshTail = Promise.resolve();
   let floating = null;
+  let assignmentDetail = null;
+  let detailSaveTimer = 0;
+  let detailSaveTail = Promise.resolve();
+  const pendingDetailFields = new Map();
   let dragItemId = "";
   let currentUser = "";
   let selectedFilter = localStorage.getItem(FILTER_KEY) || "all";
@@ -92,7 +96,7 @@
       .crm-assignment-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 1px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.5) transparent}.crm-assignment-card-list.is-expanded{gap:8px}
       .crm-assignment-work-card{appearance:none;position:relative;flex:0 0 auto;width:var(--assignment-card-width);height:var(--assignment-card-height);box-sizing:border-box;padding:0;text-align:left;border:0;border-radius:15px;color:#fff;background:transparent;cursor:grab;overflow:visible;transition:width .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1),margin .2s cubic-bezier(.22,1,.26,1),opacity .14s ease}.crm-assignments-surface.is-seating .crm-assignment-work-card{transition:none!important}.crm-assignment-work-card+.crm-assignment-work-card{margin-top:-237px}.crm-assignment-work-card.crm-object-small+.crm-assignment-work-card{margin-top:-189.6px}.crm-assignment-card-list.is-expanded .crm-assignment-work-card+.crm-assignment-work-card{margin-top:0}.crm-assignment-work-card:focus-visible{outline:0}.crm-assignment-work-card.is-dragging{opacity:.3}.crm-assignment-work-card:active{cursor:grabbing}
       .crm-assignment-card-face{position:absolute;left:0;top:0;width:var(--assignment-card-width);height:var(--assignment-card-height);box-sizing:border-box;padding:14px 15px;border-radius:15px;display:flex;flex-direction:column;overflow:hidden;transform:scale(1);transform-origin:top left;background-color:rgb(107,114,128);background-image:linear-gradient(180deg,rgba(14,165,233,.42),rgba(14,165,233,.2));box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.55);transition:transform .18s cubic-bezier(.22,1,.26,1),box-shadow .14s ease}.crm-assignment-work-card[data-priority="high"] .crm-assignment-card-face{background-image:linear-gradient(180deg,rgba(202,138,4,.45),rgba(202,138,4,.22))}.crm-assignment-work-card[data-priority="urgent"] .crm-assignment-card-face{background-image:linear-gradient(180deg,rgba(220,38,38,.46),rgba(190,24,93,.2))}.crm-assignment-work-card:hover .crm-assignment-card-face,.crm-assignment-work-card:focus-visible .crm-assignment-card-face{box-shadow:inset 0 0 0 9999px rgba(255,255,255,.1),inset 0 1px rgba(255,255,255,.32),0 14px 18px -14px rgba(0,0,0,.55)}
-      .crm-assignment-card-progress{position:absolute;right:13px;top:14px;display:flex;gap:3px}.crm-assignment-card-progress i{display:block;width:8px;height:3px;border-radius:4px;background:rgba(255,255,255,.18)}.crm-assignment-card-progress i.is-past{background:rgba(94,231,157,.8)}.crm-assignment-card-title{display:block;max-width:132px;font-size:var(--crm-type-object,14px);font-weight:800;line-height:1.22;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-assignment-card-note{display:-webkit-box;margin-top:9px;color:rgba(255,255,255,.67);font-size:var(--crm-type-body,12px);line-height:1.38;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}.crm-assignment-card-details{display:grid;gap:7px;margin-top:auto;padding-top:13px}.crm-assignment-card-meta{display:grid;grid-template-columns:48px minmax(0,1fr);gap:6px;color:rgba(255,255,255,.75);font-size:var(--crm-type-meta,10px);line-height:1.25}.crm-assignment-card-meta b{color:rgba(255,255,255,.4);font-weight:700}.crm-assignment-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .crm-assignment-card-progress{position:absolute;right:13px;top:14px;display:flex;gap:3px}.crm-assignment-card-progress i{display:block;width:8px;height:3px;border-radius:4px;background:rgba(255,255,255,.18)}.crm-assignment-card-progress i.is-past{background:rgba(94,231,157,.8)}.crm-assignment-card-title{display:block;max-width:132px;font-size:var(--crm-type-object,14px);font-weight:800;line-height:1.22;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-assignment-card-face>.crm-card-date{top:23px;right:13px}.crm-assignment-card-note{display:-webkit-box;margin-top:9px;color:rgba(255,255,255,.67);font-size:var(--crm-type-body,12px);line-height:1.38;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}.crm-assignment-card-details{display:grid;gap:7px;margin-top:auto;padding-top:13px}.crm-assignment-card-meta{display:grid;grid-template-columns:48px minmax(0,1fr);gap:6px;color:rgba(255,255,255,.75);font-size:var(--crm-type-meta,10px);line-height:1.25}.crm-assignment-card-meta b{color:rgba(255,255,255,.4);font-weight:700}.crm-assignment-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .crm-assignment-empty{height:100%;display:grid;place-items:center;padding:15px;text-align:center;color:rgba(255,255,255,.28);font-size:var(--crm-type-caption,11px)}
       .crm-assignment-bucket.crm-object-small{scale:1!important;flex-basis:203.68px;width:203.68px;height:76%}.crm-assignment-bucket.crm-object-small .crm-assignment-bucket-shell{width:268px;height:131.578947%;transform:scale(.76)}.crm-assignment-work-card.crm-object-small{scale:1!important;width:148px;height:223.2px;border-radius:12px}.crm-assignment-work-card.crm-object-small .crm-assignment-card-face{transform:scale(.8)}
       .crm-assignment-hsb{position:absolute;z-index:3;left:0;right:0;bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-assignment-hsb.is-on{opacity:1;pointer-events:auto}.crm-assignment-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease;-webkit-app-region:no-drag}.crm-assignment-hth:hover{background:rgba(255,255,255,.88)}.crm-assignment-hth:active{cursor:grabbing;background:#fff}
@@ -128,16 +132,12 @@
     setTimeout(() => { const outside = (event) => { if (element.contains(event.target)) return; closeFloating(); document.removeEventListener("pointerdown", outside, true); }; document.addEventListener("pointerdown", outside, true); }, 0);
   };
 
-  const dueLabel = (item) => {
-    if (!item.dueAt) return "No due date"; const date = new Date(item.dueAt); if (Number.isNaN(date.getTime())) return "No due date";
-    const days = Math.ceil((date.getTime() - Date.now()) / 86400000); if (days < 0) return `${Math.abs(days)}d overdue`; if (days === 0) return "Due today"; if (days === 1) return "Due tomorrow";
-    return date.toLocaleDateString([], { month:"short", day:"numeric" });
-  };
   const contextLabel = (item) => { const link = linkOf(item); if (!link) return "Independent work"; const entity = ({ workItems:"Pipeline", tickets:"Ticket", tasks:"Task", contacts:"Person", companies:"Company" })[link.entityType] || "Work"; return `${entity} · ${recordName(targetRecord(link) || { id:link.recordId })}`; };
   function cardHTML(item) {
     const currentStage = stageOf(item); const stageIndex = Math.max(0, STAGES.findIndex((stage) => stage.id === currentStage));
     const progress = STAGES.map((stage, index) => `<i class="${index <= stageIndex ? "is-past" : ""}" title="${esc(stage.title)}"></i>`).join("");
-    return `<button type="button" class="crm-assignment-work-card" draggable="true" data-assignment-card="${esc(item.id)}" data-record-entity="commitments" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:commitments:${item.id}`)}" data-priority="${esc(String(item.priority || "normal").toLowerCase())}" aria-label="${esc(first(item.title, "Untitled assignment"))}"><span class="crm-assignment-card-face"><span class="crm-assignment-card-progress" aria-hidden="true">${progress}</span><span class="crm-assignment-card-title">${esc(first(item.title, "Untitled assignment"))}</span>${first(item.context, item.note, item.description) ? `<span class="crm-assignment-card-note">${esc(first(item.context, item.note, item.description))}</span>` : ""}<span class="crm-assignment-card-details"><span class="crm-assignment-card-meta"><b>Owner</b><span>${esc(first(item.assignee, "Unassigned"))}</span></span><span class="crm-assignment-card-meta"><b>Due</b><span>${esc(dueLabel(item))}</span></span><span class="crm-assignment-card-meta"><b>For</b><span>${esc(contextLabel(item))}</span></span><span class="crm-assignment-card-meta"><b>Priority</b><span>${esc(first(item.priority, "Normal"))}</span></span></span></span></button>`;
+    const date = window.crmCardDate?.html?.(item.dueAt, { label:`Open ${first(item.title, "assignment")} due date in Calendar` }) || "";
+    return `<button type="button" class="crm-assignment-work-card" draggable="true" data-assignment-card="${esc(item.id)}" data-card-detail-card data-record-entity="commitments" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:commitments:${item.id}`)}" data-priority="${esc(String(item.priority || "normal").toLowerCase())}" aria-label="${esc(first(item.title, "Untitled assignment"))}"><span class="crm-assignment-card-face ticket-body"><span class="crm-assignment-card-progress" aria-hidden="true">${progress}</span>${date}<span class="crm-assignment-card-title">${esc(first(item.title, "Untitled assignment"))}</span>${first(item.context, item.note, item.description) ? `<span class="crm-assignment-card-note">${esc(first(item.context, item.note, item.description))}</span>` : ""}<span class="crm-assignment-card-details"><span class="crm-assignment-card-meta"><b>Owner</b><span>${esc(first(item.assignee, "Unassigned"))}</span></span><span class="crm-assignment-card-meta"><b>For</b><span>${esc(contextLabel(item))}</span></span><span class="crm-assignment-card-meta"><b>Priority</b><span>${esc(first(item.priority, "Normal"))}</span></span></span></span></button>`;
   }
 
   const boardElements = () => ({
@@ -220,7 +220,7 @@
     const visible = filteredItems(); const openCount = model.commitments.filter((item) => !closed(item)).length; const unassignedCount = model.commitments.filter((item) => stageOf(item) === "unassigned").length;
     root.innerHTML = `<div class="crm-assignments-frame"><header class="crm-assignment-tabs"><span class="crm-assignment-title">Assignments</span><nav class="crm-assignment-filters" role="tablist" aria-label="Assignment filters">${FILTERS.map((filter) => `<button type="button" role="tab" class="crm-assignment-filter crm-menu-action${filter.id === selectedFilter ? " is-selected" : ""}" data-assignment-filter="${filter.id}" aria-selected="${filter.id === selectedFilter}" aria-pressed="${filter.id === selectedFilter}">${esc(filter.label)}</button>`).join("")}</nav><span class="crm-assignment-tab-status">${openCount} open · ${unassignedCount} unassigned</span><button type="button" class="crm-assignment-new crm-menu-action" data-assignment-action="new" aria-label="Create assignment">+</button></header><section class="crm-assignment-board" aria-label="Assignment pipeline"><div class="crm-assignment-board-clip" tabindex="0" aria-label="Scrollable assignment buckets"><div class="crm-assignment-pipeline">${STAGES.map((stage) => {
       const items = sorted(visible.filter((item) => stageOf(item) === stage.id)); const expanded = expandedStages.has(expansionKey(stage.id));
-      return `<section class="crm-assignment-bucket${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><div class="crm-assignment-bucket-shell tk-zone${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-assignment-stack-toggle crm-menu-action" data-assignment-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></header><div class="crm-assignment-card-list${expanded ? " is-expanded" : ""}">${items.length ? items.map(cardHTML).join("") : '<div class="crm-assignment-empty">No work here</div>'}</div></div></section>`;
+       return `<section class="crm-assignment-bucket${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><div class="crm-assignment-bucket-shell tk-zone${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-card-detail-zone data-crm-size-key="bucket:assignments:${stage.id}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r"><button type="button" class="crm-assignment-stack-toggle crm-menu-action" data-assignment-action="toggle-stack" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(stage.title)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></header><div class="crm-assignment-card-list${expanded ? " is-expanded" : ""}" data-card-detail-track data-card-detail-clip>${items.length ? items.map(cardHTML).join("") : '<div class="crm-assignment-empty">No work here</div>'}</div></div></section>`;
     }).join("")}</div></div><div class="crm-assignment-hsb" aria-hidden="true"><div class="crm-assignment-hth"></div></div></section></div>`;
     window.crmObjectSizing?.scan?.(root);
     wireBoardScroller();
@@ -232,7 +232,7 @@
     const run = refreshTail.catch(() => null).then(async () => { model = await load(); dirty = false; render(); return model; });
     refreshTail = run; refreshPromise = run; run.finally(() => { if (refreshPromise === run) refreshPromise = null; }).catch(() => {}); return run;
   }
-  const schedule = () => { dirty = true; clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (active) refresh(); }, 100); };
+  const schedule = () => { dirty = true; clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (active && !assignmentDetail?.isOpen?.()) refresh(); }, 100); };
 
   async function syncFlow(item, stageId, rank = 0) {
     const flow = flowFor(item); const fields = { workflowKey:"assignments", entityType:"commitments", recordId:item.id, stage:stageId, rank, owner:item.assignee || null };
@@ -243,13 +243,15 @@
     }
     return (await window.crmDomain.create("workflow-entries", fields))?.record || null;
   }
-  async function updateCommitment(itemId, fields, stageId = null) {
+  async function updateCommitment(itemId, fields, stageId = null, options = {}) {
     let item = itemById(itemId); if (!item) return false;
     let result = await window.crmDomain.update("commitments", item.id, fields, item.version);
     if (!result?.ok) { await refresh(true); item = itemById(itemId); if (!item) return false; result = await window.crmDomain.update("commitments", item.id, fields, item.version); }
     if (!result?.record) return false;
     const nextStage = stageId || stageOf(result.record); const rank = model.commitments.filter((candidate) => candidate.id !== itemId && stageOf(candidate) === nextStage).length;
-    await syncFlow({ ...item, ...result.record }, nextStage, rank); await refresh(true); return true;
+    await syncFlow({ ...item, ...result.record }, nextStage, rank);
+    if (options.deferRefresh) { const index = model.commitments.findIndex((candidate) => candidate.id === itemId); if (index >= 0) model.commitments[index] = result.record; return true; }
+    await refresh(true); return true;
   }
   async function move(itemId, stageId) {
     const item = itemById(itemId); const stage = stageById(stageId); if (!item || !stage) return false;
@@ -266,11 +268,87 @@
   }
   const unassign = (commitmentId) => move(commitmentId, "unassigned");
 
+  const assignmentTargetPairs = () => [["", "No linked record"], ...model.tasks.map((record) => [`tasks:${record.id}`, `Task · ${recordName(record)}`]), ...model.contacts.map((record) => [`contacts:${record.id}`, `Person · ${recordName(record)}`]), ...model.tickets.map((record) => [`tickets:${record.id}`, `Ticket · ${recordName(record)}`]), ...model.workItems.map((record) => [`workItems:${record.id}`, `Pipeline · ${recordName(record)}`])];
   function targetOptions(item) {
-    const records = [["", "No linked record"], ...model.tasks.map((record) => [`tasks:${record.id}`, `Task · ${recordName(record)}`]), ...model.contacts.map((record) => [`contacts:${record.id}`, `Person · ${recordName(record)}`]), ...model.tickets.map((record) => [`tickets:${record.id}`, `Ticket · ${recordName(record)}`]), ...model.workItems.map((record) => [`workItems:${record.id}`, `Pipeline · ${recordName(record)}`])];
+    const records = assignmentTargetPairs();
     const link = linkOf(item); const selected = link ? `${link.entityType}:${link.recordId}` : "";
     return records.map(([value, label]) => `<option value="${esc(value)}"${selected === value ? " selected" : ""}>${esc(label)}</option>`).join("");
   }
+  const dateInputValue = (value) => {
+    const raw = String(value || ""); if (!raw) return ""; if (!raw.includes("T")) return raw.slice(0, 10);
+    const date = new Date(raw); if (!Number.isFinite(date.getTime())) return ""; const pad = (part) => String(part).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+  const assignmentDetailValue = (itemId, key) => {
+    const item = itemById(itemId); if (!item) return "";
+    if (key === "stage") return stageOf(item);
+    if (key === "dueAt") return dateInputValue(item.dueAt);
+    if (key === "assignedTarget") {
+      if (item.assignedContactId) return String(item.assignedContactId);
+      return first(item.assignee).toLowerCase() === currentUser.toLowerCase() ? "__me" : "";
+    }
+    if (key === "linkedTarget") { const link = linkOf(item); return link ? `${link.entityType}:${link.recordId}` : ""; }
+    return item[key] ?? "";
+  };
+  const assignmentDetailFields = () => [
+    { key:"title", label:"Assignment", q:"What needs to happen?" },
+    { key:"context", label:"Definition of done", q:"What does done look like?", area:true, req:false },
+    { key:"stage", label:"Stage", options:() => STAGES.map((stage) => [stage.id, stage.title]), req:false },
+    { key:"dueAt", label:"Due", date:true, req:false },
+    { key:"assignedTarget", label:"Owner", options:() => [["", "Unassigned"], ["__me", `Me · ${currentUser}`], ...model.contacts.map((contact) => [contact.id, contactName(contact)])], req:false },
+    { key:"linkedTarget", label:"Linked to", options:assignmentTargetPairs, req:false },
+    { key:"priority", label:"Priority", prio:true, req:false },
+  ];
+  const patchAssignmentCard = (item) => {
+    if (!item) return;
+    document.querySelectorAll(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`).forEach((card) => {
+      const holder = document.createElement("div"); holder.innerHTML = cardHTML(item); const next = holder.firstElementChild;
+      if (next) card.innerHTML = next.innerHTML;
+      card.dataset.priority = String(item.priority || "normal").toLowerCase(); card.setAttribute("aria-label", first(item.title, "Untitled assignment"));
+    });
+  };
+  function queueAssignmentDetailFields(itemId, fields = {}) {
+    const item = itemById(itemId); if (!item) return false; const persist = {};
+    if (Object.prototype.hasOwnProperty.call(fields, "title")) { const title = String(fields.title || "").trim(); if (title) item.title = persist.title = title; }
+    if (Object.prototype.hasOwnProperty.call(fields, "context")) item.context = persist.context = String(fields.context || "");
+    if (Object.prototype.hasOwnProperty.call(fields, "dueAt")) { const value = String(fields.dueAt || ""); item.dueAt = persist.dueAt = value ? new Date(`${value}T17:00:00`).toISOString() : null; }
+    if (Object.prototype.hasOwnProperty.call(fields, "priority")) item.priority = persist.priority = String(fields.priority || "normal");
+    if (Object.prototype.hasOwnProperty.call(fields, "stage")) {
+      const stage = stageById(fields.stage) || STAGES[0]; item.assignmentStage = persist.assignmentStage = stage.id;
+      item.status = persist.status = stage.id === "done" ? "completed" : "open"; item.completedAt = persist.completedAt = stage.id === "done" ? first(item.completedAt, nowIso()) : null;
+      if (stage.id === "unassigned") { const cleared = { assignee:null, assignedContactId:null, assignedContactName:null, assignedAt:null }; Object.assign(item, cleared); Object.assign(persist, cleared); }
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, "assignedTarget")) {
+      const value = String(fields.assignedTarget || ""); const contact = model.contacts.find((candidate) => String(candidate.id) === value); const assignee = contact ? contactName(contact) : value === "__me" ? currentUser : null;
+      const ownership = { assignedContactId:contact?.id || null, assignedContactName:contact ? contactName(contact) : null, assignee, assignedAt:assignee ? first(item.assignedAt, nowIso()) : null }; Object.assign(item, ownership); Object.assign(persist, ownership);
+      const nextStage = assignee && stageOf(item) === "unassigned" ? "assigned" : !assignee ? "unassigned" : stageOf(item); item.assignmentStage = persist.assignmentStage = nextStage;
+    }
+    if (Object.prototype.hasOwnProperty.call(fields, "linkedTarget")) {
+      const raw = String(fields.linkedTarget || ""); const [entityType, ...parts] = raw.split(":"); const recordId = parts.join(":"); const links = (item.links || []).filter((link) => link.entityType === "workItems" && link.relation === "regarding");
+      if (raw) links.push({ entityType, recordId, relation:"assignment-context" }); item.links = persist.links = links;
+    }
+    patchAssignmentCard(item); pendingDetailFields.set(item.id, { ...(pendingDetailFields.get(item.id) || {}), ...persist });
+    clearTimeout(detailSaveTimer); detailSaveTimer = setTimeout(flushAssignmentDetailFields, 180); return true;
+  }
+  function flushAssignmentDetailFields() {
+    clearTimeout(detailSaveTimer); detailSaveTimer = 0; const batch = [...pendingDetailFields.entries()]; pendingDetailFields.clear(); if (!batch.length) return detailSaveTail;
+    detailSaveTail = detailSaveTail.catch(() => null).then(async () => { for (const [itemId, fields] of batch) await updateCommitment(itemId, fields, fields.assignmentStage || stageOf(itemById(itemId)), { deferRefresh:true }); });
+    return detailSaveTail;
+  }
+  const assignmentDetailSource = { list:async () => ({ records:clone(model.commitments) }), onChanged:(callback) => window.crmDomain?.onChanged?.(callback) };
+  const assignmentDetailStacks = {
+    stageFields:(itemId) => ({ key:stageOf(itemById(itemId)), label:stageById(stageOf(itemById(itemId)))?.title || "Assignment", fields:assignmentDetailFields() }),
+    fieldValue:assignmentDetailValue, setMeta:queueAssignmentDetailFields, setPriority:(itemId, priority) => queueAssignmentDetailFields(itemId, { priority }),
+    onDetailClosed:() => { flushAssignmentDetailFields().finally(() => refresh(true)); },
+  };
+  function ensureAssignmentDetail() {
+    if (assignmentDetail) return assignmentDetail; if (typeof window.createCrmCardDetail !== "function") return null;
+    assignmentDetail = window.createCrmCardDetail({ apiName:"assignmentDetail", source:assignmentDetailSource, stacks:assignmentDetailStacks, panelWidth:380,
+      priorities:["normal","high","urgent"], intensityValues:["normal","high","urgent"], defaultIntensity:"normal",
+      severityRgb:{ normal:"14,165,233", high:"202,138,4", urgent:"220,38,38", none:"107,114,128" }, notFoundText:"Assignment not found.", draftRequiredText:"An assignment title is required." });
+    return assignmentDetail;
+  }
+  const openAssignmentDetail = (item, anchor) => { if (!item || !anchor) return false; closeFloating(); ensureAssignmentDetail()?.open(item, anchor); return true; };
   function openEditor(item = null, anchor = null) {
     closeFloating(); const stageId = item ? stageOf(item) : "unassigned"; const assignedId = String(item?.assignedContactId || "");
     floating = document.createElement("form"); floating.className = "crm-assignment-editor crm-menu-surface";
@@ -295,7 +373,7 @@
   function openMenu(item, anchor, x, y) {
     closeFloating(); floating = document.createElement("div"); floating.className = "crm-assignment-menu crm-menu-surface";
     const actions = [
-      { label:"Edit", run:() => openEditor(item, anchor) },
+      { label:"Edit", run:() => openAssignmentDetail(item, anchor) },
       linkOf(item) && { label:"Open linked record", run:() => openLinked(item) },
       { label:window.crmObjectSizing?.isSmall?.(anchor, "card") ? "Make large" : "Make small", run:() => window.crmObjectSizing?.toggle?.(anchor, "card") },
       { label:stageOf(item) === "done" ? "Reopen" : "Complete", run:() => move(item.id, stageOf(item) === "done" ? first(item.assignmentPreviousStage, "assigned") : "done") },
@@ -324,7 +402,7 @@
       const action = event.target.closest("[data-assignment-action]"); const stageElement = action?.closest("[data-assignment-stage]");
       if (action?.dataset.assignmentAction === "new") { openEditor(null, action); return; }
       if (action?.dataset.assignmentAction === "toggle-stack" && stageElement) { setStageExpanded(stageElement.dataset.assignmentStage); return; }
-      const card = event.target.closest("[data-assignment-card]"); if (card) openEditor(itemById(card.dataset.assignmentCard), card);
+      const card = event.target.closest("[data-assignment-card]"); if (card) openAssignmentDetail(itemById(card.dataset.assignmentCard), card);
     });
     root.addEventListener("keydown", (event) => {
       const current = event.target.closest(".crm-assignment-filter"); if (!current || !["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
@@ -333,7 +411,7 @@
       selectFilter(tabs[nextIndex]?.dataset.assignmentFilter, true);
     });
     root.addEventListener("contextmenu", (event) => { const card = event.target.closest("[data-assignment-card]"); if (!card) return; event.preventDefault(); event.stopPropagation(); const item = itemById(card.dataset.assignmentCard); if (item) openMenu(item, card, event.clientX, event.clientY); });
-    root.addEventListener("dragstart", (event) => { const card = event.target.closest("[data-assignment-card]"); if (!card) return; dragItemId = card.dataset.assignmentCard; card.classList.add("is-dragging"); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", dragItemId); });
+    root.addEventListener("dragstart", (event) => { if (event.target.closest?.("[data-crm-card-date]")) { event.preventDefault(); return; } const card = event.target.closest("[data-assignment-card]"); if (!card) return; dragItemId = card.dataset.assignmentCard; card.classList.add("is-dragging"); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", dragItemId); });
     root.addEventListener("dragend", (event) => { event.target.closest("[data-assignment-card]")?.classList.remove("is-dragging"); root.querySelectorAll(".is-drop-target").forEach((node) => node.classList.remove("is-drop-target")); dragItemId = ""; stopBoardAutoScroll(); });
     root.addEventListener("dragover", (event) => { if (dragItemId) updateBoardAutoScroll(event.clientX); const bucket = event.target.closest("[data-assignment-stage]"); if (!bucket || !dragItemId) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; root.querySelectorAll(".crm-assignment-bucket").forEach((node) => node.classList.toggle("is-drop-target", node === bucket)); });
     root.addEventListener("dragleave", (event) => { const bucket = event.target.closest("[data-assignment-stage]"); if (bucket && !bucket.contains(event.relatedTarget)) bucket.classList.remove("is-drop-target"); });
@@ -368,7 +446,7 @@
     return homePreviewState();
   };
   async function miniature() { await baseline(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater"); Object.assign(copy.style, { position:"absolute", left:"50%", top:"50%", width:"1320px", height:"860px", transform:"translate(-50%,-50%) scale(.285)", transformOrigin:"center", pointerEvents:"none" }); return copy; }
-  const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; revealStage(stageOf(item)); requestAnimationFrame(() => openEditor(item, anchor || root?.querySelector(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`))); return true; };
+  const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; revealStage(stageOf(item)); requestAnimationFrame(() => openAssignmentDetail(item, anchor || root?.querySelector(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`))); return true; };
   const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), selectFilter, setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), homePreviewState, applyHomePreviewState, isActive:() => active };
   document.addEventListener("crm:theater-switch", closeFloating);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();

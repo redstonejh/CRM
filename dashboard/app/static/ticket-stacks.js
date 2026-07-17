@@ -9,6 +9,7 @@
 (() => {
   let CARD_W = 185, CARD_H = 279;          // matched to the grid ticket card at render time
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
+  const FAN_CONTROL_W = 32, FAN_CONTROL_H = 48;
   const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
   const SMALL_CARD_SCALE = .8, SMALL_BUCKET_SCALE = .76;
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
@@ -425,15 +426,18 @@
       .tk-act-by { color: rgba(255,255,255,0.5); }
       .tk-act-none { color: rgba(255,255,255,0.45); font-size: var(--crm-type-body,12px); }
 
-      .tk-arrow { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
-        border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
-        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
-        -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 10px 26px rgba(0,0,0,0.34);
-        color: #fff; display: flex; align-items: center; justify-content: center;
-        transition: left .42s ${EASE}, right .42s ${EASE}, transform .2s ease, opacity .2s ease; }
-      .tk-arrow:hover { transform: scale(1.08); }
-      .tk-arrow svg { width: 15px; height: 15px; } .tk-arrow.is-hidden { opacity: 0; pointer-events: none; }
+      .tk-arrow { position:absolute;width:${FAN_CONTROL_W}px;height:${FAN_CONTROL_H}px;padding:0;border-radius:13px;-webkit-appearance:none;appearance:none;z-index:5000;
+        border:1px solid rgba(222,236,252,.2);cursor:pointer;pointer-events:auto;
+        background:linear-gradient(155deg,rgba(27,36,49,.76),rgba(9,15,23,.66));
+        -webkit-backdrop-filter:blur(20px) saturate(132%);backdrop-filter:blur(20px) saturate(132%);
+        box-shadow:inset 0 1px rgba(255,255,255,.14),0 14px 26px -18px rgba(0,0,0,.9);
+        color:rgba(235,243,253,.68);display:grid;place-items:center;
+        transition:left .42s ${EASE},right .42s ${EASE},transform .16s ease,opacity .16s ease,color .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease; }
+      .tk-arrow:hover,.tk-arrow:focus-visible{outline:0;transform:translateY(-1px);color:#fff;border-color:rgba(222,236,252,.36);background:linear-gradient(155deg,rgba(38,51,69,.82),rgba(12,20,30,.72));box-shadow:inset 0 1px rgba(255,255,255,.18),0 16px 30px -18px rgba(0,0,0,.96)}
+      .tk-arrow:active{transform:scale(.97)}
+      .tk-arrow[aria-expanded="true"]{color:rgba(206,226,251,.96);border-color:rgba(145,187,239,.42);background:linear-gradient(155deg,rgba(31,53,78,.8),rgba(10,21,34,.7))}
+      .tk-arrow svg{width:20px;height:20px;overflow:visible}.tk-arrow .tk-fan-back{opacity:.42}.tk-arrow .tk-fan-motion{opacity:.88}
+      .tk-arrow.is-hidden{opacity:0;pointer-events:none;transform:scale(.94)}
 
       /* Create (+) / trash buttons centred above each corner stack — same glass pill as .tk-arrow. */
       .tk-stack-btn { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
@@ -608,9 +612,10 @@
     document.head.appendChild(style);
   };
 
-  const arrowSvg = (dir) =>
-    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${
-      dir === "right" ? `<polyline points="9 6 15 12 9 18"/>` : `<polyline points="15 6 9 12 15 18"/>`}</svg>`;
+  const fanControlSvg = (dir) => {
+    const mirror = dir === "left" ? ' transform="translate(24 0) scale(-1 1)"' : "";
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g${mirror}><path class="tk-fan-back" d="M6.5 6h7.2a2 2 0 0 1 2 2v7.5"/><rect x="4" y="8" width="11.5" height="10" rx="2.2"/><path class="tk-fan-motion" d="M15.2 13h4.7m-1.8-1.8 1.8 1.8-1.8 1.8"/></g></svg>`;
+  };
   const PLUS_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
   // Recycle symbol (three chasing arrows) — the trash stack is a recycle bin you can dig back through.
   const RECYCLE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/></svg>`;
@@ -863,7 +868,8 @@
       box.appendChild(track);
       const arrow = document.createElement("button");
       arrow.className = "tk-arrow"; arrow.type = "button";
-      arrow.setAttribute("aria-label", side === "left" ? "Fan out active tickets" : "Fan out resolved tickets");
+      const fanLabel = side === "left" ? "Fan out active tickets" : "Fan out resolved tickets";
+      arrow.dataset.fanLabel = fanLabel; arrow.setAttribute("aria-label", fanLabel); arrow.setAttribute("aria-expanded", "false");
       arrow.addEventListener("click", () => toggleFan(side));
       const bar = document.createElement("div"); bar.className = "tk-bar";
       const thumb = document.createElement("div"); thumb.className = "tk-thumb";
@@ -901,7 +907,7 @@
       box.className = "tk-deck tk-deck-trash";
       const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
       const arrow = document.createElement("button"); arrow.className = "tk-arrow"; arrow.type = "button";
-      arrow.setAttribute("aria-label", "Fan out deleted tickets");
+      arrow.dataset.fanLabel = "Fan out deleted tickets"; arrow.setAttribute("aria-label", "Fan out deleted tickets"); arrow.setAttribute("aria-expanded", "false");
       arrow.addEventListener("click", () => toggleFan("trash"));
       const bar = document.createElement("div"); bar.className = "tk-bar";
       const thumb = document.createElement("div"); thumb.className = "tk-thumb"; bar.appendChild(thumb);
@@ -1095,8 +1101,11 @@
     cards.forEach((c, i) => place(c, side, i, open, step));
     setTrack(side);     // apply scroll to the track (cards hold only their slot transform)
     placeArrow(side);   // horizontal position follows the fan edge (updated live during scroll too)
-    deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - 17}px`;
-    deck.arrow.innerHTML = arrowSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
+    deck.arrow.style.bottom = `${MARGIN + CARD_H / 2 - FAN_CONTROL_H / 2}px`;
+    deck.arrow.innerHTML = fanControlSvg(side === "left" ? (open ? "left" : "right") : (open ? "right" : "left"));
+    deck.arrow.setAttribute("aria-expanded", String(open));
+    const fanLabel = deck.arrow.dataset.fanLabel || "Fan out stack";
+    deck.arrow.setAttribute("aria-label", open ? `Collapse ${fanLabel.replace(/^Fan out\s+/i, "")}` : fanLabel);
     // Only the two CORNERS are mutually exclusive; the trash fans independently and can be open alongside
     // one of them. So hide a corner's fan arrow only while the OTHER corner is fanned (and this one isn't);
     // the trash arrow shows whenever the bin holds ≥2 cards, regardless of a fanned corner.
@@ -1190,8 +1199,9 @@
     return clamp(idx, 0, n);
   };
 
-  const toggleFan = (side) => {
-    const open = !fanned[side];
+  const setFan = (side, open) => {
+    if (!decks[side]) return false;
+    open = !!open;
     fanned[side] = open;
     if (!open) decks[side].scrollX = 0;
     // The two CORNERS are mutually exclusive, but the trash can fan out ALONGSIDE a corner (so you can
@@ -1203,7 +1213,9 @@
     if (!open && side !== "trash" && trashMode) { setTrashMode(false); return; }   // setTrashMode() re-renders
     DECK_SIDES.forEach(layout);   // re-lay ALL: each arrow's z + dimming depend on which deck is fanned
     trackFanEdges();               // edge shadows appear as the cards animate out (not on next scroll)
+    return fanned[side];
   };
+  const toggleFan = (side) => setFan(side, !fanned[side]);
 
   // ── Overscroll: Apple-style rubber-band at the ends of a fanned scroll ──────────
   const MAX_OVER = 92;                                   // furthest the fan can be pulled past an end
@@ -1220,7 +1232,7 @@
   // during scroll — see runScroll/wireThumb) so it locks to the ticket instead of floating.
   const placeArrow = (side) => {
     const deck = decks[side]; if (!deck) return;
-    const screenEdge = window.innerWidth - MARGIN - 34;
+    const screenEdge = window.innerWidth - MARGIN - FAN_CONTROL_W;
     const inset = !fanned[side] ? (MARGIN + CARD_W + 10)               // closed pile edge
       : Math.min(MARGIN + deck.contentW + deck.scrollX + 10, screenEdge);
     deck.arrow.style[side === "left" ? "left" : "right"] = `${Math.round(inset)}px`;
@@ -2158,6 +2170,10 @@
   const homePreviewState = () => ({
     expandedStages:[...expandedStages],
     zoneScroll:Object.fromEntries(STAGE_KEYS.map((stage) => [stage, zoneScroll[stage]?.sy || 0])),
+    fan:Object.fromEntries(["left", "right"].map((side) => [side, {
+      open:!!fanned[side],
+      scrollX:decks[side] ? clamp(decks[side].scrollX || 0, scrollMinOf(decks[side]), 0) : 0,
+    }])),
   });
   const applyHomePreviewState = async (state = {}) => {
     ensureZones();
@@ -2167,6 +2183,11 @@
       renderZones();
       layoutZones();
     }
+    const requestedFan = ["left", "right"].find((side) => !!state.fan?.[side]?.open) || null;
+    ["left", "right"].forEach((side) => {
+      if (decks[side] && fanned[side] && side !== requestedFan) setFan(side, false);
+    });
+    if (requestedFan && decks[requestedFan] && !fanned[requestedFan]) setFan(requestedFan, true);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (state.zoneScroll && typeof state.zoneScroll === "object") {
       STAGE_KEYS.forEach((stage) => {
@@ -2178,6 +2199,12 @@
         scroll.sy = scroll.ty = clamp(requested, zMin(stage), 0);
         positionZone(stage);
       });
+    }
+    if (requestedFan && decks[requestedFan]) {
+      const requested = Number(state.fan?.[requestedFan]?.scrollX);
+      decks[requestedFan].scrollX = clamp(Number.isFinite(requested) ? requested : 0, scrollMinOf(decks[requestedFan]), 0);
+      layout(requestedFan);
+      updateDeckEdges();
     }
     return homePreviewState();
   };
@@ -2702,6 +2729,7 @@
     },
     open: openTicket,
     contextMenu: openContextMenu,
+    fan: setFan,
     setStageExpanded: setZoneExpanded,
     toggleStageExpanded: (stage) => setZoneExpanded(stage),
     expandedStages: () => [...expandedStages],

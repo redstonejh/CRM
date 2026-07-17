@@ -7,7 +7,7 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v38';
+const HOME_PREVIEW_VERSION = 'filtered-home-v39';
 const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
@@ -284,6 +284,11 @@ async function main() {
         glass: { backdrop: style.webkitBackdropFilter || style.backdropFilter, background: style.backgroundImage } };
     }),
     controls: document.querySelectorAll('.window-control-cluster .window-glass-control').length,
+    calendar: (() => {
+      const node = document.querySelector('.crm-viewport-date');
+      const style = node && getComputedStyle(node);
+      return { exists:!!node, hidden:node?.hidden === true, display:style?.display || '' };
+    })(),
     homeLayers: {
       levels: document.querySelectorAll('.crm-home-surface > .crm-home-level').length,
       hands: document.querySelectorAll('.crm-home-level > .crm-home-priority-hand').length,
@@ -310,6 +315,9 @@ async function main() {
     || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 4
     || startup.homeLayers.rootWillChange !== 'auto' || startup.homeLayers.snapshots !== 1 || startup.homeLayers.snapshotDisplay !== 'none') {
     throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
+  }
+  if (!startup.calendar.exists || !startup.calendar.hidden || startup.calendar.display !== 'none') {
+    throw new Error(`The global calendar control must not appear at Home: ${JSON.stringify(startup.calendar)}`);
   }
   const initialPreviewTime = Math.max(...await page.evaluate(() => window.crmHome.previewStatus().map((item) => item.capturedAt || 0)));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setContentSize(1360, 900));

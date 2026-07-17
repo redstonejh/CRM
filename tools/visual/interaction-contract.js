@@ -85,6 +85,10 @@ async function main() {
       && title('planner')?.textContent.trim() === 'Planner'
       && title('assignments')?.textContent.trim() === 'Assignments';
   });
+  await check('Home has no calendar control', () => {
+    const control = document.querySelector('.crm-viewport-date');
+    return !!control && control.hidden && getComputedStyle(control).display === 'none';
+  });
   await check('Every Home preview is a proportional viewport of its destination', () => {
     const expected = innerWidth / innerHeight;
     const tiles = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')].map((tile) => {
@@ -263,7 +267,7 @@ async function main() {
     return surface?.classList.contains('crm-home-camera-moving') && titles.length > 0
       && titles.every((title) => getComputedStyle(title).visibility === 'hidden' && Number(getComputedStyle(title).opacity) === 0);
   });
-  await check('Tile transition preserves the native drag region around the calendar control', () => {
+  await check('Tile transition preserves the unobstructed native title-bar drag region', () => {
     const strip = document.querySelector('.app-window-drag-region');
     const lid = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
     const x = Math.round(innerWidth * .4), y = 20;
@@ -323,7 +327,7 @@ async function main() {
   });
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.(), { timeout: 10000 });
   await sleep(100);
-  await check('Returning Home restores the drag region around the calendar control', () => {
+  await check('Returning Home restores an unobstructed drag region', () => {
     const x = Math.round(innerWidth * .4), y = 20;
     const strip = document.querySelector('.app-window-drag-region');
     const exclusions = [...document.querySelectorAll('*')].filter((node) => {
@@ -347,7 +351,7 @@ async function main() {
     const control = document.querySelector('.crm-viewport-date');
     const today = new Date();
     const localIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    return !!control && control.querySelector('.crm-viewport-date-day')?.textContent === String(today.getDate())
+    return !!control && !control.hidden && control.querySelector('.crm-viewport-date-day')?.textContent === String(today.getDate())
       && /open calendar for/i.test(control.getAttribute('aria-label') || '')
       && !document.querySelector('.crm-temporal-context')
       && document.body.dataset.crmTemporalDate === localIso;
@@ -511,8 +515,9 @@ async function main() {
   await page.waitForFunction(() => document.querySelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]')?.hidden === true);
   await check('Calendar navigation is one fixed top-center control, never card chrome', () => {
     const controls = [...document.querySelectorAll('.crm-viewport-date')]; const rect = controls[0]?.getBoundingClientRect(); const style = controls[0] && getComputedStyle(controls[0]);
-    return controls.length === 1 && !document.querySelector('[data-crm-card-date],.crm-card-date') && style?.position === 'fixed'
-      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 8 && rect.top <= 12;
+    return controls.length === 1 && !controls[0].hidden && !document.querySelector('[data-crm-card-date],.crm-card-date') && style?.position === 'fixed'
+      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 47 && rect.top <= 49
+      && rect.width >= 57 && rect.height >= 51 && parseFloat(style.fontSize) >= 9;
   });
   await page.click('.crm-viewport-date');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout:2500 });
@@ -779,13 +784,15 @@ async function main() {
       const action = document.querySelector('[data-crm-theater]:not([hidden]) .tk-create-action');
       return !!action && action.textContent.trim().length > 3 && !action.querySelector('svg');
     });
-    await check(`${key} keeps dormant corner controls hidden and exposes one quiet spread control per stage`, () => {
+    await check(`${key} keeps dormant actions hidden, reserves fan tabs for corner decks, and exposes one spread control per stage`, () => {
       const room = document.querySelector('[data-crm-theater]:not([hidden])');
-      const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+      const fans = [...room.querySelectorAll('.tk-arrow')];
+      const dormant = [...room.querySelectorAll('.tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
       const spreads = [...room.querySelectorAll('.tk-zone-spread')];
-      return controls.some((element) => element.matches('.tk-stack-btn'))
-        && controls.some((element) => element.matches('.tk-deck-trash'))
-        && controls.every((element) => getComputedStyle(element).display === 'none')
+      return dormant.some((element) => element.matches('.tk-stack-btn'))
+        && dormant.some((element) => element.matches('.tk-deck-trash'))
+        && dormant.every((element) => getComputedStyle(element).display === 'none')
+        && fans.length >= 2 && fans.every((element) => !element.closest('.tk-zone') && !!element.querySelector('.tk-fan-motion') && !element.classList.contains('crm-menu-action'))
         && spreads.length === room.querySelectorAll('.tk-zone').length
         && spreads.every((element) => getComputedStyle(element).display !== 'none' && element.getAttribute('aria-expanded') === 'false');
     });
@@ -818,15 +825,68 @@ async function main() {
       detail: `stages ${stages.join('/')} · inbox ${inbox} · resolved ${resolved}`,
     };
   });
-  await check('Tickets hides dormant corner controls and exposes stage stack expansion', () => {
+  await check('Tickets exposes sleek corner fan tabs while keeping dormant actions hidden', () => {
     const room = document.querySelector('[data-crm-theater="tickets"]:not([hidden])');
-    const controls = [...room.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+    const fans = [...room.querySelectorAll('.tk-deck-left > .tk-arrow, .tk-deck-right > .tk-arrow')];
+    const dormant = [...room.querySelectorAll('.tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
     const spreads = [...room.querySelectorAll('.tk-zone-spread')];
-    return controls.some((element) => element.matches('.tk-stack-btn[aria-label="Create a ticket"]'))
-      && controls.some((element) => element.matches('.tk-deck-trash'))
-      && controls.every((element) => getComputedStyle(element).display === 'none')
+    return dormant.some((element) => element.matches('.tk-stack-btn[aria-label="Create a ticket"]'))
+      && dormant.some((element) => element.matches('.tk-deck-trash'))
+      && dormant.every((element) => getComputedStyle(element).display === 'none')
+      && fans.length === 2 && fans.every((element) => {
+        const rect = element.getBoundingClientRect(); const style = getComputedStyle(element);
+        return rect.width >= 31 && rect.height >= 47 && style.borderRadius === '13px'
+          && element.getAttribute('aria-expanded') === 'false' && !!element.querySelector('.tk-fan-motion')
+          && !element.closest('.tk-zone') && !element.classList.contains('crm-menu-action');
+      })
       && spreads.length === 3 && spreads.every((element) => getComputedStyle(element).display !== 'none');
   });
+  await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left > .tk-arrow');
+  await sleep(520);
+  await check('The left corner stack fans its original cards outward without replacement', () => {
+    const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
+    const fan = deck?.querySelector(':scope > .tk-arrow'); const cards = [...(deck?.querySelectorAll('.tk-card') || [])];
+    const rects = cards.map((card) => card.getBoundingClientRect()); const ids = cards.map((card) => card.dataset.id);
+    const span = rects.length ? Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left)) : 0;
+    return { ok:deck?.classList.contains('is-fanned') && fan?.getAttribute('aria-expanded') === 'true'
+      && /^collapse /i.test(fan?.getAttribute('aria-label') || '') && new Set(ids).size === ids.length
+      && span > (rects[0]?.width || 0) * 3, detail:`${cards.length} unchanged cards · ${Math.round(span)}px fan` };
+  });
+  const leftFanPoint = await page.$eval('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left .tk-card', (card) => { const rect=card.getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; });
+  await page.mouse.move(leftFanPoint.x, leftFanPoint.y); await page.mouse.wheel({ deltaY:700 }); await sleep(420);
+  await check('The fanned stack retains horizontal wheel travel, scrollbar, and adaptive edge shading', () => {
+    const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(deck.querySelector('.tk-track')).transform);
+    const shades = [...deck.querySelectorAll('.tk-edge-shade')].map((shade) => parseFloat(shade.style.width || '0'));
+    return { ok:matrix.m41 < -1 && deck.querySelector('.tk-bar')?.classList.contains('is-on') && shades.some((width) => width > 0), detail:`x ${Math.round(matrix.m41)} · shade ${Math.round(Math.max(0,...shades))}px` };
+  });
+  await check('The exact open-fan viewport is included in the Home preview handoff', () => {
+    const state = window.ticketStacks?.homePreviewState?.();
+    return !!state?.fan?.left?.open && state.fan.left.scrollX < -1 && state?.fan?.right?.open === false;
+  });
+  await page.evaluate(async () => {
+    const state = window.ticketStacks.homePreviewState();
+    window.ticketStacks.fan('left', false);
+    await window.ticketStacks.applyHomePreviewState(state);
+  });
+  await sleep(240);
+  await check('Applying that Home preview handoff restores the identical fan and scroll position', () => {
+    const state = window.ticketStacks?.homePreviewState?.();
+    const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(deck?.querySelector('.tk-track')).transform);
+    return !!state?.fan?.left?.open && state.fan.left.scrollX < -1 && Math.abs(matrix.m41 - state.fan.left.scrollX) < 1;
+  });
+  await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left > .tk-arrow'); await sleep(520);
+  await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-right > .tk-arrow'); await sleep(520);
+  await check('The right corner stack mirrors the same fan choreography', () => {
+    const left = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
+    const right = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-right');
+    const fan = right?.querySelector(':scope > .tk-arrow'); const rects = [...(right?.querySelectorAll('.tk-card') || [])].map((card) => card.getBoundingClientRect());
+    const span = rects.length ? Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left)) : 0;
+    return { ok:!left?.classList.contains('is-fanned') && right?.classList.contains('is-fanned') && fan?.getAttribute('aria-expanded') === 'true'
+      && span > (rects[0]?.width || 0) * 3, detail:`${rects.length} cards · ${Math.round(span)}px mirrored fan` };
+  });
+  await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-right > .tk-arrow'); await sleep(520);
   await check('Tickets buckets stay proportional to a ticket', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="tickets"] .tk-zone')];
     return buckets.length === 3 && buckets.every((bucket) => {

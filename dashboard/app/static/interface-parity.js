@@ -86,6 +86,7 @@
   ].join(",");
 
   const TOP_CIRCULAR_SELECTOR = ".window-glass-control, .auth-profile-button";
+  const PHYSICAL_ACTION_SELECTOR = ".tk-arrow";
   const ACTION_SELECTOR = "button, [role='button']";
   const INPUT_SELECTOR = [
     "input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='range']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset'])",
@@ -97,6 +98,7 @@
   const inCardFace = (element) => !!element.closest(CARD_FACE_SELECTOR);
   const inDirectMenu = (element) => !!element.closest(DIRECT_MENU_SELECTOR);
   const isTopCircular = (element) => element.matches(TOP_CIRCULAR_SELECTOR) || !!element.closest(TOP_CIRCULAR_SELECTOR);
+  const isPhysicalAction = (element) => element.matches(PHYSICAL_ACTION_SELECTOR) || !!element.closest(PHYSICAL_ACTION_SELECTOR);
   const classify = (element) => {
     if (!isElement(element)) return;
     const cardFace = inCardFace(element);
@@ -111,6 +113,7 @@
       !cardFace &&
       !inDirectMenu(element) &&
       !isTopCircular(element) &&
+      !isPhysicalAction(element) &&
       element.matches(ACTION_SELECTOR) &&
       !element.matches(SURFACE_SELECTOR)
     ) {
@@ -148,6 +151,7 @@
     !inCardFace(element) &&
     !inDirectMenu(element) &&
     !isTopCircular(element) &&
+    !isPhysicalAction(element) &&
     !element.matches(SURFACE_SELECTOR)
   );
 

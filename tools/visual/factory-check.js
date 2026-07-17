@@ -28,8 +28,8 @@ const PROBES = [
   { name: 'card subtitle', selector: '.tk-card .ticket-host, .tk-zcard .ticket-host', props: ['fontSize', 'color'] },
 ];
 
-// Structural counts. Arrows are explicitly zero for every bucket system; the
-// physical stack controls remain mounted for their mechanics but render hidden.
+// Structural counts. Bucket-to-bucket arrows remain forbidden; the two corner
+// deck fan tabs are visible while create/trash chrome stays dormant.
 const STRUCTURE = [
   { name: 'stage zones', selector: '.tk-zone', min: 3, max: 3 },
   { name: 'corner decks', selector: '.tk-deck-left, .tk-deck-right', min: 2, max: 2 },
@@ -65,14 +65,13 @@ async function sample(page, rootSelector = '') {
     }
     const counts = {};
     for (const item of structure) counts[item.name] = root.querySelectorAll(item.selector).length;
-    const physicalControls = [...root.querySelectorAll('.tk-arrow, .tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
+    const fanControls = [...root.querySelectorAll('.tk-deck-left > .tk-arrow, .tk-deck-right > .tk-arrow')];
+    const dormantControls = [...root.querySelectorAll('.tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
     return {
       styles,
       counts,
-      physicalControls: {
-        mounted: physicalControls.length,
-        visible: physicalControls.filter((element) => getComputedStyle(element).display !== 'none').length,
-      },
+      fanControls: { mounted:fanControls.length, visible:fanControls.filter((element) => { const rect=element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }).length },
+      dormantControls: { mounted:dormantControls.length, visible:dormantControls.filter((element) => { const rect=element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }).length },
     };
   }, { probes: PROBES, structure: STRUCTURE, rootSelector });
 }
@@ -128,8 +127,8 @@ async function main() {
     const ok = got >= item.min && got <= item.max;
     report(ok ? ' ok ' : 'FAIL', `structure: ${item.name} — expected ${item.min === item.max ? item.min : `${item.min}..${item.max}`}, got ${got}`);
   }
-  report(actual.physicalControls.mounted > 0 && actual.physicalControls.visible === 0 ? ' ok ' : 'FAIL',
-    `physical stack chrome — ${actual.physicalControls.mounted} controls mounted, ${actual.physicalControls.visible} visible`);
+  report(actual.fanControls.mounted === 2 && actual.fanControls.visible === 2 && actual.dormantControls.mounted > 0 && actual.dormantControls.visible === 0 ? ' ok ' : 'FAIL',
+    `corner deck chrome — ${actual.fanControls.visible}/2 fan tabs visible · ${actual.dormantControls.visible} dormant actions visible`);
   for (const probe of PROBES) {
     const want = expected.styles[probe.name];
     const got = actual.styles[probe.name];
@@ -141,7 +140,7 @@ async function main() {
     }
   }
   const anyStyleOk = PROBES.every((p) => !expected.styles[p.name] || actual.styles[p.name]);
-  if (anyStyleOk && !failures) console.log('\nFactory check PASSED: ticket/card faces match the reference, bucket arrows are absent, and stack-control mechanics remain mounted behind hidden chrome.');
+  if (anyStyleOk && !failures) console.log('\nFactory check PASSED: ticket/card faces match the reference, bucket arrows are absent, and only the corner-deck fan tabs are exposed.');
   else console.log(`\nFactory check: ${failures} mismatch(es).`);
 
   await browser.close();

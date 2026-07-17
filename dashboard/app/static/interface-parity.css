@@ -105,11 +105,10 @@
 }
 
 /*
- * Keep stack mechanics mounted for future placement, but remove their
- * physical chrome from the current rooms. The create/trash/fan handlers,
- * deck state, and trashed cards all remain in the DOM and data model.
+ * Keep create/trash mechanics mounted without adding dormant chrome. The
+ * dedicated corner-deck fan tabs remain visible; they are physical controls,
+ * not menu actions and not bucket spread buttons.
  */
-.tk-arrow,
 .tk-stack-btn,
 .tk-deck-trash,
 .tk-empty-trash {

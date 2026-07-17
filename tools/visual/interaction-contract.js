@@ -135,7 +135,7 @@ async function main() {
     const toolbar = document.querySelector('.crm-home-todo-toolbar');
     const cards = [...document.querySelectorAll('.crm-home-hand-card')];
     const created = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.id)}"]`);
-    return toolbar?.querySelector('.crm-home-todo-label')?.textContent.trim() === 'To do'
+    return !!toolbar && !toolbar.querySelector('.crm-home-todo-label') && !!toolbar.querySelector('.crm-home-todo-add[aria-label="Add to do"]')
       && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && !card.dataset.commitmentId.startsWith('signal:'))
       && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId;
   }, linkedHomeTodo);
@@ -269,7 +269,7 @@ async function main() {
       && getComputedStyle(lid).webkitAppRegion !== 'no-drag'
       && exclusions.length === 0;
   });
-  await sleep(650);
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.(), { timeout:5000 });
   await check('Home camera lands directly on the destination', () => document.body.dataset.crmModule === 'people' && !document.querySelector('.crm-transit-veil'));
   await check('Tile room does not exclude the title-bar drag region', () => {
     const room = document.querySelector('[data-crm-theater="people"]:not([hidden])');
@@ -370,7 +370,7 @@ async function main() {
     const bucketRect = buckets[0]?.getBoundingClientRect();
     const pipeline = theater?.querySelector('.crm-assignment-pipeline'); const clip = theater?.querySelector('.crm-assignment-board-clip');
     const scrollbar = theater?.querySelector('.crm-assignment-hsb'); const thumb = theater?.querySelector('.crm-assignment-hth');
-    const board = theater?.querySelector('.crm-assignment-board'); const pipelineRect = pipeline?.getBoundingClientRect(); const clipRect = clip?.getBoundingClientRect();
+    const board = theater?.querySelector('.crm-assignment-board'); const pipelineRect = pipeline?.getBoundingClientRect(); const clipRect = clip?.getBoundingClientRect(); const scrollbarRect = scrollbar?.getBoundingClientRect();
     const firstCard = cards[0]; const firstCardRect = firstCard?.getBoundingClientRect(); const firstFaceRect = firstCard?.querySelector('.crm-assignment-card-face')?.getBoundingClientRect();
     const pseudoTab = actual.backgroundColor === 'rgba(0, 0, 0, 0)' && actual.borderTopWidth === '0px' && actual.boxShadow === 'none' && actual.position === 'relative';
     const leftShadow = Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-left') || '0'); const rightShadow = Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-right') || '0');
@@ -379,17 +379,21 @@ async function main() {
       && cards.every((card) => card.dataset.recordEntity === 'commitments' && card.dataset.recordId === card.dataset.assignmentCard)
       && new Set(ids).size === ids.length && filters.filter((filter) => filter.classList.contains('is-selected')).length === 1 && filters.every((filter) => filter.getAttribute('role') === 'tab')
       && pseudoTab && !theater.querySelector('.crm-assignment-rail,aside,.crm-assignment-hand,.crm-assignment-hand-card,.crm-assignment-source-pool')
-      && !!tabsRect && !!bucketRect && bucketRect.top >= tabsRect.bottom + 8 && Math.abs(tabsRect.left - bucketRect.left) <= 1
+      && !!tabsRect && !!bucketRect && bucketRect.top >= tabsRect.bottom + 8 && !!clipRect
+      && bucketRect.left - clipRect.left >= 20 && bucketRect.left - clipRect.left <= 32 && tabsRect.left > bucketRect.left + 20
       && getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize === '17px'
       && buckets.every((bucket) => !!bucket.dataset.assignmentStage && getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize === '14px')
       && theater.querySelectorAll('.crm-assignment-stack-toggle').length === 5
       && !!pipeline && !!clip && pipeline.scrollWidth > clip.clientWidth + 100 && scrollbar?.classList.contains('is-on') && thumb?.getBoundingClientRect().width > 28
-      && !!pipelineRect && !!clipRect && Math.abs(pipelineRect.left - clipRect.left) <= 1 && leftShadow <= .01 && rightShadow >= .95
+      && !!pipelineRect && Math.abs(pipelineRect.left - clipRect.left) <= 1 && !!scrollbarRect
+      && scrollbarRect.left - clipRect.left >= 20 && scrollbarRect.left - clipRect.left <= 32
+      && clipRect.right - scrollbarRect.right >= 20 && clipRect.right - scrollbarRect.right <= 32
+      && leftShadow <= .01 && rightShadow >= .95
       && buckets.every((bucket) => Math.abs(bucket.getBoundingClientRect().width - 268) < 1 && Math.abs(bucket.getBoundingClientRect().height - clip.clientHeight) < 1)
       && !!firstCardRect && !!firstFaceRect && Math.abs(firstCardRect.width - 185) < 1 && Math.abs(firstCardRect.height - 279) < 1
       && Math.abs(firstFaceRect.width - firstCardRect.width) < 1 && Math.abs(firstFaceRect.height - firstCardRect.height) < 1
       && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head'),
-      detail: JSON.stringify({ pseudoTab, tabsBottom:tabsRect?.bottom, bucketTop:bucketRect?.top, shadows:[leftShadow,rightShadow], cards:cards.length, unique:new Set(ids).size, overflow:(pipeline?.scrollWidth || 0) - (clip?.clientWidth || 0), card:firstCardRect && [firstCardRect.width, firstCardRect.height] }) };
+      detail: JSON.stringify({ pseudoTab, tabsBottom:tabsRect?.bottom, bucketTop:bucketRect?.top, bucketInset:bucketRect&&clipRect?bucketRect.left-clipRect.left:null, scrollbarInset:scrollbarRect&&clipRect?[scrollbarRect.left-clipRect.left,clipRect.right-scrollbarRect.right]:null, shadows:[leftShadow,rightShadow], cards:cards.length, unique:new Set(ids).size, overflow:(pipeline?.scrollWidth || 0) - (clip?.clientWidth || 0), card:firstCardRect && [firstCardRect.width, firstCardRect.height] }) };
   });
   await page.focus(`${assignmentScope} .crm-assignment-filter.is-selected`); await page.keyboard.press('ArrowRight');
   await page.waitForFunction(() => document.activeElement?.classList.contains('crm-assignment-filter') && document.activeElement?.classList.contains('is-selected'));
@@ -410,9 +414,9 @@ async function main() {
   }, assignmentScrollBefore);
   await page.evaluate(() => window.crmAssignments.scrollBy(100000, true));
   await check('Assignment scrolling reaches the exact far edge and transfers its shadow to the left boundary', () => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const board=theater?.querySelector('.crm-assignment-board'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const last=theater?.querySelector('.crm-assignment-bucket:last-child')?.getBoundingClientRect(); const state=window.crmAssignments.scrollState();
+    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const board=theater?.querySelector('.crm-assignment-board'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect(); const last=theater?.querySelector('.crm-assignment-bucket:last-child')?.getBoundingClientRect(); const state=window.crmAssignments.scrollState(); const inset=bar&&clip?bar.left-clip.left:0;
     const left=Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-left')||'0'); const right=Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-right')||'0');
-    return { ok:state.min < -100 && Math.abs(state.x-state.min) <= 1 && !!clip && !!last && Math.abs(last.right-clip.right) <= 1 && left >= .95 && right <= .01, detail:JSON.stringify({ state, edge:last&&clip?last.right-clip.right:null, shadows:[left,right] }) };
+    return { ok:state.min < -100 && Math.abs(state.x-state.min) <= 1 && !!clip && !!last && Math.abs((clip.right-last.right)-inset) <= 1 && left >= .95 && right <= .01, detail:JSON.stringify({ state, inset, edge:last&&clip?clip.right-last.right:null, shadows:[left,right] }) };
   });
   await page.evaluate(() => window.crmAssignments.scrollBy(-100000, true));
   await page.waitForFunction(() => document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-hth')?.getBoundingClientRect().width > 28);
@@ -495,7 +499,7 @@ async function main() {
   await page.click('.ticket-detail-overlay[data-card-detail="assignmentDetail"] .td-x');
   await page.waitForFunction(() => document.querySelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]')?.hidden === true);
   const assignmentCalendarDate = await page.$eval(`${assignmentScope} [data-crm-card-date]`, (date) => { const value = date.dataset.crmCardDate; date.click(); return value; });
-  await sleep(700);
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout:2500 });
   await check('The top calendar glyph opens the card date at its month pane', (value) => {
     const date = new Date(`${value}T12:00:00`); const month = date.getMonth() + 1;
     const pane = document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${month}"]`);
@@ -553,14 +557,15 @@ async function main() {
 
   await page.setViewport({ width:1600, height:1000, deviceScaleFactor:1 });
   await activate('people');
-  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8
-    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 80, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 12
+    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 120, { timeout: 10000 });
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-100000, true));
   await check('People are shared card objects grouped inside company buckets, never a pipeline', () => {
     const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
     const cards = [...(theater?.querySelectorAll('.tk-zone .tk-zcard') || [])];
     return {
-      ok: buckets.length === 8 && cards.length === 80
+      ok: buckets.length === 12 && cards.length === 120 && window.peopleCards.contract().horizontalZones === true
         && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
         && !theater.querySelector('svg.tk-flow, .tk-flow-shaft, .tk-flow-head, .tk-bars')
         && [...theater.querySelectorAll('.tk-deck-left, .tk-empty-left')].every((element) => getComputedStyle(element).display === 'none')
@@ -570,16 +575,41 @@ async function main() {
   });
   await check('People company buckets stay proportional to the shared card object', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')];
-    return buckets.length === 8 && buckets.every((bucket) => {
+    return buckets.length === 12 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
   });
+  await check('Company buckets occupy one measured horizontal field with an inset scrollbar and adaptive edge shadow', () => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const clip=theater?.querySelector('.tk-zone-hclip'); const track=theater?.querySelector('.tk-zone-htrack'); const bar=theater?.querySelector('.tk-zone-hsb'); const thumb=theater?.querySelector('.tk-zone-hth'); const buckets=[...(track?.querySelectorAll(':scope > .tk-zone')||[])];
+    const clipRect=clip?.getBoundingClientRect(),barRect=bar?.getBoundingClientRect(),first=buckets[0]?.getBoundingClientRect(); const tops=new Set(buckets.map((bucket)=>Math.round(bucket.getBoundingClientRect().top))); const state=window.peopleCards.zoneScrollState();
+    const left=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-left')||'0'); const right=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-right')||'0');
+    return { ok:!!rail&&!!clip&&!!track&&!!bar&&!!thumb&&buckets.length===12&&tops.size===1&&state.min < -1000&&track.scrollWidth>clip.clientWidth+1000
+      && !!clipRect&&!!barRect&&!!first&&first.left-clipRect.left>=20&&first.left-clipRect.left<=32
+      && barRect.left-clipRect.left>=20&&barRect.left-clipRect.left<=32&&clipRect.right-barRect.right>=20&&clipRect.right-barRect.right<=32
+      && bar.classList.contains('is-on')&&thumb.getBoundingClientRect().width>28&&left<=.01&&right>=.95,
+      detail:JSON.stringify({ state, tops:tops.size, firstInset:first&&clipRect?first.left-clipRect.left:null, barInset:barRect&&clipRect?[barRect.left-clipRect.left,clipRect.right-barRect.right]:null, shadows:[left,right] }) };
+  });
+  const peopleScrollBefore = await page.evaluate(() => window.peopleCards.zoneScrollState());
+  await page.$eval('[data-crm-theater="people"] .tk-zone-hclip', (clip) => clip.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaX:420 })));
+  await sleep(240);
+  await check('Company rail accepts trackpad motion and moves its matching horizontal thumb', (before) => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const state=window.peopleCards.zoneScrollState(); const track=theater?.querySelector('.tk-zone-htrack'); const bar=theater?.querySelector('.tk-zone-hsb'); const thumb=theater?.querySelector('.tk-zone-hth'); const rail=theater?.querySelector('.tk-zone-hrail');
+    const left=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-left')||'0'); const right=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-right')||'0');
+    return { ok:state.x<before.x-30&&/matrix\(1, 0, 0, 1, -/.test(getComputedStyle(track).transform)&&thumb.getBoundingClientRect().left>bar.getBoundingClientRect().left+5&&left>.2&&right>=.95, detail:JSON.stringify({ before,state,shadows:[left,right] }) };
+  }, peopleScrollBefore);
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(100000, true));
+  await check('Company rail reaches its inset far edge and hands the adaptive shadow to the left', () => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect(); const bar=theater?.querySelector('.tk-zone-hsb')?.getBoundingClientRect(); const last=theater?.querySelector('.tk-zone-htrack>.tk-zone:last-child')?.getBoundingClientRect(); const state=window.peopleCards.zoneScrollState(); const inset=bar&&clip?bar.left-clip.left:0;
+    const left=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-left')||'0'); const right=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-right')||'0');
+    return { ok:Math.abs(state.x-state.min)<=1&&!!clip&&!!last&&Math.abs((clip.right-last.right)-inset)<=1&&left>=.95&&right<=.01, detail:JSON.stringify({state,inset,edge:last&&clip?clip.right-last.right:null,shadows:[left,right]}) };
+  });
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-100000, true));
   await page.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); });
-  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 8, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 12, { timeout: 10000 });
   await check('Company-dive buckets use the same ticket-like proportions', () => {
     const buckets = [...document.querySelectorAll('.crm-company-bucket')];
-    return buckets.length === 8 && buckets.every((bucket) => {
+    return buckets.length === 12 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 280 && height <= 410 && width / height >= .55 && width / height <= .85;
     });

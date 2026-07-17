@@ -135,12 +135,10 @@
       .crm-home-priority-hand{position:absolute;z-index:9;left:0;right:0;bottom:0;height:var(--home-hand-reserve,280px);
         overflow:visible;pointer-events:none;contain:layout style}
       .crm-home-priority-hand[hidden]{display:none}
-      .crm-home-todo-toolbar{position:absolute;z-index:1200;left:50%;top:7px;transform:translateX(-50%);height:31px;
-        display:flex;align-items:center;gap:3px;padding:0 3px 0 11px;border:1px solid rgba(255,255,255,.12);border-radius:12px;
+      .crm-home-todo-toolbar{position:absolute;z-index:1200;left:50%;top:7px;transform:translateX(-50%);width:31px;height:31px;
+        display:grid;place-items:center;padding:0;border:1px solid rgba(255,255,255,.12);border-radius:12px;
         background:linear-gradient(180deg,rgba(24,31,42,.62),rgba(13,18,26,.55));-webkit-backdrop-filter:blur(20px) saturate(125%);backdrop-filter:blur(20px) saturate(125%);
         box-shadow:inset 0 1px rgba(255,255,255,.12),0 10px 24px rgba(0,0,0,.18);pointer-events:auto}
-      .crm-home-todo-label{font:600 var(--crm-type-caption,11px)/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
-        letter-spacing:.025em;color:rgba(240,245,252,.74);white-space:nowrap}
       .crm-home-todo-add.crm-menu-action{width:25px;height:25px;padding:0!important;display:grid;place-items:center;font-size:16px!important;line-height:1;color:rgba(238,245,254,.7)!important}
       .crm-home-todo-popover{position:fixed;z-index:9360;width:min(340px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}
       .crm-home-todo-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}
@@ -628,8 +626,8 @@
     hand.dataset.renderSignature = renderSignature;
     hand.classList.toggle("is-empty", priorityItems.length === 0);
     hand.replaceChildren();
-    const toolbar = document.createElement("div"); toolbar.className = "crm-home-todo-toolbar";
-    toolbar.innerHTML = `<span class="crm-home-todo-label">To do</span><button type="button" class="crm-home-todo-add crm-menu-action" aria-label="Add to do">+</button>`;
+    const toolbar = document.createElement("div"); toolbar.className = "crm-home-todo-toolbar"; toolbar.setAttribute("aria-label", "To-do list");
+    toolbar.innerHTML = `<button type="button" class="crm-home-todo-add crm-menu-action" aria-label="Add to do">+</button>`;
     toolbar.querySelector("button")?.addEventListener("click", (event) => { event.stopPropagation(); openTodoComposer(event.currentTarget); });
     hand.appendChild(toolbar);
     if (!priorityItems.length) {

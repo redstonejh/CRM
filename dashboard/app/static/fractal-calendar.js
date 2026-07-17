@@ -336,6 +336,10 @@
   const openMonthFor = (value = new Date()) => {
     const date = value instanceof Date ? value : new Date(value);
     if (!Number.isFinite(date.getTime())) return false;
+    if (camera.isTransitioning?.()) {
+      camera.whenSettled?.().then(() => openMonthFor(date));
+      return true;
+    }
     const year = date.getFullYear();
     if (currentYear !== year) {
       currentYear = year;

@@ -31,6 +31,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // from completed fields; lifecycle workflows move through ordered states;
   // grouped surfaces are independent containers; collections are deck-only.
   const workflowKind = config.workflowKind || (deckOnly ? "collection" : "progressive");
+  const horizontalZones = config.horizontalZones != null ? config.horizontalZones === true : workflowKind === "grouped";
   const rightDeckEnabled = !deckOnly && config.rightDeckEnabled !== false;
   const trashEnabled = !deckOnly && config.trashEnabled !== false;
   const createEnabled = config.createEnabled !== false;
@@ -980,6 +981,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .ticket-date { color: rgba(255,255,255,0.55); font-weight: 400; white-space: nowrap; }
     `;
     document.head.appendChild(style);
+  };
+
+  // Card systems deliberately share the canonical ticket stylesheet. Tickets
+  // may install that sheet before People initializes, so grouped-rail rules
+  // live in their own supplement instead of depending on stylesheet order.
+  const ensureHorizontalZoneStyles = () => {
+    if (document.getElementById("crm-horizontal-zone-styles")) return;
+    const style = document.createElement("style"); style.id = "crm-horizontal-zone-styles"; style.textContent = `
+      .tk-zones.is-horizontal{display:block;position:fixed;inset:0;z-index:790;pointer-events:none}
+      .tk-zone-hrail{--tk-zone-shadow-left:0;--tk-zone-shadow-right:0;--tk-zone-rail-inset:clamp(22px,2.2vw,30px);position:fixed;left:0;right:0;overflow:hidden;pointer-events:none}
+      .tk-zone-hrail:before,.tk-zone-hrail:after{content:"";position:absolute;z-index:3;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.tk-zone-hrail:before{left:0;opacity:var(--tk-zone-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hrail:after{right:0;opacity:var(--tk-zone-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
+      .tk-zone-hclip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0;pointer-events:auto}.tk-zone-hclip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
+      .tk-zone-htrack{position:relative;width:max-content;min-width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 var(--tk-zone-rail-inset);will-change:transform;pointer-events:auto}.tk-zone-htrack>.tk-zone{position:relative;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 auto;z-index:1}
+      .tk-zone-hsb{position:absolute;z-index:4;left:var(--tk-zone-rail-inset);right:var(--tk-zone-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none}.tk-zone-hsb.is-on{opacity:1;pointer-events:auto}.tk-zone-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.tk-zone-hth:hover{background:rgba(255,255,255,.88)}.tk-zone-hth:active{cursor:grabbing;background:#fff}
+    `; document.head.appendChild(style);
   };
 
   const arrowSvg = (dir) =>
@@ -2410,6 +2426,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
+  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHBar = null, zoneHThumb = null, zoneHResizeObserver = null;
+  const zoneHScroll = { x:0, target:0, raf:0, wheeling:false, releaseT:0 };
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   let draggingSide = null;    // which deck owns the in-flight card → its deck is NOT rebuilt mid-drag
   let dragPreviewFn = null;   // (x,y) => recompute the current drag's highlight + sandwich gap (re-run while autoscrolling)
@@ -2512,6 +2530,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     requestAnimationFrame(waitFor);
   };
   const onZoneWheel = (s, e) => {
+    if (horizontalZones && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
+      const raw = Math.abs(e.deltaX) > 0 ? e.deltaX : e.deltaY;
+      const px = e.deltaMode === 1 ? raw * 16 : e.deltaMode === 2 ? raw * (zoneHClip?.clientWidth || innerWidth) : raw;
+      if (scrollZoneRailBy(px)) e.preventDefault(); return;
+    }
     if (zContentH(s) <= zViewH(s) + 1) return;   // nothing to scroll
     e.preventDefault();
     const st = zoneScroll[s], min = zMin(s);
@@ -2559,7 +2582,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const autoTick = () => {
     autoRaf = 0;
     if (!autoTarget || !autoVel) return;
-    if (autoTarget.kind === "zone") {
+    if (autoTarget.kind === "zone-rail") {
+      const minimum = zoneHMin(), next = clamp(zoneHScroll.x + autoVel, minimum, 0);
+      if (next !== zoneHScroll.x) { zoneHScroll.x = zoneHScroll.target = next; positionZoneRail(); }
+    } else if (autoTarget.kind === "zone") {
       const s = autoTarget.key, st = zoneScroll[s];
       if (st) { const min = zMin(s), next = clamp(st.sy + autoVel, min, 0);
         if (next !== st.sy) { st.sy = next; st.ty = next; positionZone(s); } }
@@ -2578,6 +2604,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const updateAutoScroll = (x, y) => {
     autoX = x; autoY = y; autoTarget = null; autoVel = 0;
+    if (horizontalZones && zoneHClip && zoneHMin() < 0) {
+      const rail = zoneHClip.getBoundingClientRect();
+      if (y >= rail.top && y <= rail.bottom) {
+        if (x < rail.left + EDGE_ZONE && zoneHScroll.x < 0) { autoTarget = { kind:"zone-rail" }; autoVel = clamp((rail.left + EDGE_ZONE - x) / EDGE_ZONE, 0, 1) * EDGE_MAX; }
+        else if (x > rail.right - EDGE_ZONE && zoneHScroll.x > zoneHMin()) { autoTarget = { kind:"zone-rail" }; autoVel = -clamp((x - (rail.right - EDGE_ZONE)) / EDGE_ZONE, 0, 1) * EDGE_MAX; }
+      }
+    }
+    if (autoTarget) { if (!autoRaf) autoRaf = requestAnimationFrame(autoTick); return; }
     let overBucket = false;
     for (const sdef of STAGES) {
       const p = zoneBody[sdef.key]?.parentElement; if (!p) continue;
@@ -2642,6 +2676,64 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
   };
 
+  const zoneHMin = () => Math.min(0, (zoneHClip?.clientWidth || 0) - (zoneHTrack?.scrollWidth || zoneHTrack?.offsetWidth || 0));
+  const positionZoneRail = () => {
+    if (!horizontalZones || !zoneRail || !zoneHClip || !zoneHTrack || !zoneHBar || !zoneHThumb) return;
+    zoneHTrack.style.transform = `translateX(${Math.round(zoneHScroll.x)}px)`;
+    const view = zoneHClip.clientWidth, content = zoneHTrack.scrollWidth || zoneHTrack.offsetWidth, minimum = Math.min(0, view - content), over = content > view + 1;
+    const fade = Math.min(72, Math.max(42, view * .06));
+    zoneRail.style.setProperty("--tk-zone-shadow-left", String(over ? clamp(-zoneHScroll.x / fade, 0, 1) : 0));
+    zoneRail.style.setProperty("--tk-zone-shadow-right", String(over ? clamp((zoneHScroll.x - minimum) / fade, 0, 1) : 0));
+    zoneHBar.classList.toggle("is-on", over); zoneHBar.setAttribute("aria-hidden", String(!over));
+    if (!over) { zoneHScroll.x = zoneHScroll.target = 0; zoneHTrack.style.transform = "translateX(0px)"; return; }
+    const trackW = Math.max(1, zoneHBar.clientWidth), base = Math.max(28, trackW * (view / content)); let width = base, left = 0;
+    if (zoneHScroll.x > 0) { width = Math.max(14, base - zoneHScroll.x); left = 0; }
+    else if (zoneHScroll.x < minimum) { width = Math.max(14, base - (minimum - zoneHScroll.x)); left = trackW - width; }
+    else left = (minimum ? zoneHScroll.x / minimum : 0) * (trackW - width);
+    zoneHThumb.style.width = `${Math.round(width)}px`; zoneHThumb.style.left = `${Math.round(left)}px`;
+  };
+  const runZoneRailScroll = () => {
+    if (!horizontalZones || zoneHScroll.raf) return;
+    const tick = () => {
+      const minimum = zoneHMin(), goal = zoneHScroll.wheeling ? zoneHScroll.target : clamp(zoneHScroll.target, minimum, 0);
+      zoneHScroll.x += (goal - zoneHScroll.x) * .22;
+      if (!zoneHScroll.wheeling && Math.abs(goal - zoneHScroll.x) < .4) { zoneHScroll.x = zoneHScroll.target = goal; positionZoneRail(); zoneHScroll.raf = 0; return; }
+      positionZoneRail(); zoneHScroll.raf = requestAnimationFrame(tick);
+    };
+    zoneHScroll.raf = requestAnimationFrame(tick);
+  };
+  const scrollZoneRailBy = (delta, immediate = false) => {
+    if (!horizontalZones) return false; const minimum = zoneHMin(); if (minimum >= 0) return false;
+    if (immediate) { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x - delta, minimum, 0); positionZoneRail(); return true; }
+    if (!zoneHScroll.raf) zoneHScroll.target = zoneHScroll.x;
+    zoneHScroll.target = damp(zoneHScroll.target - delta, minimum); zoneHScroll.wheeling = true;
+    clearTimeout(zoneHScroll.releaseT); zoneHScroll.releaseT = setTimeout(() => { zoneHScroll.wheeling = false; runZoneRailScroll(); }, 90); runZoneRailScroll(); return true;
+  };
+  const revealZoneHorizontally = (stage) => {
+    const panel = zoneBody[stage]?.parentElement; if (!horizontalZones || !zoneHClip || !panel) return false;
+    const view = zoneHClip.getBoundingClientRect(), bounds = panel.getBoundingClientRect(), barBounds = zoneHBar?.getBoundingClientRect(); const inset = barBounds ? Math.max(0, barBounds.left - view.left) : 24; let shift = 0;
+    if (bounds.left < view.left + inset) shift = view.left + inset - bounds.left;
+    else if (bounds.right > view.right - inset) shift = view.right - inset - bounds.right;
+    if (!shift) return true; zoneHScroll.target = clamp(zoneHScroll.x + shift, zoneHMin(), 0); zoneHScroll.wheeling = false; runZoneRailScroll(); return true;
+  };
+  const wireZoneRail = () => {
+    if (!horizontalZones || !zoneHClip || !zoneHBar || !zoneHThumb) return;
+    zoneHClip.addEventListener("wheel", (event) => {
+      if (event.defaultPrevented) return;
+      const horizontal = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+      if (!horizontal && event.target.closest?.(".tk-zone-body")) return;
+      const raw = horizontal ? (Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY) : event.deltaY; if (!raw) return;
+      const px = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * zoneHClip.clientWidth : raw;
+      if (scrollZoneRailBy(px)) event.preventDefault();
+    }, { passive:false });
+    zoneHClip.addEventListener("keydown", (event) => { const amount = event.key === "ArrowLeft" ? -72 : event.key === "ArrowRight" ? 72 : event.key === "PageUp" ? -zoneHClip.clientWidth * .82 : event.key === "PageDown" ? zoneHClip.clientWidth * .82 : 0; if (!amount) return; event.preventDefault(); scrollZoneRailBy(amount); });
+    let dragging = false, startX = 0, startScroll = 0, pointerId = null;
+    const move = (event) => { if (!dragging) return; const minimum = zoneHMin(), view = zoneHClip.clientWidth, content = view - minimum, trackW = zoneHBar.clientWidth, thumbW = Math.max(28, trackW * (view / content)), fraction = (event.clientX - startX) / Math.max(1, trackW - thumbW); zoneHScroll.x = damp(startScroll + fraction * minimum, minimum); zoneHScroll.target = zoneHScroll.x; positionZoneRail(); };
+    const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && zoneHThumb.hasPointerCapture?.(pointerId)) zoneHThumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); zoneHScroll.wheeling = false; zoneHScroll.target = zoneHScroll.x; runZoneRailScroll(); };
+    zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
+    zoneHResizeObserver?.disconnect(); zoneHResizeObserver = new ResizeObserver(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); }); zoneHResizeObserver.observe(zoneHClip); zoneHResizeObserver.observe(zoneHTrack);
+  };
+
   // Measure the dashboard grid so the buckets can snap to its columns instead of free-floating.
   const gridGeom = () => {
     const grid = document.querySelector(".dashboard-layout-grid");
@@ -2665,6 +2757,27 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const metric = (name, fallback) => parseFloat(rootStyle.getPropertyValue(name)) || fallback;
     const zTop = metric("--crm-canvas-top", 78);
     const zBottom = reserveStackSpace ? CARD_H + MARGIN * 2 : metric("--crm-canvas-bottom", 78);
+    if (horizontalZones && zoneRail && zoneHTrack) {
+      const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
+      const bucketW = Math.max(220, Math.min(260, CARD_W + 60));
+      const bucketH = Math.max(300, Math.min(CARD_H + 110, availableH - 12));
+      zoneRail.style.top = `${Math.round(zTop)}px`; zoneRail.style.bottom = `${Math.round(zBottom)}px`;
+      zoneHTrack.style.gap = `${Math.round(zoneGap == null ? metric("--crm-object-gap", 18) : zoneGap)}px`;
+      STAGES.forEach((stage) => {
+        const panel = zoneBody[stage.key]?.parentElement; if (!panel) return;
+        window.crmObjectSizing?.scan?.(panel); const compact = isSmallObject(panel); const width = Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)); const height = Math.round(bucketH * (compact ? .78 : 1));
+        panel.style.width = `${width}px`; panel.style.height = `${height}px`; panel.style.left = panel.style.right = panel.style.top = panel.style.bottom = "auto";
+        const body = zoneBody[stage.key], sb = body?.querySelector(".tk-zsb");
+        if (body && sb) {
+          const gutter = panel.getBoundingClientRect().right - body.getBoundingClientRect().right;
+          const referenceCard = body.querySelector(".tk-zcard"), ticketWidth = referenceCard?.offsetWidth || CARD_W, ticketGap = Math.max(0, (body.clientWidth - ticketWidth) / 2), center = (ticketGap - gutter) / 2;
+          sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;
+        }
+      });
+      STAGES.forEach((stage) => clampZoneScroll(stage.key));
+      requestAnimationFrame(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); });
+      return;
+    }
     const n = STAGES.length, g = gridGeom();
     // Distribute across the grid's horizontal extent (fallback: the viewport minus margins).
     const region = g
@@ -2755,6 +2868,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const homePreviewState = () => ({
     expandedStages:[...expandedStages],
     zoneScroll:Object.fromEntries(STAGE_KEYS.map((stage) => [stage, zoneScroll[stage]?.sy || 0])),
+    zoneX:horizontalZones ? clamp(zoneHScroll.x, zoneHMin(), 0) : 0,
   });
   const applyHomePreviewState = async (state = {}) => {
     ensureZones();
@@ -2776,14 +2890,22 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         positionZone(stage);
       });
     }
+    if (horizontalZones) {
+      const requested = Number(state.zoneX); zoneHScroll.x = zoneHScroll.target = clamp(Number.isFinite(requested) ? requested : 0, zoneHMin(), 0); zoneHScroll.wheeling = false; positionZoneRail();
+    }
     return homePreviewState();
   };
   const ensureZones = () => {
     if (!zonesEnabled) return;
     if (zonesRoot) return;
     ensureStyles();
+    if (horizontalZones) ensureHorizontalZoneStyles();
     zonesRoot = document.createElement("div");
-    zonesRoot.className = "tk-zones";
+    zonesRoot.className = `tk-zones${horizontalZones ? " is-horizontal" : ""}`;
+    if (horizontalZones) {
+      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
+      zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+    }
     STAGES.forEach((s, i) => {
       const panel = document.createElement("div");
       panel.className = "tk-zone";
@@ -2796,7 +2918,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       panel.querySelector(".tk-zone-spread")?.addEventListener("click", (event) => {
         event.preventDefault(); event.stopPropagation(); setZoneExpanded(s.key);
       });
-      zonesRoot.appendChild(panel);
+      (zoneHTrack || zonesRoot).appendChild(panel);
       window.crmObjectSizing?.scan?.(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
       zoneTrack[s.key] = panel.querySelector(".tk-zone-track");
@@ -2809,6 +2931,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       wireZoneThumb(s.key);
     });
     ensureTheater().appendChild(zonesRoot);
+    if (horizontalZones) wireZoneRail();
     layoutZones();
     window.addEventListener("resize", layoutZones);
   };
@@ -3260,6 +3383,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const st = zoneScroll[s.key];   // re-clamp scroll to the new content height + reposition
       if (st) { st.sy = clamp(st.sy, zMin(s.key), 0); st.ty = st.sy; positionZone(s.key); }
     });
+    // The first zone layout runs before its cards exist. Re-measure once the
+    // real stacks are seated so bucket scrollbars and the outer rail use the
+    // final card geometry instead of a temporary empty-state measurement.
+    if (horizontalZones) layoutZones();
   };
 
   const reflowObjectSizes = (detail = null) => {
@@ -3519,8 +3646,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (state?.raf) cancelAnimationFrame(state.raf);
         if (state?.releaseT) clearTimeout(state.releaseT);
       });
+      if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf); clearTimeout(zoneHScroll.releaseT); zoneHScroll.raf = 0; zoneHScroll.wheeling = false;
+      zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zonesRoot?.remove();
-      zonesRoot = null;
+      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHBar = zoneHThumb = null;
       [zoneBody, zoneTrack, zoneScroll].forEach((map) => Object.keys(map).forEach((key) => { delete map[key]; }));
       STAGES = normalized;
       STAGE_KEYS = normalized.map((stage) => stage.key);
@@ -3533,6 +3662,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     setStageExpanded: setZoneExpanded,
     toggleStageExpanded: (stage) => setZoneExpanded(stage),
     expandedStages: () => [...expandedStages],
+    scrollZonesBy: scrollZoneRailBy,
+    scrollZoneIntoView: revealZoneHorizontally,
+    zoneScrollState: () => ({ x:zoneHScroll.x, target:zoneHScroll.target, min:zoneHMin() }),
     homePreviewState,
     applyHomePreviewState,
     // Product-level contract used by the interaction audit. These semantics
@@ -3540,6 +3672,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // hand/search collection must not acquire lifecycle chrome by accident.
     contract: () => ({
       workflowKind,
+      horizontalZones,
       showFlow,
       showProgressBars,
       stageMovement,

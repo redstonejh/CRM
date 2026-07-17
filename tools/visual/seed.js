@@ -29,6 +29,10 @@ function rosaDataset() {
     { id: 'co_cascade', name: 'Cascade Fieldworks', title: 'Cascade Fieldworks', industry: 'Environmental services', city: 'Bend' },
     { id: 'co_meridian', name: 'Meridian Fabrication', title: 'Meridian Fabrication', industry: 'Manufacturing', city: 'Kent' },
     { id: 'co_solace', name: 'Solace Property Group', title: 'Solace Property Group', industry: 'Property management', city: 'Spokane' },
+    { id: 'co_redfern', name: 'Redfern Energy', title: 'Redfern Energy', industry: 'Renewable energy', city: 'Eugene' },
+    { id: 'co_kestrel', name: 'Kestrel Civic Works', title: 'Kestrel Civic Works', industry: 'Public infrastructure', city: 'Salem' },
+    { id: 'co_juniper', name: 'Juniper Labs', title: 'Juniper Labs', industry: 'Life sciences', city: 'Vancouver' },
+    { id: 'co_tidewater', name: 'Tidewater Hospitality', title: 'Tidewater Hospitality', industry: 'Hospitality', city: 'Astoria' },
   ];
   const contacts = [
     {
@@ -104,7 +108,7 @@ function rosaDataset() {
     'Avery', 'Maya', 'Theo', 'Nina', 'Elias', 'Cora', 'Julian', 'Zoe', 'Miles', 'Leah',
     'Caleb', 'Amara', 'Finn', 'Elena', 'Rowan', 'Sofia', 'Micah', 'Talia', 'Nolan', 'Maeve',
   ];
-  const supportingLastNames = ['Stone', 'Bennett', 'Navarro', 'Whitaker'];
+  const supportingLastNames = ['Stone', 'Bennett', 'Navarro', 'Whitaker', 'Sato', 'Ibrahim'];
   const supportingRoles = [
     'Account lead', 'Operations manager', 'Finance manager', 'IT administrator', 'Project coordinator',
     'Office manager', 'Service director', 'Procurement lead', 'Program manager', 'Executive sponsor',

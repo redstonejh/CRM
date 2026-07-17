@@ -28,9 +28,12 @@
     let attempts = 0;
     const reveal = () => {
       attempts += 1; window.fractalCalendar?.openMonthFor?.(date);
-      if (window.fractalCalendar?.level?.() !== 1 && attempts < 4) setTimeout(reveal, 120);
+      if (window.fractalCalendar?.level?.() !== 1 && attempts < 12) setTimeout(reveal, 120);
     };
-    requestAnimationFrame(reveal);
+    // Workspace activation is synchronous. Seat the month in the same task as
+    // the click so a busy main thread cannot leave Calendar exposed at its
+    // year root while a deferred frame waits behind unrelated rendering.
+    reveal();
     return true;
   };
   const ensureStyles = () => {

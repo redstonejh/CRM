@@ -647,8 +647,13 @@ async function main() {
   await check('Right-clicking a person offers conversation history in the canonical card menu', () => {
     const menu = document.querySelector('.tk-menu');
     const action = menu?.querySelector('.tk-menu-item[data-act^="custom-"]');
+    const items = [...(menu?.querySelectorAll('.tk-menu-item') || [])];
+    const labels = items.map((item) => item.textContent.trim().toLowerCase());
     return !!menu && menu.classList.contains('crm-menu-surface') && !!action
-      && action.textContent.trim().toLowerCase() === 'conversation history';
+      && action.textContent.trim().toLowerCase() === 'conversation history'
+      && items.length === 4 && labels.includes('edit') && labels.includes('move to trash')
+      && labels.some((label) => ['make small','make large'].includes(label))
+      && !labels.includes('activity') && !labels.includes('appearance');
   });
   await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
   await page.waitForSelector('.crm-person-history-shell:not([hidden]) .crm-person-history', { timeout: 10000 });
@@ -797,13 +802,14 @@ async function main() {
   await page.click(ticketCard);
   await page.waitForSelector('.ticket-detail', { timeout: 5000 });
   await sleep(760);
-  await check('Left-click runs the ticket-reference card flight and guided work screen', () => (
+  await check('Left-click runs the ticket-reference card flight and current-stage work screen', () => (
     !!document.querySelector('.ticket-detail-overlay:not([hidden]) .td-card')
       && !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail')
-      && ['priority','assignee','description','note','activity'].every((key) => document.querySelector(`.ticket-detail .td-acc[data-sec="${key}"]`))
-      && !!document.querySelector('.ticket-detail .td-edit[data-meta="title"]')
-      && !!document.querySelector('.ticket-detail .td-acts .td-act[data-act="delete"]')
-      && !document.querySelector('.ticket-detail .td-field, .ticket-detail .td-save')
+      && document.querySelectorAll('.ticket-detail .td-field').length === 2
+      && !!document.querySelector('.ticket-detail .td-prio')
+      && !!document.querySelector('.ticket-detail [data-field="assignee"]')
+      && !!document.querySelector('.ticket-detail .td-save')
+      && !document.querySelector('.ticket-detail .td-acc, .ticket-detail .td-edit, .ticket-detail .td-meta, .ticket-detail .td-time, .ticket-detail .td-acts, .ticket-detail .td-log')
   ));
   await check('Ticket detail unfolds beyond its card, fits its work surface, and keeps the canonical glass', () => {
     const overlay = document.querySelector('.ticket-detail-overlay:not([hidden])');
@@ -827,19 +833,32 @@ async function main() {
   await sleep(520);
   await page.click(ticketCard, { button: 'right' });
   await page.waitForSelector('.tk-menu', { timeout: 5000 });
-  await check('Right-click restores the complete ticket action menu', () => {
+  await check('Right-click keeps the ticket command menu concise and state-aware', () => {
     const items = [...document.querySelectorAll('.tk-menu .tk-menu-item')];
-    const actions = items.map((item) => item.textContent.trim().toLowerCase());
+    const actions = items.map((item) => item.dataset.act);
     return document.querySelector('.tk-menu')?.classList.contains('crm-menu-surface')
       && items.every((item) => item.classList.contains('crm-menu-action'))
-      && ['edit', 'appearance', 'activity', 'move to trash'].every((label) => actions.includes(label));
+      && items.length === 5 && ['edit', 'size', 'activity', 'trash'].every((action) => actions.includes(action))
+      && ['claim', 'resolve', 'reopen'].filter((action) => actions.includes(action)).length === 1
+      && !actions.includes('appearance');
   });
+  await page.click('.tk-menu .tk-menu-item[data-act="activity"]');
+  await page.waitForSelector('.tk-menu.tk-activity', { timeout: 5000 });
+  await check('Ticket activity is a single-purpose submenu without repeated identity', () => {
+    const menu = document.querySelector('.tk-menu.tk-activity');
+    return menu?.querySelector('.tk-act-hd')?.textContent.trim() === 'Activity'
+      && !!menu.querySelector('.tk-act-compose .crm-menu-input[placeholder="Add note"]')
+      && !menu.querySelector('.tk-menu-item, .tk-swatches, .tk-menu-check');
+  });
+  await page.keyboard.press('Escape');
+  await page.click(ticketCard, { button: 'right' });
+  await page.waitForSelector('.tk-menu .tk-menu-item[data-act="edit"]', { timeout: 5000 });
   await page.click('.tk-menu .tk-menu-item[data-act="edit"]');
   await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail', { timeout: 5000 });
-  await check('Right-click edit opens that same guided ticket screen', () => (
-    !!document.querySelector('.ticket-detail .td-acc[data-sec="activity"]')
-      && !!document.querySelector('.ticket-detail .td-act[data-act="delete"]')
-      && !document.querySelector('.ticket-detail .td-field, .ticket-detail .td-save')
+  await check('Right-click edit opens that same focused stage screen', () => (
+    !!document.querySelector('.ticket-detail .td-field')
+      && !!document.querySelector('.ticket-detail .td-save')
+      && !document.querySelector('.ticket-detail .td-acc, .ticket-detail .td-act, .ticket-detail [data-meta="title"]')
   ));
   await page.keyboard.press('Escape');
   await sleep(520);
@@ -941,9 +960,11 @@ async function main() {
   await page.waitForSelector('.crm-search-result[data-entity="tickets"]', { timeout: 5000 });
   await page.click('.crm-search-result[data-entity="tickets"]');
   await page.waitForSelector('.ticket-detail-overlay:not([hidden]) .ticket-detail', { timeout: 5000 });
-  await check('Ticket search results route to the reference guided screen, never the generic record panel', () => (
+  await check('Ticket search results route to the reference stage screen, never the generic record panel', () => (
     !!document.querySelector('.ticket-detail-overlay:not([hidden]) .td-card .ticket-body')
-      && !!document.querySelector('.ticket-detail .td-acc[data-sec="activity"]')
+      && !!document.querySelector('.ticket-detail .td-field')
+      && !!document.querySelector('.ticket-detail .td-save')
+      && !document.querySelector('.ticket-detail .td-acc, .ticket-detail .td-act')
       && !document.querySelector('.record-world-shell:not([hidden])')
   ));
   await page.keyboard.press('Escape');

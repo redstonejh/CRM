@@ -211,6 +211,9 @@
       label: "Conversation history",
       run: (contact, sourceCard) => window.crmPersonHistory?.open?.(contact.id, sourceCard),
     }],
+    // Conversation history is the complete human-readable trail for a person;
+    // a second generic Activity command would duplicate the same destination.
+    showActivityAction: false,
     widgetType: "contact",
     widgetTitle: "Contact",
     widgetCardClass: "ticket-widget-card contact-widget-card",

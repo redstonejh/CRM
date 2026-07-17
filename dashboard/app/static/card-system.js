@@ -48,6 +48,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
   const bucketSummary = typeof config.bucketSummary === "function" ? config.bucketSummary : null;
   const contextActionSource = config.contextActions;
+  const showActivityAction = config.showActivityAction !== false;
   const contextActionsFor = (record) => {
     const actions = typeof contextActionSource === "function" ? contextActionSource(record) : contextActionSource;
     return (Array.isArray(actions) ? actions : []).filter((action) => {
@@ -749,15 +750,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
       .tk-menu-danger { color: rgba(255,135,135,0.85); }
       .tk-menu-danger:hover { background: rgba(255,90,90,0.14); color: #ff8a8a; }
-      /* Appearance submenu: the widget palette as swatches + a "match severity" check item. */
-      .tk-swatches { display: grid; grid-template-columns: repeat(8, 20px); gap: 7px; padding: 8px 12px 6px; }
-      .tk-swatch { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
-        border: 1px solid rgba(255,255,255,0.30); padding: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
-        transition: transform .12s ease, box-shadow .12s ease; }
-      .tk-swatch:hover { transform: scale(1.18); }
-      .tk-swatch.is-active { box-shadow: 0 0 0 2px rgba(255,255,255,0.95), inset 0 1px 0 rgba(255,255,255,0.25); }
-      .tk-menu-check { display: flex; align-items: center; gap: 7px; }
-      .tk-menu-check .tk-tick { width: 13px; flex: 0 0 auto; font-weight: 800; color: rgba(140,255,180,0.95); }
       /* Activity view — a scrollable trail in the same frosted shell. */
       .tk-activity { width: 285px; max-height: 330px; overflow-y: auto; overscroll-behavior: contain;
         scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.5) transparent; }
@@ -1019,8 +1011,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     render();
   };
 
-  // Right-click menu on a ticket — a small frosted-glass menu (config-menu styling) with plain-text
-  // actions: edit (opens the config), appearance (placeholder), delete (animated into the recycle bin).
+  // Right-click is a command surface, not a second record view. Identity and
+  // metadata remain on the adjacent card; only immediate, state-aware actions
+  // belong here. A trashed object exposes just its two recovery decisions.
   let ticketMenu = null;
   const hideTicketMenu = () => { if (ticketMenu) { ticketMenu.remove(); ticketMenu = null; } };
   const showTicketMenu = (t, card, x, y) => {
@@ -1029,19 +1022,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const customActions = contextActionsFor(t);
     const m = document.createElement("div");
     m.className = "tk-menu crm-menu-surface";
-    // State-aware items: a live ticket can be MOVED TO TRASH (reversible); a trashed one can be
-    // RESTORED or DELETED PERMANENTLY (the only truly destructive action → the lone red item).
-    m.innerHTML = customActions.map((action, index) => `<button class="tk-menu-item" data-act="custom-${index}">${esc(action.label)}</button>`).join("") +
-      `<button class="tk-menu-item" data-act="edit">edit</button>` +
-      `<button class="tk-menu-item" data-act="appearance">appearance</button>` +
-      `<button class="tk-menu-item" data-act="size">${window.crmObjectSizing?.isSmall?.(card, "card") ? "make large" : "make small"}</button>` +
-      `<button class="tk-menu-item" data-act="activity">activity</button>` +
-      (trashEnabled && trashed
-        ? `<button class="tk-menu-item" data-act="restore">restore</button>` +
-          `<button class="tk-menu-item tk-menu-danger" data-act="purge">delete permanently</button>`
-        : trashEnabled
-          ? `<button class="tk-menu-item" data-act="trash">move to trash</button>`
-          : "");
+    m.innerHTML = trashed
+      ? `<button class="tk-menu-item" data-act="restore">Restore</button>` +
+        `<button class="tk-menu-item tk-menu-danger" data-act="purge">Delete permanently</button>`
+      : customActions.map((action, index) => `<button class="tk-menu-item" data-act="custom-${index}">${esc(action.label)}</button>`).join("") +
+        `<button class="tk-menu-item" data-act="edit">Edit</button>` +
+        `<button class="tk-menu-item" data-act="size">${window.crmObjectSizing?.isSmall?.(card, "card") ? "Make large" : "Make small"}</button>` +
+        (showActivityAction ? `<button class="tk-menu-item" data-act="activity">Activity</button>` : "") +
+        (trashEnabled ? `<button class="tk-menu-item" data-act="trash">Move to trash</button>` : "");
     window.crmInterfaceParity?.scan?.(m);
     ensureTheater().appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
@@ -1050,7 +1038,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const on = (act, fn) => { const b = m.querySelector(`[data-act="${act}"]`); if (b) b.onclick = () => { hideTicketMenu(); fn(); }; };
     customActions.forEach((action, index) => on(`custom-${index}`, () => Promise.resolve(action.run(t, card)).catch((error) => console.error("[CRM] context action failed", error))));
     on("edit", () => detail?.open(t, card));
-    on("appearance", () => showAppearanceMenu(t, x, y));
     on("size", () => window.crmObjectSizing?.toggle?.(card, "card"));
     on("activity", () => showActivityMenu(t, x, y));
     on("trash", () => deleteToBin(t, card));
@@ -1063,43 +1050,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     showTicketMenu(t, card, e.clientX, e.clientY);
   });
 
-  // Appearance: an explicit palette colour (meta.color, persisted) or "match severity" (the default —
-  // no override, the card follows its severity colour and tracks live severity changes). Recolours every
-  // card instance IN PLACE (no rebuild), the same pattern as setPriority.
-  const setAppearance = (t, hex) => {
-    setMeta(t.id, { color: hex || "" });
-    document.querySelectorAll(`.tk-card[data-id="${cssEsc(t.id)}"], .tk-zcard[data-id="${cssEsc(t.id)}"]`).forEach((c) => {
-      applyCardPaint(c, t);
-    });
-  };
-  // The appearance submenu — same frosted .tk-menu shell: the widget palette as a swatch grid, then a
-  // "match severity" check item. The current state reads back: the active swatch rings white, or the
-  // check shows when no override is set.
-  const showAppearanceMenu = (t, x, y) => {
-    hideTicketMenu();
-    const cur = metaOf(t.id).color || "";
-    const m = document.createElement("div");
-    m.className = "tk-menu crm-menu-surface";
-    m.innerHTML =
-      `<div class="tk-swatches">${TICKET_COLORS.map((c) =>
-        `<button class="tk-swatch${c === cur ? " is-active" : ""}" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join("")}</div>` +
-      `<button class="tk-menu-item tk-menu-check" data-act="match"><span class="tk-tick">${cur ? "" : "&#10003;"}</span><span>match severity</span></button>`;
-    window.crmInterfaceParity?.scan?.(m);
-    ensureTheater().appendChild(m);
-    m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
-    m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
-    ticketMenu = m;   // reuse the main menu's dismiss wiring (outside press / Escape / wheel)
-    // Selections apply LIVE but keep the menu open (so you can try colours) — the active ring / check
-    // moves in place. Clicking off, Escape, or scrolling still dismisses it.
-    const sync = () => {
-      const now = metaOf(t.id).color || "";
-      m.querySelectorAll(".tk-swatch").forEach((b) => b.classList.toggle("is-active", b.dataset.color === now));
-      const tick = m.querySelector(".tk-tick"); if (tick) tick.innerHTML = now ? "" : "&#10003;";
-    };
-    m.querySelectorAll(".tk-swatch").forEach((b) => { b.onclick = () => { setAppearance(t, b.dataset.color); sync(); }; });
-    const mb = m.querySelector('[data-act="match"]'); if (mb) mb.onclick = () => { setAppearance(t, ""); sync(); };
-  };
-
   // Activity view: the ticket's full trail — the STORE's history (created / edited / resolved / …,
   // stamped with who) merged with the CLIENT trail (stage moves, trash/restore, severity), newest first.
   const showActivityMenu = (t, x, y) => {
@@ -1111,7 +1061,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     ].filter((e) => e.text).sort((a, b) => b.at - a.at);
     const m = document.createElement("div");
     m.className = "tk-menu tk-activity crm-menu-surface";
-    m.innerHTML = `<div class="tk-act-hd">Activity — ${esc(titleOf(t))}</div>` +
+    m.innerHTML = `<div class="tk-act-hd">Activity</div>` +
       (entries.length
         ? entries.map((e) => `<div class="tk-act-row"><span class="tk-act-when">${esc(when(e.at))}</span><span class="tk-act-text">${esc(e.text)}${e.by ? ` <span class="tk-act-by">— ${esc(e.by)}</span>` : ""}</span></div>`).join("")
         : `<div class="tk-act-row tk-act-none">No activity yet</div>`);
@@ -3274,7 +3224,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       hydrateZoneCard(card, t);
       revealZoneCard(stage, card, () => detail?.open?.(t, card));
     });
-    wireContextMenu(card, t);   // right-click menu (edit / appearance / delete)
+    wireContextMenu(card, t);   // concise, state-aware card commands
     return card;
   };
 

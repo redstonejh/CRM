@@ -11,9 +11,9 @@
 //   by ticket-stacks.js before this open runs.)
 //   close → the panel collapses back in, then the card flies back to its place.
 //
-// The work screen preserves the original guided flow: identity, priority, assignee,
-// description, note, activity, and state actions. It portals to <body> so the card
-// flight and the glass work surface are not flattened by a parent transform.
+// The work screen preserves the card-flight choreography while exposing only the
+// current stage's configuration. The adjacent card remains the single source of
+// identity; state commands and history live in its context menu.
 (() => {
   const PRIORITIES = ["low", "medium", "high", "critical"];
   const GAP = 10;            // gap between the card and the panel — matches GAP_FAN (the fanned-stack gap)
@@ -33,18 +33,7 @@
   let cardStays = false;     // true when the card doesn't move (front/closed-pile card) → panel opens with no delay
   let scrim = null;          // full-screen backdrop-blur layer behind the flyer/panel (depth-of-field)
   const slideBack = () => `translateX(${panelSide === "left" ? "" : "-"}${TUCK}px)`;  // retract direction (mirrors per side)
-  const openSections = new Set();
-
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const human = (ms) => {
-    if (!Number.isFinite(ms) || ms < 0) return "—";
-    const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
-    if (d) return `${d}d ${h % 24}h`;
-    if (h) return `${h}h ${m % 60}m`;
-    if (m) return `${m}m`;
-    return `${s}s`;
-  };
-  const shortTime = (iso) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
 
   const ensureStyles = () => {
     if (document.getElementById("ticket-detail-styles")) return;
@@ -54,8 +43,8 @@
       /* No scrim — background not dimmed; the panel's backdrop-filter blurs the real bg. */
       .ticket-detail-overlay { position: fixed; inset: 0; z-index: 5000; background: transparent; -webkit-app-region: no-drag;
         -webkit-user-select: none; user-select: none; }
-      /* The ONLY place text selection / a text caret is allowed: the guided screen's editable fields. */
-      .ticket-detail .td-edit, .ticket-detail .td-in { -webkit-user-select: text; user-select: text; cursor: text; }
+      /* The ONLY place text selection / a text caret is allowed: the stage's editable fields. */
+      .ticket-detail .td-in { -webkit-user-select: text; user-select: text; cursor: text; }
       .ticket-detail-overlay[hidden] { display: none; }
       /* Depth-of-field: a full-screen layer UNDER the flyer + panel whose backdrop-filter blurs
          everything behind the overlay (dashboard, stacks, buckets). The flyer/panel paint above it
@@ -111,40 +100,13 @@
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 18px 42px rgba(0,0,0,0); }
       .td-wrap.is-settled .ticket-detail { box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 18px 42px rgba(0,0,0,0.4); }
       .ticket-detail :focus, .ticket-detail :focus-visible { outline: none !important; box-shadow: none !important; }
-      /* Header: "name | ip" on top, then "Down <time> | <opened timestamp>". */
-      .td-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; }
-      .td-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--crm-type-object,14px); font-weight: 700; line-height: 1.2; }
-      .td-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .td-ip { font-size: var(--crm-type-caption,11px); font-weight: 500; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .td-sep { color: rgba(255,255,255,0.28); font-weight: 400; }
-      /* Editable title/subtitle inputs styled to read like the header text until focused. */
-      .td-edit { font: inherit; color: inherit; background: transparent; border: 0; border-radius: 6px;
-        padding: 1px 4px; margin: 0; outline: none; min-width: 0; transition: background .14s ease, box-shadow .14s ease; }
-      .td-edit::placeholder { color: rgba(255,255,255,0.32); font-weight: 600; }
-      .td-edit:hover { background: rgba(255,255,255,0.06); }
-      .td-edit:focus { background: rgba(255,255,255,0.10); box-shadow: inset 0 0 0 1px rgba(125,180,255,0.55); }
-      input.td-name { flex: 1 1 auto; }
-      input.td-ip { flex: 0 1 auto; width: 9ch; }
-      input.td-ip:focus { width: 16ch; }
       .td-x { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0 2px; margin: 0;
         color: rgba(255,255,255,0.5); font-size: 17px; line-height: 1; cursor: pointer; transition: color .14s ease; }
       .td-x:hover { color: #fff; }
-      .td-meta { padding: 0 4px; font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.6); }
-      .td-time { padding: 0 4px; margin-top: -4px; font-size: var(--crm-type-meta,10px); color: rgba(255,255,255,0.4); font-variant-numeric: tabular-nums; }
-
-      /* Accordion section: dropdown header + a body that animates open below it. */
-      .td-acc { display: flex; flex-direction: column; }
-      .td-acc-head { -webkit-appearance: none; appearance: none; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
-        width: 100%; border: 0; background: transparent; cursor: pointer; padding: 0 4px; margin: 0; text-align: left;
-        font: inherit; font-size: var(--crm-type-control,13px); font-weight: 600; color: rgba(255,255,255,0.6); transition: color .14s ease; }
-      .td-acc-head:hover { color: #fff; }
-      .td-acc.is-open > .td-acc-head { color: #fff; }
-      .td-acc-caret { display: inline-block; width: 9px; font-size: 0.72rem; color: rgba(255,255,255,0.4); transition: transform .14s ease; }
-      .td-acc.is-open > .td-acc-head .td-acc-caret { transform: rotate(90deg); }
-      .td-acc-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .24s ease; }
-      .td-acc.is-open > .td-acc-body { grid-template-rows: 1fr; }
-      .td-acc-inner { overflow: hidden; min-height: 0; }
-      .td-acc-pad { padding: 3px 4px 7px 21px; }
+      .td-field { display: flex; flex-direction: column; gap: 5px; padding: 1px 4px; }
+      .td-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .td-field-label { font-size: var(--crm-type-body,12px); font-weight: 600; color: rgba(255,255,255,0.72); }
+      .td-req { color: rgba(255,140,140,0.95); font-weight: 700; }
 
       .td-prio { display: flex; gap: 12px; }
       .td-prio-opt { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer;
@@ -155,24 +117,15 @@
       .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
         background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: var(--crm-type-body,12px); padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
-      .td-ta { resize: none; min-height: 0; height: auto; line-height: 1.4; overflow:hidden; }
-
-      /* Claim + Resolve share one row, pinned to the bottom of the card-height panel. */
-      .td-acts { display: flex; flex-direction: row; gap: 20px; margin-top: auto; padding-top: 6px; }
-      .td-act { -webkit-appearance: none; appearance: none; display: inline-flex; align-items: center; justify-content: flex-start;
-        text-align: left; width: auto; border: 0; background: transparent; cursor: pointer; border-radius: 8px;
-        padding: 0 4px; margin: 0; font: inherit; font-size: 0.9rem; font-weight: 600; color: rgba(255,255,255,0.62); transition: color .14s ease; }
-      .td-act:hover { color: #fff; }
-      .td-act.td-danger { color: rgba(255,135,135,0.85); margin-left: auto; }   /* Delete/Restore sits at the far end */
-      .td-act.td-danger:hover { color: #ff8a8a; }
-
-      .td-log { display: flex; flex-direction: column; gap: 7px; max-height: none; overflow: visible;
-        background: rgba(255,255,255,0.05); border-radius: 9px; padding: 8px 9px; }
-      .td-ev { font-size: var(--crm-type-caption,11px); color: rgba(255,255,255,0.78); }
-      .td-ev b { font-weight: 700; }
-      .td-ev .td-at { color: rgba(255,255,255,0.4); }
-      .td-ev-note { color: rgba(255,255,255,0.6); margin-top: 1px; }
-      .td-log-empty, .td-empty { color: rgba(255,255,255,0.45); font-size: var(--crm-type-caption,11px); }
+      .td-date { color-scheme: dark; }
+      .td-ta { resize: none; min-height: 2.4em; line-height: 1.4; overflow-y: hidden; max-height: none; }
+      .td-ta-big { min-height: 7.6em; }
+      .td-save-row { display: flex; justify-content: flex-end; padding: 4px 4px 0; margin-top: auto; }
+      .td-save { -webkit-appearance: none; appearance: none; background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer;
+        font: inherit; font-size: 0.85rem; font-weight: 700; color: rgba(255,255,255,0.55); transition: color .14s ease; }
+      .td-save:hover { color: #fff; }
+      .td-msg { padding: 1px 4px; font-size: var(--crm-type-caption,11px); color: rgba(255,160,160,0.95); }
+      .td-empty { color: rgba(255,255,255,0.45); font-size: var(--crm-type-caption,11px); }
     `;
     document.head.appendChild(style);
   };
@@ -407,70 +360,25 @@
     catch { return null; }
   };
 
-  const section = (key, label, bodyHtml) =>
-    `<div class="td-acc${openSections.has(key) ? " is-open" : ""}" data-sec="${key}">
-      <button class="td-acc-head" data-sec-toggle="${key}"><span class="td-acc-caret">&rsaquo;</span><span>${label}</span></button>
-      <div class="td-acc-body"><div class="td-acc-inner"><div class="td-acc-pad">${bodyHtml}</div></div></div>
-    </div>`;
-
-  // Open/close one accordion section (keeps openSections in sync so a re-render preserves it).
-  const setAcc = (key, open) => {
-    const acc = panel && panel.querySelector(`.td-acc[data-sec="${key}"]`);
-    if (!acc) return null;
-    acc.classList.toggle("is-open", open);
-    if (open) openSections.add(key); else openSections.delete(key);
-    return acc;
-  };
-  // Guided flow: close the current section, open the next, focus its field, scroll it in.
-  const advanceSection = (fromKey, toKey, focusSel) => {
-    setAcc(fromKey, false);
-    const acc = setAcc(toKey, true);
-    if (!acc) return;
-    if (focusSel) { const f = panel.querySelector(focusSel); if (f) f.focus(); }
-    requestAnimationFrame(() => { try { acc.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch {} });
-    setTimeout(fitPanelToContent, 260);
-  };
-
   const render = (t) => {
     if (!panel) return;
     if (!t) { panel.innerHTML = `<div class="td-empty">Ticket not found.</div>`; wire(null); window.crmInterfaceParity?.scan?.(panel); return; }
-    const created = t.createdAt ? new Date(t.createdAt) : null;
-    const endMs = t.recoveredAt ? Date.parse(t.recoveredAt) : Date.now();
-    const downMs = created ? endMs - created.getTime() : NaN;
-    const state = t.state || "open";
-    const priority = window.ticketStacks?.fieldValue?.(t.id, "priority") || t.priority || "medium";
-    const actions = [];
-    if (state !== "claimed" && state !== "resolved") actions.push(`<button class="td-act" data-act="claim">Claim</button>`);
-    if (state !== "resolved") actions.push(`<button class="td-act" data-act="resolve">Resolve</button>`);
-    if (state === "resolved") actions.push(`<button class="td-act" data-act="reopen">Reopen</button>`);
-    if (window.ticketStacks?.isDeleted?.(t.id)) actions.push(`<button class="td-act td-danger" data-act="restore">Restore</button>`);
-    else actions.push(`<button class="td-act td-danger" data-act="delete">Delete</button>`);
-    const activity = (t.history || []).slice().reverse().map((item) =>
-      `<div class="td-ev"><b>${esc(item.by)}</b> ${esc(item.action)} <span class="td-at">${shortTime(item.at)}</span>${item.action === "comment" && item.detail ? `<div class="td-ev-note">${esc(item.detail)}</div>` : ""}</div>`
-    ).join("");
-    const meta = window.ticketStacks?.metaOf?.(t.id) || {};
-    const titleValue = meta.title != null ? meta.title : (t.companyLabel || "");
-    const subtitleValue = meta.subtitle != null ? meta.subtitle : (t.host || "");
-
-    panel.innerHTML = `
-      <div class="td-head">
-        <div class="td-title">
-          <input class="td-name td-edit" data-meta="title" value="${esc(titleValue)}" placeholder="Title" aria-label="Title" />
-          <span class="td-sep">|</span>
-          <input class="td-ip td-edit" data-meta="subtitle" value="${esc(subtitleValue)}" placeholder="Subtitle" aria-label="Subtitle" />
-        </div>
-        <button class="td-x" data-act="close" aria-label="Close">&times;</button>
-      </div>
-      <div class="td-meta">Down ${esc(human(downMs))}${t.recoveredAt ? " &middot; recovered" : ""}</div>
-      ${created ? `<div class="td-time">${esc(created.toLocaleString())}</div>` : ""}
-
-      ${section("priority", "Priority", `<span class="td-prio">${PRIORITIES.map((value) => `<button class="td-prio-opt${value === priority ? " is-active" : ""}" data-prio="${value}">${value}</button>`).join("")}</span>`)}
-      ${section("assignee", "Assignee", `<input class="td-in" data-field="assignee" value="${esc(t.assignee || "")}" placeholder="unassigned" />`)}
-      ${section("description", "Description", `<textarea class="td-in td-ta" rows="1" data-field="description" placeholder="Add details…">${esc(t.description || "")}</textarea>`)}
-      ${section("note", "Note", `<input class="td-in td-note" id="td-note" placeholder="Add a note…" />`)}
-      ${section("activity", "Activity", `<div class="td-log">${activity || `<div class="td-log-empty">No activity.</div>`}</div>`)}
-
-      <div class="td-acts">${actions.join("")}</div>`;
+    const stage = window.ticketStacks?.stageFields?.(t.id) || { key: "triage", label: "Triage", fields: [] };
+    const fieldLabel = (field) => `${esc(field.label)}${field.req === false ? "" : ` <span class="td-req">*</span>`}`;
+    const fieldInput = (field) => {
+      const value = window.ticketStacks?.fieldValue?.(t.id, field.key) ?? "";
+      const required = field.req === false ? "false" : "true";
+      if (field.prio) return `<span class="td-prio" data-field-required="${required}">${PRIORITIES.map((priority) => `<button type="button" class="td-prio-opt${priority === value ? " is-active" : ""}" data-prio="${esc(priority)}">${esc(priority)}</button>`).join("")}</span>`;
+      if (field.date) return `<input type="date" class="td-in td-date" data-field="${esc(field.key)}" data-field-required="${required}" value="${esc(value)}" />`;
+      if (field.area) return `<textarea class="td-in td-ta${field.big ? " td-ta-big" : ""}" rows="${field.big ? 4 : 2}" data-field="${esc(field.key)}" data-field-required="${required}" placeholder="${esc(field.q || "")}">${esc(value)}</textarea>`;
+      return `<input class="td-in" data-field="${esc(field.key)}" data-field-required="${required}" value="${esc(value)}" placeholder="${esc(field.q || "")}" />`;
+    };
+    const first = stage.fields[0], rest = stage.fields.slice(1);
+    panel.innerHTML =
+      (first ? `<div class="td-field"><div class="td-field-head"><span class="td-field-label">${fieldLabel(first)}</span><button class="td-x" data-act="close" aria-label="Close">&times;</button></div>${fieldInput(first)}</div>` : `<div class="td-field-head"><span></span><button class="td-x" data-act="close" aria-label="Close">&times;</button></div>`) +
+      rest.map((field) => `<div class="td-field"><span class="td-field-label">${fieldLabel(field)}</span>${fieldInput(field)}</div>`).join("") +
+      `<div class="td-msg" hidden></div>` +
+      `<div class="td-save-row"><button class="td-save" data-act="save">Save</button></div>`;
     wire(t);
     window.crmInterfaceParity?.scan?.(panel);
     fitPanelToContent();
@@ -479,38 +387,16 @@
   const refresh = async () => {
     if (!currentId || !overlay || overlay.hidden || closing) return;
     const a = document.activeElement;
-    if (a && panel && panel.contains(a) && a.matches("input, textarea")) return;
+    if (a && panel && panel.contains(a) && a.matches("input, textarea, select")) return;
     render(await ticketById(currentId));
   };
 
   const wire = (t) => {
     if (!panel) return;
     panel.querySelectorAll("[data-act='close']").forEach((b) => (b.onclick = requestClose));
-    panel.querySelectorAll("[data-sec-toggle]").forEach((element) => {
-      element.onclick = () => {
-        const key = element.dataset.secToggle;
-        const accordion = panel.querySelector(`.td-acc[data-sec="${key}"]`);
-        if (accordion.classList.toggle("is-open")) openSections.add(key); else openSections.delete(key);
-        setTimeout(fitPanelToContent, 260);
-      };
-    });
     if (!t) return;
-    panel.querySelectorAll(".td-edit").forEach((element) => {
-      element.oninput = () => { window.ticketStacks?.setMeta?.(t.id, { [element.dataset.meta]: element.value }); syncFlyer(); };
-      element.onkeydown = (event) => { if (event.key === "Enter") element.blur(); event.stopPropagation(); };
-    });
-    panel.querySelectorAll(".td-act").forEach((element) => {
-      element.onclick = async () => {
-        const action = element.dataset.act;
-        if (action === "delete") { window.ticketStacks?.delete?.(t.id); close(); return; }
-        if (action === "restore") { window.ticketStacks?.restore?.(t.id); refresh(); return; }
-        if (action === "claim") await window.tickets?.claim?.(t.id);
-        else if (action === "resolve") await window.tickets?.resolve?.(t.id);
-        else if (action === "reopen") await window.tickets?.reopen?.(t.id);
-        refresh();
-      };
-    });
-    // The original guided path advances Priority → Assignee → Description → Note.
+    // Severity is the only button field. It updates the real card and flyer in
+    // place, preserving the source node throughout the unfolding animation.
     panel.querySelectorAll(".td-prio-opt").forEach((el) => {
       el.onclick = () => {
         const val = el.dataset.prio;
@@ -519,37 +405,89 @@
         t.priority = val;
         window.ticketStacks?.setPriority?.(t.id, val);
         syncFlyer();
-        advanceSection("priority", "assignee", '[data-field="assignee"]');
       };
     });
-    const nextSection = { assignee: "description", description: "note" };
-    const nextFocus = { description: '[data-field="description"]', note: "#td-note" };
+    const grow = (element) => {
+      if (element.tagName !== "TEXTAREA") return;
+      element.style.height = "auto";
+      element.style.height = `${element.scrollHeight}px`;
+      fitPanelToContent();
+    };
+    const fieldEls = [...panel.querySelectorAll(".td-field [data-field]")];
+    const focusField = (element) => {
+      element?.focus();
+      try { if (element?.select && element.type !== "date") element.select(); } catch {}
+    };
+    const goFrom = (element, direction) => {
+      const next = fieldEls[fieldEls.indexOf(element) + direction];
+      if (next) focusField(next);
+      return !!next;
+    };
     panel.querySelectorAll("[data-field]").forEach((el) => {
+      grow(el);
+      el.oninput = () => {
+        window.ticketStacks?.setMeta?.(t.id, { [el.dataset.field]: el.value });
+        grow(el);
+        syncFlyer();
+      };
       el.onblur = async () => {
         const field = el.dataset.field, value = el.value;
-        if ((t[field] || "") === value) return;
-        t[field] = value;
-        const result = await window.tickets?.update?.(t.id, { [field]: value });
-        if (result && result.ok === false) el.value = t[field] || "";
+        if (field !== "assignee") return;
+        const previous = t.assignee || "";
+        if (previous === value) return;
+        const result = await window.tickets?.update?.(t.id, { assignee: value });
+        if (result && result.ok === false) {
+          el.value = previous;
+          window.ticketStacks?.setMeta?.(t.id, { assignee: previous });
+          syncFlyer();
+        } else t.assignee = value;
       };
       el.onkeydown = (e) => {
         e.stopPropagation();
-        if (e.key !== "Enter" || e.shiftKey) return;
-        e.preventDefault();
-        const next = nextSection[el.dataset.field];
-        if (next) advanceSection(el.dataset.field, next, nextFocus[next]);
-        else el.blur();
+        if (e.key === "Escape") { e.preventDefault(); requestClose(); return; }
+        const textarea = el.tagName === "TEXTAREA", select = el.tagName === "SELECT", date = el.type === "date";
+        if (e.key === "ArrowDown" && !date && !select && (!textarea || el.selectionEnd >= el.value.length)) { e.preventDefault(); goFrom(el, 1); return; }
+        if (e.key === "ArrowUp" && !date && !select && (!textarea || el.selectionStart <= 0)) { e.preventDefault(); goFrom(el, -1); return; }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          if (!goFrom(el, 1)) panel.querySelector("[data-act='save']")?.click();
+        }
       };
     });
-    const note = panel.querySelector("#td-note");
-    if (note) note.onkeydown = async (event) => {
-      event.stopPropagation();
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      const value = (note.value || "").trim();
-      note.value = ""; note.blur();
-      ["priority", "assignee", "description", "note", "activity"].forEach((key) => setAcc(key, false));
-      if (value) await window.tickets?.comment?.(t.id, value);
+    panel.querySelectorAll(".td-prio-opt").forEach((option) => {
+      option.onkeydown = (event) => {
+        event.stopPropagation();
+        if (event.key === "Escape") { event.preventDefault(); requestClose(); return; }
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const options = [...panel.querySelectorAll(".td-prio-opt")];
+        const direction = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1;
+        options[(options.indexOf(option) + direction + options.length) % options.length]?.focus();
+      };
+    });
+    if (!panel.contains(document.activeElement)) {
+      const priorityGroup = panel.querySelector(".td-prio");
+      const priority = priorityGroup && !priorityGroup.querySelector(".is-active") ? priorityGroup.querySelector(".td-prio-opt") : null;
+      const first = priority || fieldEls.find((field) => !String(field.value || "").trim()) || fieldEls[0];
+      if (first) setTimeout(() => { if (panel?.contains(first)) focusField(first); }, 0);
+    }
+    const message = panel.querySelector(".td-msg");
+    const save = panel.querySelector("[data-act='save']");
+    if (save) save.onclick = () => {
+      const priority = panel.querySelector('.td-prio[data-field-required="true"]');
+      let blank = priority && !priority.querySelector(".is-active") ? priority.querySelector(".td-prio-opt") : null;
+      panel.querySelectorAll('.td-field [data-field][data-field-required="true"]').forEach((field) => {
+        if (!blank && !String(field.value || "").trim()) blank = field;
+      });
+      if (blank) {
+        if (message) {
+          message.textContent = "Some fields are blank — for anything not applicable, type “n/a”.";
+          message.hidden = false;
+        }
+        blank.focus();
+        return;
+      }
+      requestClose();
     };
   };
 
@@ -572,7 +510,6 @@
     if (overlay && !overlay.hidden) return;
     ensureStyles(); ensureOverlay();
     closing = false;
-    openSections.clear(); openSections.add("priority");
     currentId = ticket && ticket.id ? ticket.id : null;
     sourceEl = srcEl || null;
     overlay.hidden = false;

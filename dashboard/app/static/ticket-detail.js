@@ -245,8 +245,7 @@
   const flyerInner = () => {
     const body = sourceEl ? sourceEl.querySelector(".ticket-body, [data-ticket-mount]") : null;
     const bars = sourceEl ? sourceEl.querySelector(".tk-bars-card") : null;
-    const date = sourceEl ? sourceEl.querySelector(".crm-card-date") : null;
-    return `<div class="ticket-body">${body ? body.innerHTML : ""}</div>` + (bars ? bars.outerHTML : "") + (date ? date.outerHTML : "");
+    return `<div class="ticket-body">${body ? body.innerHTML : ""}</div>` + (bars ? bars.outerHTML : "");
   };
   // Mirror the (live-patched) source card onto the flyer: refresh its bars + body and recolour it, so
   // the flying card tracks edits in real time (a filled field greening a segment; a severity recolour).

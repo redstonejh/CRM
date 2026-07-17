@@ -41,8 +41,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // Bucket systems never render connective arrows. Stage order is expressed by
   // the bucket layout and the card movement itself, not extra directional UI.
   const showFlow = false;
-  const showDateUnder = config.showDateUnder !== false;
-  const cardDate = typeof config.cardDate === "function" ? config.cardDate : null;
   const stageMovement = config.stageMovement || "gated";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
   const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
@@ -888,8 +886,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
       .tk-seg { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.20); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
       .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
-      /* Every entity uses the shared calendar glyph in the same top-right seat. */
-      .tk-date-under.crm-card-date { top: 20px; right: 13px; }
       /* Census D3: seeded names get two readable lines before ellipsis while
          retaining the original's clear top-right progress/date column. */
       .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 2; padding-right: 56px; }
@@ -2228,7 +2224,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
-      if (e.target.closest?.("[data-crm-card-date]")) return;
       down = true; handedOff = false; dragging = false;
       startX = e.clientX; startY = e.clientY;
       pointerId = e.pointerId; pointerType = e.pointerType || "mouse";
@@ -2275,13 +2270,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // The pinned date block under the top-right bars: the incident date, and — once a resolution date is
   // entered — a second line: resolved SAME day → the time it took ("15 minutes"); a LATER day → the
   // resolution date. (Both stay in the card's detail rows too; this is just the at-a-glance header.)
-  const dateUnderHTML = (t) => {
-    if (!showDateUnder) return "";
-    const m = metaOf(t.id);
-    const value = cardDate ? cardDate(t) : m.incidentDate;
-    return global.crmCardDate?.html?.(value, { className:"tk-date-under", label:`Open ${titleOf(t)} date in Calendar` }) || "";
-  };
-
   // Entity-specific body rows from the face contract. Each row fn returns a
   // string (one line), a {label, value} pair, or nothing (row skipped). With no
   // contract the body falls back to the original stage-field rows (tickets).
@@ -2310,8 +2298,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       `<div class="ticket-fields">${faceRowsHTML(t)}</div>` +       // entity field rows from the face contract
       faceBadgesHTML(t) +
       `</div>` +
-      barsHTML(ticketBarClasses(t), true) +
-      dateUnderHTML(t);   // incident date (+ resolution info), fixed snugly under the top-right bars
+      barsHTML(ticketBarClasses(t), true);
   };
 
   // Smart-fit the card's detail lines. Every entry renders FULL (wrapped) by default; only when the
@@ -3249,7 +3236,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
-      if (e.target.closest?.("[data-crm-card-date]")) return;
       down = true; dragging = false; sx = e.clientX; sy = e.clientY;
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });
@@ -3840,9 +3826,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         const co = c.querySelector(".ticket-company");
         if (co) co.textContent = titleOf(t);   // client only; the date lives in its own pinned element
-        const du = c.querySelector(".tk-date-under"), duh = dateUnderHTML(t);   // date (+ resolution info) under the bars
-        if (du) du.remove();
-        if (duh) c.insertAdjacentHTML("beforeend", duh);
         const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
         const sub = subOf(t);
         if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }

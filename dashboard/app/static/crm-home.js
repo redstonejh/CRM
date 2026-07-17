@@ -135,15 +135,9 @@
       .crm-home-priority-hand{position:absolute;z-index:9;left:0;right:0;bottom:0;height:var(--home-hand-reserve,280px);
         overflow:visible;pointer-events:none;contain:layout style}
       .crm-home-priority-hand[hidden]{display:none}
-      .crm-home-todo-toolbar{position:absolute;z-index:1200;left:50%;top:7px;transform:translateX(-50%);width:31px;height:31px;
-        display:grid;place-items:center;padding:0;border:1px solid rgba(255,255,255,.12);border-radius:12px;
-        background:linear-gradient(180deg,rgba(24,31,42,.62),rgba(13,18,26,.55));-webkit-backdrop-filter:blur(20px) saturate(125%);backdrop-filter:blur(20px) saturate(125%);
-        box-shadow:inset 0 1px rgba(255,255,255,.12),0 10px 24px rgba(0,0,0,.18);pointer-events:auto}
-      .crm-home-todo-add.crm-menu-action{width:25px;height:25px;padding:0!important;display:grid;place-items:center;font-size:16px!important;line-height:1;color:rgba(238,245,254,.7)!important}
       .crm-home-todo-popover{position:fixed;z-index:9360;width:min(340px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}
-      .crm-home-todo-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}
       .crm-home-todo-fields{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:7px}.crm-home-todo-fields>.crm-menu-input:first-child{grid-column:1/-1}
-      .crm-home-todo-target{grid-column:1/-1}.crm-home-todo-actions{display:flex;justify-content:flex-end;gap:2px;padding-top:1px}
+      .crm-home-todo-actions{display:flex;justify-content:flex-end;gap:2px;padding-top:1px}
       .crm-home-todo-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
       .crm-home-todo-menu{position:fixed;z-index:9365;width:166px;padding:6px;display:grid;gap:1px}.crm-home-todo-menu .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       .crm-home-hand-trigger{position:absolute;z-index:1;left:50%;bottom:0;width:var(--home-hand-span,760px);height:92px;
@@ -430,7 +424,7 @@
   const choosePriorityItems = (records, username = "") => {
     const userKey = String(username || "").trim().toLowerCase();
     return records.filter((item) => {
-      if (!item || item.deletedAt || isDone(item)) return false;
+      if (!item || item.deletedAt || isDone(item) || !priorityLink(item)) return false;
       const assignee = String(item.assignee || "").trim().toLowerCase();
       if (userKey && assignee && assignee !== userKey) return false;
       return true;
@@ -523,47 +517,24 @@
     };
     document.addEventListener("pointerdown", todoOutsideClose, true);
   }, 0);
-  const recordName = (record) => firstText(record?.title, record?.name, record?.companyLabel, record?.description, record?.id, "Untitled");
-  const createTodo = async ({ title, dueAt = null, priority = "normal", link = null } = {}) => {
-    const fields = { title:firstText(title, "New task"), kind:link?.entityType === "workItems" ? "pipeline-work" : link?.entityType === "contacts" ? "follow-up" : link?.entityType === "tickets" ? "ticket-work" : "task", status:"open", dueAt, priority };
-    if (priorityUsername) fields.assignee = priorityUsername;
-    if (link?.entityType && link?.recordId) fields.links = [{ entityType:link.entityType, recordId:link.recordId, relation:"regarding" }];
-    const result = await window.crmDomain?.create?.("commitments", fields);
-    if (result?.record) { handDirty = true; await refreshPriorityHand(); return result.record; }
-    return null;
-  };
   const openTodoComposer = async (anchor, item = null) => {
     closeTodoPopover();
-    const groups = [
-      ["tasks", "Tasks"], ["contacts", "People"], ["tickets", "Tickets"], ["workItems", "Pipeline cards"],
-    ];
-    const targets = await Promise.all(groups.map(async ([entityType, label]) => {
-      try {
-        const result = await window.crmStore?.list?.(entityType, { includeDeleted:false });
-        return { entityType, label, records:(result?.records || []).filter((record) => !record.deletedAt).slice(0, 80) };
-      } catch { return { entityType, label, records:[] }; }
-    }));
-    const linked = priorityLink(item); const selectedTarget = linked ? `${linked.entityType}:${linked.recordId}` : "";
-    const pipelineLinked = linked?.entityType === "workItems";
+    // Home is a projection of linked work, never an authoring surface. The
+    // relationship is owned by the source object and cannot be changed here.
+    if (!item || !priorityLink(item)) return false;
     const dueValue = item?.dueAt && Number.isFinite(Date.parse(item.dueAt)) ? new Date(item.dueAt).toISOString().slice(0, 10) : "";
     const rawPriority = String(item?.priority || "normal").toLowerCase();
     const priorityValue = ["critical","overdue"].includes(rawPriority) ? "urgent" : ["urgent","high","normal"].includes(rawPriority) ? rawPriority : "normal";
-    todoPopover = document.createElement("form"); todoPopover.className = "crm-home-todo-popover crm-menu-surface";
-    todoPopover.innerHTML = `<div class="crm-home-todo-popover-title">${item ? "Edit to do" : "New to do"}</div><div class="crm-home-todo-fields">
+    todoPopover = document.createElement("form"); todoPopover.className = "crm-home-todo-popover crm-menu-surface"; todoPopover.setAttribute("aria-label", "Edit linked task");
+    todoPopover.innerHTML = `<div class="crm-home-todo-fields">
       <input class="crm-menu-input" name="title" value="${esc(item?.title || "")}" placeholder="What needs doing?" autocomplete="off" required>
-      <select class="crm-menu-input crm-home-todo-target" name="target"${pipelineLinked ? " disabled" : ""}><option value="">Personal task</option>${targets.map((group) => `<optgroup label="${esc(group.label)}">${group.records.map((record) => { const value = `${group.entityType}:${record.id}`; return `<option value="${esc(value)}"${selectedTarget === value ? " selected" : ""}>${esc(recordName(record))}</option>`; }).join("")}</optgroup>`).join("")}</select>
       <input class="crm-menu-input" name="dueAt" type="date" value="${esc(dueValue)}" aria-label="Due date"><select class="crm-menu-input" name="priority" aria-label="Priority">${["normal","high","urgent"].map((value) => `<option value="${value}"${priorityValue === value ? " selected" : ""}>${value[0].toUpperCase() + value.slice(1)}</option>`).join("")}</select>
-      </div><div class="crm-home-todo-actions"><button type="button" class="crm-menu-action" data-todo-cancel>Cancel</button><button type="submit" class="crm-menu-action">${item ? "Save" : "Add"}</button></div>`;
+      </div><div class="crm-home-todo-actions"><button type="button" class="crm-menu-action" data-todo-cancel>Cancel</button><button type="submit" class="crm-menu-action">Save</button></div>`;
     todoPopover.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = new FormData(todoPopover); const rawTarget = String(data.get("target") || (pipelineLinked ? selectedTarget : "")); const [entityType, ...idParts] = rawTarget.split(":"); const recordId = idParts.join(":");
+      const data = new FormData(todoPopover);
       const due = String(data.get("dueAt") || ""); const fields = { title:String(data.get("title") || "").trim(), dueAt:due ? new Date(`${due}T17:00:00`).toISOString() : null, priority:String(data.get("priority") || "normal") };
-      let saved;
-      if (item) {
-        const links = (item.links || []).filter((link) => !TODO_LINK_ENTITIES.has(link.entityType) || (link.entityType === "workItems" && link.relation === "regarding"));
-        if (entityType && recordId && !links.some((link) => link.entityType === entityType && String(link.recordId) === recordId)) links.push({ entityType, recordId, relation:"regarding" });
-        saved = await updateTodo(item, { ...fields, links });
-      } else saved = await createTodo({ ...fields, link:rawTarget ? { entityType, recordId } : null });
+      const saved = await updateTodo(item, fields);
       if (saved) closeTodoPopover();
     });
     todoPopover.querySelector("[data-todo-cancel]")?.addEventListener("click", closeTodoPopover);
@@ -580,18 +551,13 @@
     if (result?.record) { scheduleHandRefresh(); return true; }
     return false;
   };
-  const openTodoInAssignments = async (item) => {
-    await (window.crmDeskTransit?.driveTo?.("assignments") || Promise.resolve(window.crmWorkspaces?.setActive?.("assignments")));
-    return window.crmAssignments?.open?.(item.id) || false;
-  };
   const openTodoMenu = (item, card, x, y) => {
     closeTodoPopover(); todoPopover = document.createElement("div"); todoPopover.className = "crm-home-todo-menu crm-menu-surface";
     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(17, 0, 0, 0);
     const link = priorityLink(item);
     [
-      { key:"open", label:link ? "Open linked item" : "Open assignment", run:() => openPriorityItem(item, card) },
-      link?.entityType !== "workItems" && { key:"edit", label:"Edit to do", run:() => openTodoComposer(card, item) },
-      link && { key:"assignments", label:"Open in Assignments", run:() => openTodoInAssignments(item) },
+      { key:"open", label:"Open", run:() => openPriorityItem(item, card) },
+      link?.entityType !== "workItems" && { key:"edit", label:"Edit", run:() => openTodoComposer(card, item) },
       { key:"tomorrow", label:"Due tomorrow", run:() => updateTodo(item, { dueAt:tomorrow.toISOString() }) },
       { key:"complete", label:"Complete", run:() => updateTodo(item, { status:"completed", completedAt:new Date().toISOString(), outcome:"Completed from Home" }) },
     ].filter(Boolean).forEach((action) => {
@@ -626,10 +592,6 @@
     hand.dataset.renderSignature = renderSignature;
     hand.classList.toggle("is-empty", priorityItems.length === 0);
     hand.replaceChildren();
-    const toolbar = document.createElement("div"); toolbar.className = "crm-home-todo-toolbar"; toolbar.setAttribute("aria-label", "To-do list");
-    toolbar.innerHTML = `<button type="button" class="crm-home-todo-add crm-menu-action" aria-label="Add to do">+</button>`;
-    toolbar.querySelector("button")?.addEventListener("click", (event) => { event.stopPropagation(); openTodoComposer(event.currentTarget); });
-    hand.appendChild(toolbar);
     if (!priorityItems.length) {
       const empty = document.createElement("div"); empty.className = "crm-home-hand-empty"; empty.textContent = "Nothing to do"; hand.appendChild(empty); return;
     }
@@ -917,7 +879,7 @@
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
-    ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-toolbar,.crm-home-todo-popover,.crm-home-todo-menu",
+    ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
     contractExpanderAbove:true,holdContractEndpointFrame:true,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
@@ -1057,7 +1019,7 @@
     if (apiName) prewarmedFactories.add(apiName);
   };
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,createTodo,
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:pending?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,ids:priorityItems.map((item)=>item.id)}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),

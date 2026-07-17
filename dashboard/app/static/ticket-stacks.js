@@ -548,11 +548,6 @@
       .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
       /* Incident date: pinned right under the top-right stage bars, right-aligned to them. A fixed spot that
          never moves with the card's content, in a smaller, quieter font. */
-      /* Snug under the bars (bars: top 11 + 4 tall) and tight-leaded so BOTH lines (incident date +
-         resolution date/time) sit inside the ${ZCARD_PEEK}px header band a stacked card leaves visible. */
-      .tk-date-under { position: absolute; top: 16px; right: 13px; z-index: 7; pointer-events: none;
-        font-size: var(--crm-type-micro,9px); font-weight: 600; line-height: 1.3; letter-spacing: .02em; white-space: nowrap;
-        text-align: right; color: rgba(255,255,255,0.6); }
       /* On the stack/zone cards the client name is a single ellipsised line, leaving the top-right column
          (bars + date) clear so they never collide with a long name. */
       .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 1; padding-right: 56px; }
@@ -1778,16 +1773,6 @@
   // The pinned date block under the top-right bars: the incident date, and — once a resolution date is
   // entered — a second line: resolved SAME day → the time it took ("15 minutes"); a LATER day → the
   // resolution date. (Both stay in the card's detail rows too; this is just the at-a-glance header.)
-  const dateUnderHTML = (t) => {
-    const m = metaOf(t.id);
-    const dateS = fmtDate(m.incidentDate);
-    if (!dateS) return "";
-    const ok = (v) => v && !isNA(v) && String(v).trim() ? String(v).trim() : "";
-    const resD = ok(m.resolutionDate) ? fmtDate(m.resolutionDate) : "";
-    const second = resD ? (resD === dateS ? ok(m.duration) : resD) : "";
-    return `<div class="tk-date-under">${esc(dateS)}${second ? `<br>${esc(second)}` : ""}</div>`;
-  };
-
   const cardInner = (t) => {
     const desc = fieldRaw(t, "description");
     const sub = (desc && !isNA(desc) && String(desc).trim()) ? desc : subOf(t);
@@ -1796,8 +1781,7 @@
       (sub ? `<div class="ticket-host">${esc(sub)}</div>` : "") +   // short description (else host); n/a/empty → no line
       `<div class="ticket-fields">${cardFieldsHTML(t)}</div>` +     // live config-menu info (replaces the down-time)
       `</div>` +
-      barsHTML(ticketBarClasses(t), true) +
-      dateUnderHTML(t);   // incident date (+ resolution info), fixed snugly under the top-right bars
+      barsHTML(ticketBarClasses(t), true);
   };
 
   // Smart-fit the card's detail lines. Every entry renders FULL (wrapped) by default; only when the
@@ -2852,9 +2836,6 @@
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         const co = c.querySelector(".ticket-company");
         if (co) co.textContent = titleOf(t);   // client only; the date lives in its own pinned element
-        const du = c.querySelector(".tk-date-under"), duh = dateUnderHTML(t);   // date (+ resolution info) under the bars
-        if (du) du.remove();
-        if (duh) c.insertAdjacentHTML("beforeend", duh);
         const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
         const descRaw = fieldRaw(t, "description"); const sub = (descRaw && !isNA(descRaw) && String(descRaw).trim()) ? descRaw : subOf(t);
         if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }

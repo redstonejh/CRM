@@ -114,42 +114,38 @@ async function main() {
     return cards.length > 0 && cards.every((card) => card.matches('.tk-card.tk-card-today') && !!card.querySelector('.ticket-body'))
       && !document.querySelector('.crm-home-priority-card');
   });
-  await page.click('.crm-home-todo-add');
-  await page.waitForSelector('.crm-home-todo-popover.crm-menu-surface', { timeout:10000 });
-  await check('Home exposes a compact linked to-do composer', () => {
-    const form = document.querySelector('.crm-home-todo-popover.crm-menu-surface');
-    return !!form && !!form.elements.title && !!form.elements.dueAt && !!form.elements.priority
-      && !!form.querySelector('optgroup[label="Pipeline cards"]')
-      && [...form.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
-  });
-  await page.click('[data-todo-cancel]');
+  await check('Home cannot create independent to-dos', () => !document.querySelector('.crm-home-todo-add,.crm-home-todo-toolbar')
+    && typeof window.crmHome.createTodo === 'undefined');
   const linkedHomeTodo = await page.evaluate(async () => {
     const task = (await window.crmStore.list('tasks', { includeDeleted:false })).records?.[0];
     if (!task) return null;
-    const record = await window.crmHome.createTodo({ title:'Home linked to-do contract', priority:'urgent', dueAt:new Date().toISOString(), link:{ entityType:'tasks', recordId:task.id } });
-    return record ? { id:record.id, taskId:task.id } : null;
+    const linked = await window.crmDomain.create('commitments', { title:'Home linked to-do contract', kind:'task', status:'open', priority:'urgent', dueAt:new Date().toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'regarding' }] });
+    const orphan = await window.crmDomain.create('commitments', { title:'Orphan Home task contract', kind:'task', status:'open', priority:'urgent', dueAt:new Date().toISOString() });
+    await window.crmHome.ensureHandReady();
+    return linked?.record && orphan?.record ? { id:linked.record.id, taskId:task.id, orphanId:orphan.record.id } : null;
   });
-  if (!linkedHomeTodo) throw new Error('Could not create linked Home to-do contract record');
+  if (!linkedHomeTodo) throw new Error('Could not create linked-work Home contract records');
   await page.waitForFunction((id) => !!document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(id)}"]`), { timeout:10000 }, linkedHomeTodo.id);
-  await check('Home hand is the persistent linked to-do list', (todo) => {
-    const toolbar = document.querySelector('.crm-home-todo-toolbar');
+  await check('Home hand is only the persistent projection of linked work', (todo) => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card')];
     const created = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.id)}"]`);
-    return !!toolbar && !toolbar.querySelector('.crm-home-todo-label') && !!toolbar.querySelector('.crm-home-todo-add[aria-label="Add to do"]')
-      && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && !card.dataset.commitmentId.startsWith('signal:'))
+    const orphan = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.orphanId)}"]`);
+    return !document.querySelector('.crm-home-todo-toolbar,.crm-home-todo-add') && !orphan
+      && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && card.dataset.recordEntity && card.dataset.recordId && !card.dataset.commitmentId.startsWith('signal:'))
       && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId;
   }, linkedHomeTodo);
   await page.click(`.crm-home-hand-card[data-commitment-id="${linkedHomeTodo.id}"]`, { button:'right' });
   await page.waitForSelector('.crm-home-todo-menu [data-todo-action="edit"]', { timeout:10000 });
-  await check('A linked to-do remains editable and can enter the Assignment pipeline', () => !!document.querySelector('[data-todo-action="edit"]')
-    && !!document.querySelector('[data-todo-action="assignments"]') && !!document.querySelector('[data-todo-action="open"]'));
+  await check('A linked to-do menu contains only direct task actions', () => !!document.querySelector('[data-todo-action="edit"]')
+    && !!document.querySelector('[data-todo-action="open"]') && !!document.querySelector('[data-todo-action="complete"]')
+    && !document.querySelector('[data-todo-action="assignments"]'));
   await page.click('.crm-home-todo-menu [data-todo-action="edit"]');
   await page.waitForSelector('.crm-home-todo-popover input[name="title"]', { timeout:10000 });
-  await check('To-do editing keeps its exact linked record selected', (todo) => {
+  await check('Home editing cannot alter the source relationship', () => {
     const form = document.querySelector('.crm-home-todo-popover');
-    return form?.querySelector('.crm-home-todo-popover-title')?.textContent.trim() === 'Edit to do'
-      && form.elements.target.value === `tasks:${todo.taskId}` && form.elements.title.value === 'Home linked to-do contract';
-  }, linkedHomeTodo);
+    return form?.getAttribute('aria-label') === 'Edit linked task' && !form.elements.target
+      && form.elements.title.value === 'Home linked to-do contract' && [...form.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
+  });
   await page.$eval('.crm-home-todo-popover input[name="title"]', (input) => { input.value = 'Edited linked to-do'; input.dispatchEvent(new Event('input', { bubbles:true })); });
   await page.click('.crm-home-todo-popover button[type="submit"]');
   await page.waitForFunction(async (id) => (await window.crmDomain.list('commitments', { includeDeleted:false, limit:300 })).records?.find((item) => item.id === id)?.title === 'Edited linked to-do', { timeout:10000 }, linkedHomeTodo.id);
@@ -498,14 +494,19 @@ async function main() {
   });
   await page.click('.ticket-detail-overlay[data-card-detail="assignmentDetail"] .td-x');
   await page.waitForFunction(() => document.querySelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]')?.hidden === true);
-  const assignmentCalendarDate = await page.$eval(`${assignmentScope} [data-crm-card-date]`, (date) => { const value = date.dataset.crmCardDate; date.click(); return value; });
+  await check('Calendar navigation is one fixed top-center control, never card chrome', () => {
+    const controls = [...document.querySelectorAll('.crm-viewport-date')]; const rect = controls[0]?.getBoundingClientRect(); const style = controls[0] && getComputedStyle(controls[0]);
+    return controls.length === 1 && !document.querySelector('[data-crm-card-date],.crm-card-date') && style?.position === 'fixed'
+      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 8 && rect.top <= 12;
+  });
+  await page.click('.crm-viewport-date');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout:2500 });
-  await check('The top calendar glyph opens the card date at its month pane', (value) => {
-    const date = new Date(`${value}T12:00:00`); const month = date.getMonth() + 1;
+  await check('The global calendar control opens the current month pane', () => {
+    const date = new Date(); const month = date.getMonth() + 1;
     const pane = document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${month}"]`);
     return { ok:document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1 && pane?.hidden === false && window.fractalCalendar.year() === date.getFullYear(),
-      detail:JSON.stringify({ value, module:document.body.dataset.crmModule, level:window.fractalCalendar?.level?.(), year:window.fractalCalendar?.year?.(), pane:!!pane, hidden:pane?.hidden }) };
-  }, assignmentCalendarDate);
+      detail:JSON.stringify({ module:document.body.dataset.crmModule, level:window.fractalCalendar?.level?.(), year:window.fractalCalendar?.year?.(), pane:!!pane, hidden:pane?.hidden }) };
+  });
   await activate('assignments');
 
   const assignmentCardTier = await page.$eval(assignmentCardSelector, (card) => { const rect=card.getBoundingClientRect(),face=card.querySelector('.crm-assignment-card-face')?.getBoundingClientRect(); return { id:card.dataset.assignmentCard, width:rect.width, height:rect.height, faceWidth:face?.width, faceHeight:face?.height, stage:card.closest('[data-assignment-stage]')?.dataset.assignmentStage, details:card.querySelectorAll('.crm-assignment-card-meta').length, note:card.querySelector('.crm-assignment-card-note')?.textContent || '' }; });

@@ -62,6 +62,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     ? Number(config.zoneGap)
     : null;
   const reserveStackSpace = config.reserveStackSpace !== false;
+  const lazyZoneCards = config.lazyZoneCards === true;
   const resolvedPulse = config.resolvedPulse === true;
   const autoFanOncePerDayKey = String(config.autoFanOncePerDayKey || "");
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
@@ -949,6 +950,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 14px 18px -14px rgba(0,0,0,0.5);  /* neg. spread → shadow projects only downward, no horizontal bleed to compound across the stack */
         transition: transform .2s cubic-bezier(.2,.8,.3,1), box-shadow .15s ease; }   /* transform → collision/sandwich slide */
       .tk-zcard:hover { box-shadow: inset 0 0 0 9999px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.34), 0 14px 18px -14px rgba(0,0,0,0.5); }
+      /* A collapsed stack only exposes the title bands of covered cards. Keep
+         those real card nodes and their geometry, but defer hidden face paint
+         until the card is focused, dragged, opened, or the stack is spread. */
+      .tk-zcard.is-lazy-shell{contain:layout paint style}
+      .tk-zcard.is-lazy-shell::after{display:none}
+      .tk-zcard.is-lazy-shell .ticket-body{filter:none;opacity:1}
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
       .tk-zfly { position: fixed; z-index: 9999; pointer-events: none; box-sizing: border-box; color: #fff; display: flex; flex-direction: column; overflow: hidden;
         opacity: 0.72;   /* see-through while dragging so the cards/slots underneath stay visible */
@@ -1050,7 +1057,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     on("restore", () => publicApi?.restore?.(t.id));
     on("purge", () => purgeTicket(t, card));
   };
-  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTicketMenu(t, card, e.clientX, e.clientY); });
+  const wireContextMenu = (card, t) => card.addEventListener("contextmenu", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    hydrateZoneCard(card, t);
+    showTicketMenu(t, card, e.clientX, e.clientY);
+  });
 
   // Appearance: an explicit palette colour (meta.color, persisted) or "match severity" (the default —
   // no override, the card follows its severity colour and tracks live severity changes). Recolours every
@@ -2754,12 +2765,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         const panel = zoneBody[stage.key]?.parentElement; if (!panel) return;
         window.crmObjectSizing?.scan?.(panel); const compact = isSmallObject(panel); const width = Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)); const height = Math.round(bucketH * (compact ? .78 : 1));
         panel.style.width = `${width}px`; panel.style.height = `${height}px`; panel.style.left = panel.style.right = panel.style.top = panel.style.bottom = "auto";
-        const body = zoneBody[stage.key], sb = body?.querySelector(".tk-zsb");
-        if (body && sb) {
-          const gutter = panel.getBoundingClientRect().right - body.getBoundingClientRect().right;
-          const referenceCard = body.querySelector(".tk-zcard"), ticketWidth = referenceCard?.offsetWidth || CARD_W, ticketGap = Math.max(0, (body.clientWidth - ticketWidth) / 2), center = (ticketGap - gutter) / 2;
-          sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;
-        }
+        const sb = zoneBody[stage.key]?.querySelector(".tk-zsb");
+        if (sb) sb.style.right = "4px";
       });
       STAGES.forEach((stage) => clampZoneScroll(stage.key));
       requestAnimationFrame(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); });
@@ -2816,17 +2823,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
             if (Math.abs(delta) > 0.5) headerBars.style.translate = `${Math.round(-delta)}px 0`;
           }
         }
-      // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
-      // letting it sit in the right gutter (the body no longer clips it) for breathing room.
-        const body = zoneBody[s.key], sb = body.querySelector(".tk-zsb");
-        if (sb) {
-          const gutter = panel.getBoundingClientRect().right - body.getBoundingClientRect().right;  // body edge → bucket edge
-          const referenceCard = body.querySelector(".tk-zcard");
-          const ticketWidth = referenceCard?.offsetWidth || CARD_W;
-          const ticketGap = Math.max(0, (body.clientWidth - ticketWidth) / 2);                       // ticket edge → body edge
-          const center = (ticketGap - gutter) / 2;                                                   // midpoint, left of body's right edge
-          sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                   // 8px bar centred there, kept inside the bucket
-        }
+        // The scrollbar belongs to the bucket edge, not the card column. An
+        // earlier centring pass shifted it left whenever card width changed.
+        const sb = zoneBody[s.key].querySelector(".tk-zsb");
+        if (sb) sb.style.right = "4px";
         left += width + gap;
       });
       rowTop += rowHeights[row] + rowGap;
@@ -3109,6 +3109,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   // A zone card is a FULL ticket card — identical layout/size to a corner-stack card.
   const zoneCardInner = (t) => cardInner(t);
+  const zoneCardShellInner = (t) => `<div class="ticket-body"><div class="ticket-company">${esc(titleOf(t))}</div></div>` + barsHTML(ticketBarClasses(t), true);
+  const addZoneEdgeShades = (card) => card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade tk-zs-t"></div><div class="tk-edge-shade tk-zs-b"></div>');
+  const hydrateZoneCard = (card, t) => {
+    if (!card?.classList?.contains("is-lazy-shell")) return card;
+    card.classList.remove("is-lazy-shell"); delete card.dataset.faceDeferred;
+    card.innerHTML = zoneCardInner(t); addZoneEdgeShades(card);
+    fitCardFields(card);
+    return card;
+  };
 
   // Drag a zone card to ANOTHER zone (reassign stage), DOWN onto the corner stacks (un-assign
   // → back to the inbox), or release on its own zone / nowhere (snap back). Click opens config.
@@ -3236,12 +3245,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     };
     card.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
+      hydrateZoneCard(card, t);
       down = true; dragging = false; sx = e.clientX; sy = e.clientY;
       window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
     });
   };
 
-  const zoneCardEl = (t, stage) => {
+  const zoneCardEl = (t, stage, { deferFace = false } = {}) => {
     const card = document.createElement("div");
     card.className = `tk-zcard tk-zcard-${widgetType}`;
     card.dataset.id = t.id || "";
@@ -3250,15 +3260,18 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     window.crmObjectSizing?.scan?.(card);
     applyZoneCardMetrics(card);
     applyCardPaint(card, t);
-    card.innerHTML = zoneCardInner(t);
-    card.insertAdjacentHTML("beforeend", '<div class="tk-edge-shade tk-zs-t"></div><div class="tk-edge-shade tk-zs-b"></div>');   // top/bottom scroll shadows (clipped to this card)
+    if (deferFace) { card.classList.add("is-lazy-shell"); card.dataset.faceDeferred = "true"; }
+    card.innerHTML = deferFace ? zoneCardShellInner(t) : zoneCardInner(t);
+    addZoneEdgeShades(card);   // top/bottom scroll shadows (clipped to this card)
     wireZoneCard(card, t, stage);
     card.tabIndex = 0;
     card.setAttribute("role", "button");
     card.setAttribute("aria-label", `${titleOf(t)} — open ${widgetTitle.toLowerCase()}`);
+    card.addEventListener("focus", () => hydrateZoneCard(card, t));
     card.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
+      hydrateZoneCard(card, t);
       revealZoneCard(stage, card, () => detail?.open?.(t, card));
     });
     wireContextMenu(card, t);   // right-click menu (edit / appearance / delete)
@@ -3361,7 +3374,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
-        const card = zoneCardEl(t, s.key);
+        const card = zoneCardEl(t, s.key, { deferFace:lazyZoneCards && !expanded && i < list.length - 1 });
         card.style.zIndex = String(i + 1);
         track.appendChild(card);
       });
@@ -3659,6 +3672,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     contract: () => ({
       workflowKind,
       horizontalZones,
+      lazyZoneCards,
       showFlow,
       showProgressBars,
       stageMovement,
@@ -3669,7 +3683,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     openCreate,
     previewState: (kind) => showSystemState(kind === "loading" ? "loading" : kind === "error" ? "error" : null),
     performanceState: () => ({ active, started, renderDirty, records: tickets.length,
-      fingerprintMatch: dataFingerprint() === renderedDataFingerprint, theaterElements: theater?.querySelectorAll?.("*").length || 0 }),
+      fingerprintMatch: dataFingerprint() === renderedDataFingerprint, theaterElements: theater?.querySelectorAll?.("*").length || 0,
+      deferredFaces: theater?.querySelectorAll?.(".tk-zcard.is-lazy-shell").length || 0 }),
     // Return the established card object for a surface that owns its own
     // layout. It deliberately omits deck dragging/reordering; every visual
     // and face-detail concern still comes from this factory.
@@ -3826,6 +3841,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
         const co = c.querySelector(".ticket-company");
         if (co) co.textContent = titleOf(t);   // client only; the date lives in its own pinned element
+        if (c.classList.contains("is-lazy-shell")) { applyCardPaint(c, t); return; }
         const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
         const sub = subOf(t);
         if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }

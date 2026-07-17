@@ -2160,16 +2160,10 @@
           if (Math.abs(delta) > 0.5) headerBars.style.translate = `${Math.round(-delta)}px 0`;
         }
       }
-      // Centre the scrollbar in the gap between the ticket's right edge and the bucket's right edge,
-      // letting it sit in the right gutter (the body no longer clips it) for breathing room.
-      const body = zoneBody[s.key], sb = body.querySelector(".tk-zsb");
-      if (sb) {
-        const gutter = panel.getBoundingClientRect().right - body.getBoundingClientRect().right;  // body edge → bucket edge
-        const ticketWidth = body.querySelector(".tk-zcard")?.offsetWidth || CARD_W;
-        const ticketGap = Math.max(0, (body.clientWidth - ticketWidth) / 2);                       // ticket edge → body edge
-        const center = (ticketGap - gutter) / 2;                                                    // midpoint, left of body's right edge
-        sb.style.right = `${Math.round(Math.max(-(gutter - 3), center - 4))}px`;                    // 8px bar centred there, kept inside the bucket
-      }
+      // Keep the scrollbar attached to the bucket's right edge. It must not
+      // drift with the width of whichever ticket happens to be visible.
+      const sb = zoneBody[s.key].querySelector(".tk-zsb");
+      if (sb) sb.style.right = "4px";
       nextLeft += width + gap;
     });
     // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does

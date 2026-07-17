@@ -251,10 +251,10 @@ async function main() {
     return surface?.classList.contains('crm-home-camera-moving') && titles.length > 0
       && titles.every((title) => getComputedStyle(title).visibility === 'hidden' && Number(getComputedStyle(title).opacity) === 0);
   });
-  await check('Tile transition preserves the native title-bar drag region', () => {
+  await check('Tile transition preserves the native drag region around the calendar control', () => {
     const strip = document.querySelector('.app-window-drag-region');
     const lid = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
-    const x = Math.round(innerWidth * .5), y = 20;
+    const x = Math.round(innerWidth * .4), y = 20;
     const exclusions = [...document.querySelectorAll('*')].filter((node) => {
       const style = getComputedStyle(node);
       if (style.webkitAppRegion !== 'no-drag' || style.display === 'none' || style.visibility === 'hidden') return false;
@@ -311,8 +311,8 @@ async function main() {
   });
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.(), { timeout: 10000 });
   await sleep(100);
-  await check('Returning Home restores an uncontested title-bar drag region', () => {
-    const x = Math.round(innerWidth * .5), y = 20;
+  await check('Returning Home restores the drag region around the calendar control', () => {
+    const x = Math.round(innerWidth * .4), y = 20;
     const strip = document.querySelector('.app-window-drag-region');
     const exclusions = [...document.querySelectorAll('*')].filter((node) => {
       const style = getComputedStyle(node);
@@ -565,16 +565,16 @@ async function main() {
       detail:JSON.stringify({state,inset,edges:first&&last&&clip?[first.left-clip.left,clip.right-last.right]:null}) };
   });
   await activate('people');
-  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 12
-    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 120, { timeout: 10000 });
-  await page.evaluate(() => window.peopleCards.scrollZonesBy(-100000, true));
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 8
+    && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 80, { timeout: 10000 });
+  await page.evaluate(() => window.peopleCards.expandedStages().forEach((stage) => window.peopleCards.setStageExpanded(stage, false)));
   await check('People are shared card objects grouped inside company buckets, never a pipeline', () => {
     const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
     const cards = [...(theater?.querySelectorAll('.tk-zone .tk-zcard') || [])];
     return {
-      ok: buckets.length === 12 && cards.length === 120 && window.peopleCards.contract().horizontalZones === true
-        && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
+      ok: buckets.length === 8 && cards.length === 80 && window.peopleCards.contract().horizontalZones === false
+        && window.peopleCards.contract().lazyZoneCards === true && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
         && !theater.querySelector('svg.tk-flow, .tk-flow-shaft, .tk-flow-head, .tk-bars')
         && [...theater.querySelectorAll('.tk-deck-left, .tk-empty-left')].every((element) => getComputedStyle(element).display === 'none')
         && !document.querySelector('.crm-company-account, [data-crm-theater="relationships"]'),
@@ -583,41 +583,55 @@ async function main() {
   });
   await check('People company buckets stay proportional to the shared card object', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')];
-    return buckets.length === 12 && buckets.every((bucket) => {
+    return buckets.length === 8 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
   });
-  await check('Company buckets occupy one measured horizontal field with an inset scrollbar and adaptive edge shadow', () => {
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const clip=theater?.querySelector('.tk-zone-hclip'); const track=theater?.querySelector('.tk-zone-htrack'); const bar=theater?.querySelector('.tk-zone-hsb'); const thumb=theater?.querySelector('.tk-zone-hth'); const buckets=[...(track?.querySelectorAll(':scope > .tk-zone')||[])];
-    const clipRect=clip?.getBoundingClientRect(),barRect=bar?.getBoundingClientRect(),first=buckets[0]?.getBoundingClientRect(); const tops=new Set(buckets.map((bucket)=>Math.round(bucket.getBoundingClientRect().top))); const state=window.peopleCards.zoneScrollState();
-    const left=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-left')||'0'); const right=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-right')||'0');
-    return { ok:!!rail&&!!clip&&!!track&&!!bar&&!!thumb&&buckets.length===12&&tops.size===1&&state.min < -1000&&track.scrollWidth>clip.clientWidth+1000
-      && !!clipRect&&!!barRect&&!!first&&first.left-clipRect.left>=20&&first.left-clipRect.left<=32
-      && barRect.left-clipRect.left>=20&&barRect.left-clipRect.left<=32&&clipRect.right-barRect.right>=20&&clipRect.right-barRect.right<=32
-      && bar.classList.contains('is-on')&&thumb.getBoundingClientRect().width>28&&left<=.01&&right>=.95,
-      detail:JSON.stringify({ state, tops:tops.size, firstInset:first&&clipRect?first.left-clipRect.left:null, barInset:barRect&&clipRect?[barRect.left-clipRect.left,clipRect.right-barRect.right]:null, shadows:[left,right] }) };
+  await check('Eight company buckets form two aligned rows of four', () => {
+    const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')]; const rows=new Map();
+    buckets.forEach((bucket) => { const rect=bucket.getBoundingClientRect(); const top=Math.round(rect.top); if(!rows.has(top))rows.set(top,[]); rows.get(top).push(Math.round(rect.left)); });
+    const values=[...rows.values()].map((row)=>row.sort((a,b)=>a-b));
+    return { ok:values.length===2&&values.every((row)=>row.length===4)&&values[0].every((left,index)=>Math.abs(left-values[1][index])<=1)
+      && !document.querySelector('[data-crm-theater="people"] .tk-zone-hrail,[data-crm-theater="people"] .tk-zone-hsb'), detail:JSON.stringify(values) };
   });
-  const peopleScrollBefore = await page.evaluate(() => window.peopleCards.zoneScrollState());
-  await page.$eval('[data-crm-theater="people"] .tk-zone-hclip', (clip) => clip.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaX:420 })));
+  await check('Every company keeps its scrollbar inside the right bucket border', () => {
+    const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')];
+    const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
+    return { ok:geometry.length===8&&geometry.every((item)=>item.on&&item.inset>=16&&item.inset<=20&&item.gap>=2), detail:JSON.stringify(geometry) };
+  });
+  await check('Collapsed People stacks paint only the eight visible faces', () => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
+    const perf=window.peopleCards.performanceState();
+    return { ok:cards.length===80&&deferred.length===72&&full.length===8&&perf.deferredFaces===72&&perf.theaterElements<700
+      && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host')), detail:JSON.stringify({deferred:deferred.length,full:full.length,elements:perf.theaterElements}) };
+  });
+  const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
+  await page.focus(`[data-crm-theater="people"] .tk-zcard[data-id="${peopleShell}"]`);
+  await check('A deferred person face hydrates in place without replacing its card', (id) => {
+    const card=document.querySelector(`[data-crm-theater="people"] .tk-zcard[data-id="${CSS.escape(id)}"]`);
+    return !!card&&!card.classList.contains('is-lazy-shell')&&card.dataset.hydrationProbe==='same-node'&&!!card.querySelector('.ticket-fields');
+  }, peopleShell);
+  const peopleStage = await page.$eval('[data-crm-theater="people"] .tk-zone:first-child', (bucket) => bucket.dataset.stage);
+  await page.evaluate((stage) => window.peopleCards.setStageExpanded(stage, true), peopleStage);
+  await check('Spreading a company stack hydrates every newly visible face', (stage) => {
+    const bucket=document.querySelector(`[data-crm-theater="people"] .tk-zone[data-stage="${CSS.escape(stage)}"]`); const cards=[...(bucket?.querySelectorAll('.tk-zcard')||[])];
+    return cards.length===10&&cards.every((card)=>!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields'));
+  }, peopleStage);
+  await page.evaluate((stage) => window.peopleCards.setStageExpanded(stage, false), peopleStage);
+  const peopleScrollBefore = await page.$eval('[data-crm-theater="people"] .tk-zone:first-child', (bucket) => ({transform:getComputedStyle(bucket.querySelector('.tk-zone-track')).transform,thumbTop:bucket.querySelector('.tk-zth').getBoundingClientRect().top}));
+  await page.$eval('[data-crm-theater="people"] .tk-zone:first-child .tk-zone-body', (body) => body.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:320 })));
   await sleep(240);
-  await check('Company rail accepts trackpad motion and moves its matching horizontal thumb', (before) => {
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const state=window.peopleCards.zoneScrollState(); const track=theater?.querySelector('.tk-zone-htrack'); const bar=theater?.querySelector('.tk-zone-hsb'); const thumb=theater?.querySelector('.tk-zone-hth'); const rail=theater?.querySelector('.tk-zone-hrail');
-    const left=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-left')||'0'); const right=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-right')||'0');
-    return { ok:state.x<before.x-30&&/matrix\(1, 0, 0, 1, -/.test(getComputedStyle(track).transform)&&thumb.getBoundingClientRect().left>bar.getBoundingClientRect().left+5&&left>.2&&right>=.95, detail:JSON.stringify({ before,state,shadows:[left,right] }) };
+  await check('Company bucket wheel motion moves its vertical thumb and adaptive card-edge shadow', (before) => {
+    const bucket=document.querySelector('[data-crm-theater="people"] .tk-zone:first-child'); const track=bucket?.querySelector('.tk-zone-track'); const thumb=bucket?.querySelector('.tk-zth'); const activeShadow=[...(bucket?.querySelectorAll('.tk-edge-shade')||[])].some((shade)=>shade.getBoundingClientRect().width>0);
+    const state={transform:getComputedStyle(track).transform,thumbTop:thumb.getBoundingClientRect().top};
+    return { ok:state.transform!==before.transform&&state.thumbTop>before.thumbTop+2&&activeShadow, detail:JSON.stringify({before,state,activeShadow}) };
   }, peopleScrollBefore);
-  await page.evaluate(() => window.peopleCards.scrollZonesBy(100000, true));
-  await check('Company rail reaches its inset far edge and hands the adaptive shadow to the left', () => {
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect(); const bar=theater?.querySelector('.tk-zone-hsb')?.getBoundingClientRect(); const last=theater?.querySelector('.tk-zone-htrack>.tk-zone:last-child')?.getBoundingClientRect(); const state=window.peopleCards.zoneScrollState(); const inset=bar&&clip?bar.left-clip.left:0;
-    const left=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-left')||'0'); const right=Number.parseFloat(rail?.style.getPropertyValue('--tk-zone-shadow-right')||'0');
-    return { ok:Math.abs(state.x-state.min)<=1&&!!clip&&!!last&&Math.abs((clip.right-last.right)-inset)<=1&&left>=.95&&right<=.01, detail:JSON.stringify({state,inset,edge:last&&clip?clip.right-last.right:null,shadows:[left,right]}) };
-  });
-  await page.evaluate(() => window.peopleCards.scrollZonesBy(-100000, true));
   await page.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); });
-  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 12, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 8, { timeout: 10000 });
   await check('Company-dive buckets use the same ticket-like proportions', () => {
     const buckets = [...document.querySelectorAll('.crm-company-bucket')];
-    return buckets.length === 12 && buckets.every((bucket) => {
+    return buckets.length === 8 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 280 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
@@ -634,7 +648,7 @@ async function main() {
     const menu = document.querySelector('.tk-menu');
     const action = menu?.querySelector('.tk-menu-item[data-act^="custom-"]');
     return !!menu && menu.classList.contains('crm-menu-surface') && !!action
-      && action.textContent.trim().toLowerCase() === 'view conversation history';
+      && action.textContent.trim().toLowerCase() === 'conversation history';
   });
   await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
   await page.waitForSelector('.crm-person-history-shell:not([hidden]) .crm-person-history', { timeout: 10000 });

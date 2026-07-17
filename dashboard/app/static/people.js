@@ -208,7 +208,7 @@
     source: contactSource,
     detail: window.contactDetail,
     contextActions: [{
-      label: "view conversation history",
+      label: "Conversation history",
       run: (contact, sourceCard) => window.crmPersonHistory?.open?.(contact.id, sourceCard),
     }],
     widgetType: "contact",
@@ -247,8 +247,6 @@
     attentionDeckFilter: () => false,
     rightDeckEnabled: false,
     showProgressBars: false,
-    showDateUnder: true,
-    cardDate: (contact) => valueOf(contact, "nextTouchAt"),
     stageMovement: "free",
     stageUpdateFields: (_id, stage) => {
       const company = companies.find((item) => String(item.id) === String(stage));
@@ -258,7 +256,9 @@
     },
     bucketSummary: (_stage, contacts) => `${contacts.length} ${contacts.length === 1 ? "person" : "people"}`,
     zoneGravity: true,   // BLUEPRINT A2: contacts rest on the bucket floor
-    horizontalZones: true,
+    horizontalZones: false,
+    zoneColumns: 4,
+    lazyZoneCards: true,
     reserveStackSpace: false,
     leftDeckFilter: () => true,
     deckCopy: {

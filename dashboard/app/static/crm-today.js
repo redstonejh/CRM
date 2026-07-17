@@ -7,6 +7,10 @@
     "cold-front": "Cold front",
     "invoice-overdue": "Overdue",
     "invoice-due": "Due today",
+    "pipeline-work": "Pipeline",
+    "ticket-work": "Ticket",
+    "person-work": "Person",
+    "task-work": "Task",
     task: "Due today",
     calendar: "Due today",
   };

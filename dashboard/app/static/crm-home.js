@@ -7,7 +7,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v37";
+  const HOME_PREVIEW_VERSION = "filtered-home-v38";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();
@@ -455,6 +455,9 @@
     const day = plateDayOffset(item);
     if (day < 0) return `${Math.abs(day)}d overdue`;
     if (day === 0) {
+      const raw = String(firstText(item.dueAt, item.dueDate, item.date) || "");
+      const calendarDay = /^\d{4}-\d{2}-\d{2}(?:T00:00:00(?:\.000)?Z)?$/i.test(raw);
+      if (calendarDay) return "Today";
       const time = new Date(due);
       return time.getHours() || time.getMinutes() ? `Today · ${time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Today";
     }
@@ -475,6 +478,11 @@
     return "Personal task";
   };
   const cardReasonOf = (item) => {
+    const linkType = priorityLink(item)?.entityType;
+    if (linkType === "workItems") return "pipeline-work";
+    if (linkType === "tickets") return "ticket-work";
+    if (linkType === "contacts") return "person-work";
+    if (linkType === "tasks") return "task-work";
     if (item.todayReason) return item.todayReason;
     const text = `${item.kind || ""} ${item.title || ""}`.toLowerCase();
     if (/invoice|bill|payment/.test(text)) return dueTime(item) < startOfToday() ? "invoice-overdue" : "invoice-due";
@@ -502,7 +510,7 @@
       targetEntity: link?.entityType || "",
       targetId: link?.recordId || "",
       todayReason: cardReasonOf(item),
-      todayRow: { ...(item.todayRow || {}), dueDate: item.dueAt || "", stageLabel: firstText(item.attentionLabel, reason), assignee: item.assignee || "" },
+      todayRow: { ...(item.todayRow || {}), dueDate: "", stageLabel: reason, assignee: item.assignee || "" },
     };
   };
   const prioritySignature = (item) => {

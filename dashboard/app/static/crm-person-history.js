@@ -65,9 +65,8 @@
       .crm-person-history-shell{position:fixed;inset:0;z-index:7350;display:block;background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;-webkit-app-region:no-drag}
       .crm-person-history-shell[hidden]{display:none}
       .crm-person-history{position:fixed;width:min(354px,calc(100vw - 28px));max-height:min(540px,calc(100vh - 118px));overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:#fff}
-      .crm-person-history-head{min-height:54px;display:flex;align-items:center;gap:9px;padding:9px 9px 8px 12px!important}
-      .crm-person-history-heading{min-width:0;flex:1}.crm-person-history-kicker{font-size:var(--crm-type-micro,9px);letter-spacing:.1em;text-transform:uppercase;color:rgba(210,222,240,.43)}
-      .crm-person-history-title{margin-top:4px;font:680 var(--crm-type-object,14px)/1.15 system-ui,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .crm-person-history-head{min-height:42px;display:flex;align-items:center;gap:9px;padding:7px 9px 7px 12px!important}
+      .crm-person-history-heading{min-width:0;flex:1}.crm-person-history-kicker{font:650 var(--crm-type-body,12px)/1.2 system-ui,sans-serif;color:rgba(242,245,250,.76)}
       .crm-person-history-close.crm-menu-action{width:28px!important;min-width:28px!important;height:28px!important;padding:0!important;text-align:center!important;font-size:16px!important}
       .crm-person-history-thread{min-height:0;overflow-y:auto;display:grid;align-content:start;gap:1px;padding:2px 7px 7px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
       .crm-person-history-event{position:relative;min-height:45px;padding:7px 35px 8px 11px!important}
@@ -109,7 +108,7 @@
         ...item, id: `history-${index}`, kind: "system", occurredAt: item.at,
         content: first(item.detail, item.note, item.text, item.action ? `${item.action} record` : "Record changed"),
       }, "system")),
-    ].filter((item) => item.content);
+    ].filter((item) => item.content && !(item.kind === "system" && /^seed(?:ed|ing)?\b/i.test(item.content)));
     const unique = new Map();
     events.forEach((event) => {
       const key = `${event.kind}|${dateMs(event.occurredAt)}|${event.content}`;
@@ -124,7 +123,7 @@
     if (!root || !current?.person) return;
     const person = current.person;
     root.innerHTML = `<article class="crm-person-history crm-menu-surface" role="dialog" aria-modal="false" aria-label="Conversation history for ${esc(nameOf(person))}">
-      <header class="crm-person-history-head crm-menu-item"><div class="crm-person-history-heading"><div class="crm-person-history-kicker">Conversation history</div><div class="crm-person-history-title">${esc(nameOf(person))}</div></div><button type="button" class="crm-person-history-close crm-menu-action" data-person-history-close aria-label="Close">×</button></header>
+      <header class="crm-person-history-head crm-menu-item"><div class="crm-person-history-heading"><div class="crm-person-history-kicker">Conversation history</div></div><button type="button" class="crm-person-history-close crm-menu-action" data-person-history-close aria-label="Close">×</button></header>
       <section class="crm-person-history-thread" data-person-history-thread>${current.events.length ? current.events.slice(0, 30).map(eventHTML).join("") : '<div class="crm-person-history-empty">No conversation history</div>'}</section>
       <footer class="crm-person-history-foot"><button type="button" class="crm-person-history-compose crm-menu-action" data-person-history-compose>Log interaction</button>
         <form class="crm-person-history-composer crm-menu-item" data-person-history-composer hidden><select class="crm-menu-input" name="kind" aria-label="Interaction type"><option value="note">Note</option><option value="email">Email</option><option value="call">Call</option><option value="message">Message</option><option value="meeting">Meeting</option></select><select class="crm-menu-input" name="direction" aria-label="Direction"><option value="outbound">Outbound</option><option value="inbound">Inbound</option><option value="internal">Internal</option></select><textarea class="crm-menu-input" name="content" placeholder="What happened?" aria-label="Interaction details" required></textarea><div class="crm-person-history-composer-actions"><button type="button" class="crm-menu-action" data-person-history-cancel>Cancel</button><button type="submit" class="crm-menu-action">Log</button></div></form>

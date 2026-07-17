@@ -668,13 +668,21 @@ async function main() {
     if (!history || !shell || !source) return false;
     const rect = history.getBoundingClientRect(); const sourceRect = source.getBoundingClientRect(); const shellStyle = getComputedStyle(shell);
     const adjacent = Math.abs(rect.left - sourceRect.right) <= 12 || Math.abs(sourceRect.left - rect.right) <= 12;
-    return history.classList.contains('crm-menu-surface') && rect.width <= 370 && rect.height <= 540 && adjacent
-      && history.querySelector('.crm-person-history-title')?.textContent.trim() === 'Marta Reyes'
-      && events.length >= 6 && new Set(events.map((event) => event.dataset.historyKind)).size >= 4
-      && shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter)
-      && !!history.querySelector('[data-person-history-composer][hidden]')
-      && !history.querySelector('[data-history-filter],.crm-person-history-summary,.crm-person-history-sidebar,.crm-person-history-filters')
-      && [...history.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
+    const kinds = new Set(events.map((event) => event.dataset.historyKind));
+    const checks = {
+      canonical: history.classList.contains('crm-menu-surface'),
+      compact: rect.width <= 370 && rect.height <= 540,
+      adjacent,
+      clearHeading: history.querySelector('.crm-person-history-kicker')?.textContent.trim() === 'Conversation history',
+      noRepeatedIdentity: !history.querySelector('.crm-person-history-title'),
+      noSeedNoise: !events.some((event) => /^seed(?:ed|ing)?\b/i.test(event.querySelector('.crm-person-history-event-content')?.textContent.trim() || '')),
+      completeThread: events.length >= 5 && kinds.size >= 3,
+      transparentShell: shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter),
+      composerTucked: !!history.querySelector('[data-person-history-composer][hidden]'),
+      noExtraneousChrome: !history.querySelector('[data-history-filter],.crm-person-history-summary,.crm-person-history-sidebar,.crm-person-history-filters'),
+      canonicalActions: [...history.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action')),
+    };
+    return { ok: Object.values(checks).every(Boolean), detail: JSON.stringify({ ...checks, events: events.length, kinds: [...kinds], rect: [rect.width, rect.height] }) };
   });
   const historyCountBefore = await page.$$eval('.crm-person-history-event', (events) => events.length);
   await page.click('[data-person-history-compose]');

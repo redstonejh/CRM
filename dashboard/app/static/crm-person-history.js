@@ -4,8 +4,10 @@
   let current = null;
   let currentId = "";
   let anchorRect = null;
+  let anchorElement = null;
   let returnFocus = null;
   let refreshTimer = 0;
+  let placementFrame = 0;
 
   const esc = (value) => String(value ?? "").replace(/[&<>\"]/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -164,14 +166,26 @@
     const edge = 14; const topEdge = 62; const bottomEdge = 76; const gap = 10;
     let left = innerWidth - bounds.width - 42;
     let top = topEdge;
-    if (anchorRect) {
-      const right = anchorRect.right + gap;
-      const leftSide = anchorRect.left - gap - bounds.width;
-      left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
-      top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
+    const liveRect = anchorElement?.isConnected ? anchorElement.getBoundingClientRect() : anchorRect;
+    if (liveRect) {
+      const right = liveRect.right + gap;
+      const leftSide = liveRect.left - gap - bounds.width;
+      left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, liveRect.left));
+      top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, liveRect.top));
     }
     panel.style.left = `${Math.round(left)}px`;
     panel.style.top = `${Math.round(top)}px`;
+  }
+  function followAnchor() {
+    cancelAnimationFrame(placementFrame);
+    let frames = 36;
+    const place = () => {
+      placementFrame = 0;
+      if (!root || root.hidden) return;
+      placeHistory();
+      if (--frames > 0) placementFrame = requestAnimationFrame(place);
+    };
+    place();
   }
   async function open(id, sourceElement = null) {
     if (!root) mount();
@@ -179,6 +193,7 @@
     if (!currentId) return false;
     const source = sourceElement?.getBoundingClientRect?.();
     anchorRect = source ? { left: source.left, right: source.right, top: source.top, bottom: source.bottom } : null;
+    anchorElement = sourceElement?.isConnected ? sourceElement : null;
     returnFocus = sourceElement?.isConnected ? sourceElement : document.activeElement;
     // Do not instantiate a placeholder menu and then replace its size and
     // contents in view. Load while the shell is absent; the anchored surface
@@ -192,12 +207,12 @@
       current = loaded;
       render();
       root.hidden = false;
-      placeHistory();
+      followAnchor();
       return true;
     } catch (error) {
       root.innerHTML = `<article class="crm-person-history crm-menu-surface"><div class="crm-person-history-empty">${esc(error?.message || "Conversation history unavailable")}</div></article>`;
       root.hidden = false;
-      placeHistory();
+      followAnchor();
       return false;
     }
   }
@@ -207,6 +222,9 @@
     current = null;
     currentId = "";
     anchorRect = null;
+    anchorElement = null;
+    cancelAnimationFrame(placementFrame);
+    placementFrame = 0;
     clearTimeout(refreshTimer);
     if (returnFocus?.isConnected) returnFocus.focus?.({ preventScroll: true });
     returnFocus = null;
@@ -226,13 +244,13 @@
         form.hidden = false;
         event.target.closest("[data-person-history-compose]").hidden = true;
         form.querySelector("textarea")?.focus();
-        placeHistory();
+        followAnchor();
         return;
       }
       if (event.target.closest("[data-person-history-cancel]")) {
         root.querySelector("[data-person-history-composer]").hidden = true;
         root.querySelector("[data-person-history-compose]").hidden = false;
-        placeHistory();
+        followAnchor();
       }
     });
     root.addEventListener("submit", async (event) => {
@@ -244,6 +262,7 @@
     });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !root.hidden) close(); });
     document.addEventListener("crm:theater-switch", () => { if (!root.hidden) close(); });
+    window.addEventListener("resize", () => { if (!root.hidden) followAnchor(); });
     try { window.crmStore?.onChanged?.(scheduleRefresh); } catch {}
     try { window.crmDomain?.onChanged?.(scheduleRefresh); } catch {}
     return root;

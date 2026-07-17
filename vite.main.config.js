@@ -17,6 +17,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       external: ['electron', ...builtinModules, 'bufferutil', 'utf-8-validate'],
+      output: { format: 'cjs', entryFileNames: 'main.js' },
     },
   },
 });

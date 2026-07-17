@@ -7,11 +7,12 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v35';
+const HOME_PREVIEW_VERSION = 'filtered-home-v38';
 const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
   && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 4
+  && window.crmHome?.handStatus?.().ready
   && window.crmHome?.motionStatus?.().ready
   && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
     const image = host.querySelector(':scope > .crm-home-preview-foreground');
@@ -511,7 +512,8 @@ async function main() {
     const state=await page.evaluate(async(config)=>{
       const theater=document.querySelector(`[data-crm-theater="${config.theater}"]`);
       const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===config.key);
-      const signature={module:document.body.dataset.crmModule||'',text:String(theater?.innerText||'').replace(/\s+/g,' ').trim(),elements:theater?.querySelectorAll('*').length||0,calendarYear:window.fractalCalendar?.year?.()||null};
+      const signatureSelector='.tk-zone[data-stage],.tk-card[data-id],.tk-zcard[data-id],.crm-planner-bucket[data-planner-bucket],.crm-planner-card[data-planner-card],.crm-assignment-bucket[data-assignment-stage],.crm-assignment-work-card[data-assignment-card]';
+      const signature={module:document.body.dataset.crmModule||'',objects:[...(theater?.querySelectorAll(signatureSelector)||[])].map((node)=>[node.dataset.id||node.dataset.plannerBucket||node.dataset.plannerCard||node.dataset.assignmentStage||node.dataset.assignmentCard||node.dataset.stage||'',node.getAttribute('aria-label')||node.querySelector(':scope > .tk-zone-hd .tk-zone-title')?.textContent?.trim()||'',node.classList.contains('crm-object-small')?'small':'large',node.classList.contains('is-stack-expanded')?'expanded':'stacked']),calendarYear:window.fractalCalendar?.year?.()||null};
       const bucketGeometry=[...(theater?.querySelectorAll('.tk-zone')||[])].map((bucket)=>{const rect=bucket.getBoundingClientRect();return{width:rect.width,height:rect.height,ratio:rect.height?rect.width/rect.height:0}}).filter((bucket)=>bucket.width>0&&bucket.height>0);
       const bucketHeaders=[...(theater?.querySelectorAll('.tk-zone')||[])].filter((bucket)=>bucket.getBoundingClientRect().width>0).map((bucket)=>{const title=bucket.querySelector('.tk-zone-title');const bars=bucket.querySelector('.tk-zone-hd-r');const bucketRect=bucket.getBoundingClientRect();const barsRect=bars?.getBoundingClientRect();return{title:title?.textContent.trim()||'',whiteSpace:title?getComputedStyle(title).whiteSpace:'',singleLine:!!title&&title.scrollHeight<=title.clientHeight+1,count:bucket.querySelectorAll('.tk-zone-count').length,barsPosition:bars?getComputedStyle(bars).position:'',barsRight:barsRect?Math.round(bucketRect.right-barsRect.right):null}});
       const assignmentPipeline=theater?.querySelector('.crm-assignment-pipeline');const assignmentClip=theater?.querySelector('.crm-assignment-board-clip');const assignmentBar=theater?.querySelector('.crm-assignment-hsb');const assignmentThumb=theater?.querySelector('.crm-assignment-hth');

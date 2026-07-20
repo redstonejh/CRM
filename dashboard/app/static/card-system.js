@@ -69,6 +69,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     : null;
   const reserveStackSpace = config.reserveStackSpace !== false;
   const lazyZoneCards = config.lazyZoneCards === true;
+  // Some grouped surfaces no longer expose a stack-spread control. Those
+  // surfaces must not resurrect an expansion saved by an older build when
+  // the renderer starts again, though the live API remains available for
+  // capture/testing choreography within the current session.
+  const restoreZoneExpansion = config.restoreZoneExpansion !== false;
   const resolvedPulse = config.resolvedPulse === true;
   const autoFanOncePerDayKey = String(config.autoFanOncePerDayKey || "");
   const leftDeckFilter = typeof config.leftDeckFilter === "function" ? config.leftDeckFilter : ((record) => !isResolved(record));
@@ -128,6 +133,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   const STACK_EXPAND_KEY = `crm-zone-expansion-v1:${theaterKey}`;
   const readExpandedStages = () => {
+    if (!restoreZoneExpansion) {
+      try { localStorage.removeItem(STACK_EXPAND_KEY); } catch {}
+      return new Set();
+    }
     try { const value = JSON.parse(localStorage.getItem(STACK_EXPAND_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); }
     catch { return new Set(); }
   };
@@ -3977,6 +3986,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       horizontalZoneRows,
       scrollZoneRows,
       lazyZoneCards,
+      restoreZoneExpansion,
       showFlow,
       showProgressBars,
       stageMovement,

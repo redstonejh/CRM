@@ -264,6 +264,9 @@
     scrollZoneRows: false,
     zoneColumns: 4,
     lazyZoneCards: true,
+    // The company stack-spread control was removed. Always enter this room in
+    // its compact ticket-stack state instead of reviving legacy expansions.
+    restoreZoneExpansion: false,
     reserveStackSpace: false,
     leftDeckFilter: () => true,
     deckCopy: {

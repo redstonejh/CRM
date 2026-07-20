@@ -518,7 +518,7 @@ async function main() {
   await check('Calendar navigation is one fixed top-center control, never card chrome', () => {
     const controls = [...document.querySelectorAll('.crm-viewport-date')]; const rect = controls[0]?.getBoundingClientRect(); const style = controls[0] && getComputedStyle(controls[0]);
     return controls.length === 1 && !controls[0].hidden && !document.querySelector('[data-crm-card-date],.crm-card-date') && style?.position === 'fixed'
-      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 47 && rect.top <= 49
+      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 13 && rect.top <= 15
       && rect.width >= 57 && rect.height >= 51 && parseFloat(style.fontSize) >= 9;
   });
   await page.click('.crm-viewport-date');
@@ -589,7 +589,6 @@ async function main() {
   await activate('people');
   await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 16
     && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 160, { timeout: 10000 });
-  await page.evaluate(() => window.peopleCards.expandedStages().forEach((stage) => window.peopleCards.setStageExpanded(stage, false)));
   await check('People are shared card objects grouped inside company buckets, never a pipeline', () => {
     const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
@@ -597,7 +596,9 @@ async function main() {
     return {
       ok: buckets.length === 16 && cards.length === 160 && window.peopleCards.contract().horizontalZones === true
         && window.peopleCards.contract().horizontalZoneRows === 2 && window.peopleCards.contract().scrollZoneRows === false
-        && window.peopleCards.contract().lazyZoneCards === true && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
+        && window.peopleCards.contract().lazyZoneCards === true && window.peopleCards.contract().restoreZoneExpansion === false
+        && window.peopleCards.expandedStages().length === 0 && !theater.querySelector('.tk-zone.is-stack-expanded')
+        && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
         && !theater.querySelector('svg.tk-flow, .tk-flow-shaft, .tk-flow-head, .tk-bars')
         && [...theater.querySelectorAll('.tk-deck-left, .tk-empty-left')].every((element) => getComputedStyle(element).display === 'none')
         && !document.querySelector('.crm-company-account, [data-crm-theater="relationships"]'),
@@ -610,6 +611,12 @@ async function main() {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
+  });
+  await check('The global calendar control clears the company rail', () => {
+    const control = document.querySelector('.crm-viewport-date')?.getBoundingClientRect();
+    const bucketTops = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')]
+      .map((bucket) => bucket.getBoundingClientRect().top);
+    return !!control && bucketTops.length === 16 && control.bottom + 10 <= Math.min(...bucketTops);
   });
   await check('Companies form two aligned continuous rows with one equal horizontal gap', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect();

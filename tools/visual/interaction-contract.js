@@ -618,16 +618,16 @@ async function main() {
       && state.min < -(clip.width * .9) && track.scrollWidth >= clip.width * 1.9
       && !!theater.querySelector('.tk-zone-hrail,.tk-zone-hsb')&&!theater.querySelector('.tk-zone-vrail,.tk-zone-vsb'), detail:JSON.stringify({values,state,track:track?.scrollWidth,view:clip?.width}) };
   });
-  await check('Every company keeps its scrollbar inside the right bucket border', () => {
+  await check('Every visible company keeps its scrollbar inside the right bucket border', () => {
     const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')];
-    const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
-    return { ok:geometry.length===16&&geometry.every((item)=>item.on&&item.inset>=16&&item.inset<=20&&item.gap>=2), detail:JSON.stringify(geometry) };
+    const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{lod:bucket.dataset.zoneLod,on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
+    return { ok:geometry.length===16&&geometry.every((item)=>item.inset>=16&&item.inset<=20&&item.gap>=2&&(item.lod==='parked'||item.on)), detail:JSON.stringify(geometry) };
   });
   await check('People LOD paints the visible company page and parks the offscreen page', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
-    const perf=window.peopleCards.performanceState();
+    const perf=window.peopleCards.performanceState(); const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];
     return { ok:cards.length===160&&full.length===8&&deferred.length===152&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===8&&perf.theaterElements<1400
-      && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host')), detail:JSON.stringify({deferred:deferred.length,full:full.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
+      && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host'))&&parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}), detail:JSON.stringify({deferred:deferred.length,full:full.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
   });
   const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
   await page.focus(`[data-crm-theater="people"] .tk-zcard[data-id="${peopleShell}"]`);
@@ -650,12 +650,23 @@ async function main() {
     const state={transform:getComputedStyle(track).transform,thumbTop:thumb.getBoundingClientRect().top};
     return { ok:state.transform!==before.transform&&state.thumbTop>before.thumbTop+2&&activeShadow, detail:JSON.stringify({before,state,activeShadow}) };
   }, peopleScrollBefore);
+  const companyLodMotion = await page.evaluate(() => new Promise((resolve) => {
+    document.activeElement?.blur?.();
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const identity=theater.querySelector('.tk-zcard'); identity.dataset.companyLodIdentity='retained';
+    const mutations=[]; const observer=new MutationObserver((records)=>mutations.push(...records)); observer.observe(theater,{subtree:true,attributes:true,attributeFilter:['data-zone-lod']});
+    const deltas=[]; const longTasks=[]; let previous=performance.now(),started=previous;
+    const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration))); try{longObserver.observe({entryTypes:['longtask']});}catch{}
+    window.peopleCards.scrollZonesBy(9999);
+    const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}),identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained'});};requestAnimationFrame(tick);
+  }));
+  await check('Company LOD crosses page boundaries without per-frame DOM churn', (motion) => ({ ok:motion.frames>=40&&motion.p95<=25&&motion.over34<=4&&motion.longTasks.length===0&&motion.mutations<=24&&motion.parked===8&&motion.deferred===152&&motion.hidden&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true)); await sleep(100);
   const companyRailBefore = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const thumb=theater?.querySelector('.tk-zone-hth'); return{state:window.peopleCards.zoneScrollState(),thumbLeft:thumb?.getBoundingClientRect().left||0,scrollWidth:clip?.scrollWidth||0,clientWidth:clip?.clientWidth||0}; });
   await page.$eval('[data-crm-theater="people"] .tk-zone-hclip', (clip) => clip.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:650 })));
   await sleep(260);
   await check('The company world scrolls horizontally with its thumb and adaptive edge shadows', (before) => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const thumb=theater?.querySelector('.tk-zone-hth'); const state=window.peopleCards.zoneScrollState();
-    const leftShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-left')); const rightShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-right'));
+    const leftShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-left')).opacity); const rightShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-right')).opacity);
     return { ok:state.min<0&&state.x<before.state.x-200&&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2,
       detail:JSON.stringify({before,state,shadows:[leftShadow,rightShadow],thumb:thumb?.getBoundingClientRect().left}) };
   }, companyRailBefore);
@@ -663,7 +674,7 @@ async function main() {
   await sleep(160);
   await check('The horizontal company rail reaches its final page and transfers LOD cleanly', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastTop=last?.querySelector('.tk-zcard:last-child');
-    const leftShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-left')); const rightShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-right'));
+    const leftShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-left')).opacity); const rightShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-right')).opacity);
     return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
       detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod]}) };
   });

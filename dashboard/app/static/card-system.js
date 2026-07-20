@@ -994,15 +994,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (document.getElementById("crm-horizontal-zone-styles")) return;
     const style = document.createElement("style"); style.id = "crm-horizontal-zone-styles"; style.textContent = `
       .tk-zones.is-horizontal{display:block;position:fixed;inset:0;z-index:790;pointer-events:none}
-      .tk-zone-hrail{--tk-zone-shadow-left:0;--tk-zone-shadow-right:0;--tk-zone-rail-inset:clamp(22px,2.2vw,30px);position:fixed;left:0;right:0;overflow:hidden;pointer-events:none}
-      .tk-zone-hrail:before,.tk-zone-hrail:after{content:"";position:absolute;z-index:3;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.tk-zone-hrail:before{left:0;opacity:var(--tk-zone-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hrail:after{right:0;opacity:var(--tk-zone-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
+      .tk-zone-hrail{--tk-zone-rail-inset:clamp(22px,2.2vw,30px);position:fixed;left:0;right:0;overflow:hidden;pointer-events:none}
+      .tk-zone-hshade{position:absolute;z-index:3;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);opacity:0;pointer-events:none;transition:opacity .12s linear;will-change:opacity}.tk-zone-hshade-left{left:0;background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hshade-right{right:0;background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .tk-zone-hclip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0;pointer-events:auto}.tk-zone-hclip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
       .tk-zone-htrack{position:relative;width:max-content;min-width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 var(--tk-zone-rail-inset);will-change:transform;pointer-events:auto}.tk-zone-htrack>.tk-zone{position:relative;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 auto;z-index:1}
       .tk-zone-htrack.is-paged{display:block;width:100%;min-width:0;padding:0}
       .tk-zone-htrack.is-paged>.tk-zone{position:absolute;left:var(--tk-zone-page-left)!important;right:auto!important;top:var(--tk-zone-page-top)!important;bottom:auto!important}
-      .tk-zone-htrack.has-zone-lod>.tk-zone{content-visibility:auto;contain-intrinsic-size:245px 359px}
-      .tk-zone-htrack.has-zone-lod>.tk-zone[data-zone-lod="parked"]{contain:layout paint style;pointer-events:none}
-      .tk-zone-hsb{position:absolute;z-index:4;left:var(--tk-zone-rail-inset);right:var(--tk-zone-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none}.tk-zone-hsb.is-on{opacity:1;pointer-events:auto}.tk-zone-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.tk-zone-hth:hover{background:rgba(255,255,255,.88)}.tk-zone-hth:active{cursor:grabbing;background:#fff}
+      .tk-zone-htrack.has-zone-lod>.tk-zone{content-visibility:visible;contain:layout paint style;contain-intrinsic-size:245px 359px}
+      .tk-zone-htrack.has-zone-lod>.tk-zone[data-zone-lod="parked"]{content-visibility:hidden;visibility:hidden;contain:strict;pointer-events:none}
+      .tk-zone-hsb{position:absolute;z-index:4;left:var(--tk-zone-rail-inset);right:var(--tk-zone-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none}.tk-zone-hsb.is-on{opacity:1;pointer-events:auto}.tk-zone-hth{position:absolute;left:0;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease;will-change:transform,width}.tk-zone-hth:hover{background:rgba(255,255,255,.88)}.tk-zone-hth:active{cursor:grabbing;background:#fff}
     `; document.head.appendChild(style);
   };
 
@@ -2415,10 +2415,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
-  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHBar = null, zoneHThumb = null, zoneHResizeObserver = null;
+  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHBar = null, zoneHThumb = null, zoneHLeftShade = null, zoneHRightShade = null, zoneHResizeObserver = null;
   let zoneVRail = null, zoneVClip = null, zoneVTrack = null, zoneVBar = null, zoneVThumb = null, zoneVResizeObserver = null;
-  let zoneHLodFrame = 0, zoneVLodFrame = 0;
+  let zoneVLodFrame = 0;
   const zoneVisibleStages = new Set();
+  const zoneHorizontalBounds = new Map();
+  const zoneHMetrics = { view:0, content:0, bar:0 };
+  let zoneHThumbWidth = -1;
+  let zoneHLeftOpacity = "", zoneHRightOpacity = "";
   const zoneHScroll = { x:0, target:0, raf:0, wheeling:false, releaseT:0 };
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   let draggingSide = null;    // which deck owns the in-flight card → its deck is NOT rebuilt mid-drag
@@ -2681,22 +2685,37 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
   };
 
-  const zoneHMin = () => Math.min(0, (zoneHClip?.clientWidth || 0) - (zoneHTrack?.scrollWidth || zoneHTrack?.offsetWidth || 0));
+  const cacheZoneRailMetrics = () => {
+    if (!horizontalZones || !zoneHClip || !zoneHTrack) return zoneHMetrics;
+    zoneHMetrics.view = zoneHClip.clientWidth || 0;
+    zoneHMetrics.content = zoneHTrack.scrollWidth || zoneHTrack.offsetWidth || 0;
+    zoneHMetrics.bar = zoneHBar?.clientWidth || 0;
+    return zoneHMetrics;
+  };
+  const zoneHMin = () => {
+    const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
+    return Math.min(0, metrics.view - metrics.content);
+  };
   const positionZoneRail = () => {
     if (!horizontalZones || !zoneRail || !zoneHClip || !zoneHTrack || !zoneHBar || !zoneHThumb) return;
-    zoneHTrack.style.transform = `translateX(${Math.round(zoneHScroll.x)}px)`;
-    const view = zoneHClip.clientWidth, content = zoneHTrack.scrollWidth || zoneHTrack.offsetWidth, minimum = Math.min(0, view - content), over = content > view + 1;
+    zoneHTrack.style.transform = `translate3d(${Math.round(zoneHScroll.x)}px,0,0)`;
+    const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
+    const view = metrics.view, content = metrics.content, minimum = Math.min(0, view - content), over = content > view + 1;
     const fade = Math.min(72, Math.max(42, view * .06));
-    zoneRail.style.setProperty("--tk-zone-shadow-left", String(over ? clamp(-zoneHScroll.x / fade, 0, 1) : 0));
-    zoneRail.style.setProperty("--tk-zone-shadow-right", String(over ? clamp((zoneHScroll.x - minimum) / fade, 0, 1) : 0));
-    zoneHBar.classList.toggle("is-on", over); zoneHBar.setAttribute("aria-hidden", String(!over));
-    if (!over) { zoneHScroll.x = zoneHScroll.target = 0; zoneHTrack.style.transform = "translateX(0px)"; scheduleHorizontalZoneLod(); return; }
-    const trackW = Math.max(1, zoneHBar.clientWidth), base = Math.max(28, trackW * (view / content)); let width = base, left = 0;
+    const leftOpacity = (over ? clamp(-zoneHScroll.x / fade, 0, 1) : 0).toFixed(3);
+    const rightOpacity = (over ? clamp((zoneHScroll.x - minimum) / fade, 0, 1) : 0).toFixed(3);
+    if (zoneHLeftShade && leftOpacity !== zoneHLeftOpacity) { zoneHLeftOpacity = leftOpacity; zoneHLeftShade.style.opacity = leftOpacity; }
+    if (zoneHRightShade && rightOpacity !== zoneHRightOpacity) { zoneHRightOpacity = rightOpacity; zoneHRightShade.style.opacity = rightOpacity; }
+    zoneHBar.classList.toggle("is-on", over); const hidden = String(!over); if (zoneHBar.getAttribute("aria-hidden") !== hidden) zoneHBar.setAttribute("aria-hidden", hidden);
+    if (!over) { zoneHScroll.x = zoneHScroll.target = 0; zoneHTrack.style.transform = "translate3d(0,0,0)"; updateHorizontalZoneLod(); return; }
+    const trackW = Math.max(1, metrics.bar), base = Math.max(28, trackW * (view / content)); let width = base, left = 0;
     if (zoneHScroll.x > 0) { width = Math.max(14, base - zoneHScroll.x); left = 0; }
     else if (zoneHScroll.x < minimum) { width = Math.max(14, base - (minimum - zoneHScroll.x)); left = trackW - width; }
     else left = (minimum ? zoneHScroll.x / minimum : 0) * (trackW - width);
-    zoneHThumb.style.width = `${Math.round(width)}px`; zoneHThumb.style.left = `${Math.round(left)}px`;
-    scheduleHorizontalZoneLod();
+    const roundedWidth = Math.round(width);
+    if (roundedWidth !== zoneHThumbWidth) { zoneHThumbWidth = roundedWidth; zoneHThumb.style.width = `${roundedWidth}px`; }
+    zoneHThumb.style.transform = `translate3d(${Math.round(left)}px,0,0)`;
+    updateHorizontalZoneLod();
   };
   const runZoneRailScroll = () => {
     if (!horizontalZones || zoneHScroll.raf) return;
@@ -2737,32 +2756,37 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const move = (event) => { if (!dragging) return; const minimum = zoneHMin(), view = zoneHClip.clientWidth, content = view - minimum, trackW = zoneHBar.clientWidth, thumbW = Math.max(28, trackW * (view / content)), fraction = (event.clientX - startX) / Math.max(1, trackW - thumbW); zoneHScroll.x = damp(startScroll + fraction * minimum, minimum); zoneHScroll.target = zoneHScroll.x; positionZoneRail(); };
     const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && zoneHThumb.hasPointerCapture?.(pointerId)) zoneHThumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); zoneHScroll.wheeling = false; zoneHScroll.target = zoneHScroll.x; runZoneRailScroll(); };
     zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
-    zoneHResizeObserver?.disconnect(); zoneHResizeObserver = new ResizeObserver(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); }); zoneHResizeObserver.observe(zoneHClip); zoneHResizeObserver.observe(zoneHTrack);
+    zoneHResizeObserver?.disconnect(); zoneHResizeObserver = new ResizeObserver(() => { cacheZoneRailMetrics(); zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); }); zoneHResizeObserver.observe(zoneHClip); zoneHResizeObserver.observe(zoneHTrack);
   };
 
   const updateHorizontalZoneLod = () => {
-    zoneHLodFrame = 0;
     if (!horizontalZones || !lazyZoneCards || !zoneHClip || !zoneHTrack) return;
-    const view = zoneHClip.getBoundingClientRect();
-    const overscan = Math.max(96, Math.min(220, view.width * .14));
+    const metrics = zoneHMetrics.view ? zoneHMetrics : cacheZoneRailMetrics();
+    const viewLeft = -zoneHScroll.x, viewRight = viewLeft + metrics.view;
+    const settledTarget = clamp(zoneHScroll.target, Math.min(0, metrics.view - metrics.content), 0);
+    const settled = !zoneHScroll.wheeling && Math.abs(zoneHScroll.x - settledTarget) < .5;
+    const overscan = settled ? 0 : Math.max(72, Math.min(128, metrics.view * .08));
     STAGES.forEach((stage) => {
       const panel = zoneBody[stage.key]?.parentElement;
       if (!panel) return;
-      const bounds = panel.getBoundingClientRect();
-      const near = bounds.right >= view.left - overscan && bounds.left <= view.right + overscan;
-      panel.dataset.zoneLod = near ? "full" : "parked";
-      if (!near) { zoneVisibleStages.delete(stage.key); return; }
+      const bounds = zoneHorizontalBounds.get(stage.key);
+      if (!bounds) return;
+      const near = bounds.right >= viewLeft - overscan && bounds.left <= viewRight + overscan;
+      const nextLod = near ? "full" : "parked";
+      if (panel.dataset.zoneLod === nextLod) return;
+      panel.dataset.zoneLod = nextLod;
+      if (!near) {
+        zoneVisibleStages.delete(stage.key);
+        zoneTrack[stage.key]?.querySelectorAll(":scope > .tk-zcard").forEach((card) => dehydrateZoneCard(card, ticketById(card.dataset.id)));
+        return;
+      }
       zoneVisibleStages.add(stage.key);
       const cards = [...(zoneTrack[stage.key]?.querySelectorAll(":scope > .tk-zcard") || [])];
       if (expandedStages.has(stage.key)) cards.forEach((card) => hydrateZoneCard(card, ticketById(card.dataset.id)));
       else if (cards.length) hydrateZoneCard(cards[cards.length - 1], ticketById(cards[cards.length - 1].dataset.id));
+      clampZoneScroll(stage.key);
     });
   };
-  const scheduleHorizontalZoneLod = () => {
-    if (!horizontalZones || !lazyZoneCards || zoneHLodFrame) return;
-    zoneHLodFrame = requestAnimationFrame(updateHorizontalZoneLod);
-  };
-
   const zoneVMax = () => Math.max(0, (zoneVTrack?.scrollHeight || zoneVTrack?.offsetHeight || 0) - (zoneVClip?.clientHeight || 0));
   const updateVerticalZoneLod = () => {
     zoneVLodFrame = 0;
@@ -2914,12 +2938,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
           const rowTops = rowHeights.map((height, row) => { const value = top; top += height + (row < rows - 1 ? rowGap : 0); return value; });
           items.forEach(({ stage, panel, row, column, width, height }) => {
             if (!panel) return;
-            panel.style.setProperty("--tk-zone-page-left", `${Math.round(page * viewportW + columnLefts[column] + (columnWidths[column] - width) / 2)}px`);
+            const panelLeft = Math.round(page * viewportW + columnLefts[column] + (columnWidths[column] - width) / 2);
+            panel.style.setProperty("--tk-zone-page-left", `${panelLeft}px`);
             panel.style.setProperty("--tk-zone-page-top", `${Math.round(rowTops[row] + (rowHeights[row] - height) / 2)}px`);
             panel.style.width = `${width}px`; panel.style.height = `${height}px`;
+            zoneHorizontalBounds.set(stage.key, { left:panelLeft, right:panelLeft + width });
             const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
           });
         }
+        cacheZoneRailMetrics();
         updateHorizontalZoneLod();
       } else {
         const bucketW = Math.max(220, Math.min(260, CARD_W + 60));
@@ -2932,6 +2959,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
           window.crmObjectSizing?.scan?.(panel); const compact = isSmallObject(panel); const width = Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)); const height = Math.round(bucketH * (compact ? .78 : 1));
           panel.style.width = `${width}px`; panel.style.height = `${height}px`; panel.style.left = panel.style.right = panel.style.top = panel.style.bottom = "auto";
           const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
+        });
+        cacheZoneRailMetrics();
+        STAGES.forEach((stage) => {
+          const panel = zoneBody[stage.key]?.parentElement;
+          if (panel) zoneHorizontalBounds.set(stage.key, { left:panel.offsetLeft, right:panel.offsetLeft + panel.offsetWidth });
         });
       }
       STAGES.forEach((stage) => clampZoneScroll(stage.key));
@@ -3062,6 +3094,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // while a scroll animation owns st.sy (its own loop clamps). Runs on every resize/reflow → live update.
   const clampZoneScroll = (s) => {
     const st = zoneScroll[s];
+    if (lazyZoneCards && zoneBody[s]?.parentElement?.dataset.zoneLod === "parked") return;
     if (st && !st.raf) { st.sy = clamp(st.sy, zMin(s), 0); st.ty = st.sy; }
     positionZone(s);
   };
@@ -3132,8 +3165,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zonesRoot = document.createElement("div");
     zonesRoot.className = `tk-zones${horizontalZones ? " is-horizontal" : ""}${scrollZoneRows ? " is-vertical-scroll" : ""}`;
     if (horizontalZones) {
-      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
+      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hshade tk-zone-hshade-left"></div><div class="tk-zone-hshade tk-zone-hshade-right"></div><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
       zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+      zoneHLeftShade = zonesRoot.querySelector(".tk-zone-hshade-left"); zoneHRightShade = zonesRoot.querySelector(".tk-zone-hshade-right");
       zoneHTrack.classList.toggle("is-paged", pagedHorizontalZones);
       zoneHTrack.classList.toggle("has-zone-lod", lazyZoneCards);
     } else if (scrollZoneRows) {
@@ -3366,6 +3400,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     fitCardFields(card);
     return card;
   };
+  const dehydrateZoneCard = (card, t) => {
+    if (!card || card.classList.contains("is-lazy-shell") || card.classList.contains("tk-zdrag")) return card;
+    if (card === document.activeElement || card.matches(":focus-within,:hover")) return card;
+    card.classList.add("is-lazy-shell"); card.dataset.faceDeferred = "true";
+    card.innerHTML = zoneCardShellInner(t); addZoneEdgeShades(card);
+    return card;
+  };
 
   // Drag a zone card to ANOTHER zone (reassign stage), DOWN onto the corner stacks (un-assign
   // → back to the inbox), or release on its own zone / nowhere (snap back). Click opens config.
@@ -3586,7 +3627,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return { stage: z, index };
   };
 
-  const restackZoneElements = (stage) => {
+  const restackZoneElements = (stage, { clampScroll = true } = {}) => {
     const track = zoneTrack[stage]; if (!track) return;
     const expanded = expandedStages.has(stage);
     let previousHeight = 0;
@@ -3597,7 +3638,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       previousHeight = height;
       fitCardFields(card);
     });
-    clampZoneScroll(stage);
+    if (clampScroll) clampZoneScroll(stage);
   };
 
   const renderZones = () => {
@@ -3627,9 +3668,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         card.style.zIndex = String(i + 1);
         track.appendChild(card);
       });
-      restackZoneElements(s.key);
-      const st = zoneScroll[s.key];   // re-clamp scroll to the new content height + reposition
-      if (st) { st.sy = clamp(st.sy, zMin(s.key), 0); st.ty = st.sy; positionZone(s.key); }
+      restackZoneElements(s.key, { clampScroll:false });
     });
     // The first zone layout runs before its cards exist. Re-measure once the
     // real stacks are seated so bucket scrollbars and the outer rail use the
@@ -3897,11 +3936,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf); clearTimeout(zoneHScroll.releaseT); zoneHScroll.raf = 0; zoneHScroll.wheeling = false;
       zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zoneVResizeObserver?.disconnect(); zoneVResizeObserver = null;
-      if (zoneHLodFrame) cancelAnimationFrame(zoneHLodFrame); zoneHLodFrame = 0;
       if (zoneVLodFrame) cancelAnimationFrame(zoneVLodFrame); zoneVLodFrame = 0; zoneVisibleStages.clear();
       zonesRoot?.remove();
-      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHBar = zoneHThumb = null;
+      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHBar = zoneHThumb = zoneHLeftShade = zoneHRightShade = null;
       zoneVRail = zoneVClip = zoneVTrack = zoneVBar = zoneVThumb = null;
+      zoneHorizontalBounds.clear(); zoneHMetrics.view = zoneHMetrics.content = zoneHMetrics.bar = 0; zoneHThumbWidth = -1; zoneHLeftOpacity = zoneHRightOpacity = "";
       [zoneBody, zoneTrack, zoneScroll].forEach((map) => Object.keys(map).forEach((key) => { delete map[key]; }));
       STAGES = normalized;
       STAGE_KEYS = normalized.map((stage) => stage.key);

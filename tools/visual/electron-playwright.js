@@ -532,6 +532,13 @@ async function main() {
     const pixelMae=imageDifference(exactBuffer,liveBuffer,{left:50,right:1230,top:105,bottom:755});
     const probe={settled:await page.evaluate(()=>window.__fps),transition:await finishMotionProbe(page,`in-${room.key}`)};
     assertMotion(`${room.key} inbound`,probe.transition);
+    let companyRailMotion=null;
+    if(room.key==='people'){
+      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
+      companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,attributes:true,attributeFilter:['data-zone-lod']});const deltas=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';})});};requestAnimationFrame(tick)}));
+      if(companyRailMotion.frames<60||companyRailMotion.fps<80||companyRailMotion.p95>20.5||companyRailMotion.max>55||companyRailMotion.over34>2||companyRailMotion.longTasks.length||companyRailMotion.mutations>24||companyRailMotion.parked!==8||companyRailMotion.deferred!==152||!companyRailMotion.hidden)throw new Error(`People horizontal LOD is not compositor-stable: ${JSON.stringify(companyRailMotion)}`);
+      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
+    }
     const badBucket=room.key==='assignments'
       ? state.bucketGeometry.some((bucket)=>bucket.width<200||bucket.width>275||bucket.height<500||bucket.height>710||bucket.ratio<.35||bucket.ratio>.45)
       : room.key!=='planner'&&state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
@@ -584,7 +591,7 @@ async function main() {
     const synchronizedPixelMae=imageDifference(synchronizedExactBuffer,synchronizedLiveBuffer,{left:50,right:1230,top:105,bottom:755});
     if(outboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after returning Home: ${JSON.stringify(outboundStability)}`);
     if(after<=before||synchronizedPreview.state!=='ready'||!synchronizedPreview.sameNode||synchronizedPreview.hostCapturedAt!==after||JSON.stringify(synchronizedPreview.viewState)!==JSON.stringify(expectedViewState)||synchronizedPixelMae>12)throw new Error(`${room.key} Home tile did not synchronize with the displayed room: ${JSON.stringify({before,after,synchronization,expectedViewState,actualViewState:synchronizedPreview.viewState,sameNode:synchronizedPreview.sameNode,hostCapturedAt:synchronizedPreview.hostCapturedAt,synchronizedPixelMae})}`);
-    transitions.push({key:room.key,mid,outboundMid,pixelMae,synchronizedPixelMae,fps:probe.settled.fps,inbound:probe.transition,outbound,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewRefreshed:after>before,previewNodePreserved:synchronizedPreview.sameNode});
+    transitions.push({key:room.key,mid,outboundMid,pixelMae,synchronizedPixelMae,fps:probe.settled.fps,companyRailMotion,inbound:probe.transition,outbound,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewRefreshed:after>before,previewNodePreserved:synchronizedPreview.sameNode});
   }
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   const unsettled=transitTimings.filter((item)=>item.settled===false);

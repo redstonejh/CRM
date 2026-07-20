@@ -398,7 +398,7 @@ async function main() {
       && bucketRect.left - clipRect.left >= 20 && bucketRect.left - clipRect.left <= 32 && tabsRect.left > bucketRect.left + 20
       && getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize === '17px'
       && buckets.every((bucket) => !!bucket.dataset.assignmentStage && getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize === '14px')
-      && theater.querySelectorAll('.crm-assignment-stack-toggle').length === 5
+      && !theater.querySelector('.crm-assignment-stack-toggle,.tk-zone-spread')
       && !!pipeline && !!clip && pipeline.scrollWidth > clip.clientWidth + 100 && scrollbar?.classList.contains('is-on') && thumb?.getBoundingClientRect().width > 28
       && !!pipelineRect && Math.abs(pipelineRect.left - clipRect.left) <= 1 && !!scrollbarRect
       && scrollbarRect.left - clipRect.left >= 20 && scrollbarRect.left - clipRect.left <= 32
@@ -415,18 +415,22 @@ async function main() {
   await check('Assignment pseudo-tabs support horizontal keyboard navigation', () => document.activeElement?.dataset.assignmentFilter === 'mine' && document.activeElement?.getAttribute('aria-selected') === 'true');
   await page.keyboard.press('ArrowLeft'); await page.waitForFunction(() => document.activeElement?.dataset.assignmentFilter === 'all');
   const assignmentScrollBefore = await page.evaluate(() => window.crmAssignments.scrollState());
-  await page.$eval('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-board-clip', (clip) => clip.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:320 })));
+  const assignmentGutterPoint = await page.evaluate(() => {
+    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect();
+    return { x:Math.round((clip.left+clip.right)/2), y:Math.min(innerHeight-8,Math.ceil(bar.bottom+12)), barBottom:bar.bottom, clipBottom:clip.bottom };
+  });
+  await page.mouse.move(assignmentGutterPoint.x, assignmentGutterPoint.y); await page.mouse.wheel({ deltaY:320 });
   await sleep(240);
-  await check('Assignment buckets use the bucket scrollbar language horizontally, including wheel motion and thumb travel', (before) => {
+  await check('Assignment buckets use the bucket scrollbar language horizontally, including lower-gutter wheel motion and thumb travel', ({ before, point }) => {
     const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const state = window.crmAssignments.scrollState(); const track = theater?.querySelector('.crm-assignment-pipeline'); const bar = theater?.querySelector('.crm-assignment-hsb'); const thumb = theater?.querySelector('.crm-assignment-hth');
     const referenceBar = document.querySelector('[data-crm-theater="tickets"] .tk-zsb'); const referenceThumb = document.querySelector('[data-crm-theater="tickets"] .tk-zth');
     const barStyle = getComputedStyle(bar); const thumbStyle = getComputedStyle(thumb); const referenceBarStyle = referenceBar && getComputedStyle(referenceBar); const referenceThumbStyle = referenceThumb && getComputedStyle(referenceThumb);
-    return { ok:state.min < -100 && state.x < before.x - 30 && /matrix\(1, 0, 0, 1, -/.test(getComputedStyle(track).transform)
+    return { ok:point.y > point.barBottom && point.y > point.clipBottom && state.min < -100 && state.x < before.x - 30 && /matrix\(1, 0, 0, 1, -/.test(getComputedStyle(track).transform)
       && thumb.getBoundingClientRect().left > bar.getBoundingClientRect().left + 5
       && !!referenceBarStyle && !!referenceThumbStyle && barStyle.backgroundColor === referenceBarStyle.backgroundColor && barStyle.borderRadius === referenceBarStyle.borderRadius
       && barStyle.boxShadow === referenceBarStyle.boxShadow && thumbStyle.backgroundColor === referenceThumbStyle.backgroundColor && thumbStyle.borderRadius === referenceThumbStyle.borderRadius && thumbStyle.boxShadow === referenceThumbStyle.boxShadow,
-      detail:JSON.stringify({ before, state, thumbLeft:thumb.getBoundingClientRect().left - bar.getBoundingClientRect().left }) };
-  }, assignmentScrollBefore);
+      detail:JSON.stringify({ before, state, point, thumbLeft:thumb.getBoundingClientRect().left - bar.getBoundingClientRect().left }) };
+  }, { before:assignmentScrollBefore, point:assignmentGutterPoint });
   await page.evaluate(() => window.crmAssignments.scrollBy(100000, true));
   await check('Assignment scrolling reaches the exact far edge and transfers its shadow to the left boundary', () => {
     const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const board=theater?.querySelector('.crm-assignment-board'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect(); const last=theater?.querySelector('.crm-assignment-bucket:last-child')?.getBoundingClientRect(); const state=window.crmAssignments.scrollState(); const inset=bar&&clip?bar.left-clip.left:0;
@@ -480,16 +484,14 @@ async function main() {
   }, assignment);
   await page.evaluate((id) => window.crmAssignments.unassign(id), assignment.id);
 
-  const assignmentStageSelector = await page.$eval(`${assignmentScope} .crm-assignment-bucket:has(.crm-assignment-work-card + .crm-assignment-work-card)`, (bucket) => `[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-bucket[data-assignment-stage="${bucket.dataset.assignmentStage}"]`);
-  const assignmentStackBefore = await page.$eval(`${assignmentStageSelector}`, (bucket) => { const cards = [...bucket.querySelectorAll('.crm-assignment-work-card')]; return { ids:cards.map((card) => card.dataset.assignmentCard), step:cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top }; });
-  await page.evaluate((selector) => document.querySelector(`${selector} .crm-assignment-stack-toggle`)?.click(), assignmentStageSelector);
-  await sleep(260);
-  await check('Assignments can spread the exact same commitment stack outward', ({ selector, before }) => {
-    const bucket = document.querySelector(selector); const cards = [...bucket.querySelectorAll('.crm-assignment-work-card')]; const step = cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top;
-    return { ok:bucket.querySelector('.crm-assignment-stack-toggle')?.getAttribute('aria-expanded') === 'true' && JSON.stringify(cards.map((card) => card.dataset.assignmentCard)) === JSON.stringify(before.ids) && step > before.step + 45, detail:`${Math.round(before.step)}→${Math.round(step)}px` };
-  }, { selector:assignmentStageSelector, before:assignmentStackBefore });
-  await page.evaluate((selector) => document.querySelector(`${selector} .crm-assignment-stack-toggle`)?.click(), assignmentStageSelector);
-  await sleep(260);
+  await check('Assignment bucket headers keep the internal stack compact and expose no unstack control', () => {
+    const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
+    const bucket = theater?.querySelector('.crm-assignment-bucket:has(.crm-assignment-work-card + .crm-assignment-work-card)');
+    const cards = [...(bucket?.querySelectorAll('.crm-assignment-work-card') || [])];
+    const step = cards.length > 1 ? cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top : 0;
+    return { ok:!!bucket && !theater.querySelector('.crm-assignment-stack-toggle,.tk-zone-spread') && step > 0 && step < 60,
+      detail:`${Math.round(step)}px compact step · ${cards.length} cards` };
+  });
 
   const assignmentCardSelector = `${assignmentScope} .crm-assignment-bucket:has(.crm-assignment-work-card) .crm-assignment-work-card:last-child`;
   await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
@@ -609,24 +611,25 @@ async function main() {
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
   });
-  await check('Companies form two aligned rows of four per horizontal page', () => {
+  await check('Companies form two aligned continuous rows with one equal horizontal gap', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect();
     const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const visible=buckets.filter((bucket)=>{const rect=bucket.getBoundingClientRect();return rect.right>clip.left&&rect.left<clip.right;}); const rows=new Map();
-    visible.forEach((bucket)=>{const rect=bucket.getBoundingClientRect();const top=Math.round(rect.top);if(!rows.has(top))rows.set(top,[]);rows.get(top).push(Math.round(rect.left));});
-    const values=[...rows.values()].map((row)=>row.sort((a,b)=>a-b)); const state=window.peopleCards.zoneScrollState(); const track=theater?.querySelector('.tk-zone-htrack');
-    return { ok:buckets.length===16&&visible.length===8&&values.length===2&&values.every((row)=>row.length===4)&&values[0].every((left,index)=>Math.abs(left-values[1][index])<=1)
-      && state.min < -(clip.width * .9) && track.scrollWidth >= clip.width * 1.9
-      && !!theater.querySelector('.tk-zone-hrail,.tk-zone-hsb')&&!theater.querySelector('.tk-zone-vrail,.tk-zone-vsb'), detail:JSON.stringify({values,state,track:track?.scrollWidth,view:clip?.width}) };
+    buckets.forEach((bucket)=>{const rect=bucket.getBoundingClientRect();const top=Math.round(rect.top);if(!rows.has(top))rows.set(top,[]);rows.get(top).push({left:Math.round(rect.left),right:Math.round(rect.right)});});
+    const values=[...rows.values()].map((row)=>row.sort((a,b)=>a.left-b.left)); const gaps=values.flatMap((row)=>row.slice(1).map((item,index)=>item.left-row[index].right)); const state=window.peopleCards.zoneScrollState(); const track=theater?.querySelector('.tk-zone-htrack');
+    return { ok:buckets.length===16&&visible.length===10&&values.length===2&&values.every((row)=>row.length===8)&&values[0].every((item,index)=>Math.abs(item.left-values[1][index].left)<=1)
+      && gaps.length===14&&Math.max(...gaps)-Math.min(...gaps)<=1&&Math.min(...gaps)>20
+      && state.min < -(clip.width * .7) && track.scrollWidth >= clip.width * 1.7
+      && !!theater.querySelector('.tk-zone-hrail,.tk-zone-hsb')&&!theater.querySelector('.tk-zone-vrail,.tk-zone-vsb'), detail:JSON.stringify({values,gaps,state,track:track?.scrollWidth,view:clip?.width,visible:visible.length}) };
   });
   await check('Every visible company keeps its scrollbar inside the right bucket border', () => {
     const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')];
     const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{lod:bucket.dataset.zoneLod,on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
     return { ok:geometry.length===16&&geometry.every((item)=>item.inset>=16&&item.inset<=20&&item.gap>=2&&(item.lod==='parked'||item.on)), detail:JSON.stringify(geometry) };
   });
-  await check('People LOD paints the visible company page and parks the offscreen page', () => {
+  await check('People LOD paints only the continuous viewport and parks the rest', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
-    const perf=window.peopleCards.performanceState(); const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];
-    return { ok:cards.length===160&&full.length===8&&deferred.length===152&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===8&&perf.theaterElements<1400
+    const perf=window.peopleCards.performanceState(); const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')]; const active=theater.querySelectorAll('.tk-zone[data-zone-lod="full"]').length;
+    return { ok:cards.length===160&&active===10&&full.length===active&&deferred.length===cards.length-active&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===6&&perf.theaterElements<1400
       && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host'))&&parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}), detail:JSON.stringify({deferred:deferred.length,full:full.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
   });
   const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
@@ -659,20 +662,21 @@ async function main() {
     window.peopleCards.scrollZonesBy(9999);
     const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}),identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained'});};requestAnimationFrame(tick);
   }));
-  await check('Company LOD crosses page boundaries without per-frame DOM churn', (motion) => ({ ok:motion.frames>=40&&motion.p95<=25&&motion.over34<=4&&motion.longTasks.length===0&&motion.mutations<=24&&motion.parked===8&&motion.deferred===152&&motion.hidden&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
+  await check('Company LOD crosses the continuous rail without per-frame DOM churn', (motion) => ({ ok:motion.frames>=40&&motion.p95<=25&&motion.over34<=4&&motion.longTasks.length===0&&motion.mutations<=28&&motion.parked===6&&motion.deferred===150&&motion.hidden&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
   await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true)); await sleep(100);
   const companyRailBefore = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const thumb=theater?.querySelector('.tk-zone-hth'); return{state:window.peopleCards.zoneScrollState(),thumbLeft:thumb?.getBoundingClientRect().left||0,scrollWidth:clip?.scrollWidth||0,clientWidth:clip?.clientWidth||0}; });
-  await page.$eval('[data-crm-theater="people"] .tk-zone-hclip', (clip) => clip.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:650 })));
+  const companyGutterPoint = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect(); const bar=theater?.querySelector('.tk-zone-hsb')?.getBoundingClientRect(); return { x:Math.round((clip.left+clip.right)/2),y:Math.min(innerHeight-8,Math.ceil(bar.bottom+12)),barBottom:bar.bottom,clipBottom:clip.bottom }; });
+  await page.mouse.move(companyGutterPoint.x, companyGutterPoint.y); await page.mouse.wheel({ deltaY:650 });
   await sleep(260);
-  await check('The company world scrolls horizontally with its thumb and adaptive edge shadows', (before) => {
+  await check('The company world scrolls from below its scrollbar with its thumb and adaptive edge shadows', ({ before, point }) => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const thumb=theater?.querySelector('.tk-zone-hth'); const state=window.peopleCards.zoneScrollState();
     const leftShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-left')).opacity); const rightShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-right')).opacity);
-    return { ok:state.min<0&&state.x<before.state.x-200&&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2,
-      detail:JSON.stringify({before,state,shadows:[leftShadow,rightShadow],thumb:thumb?.getBoundingClientRect().left}) };
-  }, companyRailBefore);
+    return { ok:point.y>point.barBottom&&point.y>point.clipBottom&&state.min<0&&state.x<before.state.x-200&&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2,
+      detail:JSON.stringify({before,state,point,shadows:[leftShadow,rightShadow],thumb:thumb?.getBoundingClientRect().left}) };
+  }, { before:companyRailBefore, point:companyGutterPoint });
   await page.evaluate(() => window.peopleCards.scrollZonesBy(9999, true));
   await sleep(160);
-  await check('The horizontal company rail reaches its final page and transfers LOD cleanly', () => {
+  await check('The horizontal company rail reaches its far edge and transfers LOD cleanly', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastTop=last?.querySelector('.tk-zcard:last-child');
     const leftShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-left')).opacity); const rightShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-right')).opacity);
     return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
@@ -803,7 +807,7 @@ async function main() {
       const action = document.querySelector('[data-crm-theater]:not([hidden]) .tk-create-action');
       return !!action && action.textContent.trim().length > 3 && !action.querySelector('svg');
     });
-    await check(`${key} keeps dormant actions hidden, reserves fan tabs for corner decks, and exposes one spread control per stage`, () => {
+    await check(`${key} keeps dormant actions hidden, reserves fan tabs for corner decks, and keeps unstack controls out of buckets`, () => {
       const room = document.querySelector('[data-crm-theater]:not([hidden])');
       const fans = [...room.querySelectorAll('.tk-arrow')];
       const dormant = [...room.querySelectorAll('.tk-stack-btn, .tk-deck-trash, .tk-empty-trash')];
@@ -812,8 +816,7 @@ async function main() {
         && dormant.some((element) => element.matches('.tk-deck-trash'))
         && dormant.every((element) => getComputedStyle(element).display === 'none')
         && fans.length >= 2 && fans.every((element) => !element.closest('.tk-zone') && !!element.querySelector('.tk-fan-motion') && !element.classList.contains('crm-menu-action'))
-        && spreads.length === room.querySelectorAll('.tk-zone').length
-        && spreads.every((element) => getComputedStyle(element).display !== 'none' && element.getAttribute('aria-expanded') === 'false');
+        && spreads.length === 0;
     });
     await check(`${key} buckets stay proportional to a ticket`, () => {
       const buckets = [...document.querySelectorAll('[data-crm-theater]:not([hidden]) .tk-zone')].filter((bucket) => bucket.getBoundingClientRect().width > 0);
@@ -858,7 +861,7 @@ async function main() {
           && element.getAttribute('aria-expanded') === 'false' && !!element.querySelector('.tk-fan-motion')
           && !element.closest('.tk-zone') && !element.classList.contains('crm-menu-action');
       })
-      && spreads.length === 3 && spreads.every((element) => getComputedStyle(element).display !== 'none');
+      && spreads.length === 0;
   });
   await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left > .tk-arrow');
   await sleep(520);
@@ -871,14 +874,14 @@ async function main() {
       && /^collapse /i.test(fan?.getAttribute('aria-label') || '') && new Set(ids).size === ids.length
       && span > (rects[0]?.width || 0) * 3, detail:`${cards.length} unchanged cards · ${Math.round(span)}px fan` };
   });
-  const leftFanPoint = await page.$eval('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left .tk-card', (card) => { const rect=card.getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; });
+  const leftFanPoint = await page.$eval('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left', (deck) => { const bar=deck.querySelector('.tk-bar').getBoundingClientRect(); return { x:(bar.left+bar.right)/2, y:Math.min(innerHeight-2,bar.bottom+3), barBottom:bar.bottom }; });
   await page.mouse.move(leftFanPoint.x, leftFanPoint.y); await page.mouse.wheel({ deltaY:700 }); await sleep(420);
-  await check('The fanned stack retains horizontal wheel travel, scrollbar, and adaptive edge shading', () => {
+  await check('The fanned stack scrolls from below its scrollbar with adaptive edge shading', (point) => {
     const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
     const matrix = new DOMMatrixReadOnly(getComputedStyle(deck.querySelector('.tk-track')).transform);
     const shades = [...deck.querySelectorAll('.tk-edge-shade')].map((shade) => parseFloat(shade.style.width || '0'));
-    return { ok:matrix.m41 < -1 && deck.querySelector('.tk-bar')?.classList.contains('is-on') && shades.some((width) => width > 0), detail:`x ${Math.round(matrix.m41)} · shade ${Math.round(Math.max(0,...shades))}px` };
-  });
+    return { ok:point.y>point.barBottom&&matrix.m41 < -1 && deck.querySelector('.tk-bar')?.classList.contains('is-on') && shades.some((width) => width > 0), detail:`x ${Math.round(matrix.m41)} · shade ${Math.round(Math.max(0,...shades))}px` };
+  }, leftFanPoint);
   await check('The exact open-fan viewport is included in the Home preview handoff', () => {
     const state = window.ticketStacks?.homePreviewState?.();
     return !!state?.fan?.left?.open && state.fan.left.scrollX < -1 && state?.fan?.right?.open === false;
@@ -1057,16 +1060,12 @@ async function main() {
     const cards = [...bucket.querySelectorAll('.tk-zcard')];
     return { ids:cards.map((card) => card.dataset.id), step:cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top };
   });
-  await page.click(`${bucketSelector} .tk-zone-spread`);
-  await page.waitForFunction((selector) => document.querySelector(`${selector} .tk-zone-spread`)?.getAttribute('aria-expanded') === 'true', {}, bucketSelector);
-  await check('The stage spread button expands the same stack outward without copying its objects', ({ selector, before }) => {
+  await check('Ticket buckets retain the same compact stack without a top-right unstack control', ({ selector, before }) => {
     const bucket = document.querySelector(selector); const cards = [...bucket.querySelectorAll('.tk-zcard')];
     const step = cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top;
-    return { ok:JSON.stringify(cards.map((card) => card.dataset.id)) === JSON.stringify(before.ids) && step > before.step + 100
-      && bucket.classList.contains('is-stack-expanded'), detail:`${Math.round(before.step)}→${Math.round(step)}px · ${cards.length} same cards` };
+    return { ok:!bucket.querySelector('.tk-zone-spread') && JSON.stringify(cards.map((card) => card.dataset.id)) === JSON.stringify(before.ids)
+      && Math.abs(step-before.step)<1 && !bucket.classList.contains('is-stack-expanded'), detail:`${Math.round(step)}px · ${cards.length} same cards` };
   }, { selector:bucketSelector, before:collapsedStack });
-  await page.click(`${bucketSelector} .tk-zone-spread`);
-  await page.waitForFunction((selector) => document.querySelector(`${selector} .tk-zone-spread`)?.getAttribute('aria-expanded') === 'false', {}, bucketSelector);
 
   const routedTicketTitle = await page.evaluate(async () => {
     const result = await window.tickets?.list?.();
@@ -1320,24 +1319,28 @@ async function main() {
       && state.progress === state.expectedProgress && state.restoredProgress === state.expectedRestored,
     detail:JSON.stringify(state),
   }), plannerStageMove);
+  const plannerGutterBefore = await page.evaluate(async () => {
+    const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
+    await window.crmPlanner.createStage(project.id, 'Release'); await window.crmPlanner.createStage(project.id, 'Handoff'); await window.crmPlanner.createStage(project.id, 'Archive');
+    const scroller = document.querySelector('.crm-planner-buckets'); scroller.scrollLeft = 0;
+    return { left:scroller.scrollLeft, max:scroller.scrollWidth-scroller.clientWidth, stages:window.crmPlanner.projects().find((item) => item.id === project.id).buckets.length };
+  });
+  const plannerGutterPoint = await page.evaluate(() => { const rect=document.querySelector('.crm-planner-buckets').getBoundingClientRect(); return { x:Math.round(rect.left+rect.width*.25),y:Math.min(innerHeight-8,Math.ceil(rect.bottom+12)),scrollBottom:rect.bottom }; });
+  await page.mouse.move(plannerGutterPoint.x,plannerGutterPoint.y); await page.mouse.wheel({ deltaY:420 }); await sleep(180);
+  await check('Planner stages scroll from the blank area below their horizontal scrollbar', ({ before, point }) => {
+    const scroller=document.querySelector('.crm-planner-buckets'); const stage=scroller?.closest('.crm-planner-stage'); const left=Number.parseFloat(stage?.style.getPropertyValue('--crm-scroll-shadow-left')||'0');
+    return { ok:before.stages===7&&before.max>100&&point.y>point.scrollBottom&&scroller.scrollLeft>before.left+100&&left>.5,
+      detail:JSON.stringify({before,point,left:scroller?.scrollLeft,shadow:left}) };
+  }, { before:plannerGutterBefore, point:plannerGutterPoint });
   const plannerStackBefore = await page.evaluate((stageId) => { const bucket = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"]`); return {
     project:window.crmPlanner.selected(), stage:bucket?.dataset.plannerBucket,
     ids:[...(bucket?.querySelectorAll('.crm-planner-card') || [])].map((card) => card.dataset.plannerCard),
   }; }, plannerReviewStageId);
-  await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.click(), plannerReviewStageId);
-  await page.waitForFunction((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.getAttribute('aria-expanded') === 'true', {}, plannerReviewStageId);
-  await page.evaluate(() => {
-    const current = window.crmPlanner.selected(); const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;
-    if (other) window.crmPlanner.selectProject(other); window.crmPlanner.selectProject(current);
-  });
-  await check('Planner stage expansion persists with the project and retains the exact work objects', (before) => {
+  await check('Planner stage headers retain the exact work objects without an unstack control', (before) => {
     const bucket = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(before.stage)}"]`);
     const ids = [...(bucket?.querySelectorAll('.crm-planner-card') || [])].map((card) => card.dataset.plannerCard);
-    return !!bucket && bucket.querySelector('.crm-planner-stack-toggle')?.getAttribute('aria-expanded') === 'true'
-      && window.crmPlanner.expandedStages().includes(`${before.project}:${before.stage}`) && JSON.stringify(ids) === JSON.stringify(before.ids);
+    return !!bucket && !document.querySelector('.crm-planner-stack-toggle,.tk-zone-spread') && JSON.stringify(ids) === JSON.stringify(before.ids);
   }, plannerStackBefore);
-  await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.click(), plannerReviewStageId);
-  await page.waitForFunction((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-stack-toggle`)?.getAttribute('aria-expanded') === 'false', {}, plannerReviewStageId);
   await page.evaluate((stageId) => {
     const header = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .tk-zone-hd`);
     const rect = header?.getBoundingClientRect();

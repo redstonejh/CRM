@@ -535,9 +535,6 @@
       .tk-zone-title{display:block;height:17px;line-height:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tk-zone-count { display:none!important }
       .tk-zone-hd-r{position:absolute;right:2px;top:0;display:inline-flex;align-items:center;gap:5px;opacity:.56;pointer-events:auto}
-      .tk-zone-spread{appearance:none;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgba(255,255,255,.62);display:grid;place-items:center;cursor:pointer;transition:background .14s ease,color .14s ease,opacity .14s ease}
-      .tk-zone-spread:hover,.tk-zone-spread:focus-visible{outline:0;background:rgba(255,255,255,.08);color:#fff}.tk-zone-spread[aria-expanded="true"]{color:rgba(187,215,251,.94);background:rgba(123,174,240,.1)}
-      .tk-zone-spread svg{width:13px;height:13px;display:block}.tk-zone-spread path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
       .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
@@ -2220,10 +2217,9 @@
       panel.dataset.stage = s.key;
       panel.dataset.crmSizeKey = bucketSizeKey(s.key);
       const expanded = expandedStages.has(s.key);
-      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}<button type="button" class="tk-zone-spread" data-zone-spread="${esc(s.key)}" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(s.label)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></div>` +
+      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}</span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       panel.classList.toggle("is-stack-expanded", expanded);
-      panel.querySelector(".tk-zone-spread")?.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); setZoneExpanded(s.key); });
       zonesRoot.appendChild(panel);
       window.crmObjectSizing?.scan?.(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
@@ -2514,8 +2510,6 @@
         .sort((a, b) => oidx(a.id) - oidx(b.id) || byCreated(a, b));
       const expanded = expandedStages.has(s.key); const panel = body.parentElement;
       panel?.classList.toggle("is-stack-expanded", expanded);
-      const spread = panel?.querySelector(".tk-zone-spread");
-      if (spread) { spread.setAttribute("aria-expanded", String(expanded)); spread.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${s.label} stack`); }
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">Drag tickets here</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.

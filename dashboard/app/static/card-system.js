@@ -880,9 +880,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone-title{display:block;height:17px;line-height:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tk-zone-count{display:none!important}
       .tk-zone-hd-r{position:absolute;right:2px;top:0;display:inline-flex;align-items:center;gap:5px;opacity:.56;pointer-events:auto}
-      .tk-zone-spread{appearance:none;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:rgba(255,255,255,.62);display:grid;place-items:center;cursor:pointer;transition:background .14s ease,color .14s ease,opacity .14s ease}
-      .tk-zone-spread:hover,.tk-zone-spread:focus-visible{outline:0;background:rgba(255,255,255,.08);color:#fff}.tk-zone-spread[aria-expanded="true"]{color:rgba(187,215,251,.94);background:rgba(123,174,240,.1)}
-      .tk-zone-spread svg{width:13px;height:13px;display:block}.tk-zone-spread path{fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
       /* Stage progress bars — 3 segments. On a bucket header (battery ID) and on each ticket (top-right). */
       .tk-bars { display: inline-flex; gap: 3px; align-items: center; }
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
@@ -954,7 +951,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       /* A collapsed stack only exposes the title bands of covered cards. Keep
          those real card nodes and their geometry, but defer hidden face paint
          until the card is focused, dragged, opened, or the stack is spread. */
-      .tk-zcard.is-lazy-shell{contain:layout paint style}
+      .tk-zcard.is-lazy-shell{contain:strict;box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
       .tk-zcard.is-lazy-shell::after{display:none}
       .tk-zcard.is-lazy-shell .ticket-body{filter:none;opacity:1}
       .tk-zcard.tk-zdrag { opacity: 0; }                 /* hidden while its floating clone is dragged */
@@ -2416,6 +2413,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
   let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHBar = null, zoneHThumb = null, zoneHLeftShade = null, zoneHRightShade = null, zoneHResizeObserver = null;
+  let zoneHWindowWheelWired = false;
   let zoneVRail = null, zoneVClip = null, zoneVTrack = null, zoneVBar = null, zoneVThumb = null, zoneVResizeObserver = null;
   let zoneVLodFrame = 0;
   const zoneVisibleStages = new Set();
@@ -2741,16 +2739,28 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     else if (bounds.right > view.right - inset) shift = view.right - inset - bounds.right;
     if (!shift) return true; zoneHScroll.target = clamp(zoneHScroll.x + shift, zoneHMin(), 0); zoneHScroll.wheeling = false; runZoneRailScroll(); return true;
   };
+  const routeZoneRailWheel = (event, lowerGutter = false) => {
+    if (!active || !horizontalZones || !zoneHClip || event.defaultPrevented) return false;
+    const horizontal = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    if (!lowerGutter && !horizontal && event.target.closest?.(".tk-zone-body")) return false;
+    const raw = horizontal ? (Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY) : event.deltaY;
+    if (!raw) return false;
+    const pixels = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * zoneHClip.clientWidth : raw;
+    if (!scrollZoneRailBy(pixels)) return false;
+    event.preventDefault();
+    return true;
+  };
+  const routeZoneRailLowerGutter = (event) => {
+    if (!active || !horizontalZones || !zoneHClip || !zoneHBar || event.defaultPrevented) return;
+    const clip = zoneHClip.getBoundingClientRect();
+    if (event.clientX < clip.left || event.clientX > clip.right || event.clientY < clip.bottom || event.clientY > innerHeight) return;
+    if (event.target.closest?.("button,a,input,select,textarea,[contenteditable],.crm-menu-surface,.workspace-menu-overlay-layer")) return;
+    routeZoneRailWheel(event, true);
+  };
   const wireZoneRail = () => {
     if (!horizontalZones || !zoneHClip || !zoneHBar || !zoneHThumb) return;
-    zoneHClip.addEventListener("wheel", (event) => {
-      if (event.defaultPrevented) return;
-      const horizontal = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
-      if (!horizontal && event.target.closest?.(".tk-zone-body")) return;
-      const raw = horizontal ? (Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY) : event.deltaY; if (!raw) return;
-      const px = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * zoneHClip.clientWidth : raw;
-      if (scrollZoneRailBy(px)) event.preventDefault();
-    }, { passive:false });
+    zoneHClip.addEventListener("wheel", (event) => routeZoneRailWheel(event), { passive:false });
+    if (!zoneHWindowWheelWired) { window.addEventListener("wheel", routeZoneRailLowerGutter, { passive:false }); zoneHWindowWheelWired = true; }
     zoneHClip.addEventListener("keydown", (event) => { const amount = event.key === "ArrowLeft" ? -72 : event.key === "ArrowRight" ? 72 : event.key === "PageUp" ? -zoneHClip.clientWidth * .82 : event.key === "PageDown" ? zoneHClip.clientWidth * .82 : 0; if (!amount) return; event.preventDefault(); scrollZoneRailBy(amount); });
     let dragging = false, startX = 0, startScroll = 0, pointerId = null;
     const move = (event) => { if (!dragging) return; const minimum = zoneHMin(), view = zoneHClip.clientWidth, content = view - minimum, trackW = zoneHBar.clientWidth, thumbW = Math.max(28, trackW * (view / content)), fraction = (event.clientX - startX) / Math.max(1, trackW - thumbW); zoneHScroll.x = damp(startScroll + fraction * minimum, minimum); zoneHScroll.target = zoneHScroll.x; positionZoneRail(); };
@@ -2910,42 +2920,44 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         const region = g ? { left:g.left, width:g.colW * g.cols + g.gap * (g.cols - 1) } : { left:MARGIN, width:window.innerWidth - MARGIN * 2 };
         const columns = Math.min(n, zoneColumns || Math.min(4, n));
         const rows = Math.min(horizontalZoneRows, Math.max(1, Math.ceil(n / columns)));
-        const pageSize = Math.max(1, columns * rows), pages = Math.max(1, Math.ceil(n / pageSize));
+        const pageSize = Math.max(1, columns * rows);
         const viewportW = Math.max(1, zoneHClip?.clientWidth || window.innerWidth);
         const rowGap = metric("--crm-object-gap", 18);
         const bucketW = Math.max(168, Math.min(CARD_W + 60, (region.width - MARGIN * (columns + 1)) / columns));
         const bucketH = Math.max(280, Math.min(CARD_H + 80, (availableH - rowGap * Math.max(0, rows - 1)) / rows));
-        zoneHTrack.style.width = `${Math.round(viewportW * pages)}px`;
         zoneHTrack.style.gap = "0px";
         const geometry = STAGES.map((stage, index) => {
           const panel = zoneBody[stage.key]?.parentElement;
           window.crmObjectSizing?.scan?.(panel);
-          const compact = isSmallObject(panel), within = index % pageSize;
-          return { stage, panel, page:Math.floor(index / pageSize), row:Math.floor(within / columns), column:within % columns,
+          const compact = isSmallObject(panel), within = index % pageSize, page = Math.floor(index / pageSize), column = within % columns;
+          return { stage, panel, row:Math.floor(within / columns), column:page * columns + column,
             width:Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)), height:Math.round(bucketH * (compact ? .78 : 1)) };
         });
-        for (let page = 0; page < pages; page += 1) {
-          const items = geometry.filter((item) => item.page === page);
-          const columnWidths = Array.from({ length:columns }, (_, column) => Math.max(...items.filter((item) => item.column === column).map((item) => item.width), 0));
-          const rowHeights = Array.from({ length:rows }, (_, row) => Math.max(...items.filter((item) => item.row === row).map((item) => item.height), 0));
-          const widths = columnWidths.reduce((sum, width) => sum + width, 0);
-          const gap = zoneGap == null ? Math.max(0, (region.width - widths) / (columns + 1)) : Math.min(zoneGap, Math.max(0, (region.width - widths) / Math.max(1, columns - 1)));
-          const rowWidth = widths + gap * Math.max(0, columns - 1);
-          let left = zoneGap == null ? region.left + gap : region.left + Math.max(0, (region.width - rowWidth) / 2);
-          const columnLefts = columnWidths.map((width, column) => { const value = left; left += width + (column < columns - 1 ? gap : 0); return value; });
-          const blockH = rowHeights.reduce((sum, height) => sum + height, 0) + rowGap * Math.max(0, rows - 1);
-          let top = Math.max(0, (availableH - blockH) / 2);
-          const rowTops = rowHeights.map((height, row) => { const value = top; top += height + (row < rows - 1 ? rowGap : 0); return value; });
-          items.forEach(({ stage, panel, row, column, width, height }) => {
-            if (!panel) return;
-            const panelLeft = Math.round(page * viewportW + columnLefts[column] + (columnWidths[column] - width) / 2);
-            panel.style.setProperty("--tk-zone-page-left", `${panelLeft}px`);
-            panel.style.setProperty("--tk-zone-page-top", `${Math.round(rowTops[row] + (rowHeights[row] - height) / 2)}px`);
-            panel.style.width = `${width}px`; panel.style.height = `${height}px`;
-            zoneHorizontalBounds.set(stage.key, { left:panelLeft, right:panelLeft + width });
-            const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
-          });
-        }
+        const totalColumns = Math.max(1, ...geometry.map((item) => item.column + 1));
+        const columnWidths = Array.from({ length:totalColumns }, (_, column) => Math.max(...geometry.filter((item) => item.column === column).map((item) => item.width), 0));
+        const rowHeights = Array.from({ length:rows }, (_, row) => Math.max(...geometry.filter((item) => item.row === row).map((item) => item.height), 0));
+        const primaryColumns = Math.min(columns, totalColumns);
+        const primaryWidths = columnWidths.slice(0, primaryColumns).reduce((sum, width) => sum + width, 0);
+        const gap = zoneGap == null ? Math.max(0, (region.width - primaryWidths) / (primaryColumns + 1)) : Math.min(zoneGap, Math.max(0, (region.width - primaryWidths) / Math.max(1, primaryColumns - 1)));
+        const primaryRowWidth = primaryWidths + gap * Math.max(0, primaryColumns - 1);
+        let left = zoneGap == null ? region.left + gap : region.left + Math.max(0, (region.width - primaryRowWidth) / 2);
+        const columnLefts = columnWidths.map((width) => { const value = left; left += width + gap; return value; });
+        const blockH = rowHeights.reduce((sum, height) => sum + height, 0) + rowGap * Math.max(0, rows - 1);
+        let top = Math.max(0, (availableH - blockH) / 2);
+        const rowTops = rowHeights.map((height, row) => { const value = top; top += height + (row < rows - 1 ? rowGap : 0); return value; });
+        geometry.forEach(({ stage, panel, row, column, width, height }) => {
+          if (!panel) return;
+          const panelLeft = Math.round(columnLefts[column] + (columnWidths[column] - width) / 2);
+          panel.style.setProperty("--tk-zone-page-left", `${panelLeft}px`);
+          panel.style.setProperty("--tk-zone-page-top", `${Math.round(rowTops[row] + (rowHeights[row] - height) / 2)}px`);
+          panel.style.width = `${width}px`; panel.style.height = `${height}px`;
+          zoneHorizontalBounds.set(stage.key, { left:panelLeft, right:panelLeft + width });
+          const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
+        });
+        const primaryRight = columnLefts[primaryColumns - 1] + columnWidths[primaryColumns - 1];
+        const rightInset = Math.max(0, viewportW - primaryRight);
+        const contentRight = columnLefts[totalColumns - 1] + columnWidths[totalColumns - 1] + rightInset;
+        zoneHTrack.style.width = `${Math.max(viewportW, Math.round(contentRight))}px`;
         cacheZoneRailMetrics();
         updateHorizontalZoneLod();
       } else {
@@ -3180,12 +3192,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       panel.dataset.stage = s.key;
       panel.dataset.crmSizeKey = bucketSizeKey(s.key);
       const expanded = expandedStages.has(s.key);
-      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}<button type="button" class="tk-zone-spread" data-zone-spread="${esc(s.key)}" aria-label="${expanded ? "Collapse" : "Expand"} ${esc(s.label)} stack" aria-expanded="${expanded}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 11.5h10M8 2v5M6.2 3.8 8 2l1.8 1.8M8 14v-5m-1.8 3.2L8 14l1.8-1.8"/></svg></button></span></div>` +
+      panel.innerHTML = `<div class="tk-zone-hd"><span class="tk-zone-title" title="${esc(s.label)}">${esc(s.label)}</span><span class="tk-zone-hd-r">${barsHTML(bucketBarClasses(i), false)}</span></div>` +
         `<div class="tk-zone-body"><div class="tk-zone-clip"><div class="tk-zone-track"></div></div><div class="tk-zsb"><div class="tk-zth"></div></div></div>`;
       panel.classList.toggle("is-stack-expanded", expanded);
-      panel.querySelector(".tk-zone-spread")?.addEventListener("click", (event) => {
-        event.preventDefault(); event.stopPropagation(); setZoneExpanded(s.key);
-      });
       (zoneHTrack || zoneVTrack || zonesRoot).appendChild(panel);
       window.crmObjectSizing?.scan?.(panel);
       zoneBody[s.key] = panel.querySelector(".tk-zone-body");
@@ -3657,8 +3666,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
       const expanded = expandedStages.has(s.key);
       body.parentElement?.classList.toggle("is-stack-expanded", expanded);
-      const spread = body.parentElement?.querySelector(".tk-zone-spread");
-      if (spread) { spread.setAttribute("aria-expanded", String(expanded)); spread.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${s.label} stack`); }
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${deckCopy.zoneEmpty}</div>`;
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.

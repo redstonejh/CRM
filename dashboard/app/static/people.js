@@ -259,8 +259,9 @@
     },
     bucketSummary: (_stage, contacts) => `${contacts.length} ${contacts.length === 1 ? "person" : "people"}`,
     zoneGravity: true,   // BLUEPRINT A2: contacts rest on the bucket floor
-    horizontalZones: false,
-    scrollZoneRows: true,
+    horizontalZones: true,
+    horizontalZoneRows: 2,
+    scrollZoneRows: false,
     zoneColumns: 4,
     lazyZoneCards: true,
     reserveStackSpace: false,

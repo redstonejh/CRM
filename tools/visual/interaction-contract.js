@@ -593,8 +593,9 @@ async function main() {
     const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
     const cards = [...(theater?.querySelectorAll('.tk-zone .tk-zcard') || [])];
     return {
-      ok: buckets.length === 16 && cards.length === 160 && window.peopleCards.contract().horizontalZones === false
-        && window.peopleCards.contract().scrollZoneRows === true && window.peopleCards.contract().lazyZoneCards === true && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
+      ok: buckets.length === 16 && cards.length === 160 && window.peopleCards.contract().horizontalZones === true
+        && window.peopleCards.contract().horizontalZoneRows === 2 && window.peopleCards.contract().scrollZoneRows === false
+        && window.peopleCards.contract().lazyZoneCards === true && cards.every((card) => !!card.querySelector('.ticket-body') && !!card.dataset.id)
         && !theater.querySelector('svg.tk-flow, .tk-flow-shaft, .tk-flow-head, .tk-bars')
         && [...theater.querySelectorAll('.tk-deck-left, .tk-empty-left')].every((element) => getComputedStyle(element).display === 'none')
         && !document.querySelector('.crm-company-account, [data-crm-theater="relationships"]'),
@@ -608,23 +609,24 @@ async function main() {
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
   });
-  await check('Sixteen company buckets preserve four aligned columns across four rows', () => {
-    const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')]; const rows=new Map();
-    buckets.forEach((bucket) => { const rect=bucket.getBoundingClientRect(); const top=Math.round(rect.top); if(!rows.has(top))rows.set(top,[]); rows.get(top).push(Math.round(rect.left)); });
-    const values=[...rows.values()].map((row)=>row.sort((a,b)=>a-b));
-    return { ok:values.length===4&&values.every((row)=>row.length===4)&&values.slice(1).every((row)=>row.every((left,index)=>Math.abs(left-values[0][index])<=1))
-      && !!document.querySelector('[data-crm-theater="people"] .tk-zone-vrail,[data-crm-theater="people"] .tk-zone-vsb')
-      && !document.querySelector('[data-crm-theater="people"] .tk-zone-hrail,[data-crm-theater="people"] .tk-zone-hsb'), detail:JSON.stringify(values) };
+  await check('Companies form two aligned rows of four per horizontal page', () => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect();
+    const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const visible=buckets.filter((bucket)=>{const rect=bucket.getBoundingClientRect();return rect.right>clip.left&&rect.left<clip.right;}); const rows=new Map();
+    visible.forEach((bucket)=>{const rect=bucket.getBoundingClientRect();const top=Math.round(rect.top);if(!rows.has(top))rows.set(top,[]);rows.get(top).push(Math.round(rect.left));});
+    const values=[...rows.values()].map((row)=>row.sort((a,b)=>a-b)); const state=window.peopleCards.zoneScrollState(); const track=theater?.querySelector('.tk-zone-htrack');
+    return { ok:buckets.length===16&&visible.length===8&&values.length===2&&values.every((row)=>row.length===4)&&values[0].every((left,index)=>Math.abs(left-values[1][index])<=1)
+      && state.min < -(clip.width * .9) && track.scrollWidth >= clip.width * 1.9
+      && !!theater.querySelector('.tk-zone-hrail,.tk-zone-hsb')&&!theater.querySelector('.tk-zone-vrail,.tk-zone-vsb'), detail:JSON.stringify({values,state,track:track?.scrollWidth,view:clip?.width}) };
   });
   await check('Every company keeps its scrollbar inside the right bucket border', () => {
     const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')];
     const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
     return { ok:geometry.length===16&&geometry.every((item)=>item.on&&item.inset>=16&&item.inset<=20&&item.gap>=2), detail:JSON.stringify(geometry) };
   });
-  await check('People LOD paints only the visible rows plus one restrained overscan row', () => {
+  await check('People LOD paints the visible company page and parks the offscreen page', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
     const perf=window.peopleCards.performanceState();
-    return { ok:cards.length===160&&full.length>=8&&full.length<=12&&deferred.length===160-full.length&&perf.deferredFaces===deferred.length&&perf.parkedBuckets>=4&&perf.theaterElements<1400
+    return { ok:cards.length===160&&full.length===8&&deferred.length===152&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===8&&perf.theaterElements<1400
       && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host')), detail:JSON.stringify({deferred:deferred.length,full:full.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
   });
   const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
@@ -648,19 +650,25 @@ async function main() {
     const state={transform:getComputedStyle(track).transform,thumbTop:thumb.getBoundingClientRect().top};
     return { ok:state.transform!==before.transform&&state.thumbTop>before.thumbTop+2&&activeShadow, detail:JSON.stringify({before,state,activeShadow}) };
   }, peopleScrollBefore);
-  const companyRowsBefore = await page.evaluate(() => { const clip=document.querySelector('[data-crm-theater="people"] .tk-zone-vclip'); const thumb=document.querySelector('[data-crm-theater="people"] .tk-zone-vth'); return{state:window.peopleCards.rowScrollState(),thumbTop:thumb?.getBoundingClientRect().top||0,scrollHeight:clip?.scrollHeight||0,clientHeight:clip?.clientHeight||0}; });
-  await page.evaluate(() => window.peopleCards.scrollRowsBy(650, true));
-  await sleep(120);
-  await check('The company world scrolls by rows with adaptive shadows and viewport LOD', (before) => {
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-vrail'); const clip=theater?.querySelector('.tk-zone-vclip'); const thumb=theater?.querySelector('.tk-zone-vth'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const first=buckets[0],last=buckets.at(-1); const state=window.peopleCards.rowScrollState();
-    const topShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-top')); const bottomShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-bottom'));
-    const lastTop=last?.querySelector('.tk-zcard:last-child');
-    return { ok:state.max>0&&state.y>before.state.y+200&&before.scrollHeight>before.clientHeight&&thumb.getBoundingClientRect().top>before.thumbTop+2&&topShadow>.2&&bottomShadow>.2
-      && first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&clip.scrollTop===state.y,
-      detail:JSON.stringify({before,state,shadows:[topShadow,bottomShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod]}) };
-  }, companyRowsBefore);
-  await page.evaluate(() => window.peopleCards.scrollRowsBy(-9999, true));
-  await sleep(80);
+  const companyRailBefore = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const thumb=theater?.querySelector('.tk-zone-hth'); return{state:window.peopleCards.zoneScrollState(),thumbLeft:thumb?.getBoundingClientRect().left||0,scrollWidth:clip?.scrollWidth||0,clientWidth:clip?.clientWidth||0}; });
+  await page.$eval('[data-crm-theater="people"] .tk-zone-hclip', (clip) => clip.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:650 })));
+  await sleep(260);
+  await check('The company world scrolls horizontally with its thumb and adaptive edge shadows', (before) => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const thumb=theater?.querySelector('.tk-zone-hth'); const state=window.peopleCards.zoneScrollState();
+    const leftShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-left')); const rightShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-right'));
+    return { ok:state.min<0&&state.x<before.state.x-200&&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2,
+      detail:JSON.stringify({before,state,shadows:[leftShadow,rightShadow],thumb:thumb?.getBoundingClientRect().left}) };
+  }, companyRailBefore);
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(9999, true));
+  await sleep(160);
+  await check('The horizontal company rail reaches its final page and transfers LOD cleanly', () => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastTop=last?.querySelector('.tk-zcard:last-child');
+    const leftShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-left')); const rightShadow=Number(getComputedStyle(rail).getPropertyValue('--tk-zone-shadow-right'));
+    return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
+      detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod]}) };
+  });
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true));
+  await sleep(100);
   await page.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); });
   await page.waitForFunction(() => document.querySelectorAll('.crm-company-bucket').length === 16, { timeout: 10000 });
   await check('Company-dive buckets keep their proportions and use native viewport LOD', () => {

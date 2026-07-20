@@ -60,6 +60,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const zoneColumns = Number.isFinite(Number(config.zoneColumns)) && Number(config.zoneColumns) > 0
     ? Math.max(1, Math.floor(Number(config.zoneColumns)))
     : 0;
+  const horizontalZoneRows = horizontalZones && Number.isFinite(Number(config.horizontalZoneRows))
+    ? Math.max(1, Math.floor(Number(config.horizontalZoneRows)))
+    : 1;
+  const pagedHorizontalZones = horizontalZones && horizontalZoneRows > 1;
   const zoneGap = Number.isFinite(Number(config.zoneGap)) && Number(config.zoneGap) >= 0
     ? Number(config.zoneGap)
     : null;
@@ -994,6 +998,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone-hrail:before,.tk-zone-hrail:after{content:"";position:absolute;z-index:3;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.tk-zone-hrail:before{left:0;opacity:var(--tk-zone-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hrail:after{right:0;opacity:var(--tk-zone-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .tk-zone-hclip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0;pointer-events:auto}.tk-zone-hclip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
       .tk-zone-htrack{position:relative;width:max-content;min-width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 var(--tk-zone-rail-inset);will-change:transform;pointer-events:auto}.tk-zone-htrack>.tk-zone{position:relative;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 auto;z-index:1}
+      .tk-zone-htrack.is-paged{display:block;width:100%;min-width:0;padding:0}
+      .tk-zone-htrack.is-paged>.tk-zone{position:absolute;left:var(--tk-zone-page-left)!important;right:auto!important;top:var(--tk-zone-page-top)!important;bottom:auto!important}
+      .tk-zone-htrack.has-zone-lod>.tk-zone{content-visibility:auto;contain-intrinsic-size:245px 359px}
+      .tk-zone-htrack.has-zone-lod>.tk-zone[data-zone-lod="parked"]{contain:layout paint style;pointer-events:none}
       .tk-zone-hsb{position:absolute;z-index:4;left:var(--tk-zone-rail-inset);right:var(--tk-zone-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none}.tk-zone-hsb.is-on{opacity:1;pointer-events:auto}.tk-zone-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.tk-zone-hth:hover{background:rgba(255,255,255,.88)}.tk-zone-hth:active{cursor:grabbing;background:#fff}
     `; document.head.appendChild(style);
   };
@@ -2409,7 +2417,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let zonesRoot = null;
   let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHBar = null, zoneHThumb = null, zoneHResizeObserver = null;
   let zoneVRail = null, zoneVClip = null, zoneVTrack = null, zoneVBar = null, zoneVThumb = null, zoneVResizeObserver = null;
-  let zoneVLodFrame = 0;
+  let zoneHLodFrame = 0, zoneVLodFrame = 0;
   const zoneVisibleStages = new Set();
   const zoneHScroll = { x:0, target:0, raf:0, wheeling:false, releaseT:0 };
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
@@ -2518,6 +2526,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const raw = Math.abs(e.deltaX) > 0 ? e.deltaX : e.deltaY;
       const px = e.deltaMode === 1 ? raw * 16 : e.deltaMode === 2 ? raw * (zoneHClip?.clientWidth || innerWidth) : raw;
       if (scrollZoneRailBy(px)) e.preventDefault(); return;
+    }
+    if (pagedHorizontalZones && Math.abs(e.deltaY) > 0) {
+      const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * (zoneHClip?.clientWidth || innerWidth) : e.deltaY;
+      const state = zoneScroll[s], minimum = zMin(s), current = clamp(state?.ty ?? state?.sy ?? 0, minimum, 0);
+      const innerCanMove = zContentH(s) > zViewH(s) + 1 && (px > 0 ? current > minimum + 1 : px < 0 ? current < -1 : false);
+      if (!innerCanMove && scrollZoneRailBy(px)) { e.preventDefault(); return; }
     }
     if (scrollZoneRows) {
       const raw = Math.abs(e.deltaY) > 0 ? e.deltaY : e.deltaX;
@@ -2676,12 +2690,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneRail.style.setProperty("--tk-zone-shadow-left", String(over ? clamp(-zoneHScroll.x / fade, 0, 1) : 0));
     zoneRail.style.setProperty("--tk-zone-shadow-right", String(over ? clamp((zoneHScroll.x - minimum) / fade, 0, 1) : 0));
     zoneHBar.classList.toggle("is-on", over); zoneHBar.setAttribute("aria-hidden", String(!over));
-    if (!over) { zoneHScroll.x = zoneHScroll.target = 0; zoneHTrack.style.transform = "translateX(0px)"; return; }
+    if (!over) { zoneHScroll.x = zoneHScroll.target = 0; zoneHTrack.style.transform = "translateX(0px)"; scheduleHorizontalZoneLod(); return; }
     const trackW = Math.max(1, zoneHBar.clientWidth), base = Math.max(28, trackW * (view / content)); let width = base, left = 0;
     if (zoneHScroll.x > 0) { width = Math.max(14, base - zoneHScroll.x); left = 0; }
     else if (zoneHScroll.x < minimum) { width = Math.max(14, base - (minimum - zoneHScroll.x)); left = trackW - width; }
     else left = (minimum ? zoneHScroll.x / minimum : 0) * (trackW - width);
     zoneHThumb.style.width = `${Math.round(width)}px`; zoneHThumb.style.left = `${Math.round(left)}px`;
+    scheduleHorizontalZoneLod();
   };
   const runZoneRailScroll = () => {
     if (!horizontalZones || zoneHScroll.raf) return;
@@ -2723,6 +2738,29 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && zoneHThumb.hasPointerCapture?.(pointerId)) zoneHThumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); zoneHScroll.wheeling = false; zoneHScroll.target = zoneHScroll.x; runZoneRailScroll(); };
     zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
     zoneHResizeObserver?.disconnect(); zoneHResizeObserver = new ResizeObserver(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); }); zoneHResizeObserver.observe(zoneHClip); zoneHResizeObserver.observe(zoneHTrack);
+  };
+
+  const updateHorizontalZoneLod = () => {
+    zoneHLodFrame = 0;
+    if (!horizontalZones || !lazyZoneCards || !zoneHClip || !zoneHTrack) return;
+    const view = zoneHClip.getBoundingClientRect();
+    const overscan = Math.max(96, Math.min(220, view.width * .14));
+    STAGES.forEach((stage) => {
+      const panel = zoneBody[stage.key]?.parentElement;
+      if (!panel) return;
+      const bounds = panel.getBoundingClientRect();
+      const near = bounds.right >= view.left - overscan && bounds.left <= view.right + overscan;
+      panel.dataset.zoneLod = near ? "full" : "parked";
+      if (!near) { zoneVisibleStages.delete(stage.key); return; }
+      zoneVisibleStages.add(stage.key);
+      const cards = [...(zoneTrack[stage.key]?.querySelectorAll(":scope > .tk-zcard") || [])];
+      if (expandedStages.has(stage.key)) cards.forEach((card) => hydrateZoneCard(card, ticketById(card.dataset.id)));
+      else if (cards.length) hydrateZoneCard(cards[cards.length - 1], ticketById(cards[cards.length - 1].dataset.id));
+    });
+  };
+  const scheduleHorizontalZoneLod = () => {
+    if (!horizontalZones || !lazyZoneCards || zoneHLodFrame) return;
+    zoneHLodFrame = requestAnimationFrame(updateHorizontalZoneLod);
   };
 
   const zoneVMax = () => Math.max(0, (zoneVTrack?.scrollHeight || zoneVTrack?.offsetHeight || 0) - (zoneVClip?.clientHeight || 0));
@@ -2842,17 +2880,60 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const zBottom = reserveStackSpace ? CARD_H + MARGIN * 2 : metric("--crm-canvas-bottom", 78);
     if (horizontalZones && zoneRail && zoneHTrack) {
       const availableH = Math.max(180, window.innerHeight - zTop - zBottom);
-      const bucketW = Math.max(220, Math.min(260, CARD_W + 60));
-      const bucketH = Math.max(300, Math.min(CARD_H + 110, availableH - 12));
       zoneRail.style.top = `${Math.round(zTop)}px`; zoneRail.style.bottom = `${Math.round(zBottom)}px`;
-      zoneHTrack.style.gap = `${Math.round(zoneGap == null ? metric("--crm-object-gap", 18) : zoneGap)}px`;
-      STAGES.forEach((stage) => {
-        const panel = zoneBody[stage.key]?.parentElement; if (!panel) return;
-        window.crmObjectSizing?.scan?.(panel); const compact = isSmallObject(panel); const width = Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)); const height = Math.round(bucketH * (compact ? .78 : 1));
-        panel.style.width = `${width}px`; panel.style.height = `${height}px`; panel.style.left = panel.style.right = panel.style.top = panel.style.bottom = "auto";
-        const sb = zoneBody[stage.key]?.querySelector(".tk-zsb");
-        if (sb) sb.style.right = "4px";
-      });
+      if (pagedHorizontalZones) {
+        const n = STAGES.length, g = gridGeom();
+        const region = g ? { left:g.left, width:g.colW * g.cols + g.gap * (g.cols - 1) } : { left:MARGIN, width:window.innerWidth - MARGIN * 2 };
+        const columns = Math.min(n, zoneColumns || Math.min(4, n));
+        const rows = Math.min(horizontalZoneRows, Math.max(1, Math.ceil(n / columns)));
+        const pageSize = Math.max(1, columns * rows), pages = Math.max(1, Math.ceil(n / pageSize));
+        const viewportW = Math.max(1, zoneHClip?.clientWidth || window.innerWidth);
+        const rowGap = metric("--crm-object-gap", 18);
+        const bucketW = Math.max(168, Math.min(CARD_W + 60, (region.width - MARGIN * (columns + 1)) / columns));
+        const bucketH = Math.max(280, Math.min(CARD_H + 80, (availableH - rowGap * Math.max(0, rows - 1)) / rows));
+        zoneHTrack.style.width = `${Math.round(viewportW * pages)}px`;
+        zoneHTrack.style.gap = "0px";
+        const geometry = STAGES.map((stage, index) => {
+          const panel = zoneBody[stage.key]?.parentElement;
+          window.crmObjectSizing?.scan?.(panel);
+          const compact = isSmallObject(panel), within = index % pageSize;
+          return { stage, panel, page:Math.floor(index / pageSize), row:Math.floor(within / columns), column:within % columns,
+            width:Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)), height:Math.round(bucketH * (compact ? .78 : 1)) };
+        });
+        for (let page = 0; page < pages; page += 1) {
+          const items = geometry.filter((item) => item.page === page);
+          const columnWidths = Array.from({ length:columns }, (_, column) => Math.max(...items.filter((item) => item.column === column).map((item) => item.width), 0));
+          const rowHeights = Array.from({ length:rows }, (_, row) => Math.max(...items.filter((item) => item.row === row).map((item) => item.height), 0));
+          const widths = columnWidths.reduce((sum, width) => sum + width, 0);
+          const gap = zoneGap == null ? Math.max(0, (region.width - widths) / (columns + 1)) : Math.min(zoneGap, Math.max(0, (region.width - widths) / Math.max(1, columns - 1)));
+          const rowWidth = widths + gap * Math.max(0, columns - 1);
+          let left = zoneGap == null ? region.left + gap : region.left + Math.max(0, (region.width - rowWidth) / 2);
+          const columnLefts = columnWidths.map((width, column) => { const value = left; left += width + (column < columns - 1 ? gap : 0); return value; });
+          const blockH = rowHeights.reduce((sum, height) => sum + height, 0) + rowGap * Math.max(0, rows - 1);
+          let top = Math.max(0, (availableH - blockH) / 2);
+          const rowTops = rowHeights.map((height, row) => { const value = top; top += height + (row < rows - 1 ? rowGap : 0); return value; });
+          items.forEach(({ stage, panel, row, column, width, height }) => {
+            if (!panel) return;
+            panel.style.setProperty("--tk-zone-page-left", `${Math.round(page * viewportW + columnLefts[column] + (columnWidths[column] - width) / 2)}px`);
+            panel.style.setProperty("--tk-zone-page-top", `${Math.round(rowTops[row] + (rowHeights[row] - height) / 2)}px`);
+            panel.style.width = `${width}px`; panel.style.height = `${height}px`;
+            const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
+          });
+        }
+        updateHorizontalZoneLod();
+      } else {
+        const bucketW = Math.max(220, Math.min(260, CARD_W + 60));
+        const bucketH = Math.max(300, Math.min(CARD_H + 110, availableH - 12));
+        zoneHTrack.style.width = "";
+        zoneHTrack.style.gap = `${Math.round(zoneGap == null ? metric("--crm-object-gap", 18) : zoneGap)}px`;
+        STAGES.forEach((stage) => {
+          const panel = zoneBody[stage.key]?.parentElement; if (!panel) return;
+          panel.style.removeProperty("--tk-zone-page-left"); panel.style.removeProperty("--tk-zone-page-top");
+          window.crmObjectSizing?.scan?.(panel); const compact = isSmallObject(panel); const width = Math.round(bucketW * (compact ? SMALL_BUCKET_SCALE : 1)); const height = Math.round(bucketH * (compact ? .78 : 1));
+          panel.style.width = `${width}px`; panel.style.height = `${height}px`; panel.style.left = panel.style.right = panel.style.top = panel.style.bottom = "auto";
+          const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
+        });
+      }
       STAGES.forEach((stage) => clampZoneScroll(stage.key));
       requestAnimationFrame(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); });
       return;
@@ -3053,6 +3134,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (horizontalZones) {
       zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
       zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+      zoneHTrack.classList.toggle("is-paged", pagedHorizontalZones);
+      zoneHTrack.classList.toggle("has-zone-lod", lazyZoneCards);
     } else if (scrollZoneRows) {
       zonesRoot.innerHTML = '<div class="tk-zone-vrail"><div class="tk-zone-vclip" tabindex="0" aria-label="Scrollable company rows"><div class="tk-zone-vtrack"></div></div><div class="tk-zone-vsb" aria-hidden="true"><div class="tk-zone-vth"></div></div></div>';
       zoneVRail = zonesRoot.querySelector(".tk-zone-vrail"); zoneVClip = zonesRoot.querySelector(".tk-zone-vclip"); zoneVTrack = zonesRoot.querySelector(".tk-zone-vtrack"); zoneVBar = zonesRoot.querySelector(".tk-zone-vsb"); zoneVThumb = zonesRoot.querySelector(".tk-zone-vth");
@@ -3539,7 +3622,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // Stack the cards with overlap: each sits ZCARD_PEEK below the previous (covering all but the
       // one-below's title) and on top of it, so only titles peek until the last, fully-shown card.
       list.forEach((t, i) => {
-        const card = zoneCardEl(t, s.key, { deferFace:lazyZoneCards && !expanded && (scrollZoneRows || i < list.length - 1) });
+        const parked = body.parentElement?.dataset.zoneLod === "parked";
+        const card = zoneCardEl(t, s.key, { deferFace:lazyZoneCards && !expanded && (scrollZoneRows || parked || i < list.length - 1) });
         card.style.zIndex = String(i + 1);
         track.appendChild(card);
       });
@@ -3813,6 +3897,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf); clearTimeout(zoneHScroll.releaseT); zoneHScroll.raf = 0; zoneHScroll.wheeling = false;
       zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zoneVResizeObserver?.disconnect(); zoneVResizeObserver = null;
+      if (zoneHLodFrame) cancelAnimationFrame(zoneHLodFrame); zoneHLodFrame = 0;
       if (zoneVLodFrame) cancelAnimationFrame(zoneVLodFrame); zoneVLodFrame = 0; zoneVisibleStages.clear();
       zonesRoot?.remove();
       zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHBar = zoneHThumb = null;
@@ -3843,6 +3928,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     contract: () => ({
       workflowKind,
       horizontalZones,
+      horizontalZoneRows,
       scrollZoneRows,
       lazyZoneCards,
       showFlow,

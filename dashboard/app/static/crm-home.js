@@ -7,7 +7,7 @@
     { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v39";
+  const HOME_PREVIEW_VERSION = "filtered-home-v40";
   const DAY_MS = 86400000;
   const HAND_LIMIT = 7;
   const previews = new Map();

@@ -48,7 +48,11 @@
     const meta = record?.meta || {};
     const raw = meta.scheduledDate || meta.calendarDate || record?.scheduledDate || record?.calendarDate || record?.dueDate || record?.startDate;
     const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(raw || ""));
-    return match ? match[1] : "";
+    if (!match) return "";
+    const value = String(raw || "");
+    if (!value.includes("T") || (record?.source === "legacy-projection" && /T00:00:00(?:\.000)?Z$/i.test(value))) return match[1];
+    const date = new Date(value); if (!Number.isFinite(date.getTime())) return match[1];
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   };
   const titleOf = (record) => {
     const meta = record?.meta || {};
@@ -114,14 +118,28 @@
         color: rgba(255,255,255,0.78); line-height: 1; }
       .fc-day-body { position: absolute; inset: 24% 5% 5%; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
       .fc-scheduled-list { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: hidden; }
+      /* At year scale, days render only a tiny structural preview. These are
+         ordinary opaque spans (no filters, text or nested cards), so twelve
+         live month thumbnails stay cheap while still revealing where work is. */
+      .fc-day-preview { display: none; width: 100%; height: 100%; flex-direction: column; justify-content: center; gap: 12%; overflow: hidden; }
+      .fc-day-preview-item { display: flex; width: 100%; height: 2px; gap: 1px; opacity: .82; }
+      .fc-day-preview-item i { flex: 1 1 0; min-width: 1px; border-radius: 2px; background: rgba(143,158,180,.24); }
+      .fc-day-preview-item i[data-reached="true"] { background: rgba(151,184,226,.62); }
+      .fc-day-preview-item[data-complete="true"] i[data-reached="true"] { background: rgba(143,195,169,.62); }
       /* BLUEPRINT A4: day cells hold TITLE-PEEK bands — the card anatomy at
          k-scale (glass body, left edge accent), stacked flush like a peeking
          pile, never colored pills. Red stays money-only (data-hot). */
-      .fc-chip { position: relative; border-radius: 3px; margin-top: -1px; padding: 2px 6px 2px 9px;
+      .fc-chip { position: relative; display: grid; grid-template-rows: minmax(0,auto) 2px; gap: 2px; border-radius: 3px; margin-top: -1px; padding: 2px 6px 3px 9px;
         font-size: var(--crm-type-micro,9px); line-height: 1.2; color: rgba(255,255,255,0.88);
         background: linear-gradient(180deg, rgba(83,95,117,0.6), rgba(33,41,56,0.55));
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 6px rgba(0,0,0,0.22);
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        white-space: nowrap; overflow: hidden; }
+      .fc-chip-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .fc-chip-project-map { display: flex; align-items: stretch; gap: 1px; min-width: 0; height: 2px; }
+      .fc-chip-project-map i { flex: 1 1 0; min-width: 2px; border-radius: 2px; background: rgba(218,230,245,.13); }
+      .fc-chip-project-map i[data-reached="true"] { background: rgba(157,190,232,.55); }
+      .fc-chip-project-map[data-complete="true"] i[data-reached="true"] { background: rgba(145,197,171,.58); }
+      .fc-chip:not(:has(.fc-chip-project-map)) { grid-template-rows: minmax(0,auto); }
       .fc-chip:first-child { margin-top: 0; }
       .fc-chip::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
         background: rgba(148,163,184,0.35); }
@@ -157,6 +175,8 @@
       .fc-level .fc-day-num { display: none; }
       .fc-level .fc-dowrow span { visibility: hidden; }
       .fc-surface[data-level="0"] .fc-scheduled-list { display: none; }
+      .fc-surface[data-level="0"] .fc-day-body { inset: 13% 10%; }
+      .fc-surface[data-level="0"] .fc-day-preview { display: flex; }
       .fc-surface[data-level="0"] .fc-day { pointer-events: none; }
       .fc-surface[data-level="0"] .fc-month { cursor: pointer; }
       .fc-surface[data-level="0"] .fc-month:hover,
@@ -178,19 +198,41 @@
   };
 
   const scheduledFor = (date) => scheduledByDate.get(date) || [];
+  const visibleScheduledFor = (date, limit) => {
+    const all = scheduledFor(date); const items = all.slice(0, limit);
+    const projectItem = all.find((item) => item.projectStages?.length);
+    if (projectItem && !items.includes(projectItem)) {
+      if (items.length) items[items.length - 1] = projectItem;
+      else items.push(projectItem);
+    }
+    return { all, items };
+  };
+  const progressMapHTML = (item, className = "fc-chip-project-map") => {
+    const stages = Array.isArray(item?.projectStages) ? item.projectStages : [];
+    if (!stages.length) return "";
+    const current = stages.findIndex((stage) => String(stage.id) === String(item.stageId));
+    const complete = current >= 0 && stages[current]?.kind === "done";
+    return `<span class="${className}"${complete ? ' data-complete="true"' : ""} aria-hidden="true">${stages.map((_stage, index) => `<i data-reached="${index <= current}"></i>`).join("")}</span>`;
+  };
+  const scheduledPreviewHTML = (date, limit = 3) => {
+    const { items } = visibleScheduledFor(date, limit); if (!items.length) return "";
+    return `<div class="fc-day-preview" aria-hidden="true">${items.map((item) => {
+      const map = progressMapHTML(item, "fc-day-preview-item");
+      return map || `<span class="fc-day-preview-item" data-type="${esc(item.type)}"><i data-reached="true"></i></span>`;
+    }).join("")}</div>`;
+  };
   const scheduledHTML = (date, limit = 4) => {
-    const all = scheduledFor(date);
-    const items = all.slice(0, limit);
+    const { all, items } = visibleScheduledFor(date, limit);
     if (!items.length) return "";
     const extra = all.length - items.length;
     return `<div class="fc-scheduled-list">${items.map((item) =>
-      `<div class="fc-chip" data-type="${esc(item.type)}" data-id="${esc(item.id)}"${item.hot ? ' data-hot="true"' : ""}>${esc(item.title)}</div>`).join("")}${
+      `<div class="fc-chip" data-type="${esc(item.type)}" data-id="${esc(item.id)}"${item.hot ? ' data-hot="true"' : ""}${item.projectTitle ? ` title="${esc(item.projectTitle)}"` : ""}><span class="fc-chip-title">${esc(item.title)}</span>${progressMapHTML(item)}</div>`).join("")}${
       extra > 0 ? `<div class="fc-chip-more">+${extra} more</div>` : ""}</div>`;
   };
   const dayCellHTML = (month, day) => {
     const date = iso(month, day);
     const today = date === todayIso() ? " fc-today" : "";
-    return `<div class="fc-day${today}" data-date="${date}"><span class="fc-day-num">${day}</span><div class="fc-day-body">${scheduledHTML(date)}</div></div>`;
+    return `<div class="fc-day${today}" data-date="${date}"><span class="fc-day-num">${day}</span><div class="fc-day-body">${scheduledPreviewHTML(date)}${scheduledHTML(date)}</div></div>`;
   };
   const monthDaysHTML = (month) => {
     const leading = firstDow(month);
@@ -354,16 +396,31 @@
 
   const loadScheduled = async ({ refresh = false } = {}) => {
     const next = new Map();
+    let projects = []; let workItems = [];
     const add = (type, label, record) => {
       if (!record || record.deletedAt) return;
       const date = scheduledDateOf(record);
       if (!date || !yearDate(date)) return;
+      const workLink = (record.links || []).find((link) => link.entityType === "workItems");
+      const workItem = workItems.find((item) => String(item.id) === String(workLink?.recordId));
+      const projectId = String(record.projectId || workItem?.projectId || "");
+      const project = projects.find((candidate) => String(candidate.id) === projectId);
+      const projectStages = (Array.isArray(project?.stages) ? project.stages : []).map((stage, index) => ({
+        id:String(stage.id || index), kind:String(stage.kind || "active"), rank:Number.isFinite(Number(stage.rank)) ? Number(stage.rank) : index,
+      })).sort((a, b) => a.rank - b.rank);
       const items = next.get(date) || [];
-      items.push({ type, label, id: record.id, title: titleOf(record), hot: record.priority === "urgent" && Date.parse(record.dueAt || "") < Date.now() });
+      items.push({ type, label, id: record.id, title: titleOf(record), hot: record.priority === "urgent" && Date.parse(record.dueAt || "") < Date.now(),
+        projectTitle:String(project?.title || record.projectTitle || workItem?.projectTitle || ""), stageId:String(record.stageId || workItem?.stageId || ""), projectStages });
       next.set(date, items);
     };
     try {
-      const result = await window.crmDomain?.list?.("commitments", { includeDeleted: false, limit: 500 });
+      const [result, projectResult, workItemResult] = await Promise.all([
+        window.crmDomain?.list?.("commitments", { includeDeleted: false, limit: 500 }),
+        window.crmStore?.list?.("projects", { includeDeleted:false }),
+        window.crmStore?.list?.("workItems", { includeDeleted:false }),
+      ]);
+      projects = recordsFrom(projectResult).filter((record) => !record.deletedAt);
+      workItems = recordsFrom(workItemResult).filter((record) => !record.deletedAt);
       recordsFrom(result).filter((record) => !["completed", "cancelled", "canceled"].includes(String(record.status).toLowerCase())).forEach((record) => {
         add("commitment", record.kind || "Commitment", { ...record, dueDate: record.dueAt });
       });

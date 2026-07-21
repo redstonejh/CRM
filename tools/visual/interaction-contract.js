@@ -74,7 +74,7 @@ async function main() {
       && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
     detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/4 surfaces`,
   }));
-  await check('Home is only People, Tickets, Planner, and Assignments', () => {
+  await check('Home is only People, Tickets, Projects, and Assignments', () => {
     const keys = ['people','cases','planner','assignments'];
     const title = (key) => document.querySelector(`.crm-home-title-layer > .crm-home-title-slot[data-module="${key}"] .crm-home-title`);
     return keys.every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`))
@@ -82,7 +82,7 @@ async function main() {
       && !document.querySelector('.crm-home-bucket[data-module="pipeline"]')
       && !document.querySelector('.crm-home-bucket[data-module="jobs"],.crm-home-bucket[data-module="bills"],.crm-home-bucket[data-module="invoices"],.crm-home-bucket[data-module="desk"],.crm-home-bucket[data-module="money"]')
       && title('cases')?.textContent.trim() === 'Tickets'
-      && title('planner')?.textContent.trim() === 'Planner'
+      && title('planner')?.textContent.trim() === 'Projects'
       && title('assignments')?.textContent.trim() === 'Assignments';
   });
   await check('Home has no calendar control', () => {
@@ -1093,8 +1093,26 @@ async function main() {
   await page.keyboard.press('Escape');
   await sleep(520);
 
+  const calendarProjectPreview = await page.evaluate(async () => {
+    const project = window.crmPlanner.projects().find((item) => item.title === 'Project A');
+    const item = project?.buckets.flatMap((bucket) => bucket.cards || [])[0];
+    const now = new Date(); const pad = (value) => String(value).padStart(2, '0');
+    const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    if (item) await window.crmPlanner.updateItem(item.id, { dueAt:new Date(`${date}T17:00:00`).toISOString() });
+    window.fractalCalendar.setYear(now.getFullYear()); await window.fractalCalendar.refresh();
+    return { date, month:now.getMonth() + 1, itemId:item?.id || '', projectId:project?.id || '' };
+  });
   await activate('calendar');
-  await page.evaluate(() => document.querySelector('.fc-month[data-month="7"]')?.click());
+  await page.waitForFunction(() => window.fractalCalendar.level() === 0);
+  await check('Calendar year tiles preview scheduled day contents without mounting card trees', (probe) => {
+    const day = document.querySelector(`[data-crm-theater="calendar"] .fc-level .fc-day[data-date="${CSS.escape(probe.date)}"]`);
+    const preview = day?.querySelector('.fc-day-preview'); const strokes = [...(preview?.querySelectorAll('.fc-day-preview-item') || [])];
+    return { ok:!!day && !!preview && strokes.length > 0 && preview.textContent.trim() === ''
+      && !preview.querySelector('.fc-chip,.tk-card,.crm-planner-card,.crm-menu-surface')
+      && strokes.every((stroke) => { const style=getComputedStyle(stroke); return !style.backdropFilter || style.backdropFilter === 'none'; }),
+      detail:`${strokes.length} preview rows on ${probe.date}` };
+  }, calendarProjectPreview);
+  await page.evaluate((month) => document.querySelector(`.fc-month[data-month="${month}"]`)?.click(), calendarProjectPreview.month);
   await sleep(700);
   await check('Calendar is fed only by commitments', () => {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
@@ -1111,6 +1129,13 @@ async function main() {
     };
     return days.length > 300 && days.every(isLightweight) && details.every(isLightweight);
   });
+  await check('Project work on a calendar day carries its automatic pipeline preview', (probe) => {
+    const day = document.querySelector(`.fc-expander[data-kind="month"] .fc-day[data-date="${CSS.escape(probe.date)}"]`);
+    const chip = [...(day?.querySelectorAll('.fc-chip') || [])].find((candidate) => candidate.dataset.id);
+    const map = [...(day?.querySelectorAll('.fc-chip-project-map') || [])].find((candidate) => candidate.querySelectorAll('i').length >= 3);
+    return { ok:!!chip && !!map && map.querySelectorAll('i[data-reached="true"]').length >= 1
+      && !map.querySelector('.crm-planner-card,.crm-planner-bucket'), detail:`${map?.querySelectorAll('i').length || 0} project stages` };
+  }, calendarProjectPreview);
 
   await page.keyboard.down('Control'); await page.keyboard.press('KeyK'); await page.keyboard.up('Control');
   await page.waitForSelector('#dashboard-search-popover:not([hidden]) .crm-search-result', { timeout: 5000 });
@@ -1134,52 +1159,91 @@ async function main() {
   await page.keyboard.press('Escape');
 
   await activate('planner');
-  await check('Planner is a conventional custom pipeline with top tabs and aligned stages', () => {
+  await check('Projects opens as a gallery of nested project tiles with truthful low-cost previews', () => {
     const theater = document.querySelector('[data-crm-theater="planner"]:not([hidden])');
-    const projects = [...(theater?.querySelectorAll('.crm-planner-project') || [])];
-    const buckets = [...(theater?.querySelectorAll('.crm-planner-bucket') || [])];
-    const plannerType = {
-      heading: getComputedStyle(theater.querySelector('.crm-planner-heading')).fontSize,
-      buckets: [...new Set(buckets.map((bucket) => getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize))],
-    };
-    const tabs = theater?.querySelector('.crm-planner-projects'); const tabsRect = tabs?.getBoundingClientRect(); const bucketRect = buckets[0]?.getBoundingClientRect();
+    const projects = [...(theater?.querySelectorAll('.crm-project-tile[data-planner-project]') || [])];
+    const gallery = theater?.querySelector('.crm-project-gallery-grid');
     const snapshots = window.crmPlanner.projects();
-    return { ok: projects.length >= 3 && buckets.length === 3
-      && !theater.querySelector('aside,.crm-menu-surface.crm-planner-projects,.crm-project-minimap,.crm-planner-universe')
-      && tabs?.tagName === 'HEADER' && theater.querySelector('.crm-planner-heading')?.textContent.trim() === 'Planner'
-      && theater.querySelector('.crm-planner-project-list')?.getAttribute('aria-label') === 'Pipelines'
-      && theater.querySelector('[data-planner-action="new-project"]')?.textContent.trim() === 'New pipeline'
+    return { ok:window.crmPlanner.level() === 0 && window.crmPlanner.view() === 'projects'
+      && projects.length >= 3 && !theater.querySelector('.crm-planner-bucket,.crm-planner-card')
+      && theater.querySelector('.crm-project-gallery-title')?.textContent.trim() === 'Projects'
+      && gallery?.getAttribute('aria-label') === 'Projects'
+      && theater.querySelector('[data-planner-action="new-project"]')?.textContent.trim() === '+Create project'
       && projects.every((project) => {
         const snapshot = snapshots.find((item) => item.id === project.dataset.plannerProject);
-        return project.getAttribute('role') === 'tab' && !!project.querySelector('.crm-planner-project-name')
-          && project.querySelectorAll('.crm-planner-project-segment').length === snapshot?.buckets.length
+        const stages = [...project.querySelectorAll('.crm-project-preview-stage')];
+        const miniatureCards = stages.reduce((count, stage) => count + stage.querySelectorAll('.crm-project-preview-card').length, 0);
+        const expectedCards = snapshot?.buckets.reduce((count, bucket) => count + Math.min(4, bucket.cards.length), 0);
+        return project.tagName === 'BUTTON' && !project.classList.contains('crm-menu-action') && !!project.querySelector('.crm-project-tile-title')
+          && stages.length === snapshot?.buckets.length && miniatureCards === expectedCards
           && !project.querySelector('.tk-card,.crm-planner-card,.crm-planner-bucket');
       })
-      && projects.filter((project) => project.getAttribute('aria-selected') === 'true').length === 1
-      && buckets.every((bucket, index) => bucket.classList.contains('tk-zone') && !!bucket.querySelector('.tk-zone-title')
-        && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg').length === buckets.length
-        && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg.g').length === index + 1
-        && bucket.querySelector('[data-planner-action="new-card"]')?.textContent.trim() === '+ Add card')
-      && plannerType.heading === '17px'
-      && plannerType.buckets.every((size) => size === '14px')
-      && !!tabsRect && !!bucketRect && bucketRect.top >= tabsRect.bottom + 8 && Math.abs(tabsRect.left - bucketRect.left) <= 1
-      && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1,
-      detail: JSON.stringify(plannerType) };
+      && !theater.querySelector('.crm-project-create.crm-menu-action')
+      && getComputedStyle(theater.querySelector('.crm-project-gallery-title')).fontSize === '17px'
+      && getComputedStyle(projects[0].querySelector('.crm-project-tile-title')).fontSize === '14px',
+      detail:`${projects.length} project tiles / ${snapshots.length} projects` };
   });
-  const plannerTabStart = await page.$eval('.crm-planner-project.is-selected', (tab) => tab.dataset.plannerProject);
-  await page.focus('.crm-planner-project.is-selected'); await page.keyboard.press('ArrowRight');
-  await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-planner-project') && document.activeElement?.classList.contains('is-selected') && document.activeElement.dataset.plannerProject !== start, {}, plannerTabStart);
-  await check('Planner pipeline pseudo-tabs support horizontal keyboard navigation', () => document.activeElement?.getAttribute('role') === 'tab' && document.activeElement?.getAttribute('aria-selected') === 'true');
-  await page.evaluate((projectId) => window.crmPlanner.selectProject(projectId), plannerTabStart);
+  const plannerTileStart = await page.$eval('.crm-project-tile[data-planner-project]', (tile) => tile.dataset.plannerProject);
+  await page.focus('.crm-project-tile[data-planner-project]'); await page.keyboard.press('ArrowRight');
+  await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-tile') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
+  await check('Project tiles support spatial keyboard navigation', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project'));
+  const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
+    const tile = document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = [];
+    if (!tile || !source) { resolve(null); return; }
+    tile.click();
+    const tick = () => {
+      const layer = window.crmProjectsCamera?.layers?.()[1] || document.querySelector('.crm-planner-project-world'); const rect = layer?.getBoundingClientRect();
+      if (rect) samples.push([rect.x, rect.y, rect.width, rect.height]);
+      if (window.crmProjectsCamera?.isTransitioning?.()) { requestAnimationFrame(tick); return; }
+      const stable = []; let frame = 0;
+      const seat = () => {
+        stable.push(JSON.stringify([...document.querySelectorAll('.crm-planner-bucket')].map((bucket) => { const bounds=bucket.getBoundingClientRect(); return [bounds.x,bounds.y,bounds.width,bounds.height]; })));
+        if (++frame < 10) requestAnimationFrame(seat);
+        else resolve({ source:[source.x,source.y,source.width,source.height], samples, unique:new Set(samples.map((sample) => sample.map((value) => value.toFixed(1)).join(','))).size,
+          stable:new Set(stable).size, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
+      };
+      requestAnimationFrame(seat);
+    };
+    requestAnimationFrame(tick);
+  }), plannerTileStart);
+  await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
+    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1);
+    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1
+      && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
+      && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
+      && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,
+      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,source:probe?.source,last}) };
+  }, plannerNestedDive);
+  await check('A project tile zooms into its real aligned custom pipeline', (projectId) => {
+    const project = window.crmPlanner.projects().find((item) => item.id === projectId); const buckets = [...document.querySelectorAll('.crm-planner-bucket')];
+    const header = document.querySelector('.crm-planner-projects'); const first = buckets[0]?.getBoundingClientRect(); const head = header?.getBoundingClientRect();
+    return { ok:window.crmPlanner.view() === 'project' && window.crmPlanner.selected() === projectId
+      && document.querySelector('.crm-planner-heading')?.textContent.trim() === project?.title
+      && document.querySelector('[data-planner-action="projects-back"]')?.textContent.trim() === 'Projects'
+      && buckets.length === project?.buckets.length && buckets.every((bucket, index) => bucket.classList.contains('tk-zone')
+        && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg').length === buckets.length
+        && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg.g').length === index + 1)
+      && !!first && !!head && first.top >= head.bottom + 8 && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1,
+      detail:`${project?.title} / ${buckets.length} stages` };
+  }, plannerTileStart);
+  const plannerTileBeforeBack = await page.$eval(`.crm-project-tile[data-planner-project="${plannerTileStart}"]`, (tile) => { const rect=tile.getBoundingClientRect(); return [rect.x,rect.y,rect.width,rect.height]; });
+  await page.click('[data-planner-action="projects-back"]');
+  await page.waitForFunction(() => window.crmPlanner.level() === 0 && !document.querySelector('.crm-planner-bucket'));
+  await check('Back from a project returns to the unchanged Projects gallery', ({ projectId, before }) => {
+    const tile = document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(projectId)}"]`); const rect=tile?.getBoundingClientRect();
+    return window.crmPlanner.view() === 'projects' && document.querySelectorAll('.crm-project-tile[data-planner-project]').length >= 3
+      && !!rect && [rect.x,rect.y,rect.width,rect.height].every((value,index) => Math.abs(value-before[index]) <= 1)
+      && !document.querySelector('.crm-planner-contracting') && window.crmProjectsCamera.layers().filter(Boolean).length === 1;
+  }, { projectId:plannerTileStart, before:plannerTileBeforeBack });
   await page.click('[data-planner-action="new-project"]');
   await page.waitForSelector('.crm-planner-project-creator input[name="title"]');
-  await check('A new pipeline offers restrained presets and an explicit custom structure', () => {
+  await check('A new project offers restrained presets and an explicit custom structure', () => {
     const form = document.querySelector('.crm-planner-project-creator');
     return !!form && form.classList.contains('crm-menu-surface') && form.elements.title
       && [...form.querySelectorAll('[data-planner-preset] .crm-planner-preset-name')].map((label) => label.textContent.trim()).join('|') === 'Simple|Review|Custom'
       && form.querySelector('[data-planner-preset="simple"]')?.getAttribute('aria-checked') === 'true'
       && form.querySelector('.crm-planner-custom-builder')?.hidden === true
-      && form.querySelector('[type="submit"]')?.textContent.trim() === 'Create pipeline' && form.getBoundingClientRect().width <= 380;
+      && form.querySelector('[type="submit"]')?.textContent.trim() === 'Create project' && form.getBoundingClientRect().width <= 380;
   });
   await page.type('.crm-planner-project-creator input[name="title"]', 'Interaction plan');
   await page.click('[data-planner-preset="custom"]');
@@ -1195,7 +1259,7 @@ async function main() {
   }
   await page.type('.crm-planner-project-creator input[name="stageName"]', 'review');
   await page.click('.crm-planner-project-creator [data-add-stage]');
-  await check('Custom stage names are unique before the pipeline is created', () => {
+  await check('Custom stage names are unique before the project is created', () => {
     const form = document.querySelector('.crm-planner-project-creator');
     const names = [...(form?.querySelectorAll('.crm-planner-stage-pill > span') || [])].map((node) => node.textContent.trim());
     return names.join('|') === 'Backlog|In progress|Review|Done'
@@ -1203,9 +1267,9 @@ async function main() {
   });
   await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
-  await sleep(260);
-  await page.waitForFunction(() => document.querySelectorAll('.crm-planner-bucket').length === 4);
+  await page.waitForFunction(() => window.crmPlanner.level() === 1 && document.querySelectorAll('.crm-planner-bucket').length === 4);
   const plannerReviewStageId = await page.evaluate(() => window.crmPlanner.projects().find((item) => item.title === 'Interaction plan')?.buckets.find((bucket) => bucket.title === 'Review')?.id || '');
+  await page.evaluate(() => { const project=window.crmPlanner.projects().find((item) => item.title === 'Interaction plan'); window.__interactionProjectTile=document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(project?.id || '')}"]`); });
   await sleep(260);
   await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] [data-planner-action="new-card"]`)?.click(), plannerReviewStageId);
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
@@ -1288,15 +1352,16 @@ async function main() {
     return !!card && card.style.visibility === '' && Math.abs(rect.left - source.left) <= 1 && Math.abs(rect.top - source.top) <= 1
       && Math.abs(rect.width - source.width) <= 1 && Math.abs(rect.height - source.height) <= 1;
   }, plannerRevealSource);
-  await check('Planner creates pipelines, custom stages, and real linked cards with automatic progress', () => {
+  await check('Projects creates custom stages and real linked cards with automatic progress', () => {
     const project = window.crmPlanner.projects().find((item) => item.title === 'Interaction plan');
     const review = project?.buckets.find((bucket) => bucket.title === 'Review');
     const item = review?.cards.find((card) => card.title === 'Ship the polished flow');
     const card = item && document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(item.id)}"]`);
+    const projectTile = project && document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(project.id)}"]`);
     const commitment = item && window.crmHome?.handStatus?.();
     return { ok:!!project && project.buckets.length === 4 && !!item && item.entityType === 'workItems'
       && !!item.commitmentId && !!item.workflowEntryId && !!commitment
-      && document.querySelectorAll(`.crm-planner-project[data-planner-project="${CSS.escape(project.id)}"] .crm-planner-project-segment[data-occupied="true"]`).length >= 1
+      && projectTile === window.__interactionProjectTile && projectTile.querySelectorAll('.crm-project-preview-card').length >= 1
       && card?.getAttribute('data-record-entity') === 'workItems'
       && card.querySelectorAll('.crm-planner-card-progress .tk-seg').length === project.buckets.length
       && card.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length === review.rank + 1,

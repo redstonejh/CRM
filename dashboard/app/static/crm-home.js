@@ -4,7 +4,7 @@
 
   const MODULES = [
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
-    { key: "planner", label: "Planner" }, { key: "assignments", label: "Assignments" },
+    { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   const HOME_PREVIEW_VERSION = "filtered-home-v40";
@@ -983,14 +983,14 @@
   });
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key;
-    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
+    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-tile,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
       const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
       const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
         node.dataset?.id||node.dataset?.recordId||node.dataset?.stage||node.dataset?.assignmentCommitment||node.className,
         rect.x.toFixed(2),rect.y.toFixed(2),rect.width.toFixed(2),rect.height.toFixed(2),style.transform,style.opacity,
       ].join(":")}).join("|");
-      // A room can be intentionally empty (notably a new Planner). Its own
+      // A room can be intentionally empty (notably a new Projects world). Its own
       // stable geometry is still a valid destination; requiring a child object
       // held the reveal open until the timeout and made the handoff hitch.
       const next=source?`${source.childElementCount}:${source.querySelectorAll("*").length}:${source.scrollWidth}:${source.scrollHeight}:${geometry}`:"";
@@ -998,7 +998,7 @@
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
     const theater = key === "cases" ? "tickets" : key;
-    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-planner-project,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
+    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-tile,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });

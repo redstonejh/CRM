@@ -257,7 +257,7 @@
     const target = event.target;
     if (target && (/INPUT|TEXTAREA|SELECT/.test(target.tagName) || target.isContentEditable)) return;
     const current = document.body.dataset.crmModule || "home";
-    if (current === "home" || current === "calendar") return;   // home is root; calendar's camera owns its chain
+    if (current === "home" || current === "calendar" || current === "planner") return;   // nested cameras own their own chain
     if (busy || overlayOwnsKeys(event.key)) return;
     if (TEMPORAL_MODULES.has(current)) {
       // Calendar becomes active synchronously. Consume this originating key so

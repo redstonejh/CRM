@@ -6,7 +6,7 @@
     { key: "people", label: "People", api: () => window.peopleCards },
     { key: "pipeline", label: "Pipeline", api: () => window.dealPipeline },
     { key: "jobs", label: "Jobs", api: () => window.jobPipeline },
-    { key: "planner", label: "Planner", api: () => window.crmPlanner },
+    { key: "planner", label: "Projects", api: () => window.crmPlanner },
     { key: "assignments", label: "Assignments", api: () => window.crmAssignments },
     { key: "calendar", label: "Calendar", api: () => window.fractalCalendar },
     { key: "cases", label: "Tickets", api: () => window.ticketStacks },

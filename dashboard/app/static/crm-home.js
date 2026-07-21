@@ -12,6 +12,7 @@
   const HAND_LIMIT = 7;
   const previews = new Map();
   const pendingPreviews = new Map();
+  const previewSyncKeys = new Set();
   const previewSyncs = new Set();
   let camera = null;
   let subscribed = false;
@@ -1022,12 +1023,13 @@
   };
   const captureBaseline = (key, viewState = captureDisplayedState(key)) => {
     if (window.crmHomePreviews?.isCaptureWorker) return Promise.resolve(previews.get(key)||null);
+    previewSyncKeys.add(key);
     const request = (async () => {
       try { const result=await window.crmHomePreviews?.capture?.(key, viewState); if(result?.preview)acceptPreview(result.preview); } catch {}
       return previews.get(key)||null;
     })();
     previewSyncs.add(request);
-    request.finally(() => previewSyncs.delete(request)).catch(() => {});
+    request.finally(() => { previewSyncs.delete(request); previewSyncKeys.delete(key); }).catch(() => {});
     return request;
   };
   const waitForPreviewSync = async () => {
@@ -1042,7 +1044,7 @@
   };
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
-    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:pending?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
+    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};

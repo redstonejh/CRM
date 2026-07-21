@@ -422,7 +422,160 @@ function rosaDataset() {
       contactId: 'ct_iris', companyId: 'co_foxglove',
     },
   ];
-  return { companies, contacts, deals, bills, invoices, tasks, tickets, calendarItems, interactions };
+  const projects = [
+    {
+      id: 'proj_harbor_launch', title: 'Harbor & Lane Launch',
+      note: 'Move the approved support engagement from final scope to a clean client launch.',
+      stages: [
+        { id: 'harbor_scope', title: 'Scope', kind: 'queue', rank: 0 },
+        { id: 'harbor_prepare', title: 'Prepare', kind: 'active', rank: 1 },
+        { id: 'harbor_review', title: 'Review', kind: 'review', rank: 2 },
+        { id: 'harbor_live', title: 'Live', kind: 'done', rank: 3 },
+      ],
+    },
+    {
+      id: 'proj_bluepeak_depot', title: 'Bluepeak Depot Upgrade',
+      note: 'Plan, install, and validate the Tacoma depot network refresh without interrupting dispatch.',
+      stages: [
+        { id: 'bluepeak_plan', title: 'Plan', kind: 'queue', rank: 0 },
+        { id: 'bluepeak_scheduled', title: 'Scheduled', kind: 'active', rank: 1 },
+        { id: 'bluepeak_field', title: 'Field work', kind: 'active', rank: 2 },
+        { id: 'bluepeak_validate', title: 'Validate', kind: 'done', rank: 3 },
+      ],
+    },
+    {
+      id: 'proj_foxglove_storage', title: 'Foxglove Storage Refresh',
+      note: 'Move the studio archive onto the new storage system and prove recovery before handoff.',
+      stages: [
+        { id: 'foxglove_backlog', title: 'Backlog', kind: 'queue', rank: 0 },
+        { id: 'foxglove_moving', title: 'Migrating', kind: 'active', rank: 1 },
+        { id: 'foxglove_verify', title: 'Verify', kind: 'review', rank: 2 },
+        { id: 'foxglove_complete', title: 'Complete', kind: 'done', rank: 3 },
+      ],
+    },
+  ];
+  const workItems = [
+    {
+      id: 'wi_harbor_scope', projectId: 'proj_harbor_launch', projectTitle: 'Harbor & Lane Launch',
+      stageId: 'harbor_scope', stageLabel: 'Scope', title: 'Confirm launch scope',
+      note: 'Confirm coverage, response windows, and the first ninety-day priorities with Marta.',
+      dueAt: iso(1, 11), priority: 'high', assignee: 'Marta Reyes', assignedContactId: 'ct_marta',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_marta', status: 'open', rank: 0,
+      assignmentStage: 'assigned', assignmentRank: 10,
+    },
+    {
+      id: 'wi_harbor_matrix', projectId: 'proj_harbor_launch', projectTitle: 'Harbor & Lane Launch',
+      stageId: 'harbor_prepare', stageLabel: 'Prepare', title: 'Draft escalation matrix',
+      note: 'Name the owner and response path for each support tier.',
+      dueAt: iso(3, 14), priority: 'high', assignee: 'Marta Reyes', assignedContactId: 'ct_marta',
+      linkedEntityType: 'tasks', linkedRecordId: 'tk_call_marta', status: 'open', rank: 0,
+      assignmentStage: 'active', assignmentRank: 10,
+    },
+    {
+      id: 'wi_harbor_language', projectId: 'proj_harbor_launch', projectTitle: 'Harbor & Lane Launch',
+      stageId: 'harbor_review', stageLabel: 'Review', title: 'Review service language',
+      note: 'Resolve the final after-hours wording before the kickoff packet is issued.',
+      dueAt: iso(5, 10), priority: 'normal', assignee: 'Marta Reyes', assignedContactId: 'ct_marta',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_marta', status: 'open', rank: 0,
+      assignmentStage: 'blocked', assignmentRank: 10,
+    },
+    {
+      id: 'wi_harbor_brief', projectId: 'proj_harbor_launch', projectTitle: 'Harbor & Lane Launch',
+      stageId: 'harbor_live', stageLabel: 'Live', title: 'Publish kickoff brief',
+      note: 'The shared launch brief is approved and available to both teams.',
+      dueAt: iso(-2, 15), completedAt: iso(-2, 15), priority: 'normal', assignee: 'Marta Reyes', assignedContactId: 'ct_marta',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_marta', status: 'completed', rank: 0,
+      assignmentStage: 'done', assignmentRank: 10,
+    },
+    {
+      id: 'wi_bluepeak_map', projectId: 'proj_bluepeak_depot', projectTitle: 'Bluepeak Depot Upgrade',
+      stageId: 'bluepeak_plan', stageLabel: 'Plan', title: 'Map depot network',
+      note: 'Capture the current switches, uplinks, wireless zones, and dispatch dependencies.',
+      dueAt: iso(2, 10), priority: 'high', assignee: 'Sam Okafor', assignedContactId: 'ct_sam',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_sam', status: 'open', rank: 0,
+      assignmentStage: 'assigned', assignmentRank: 20,
+    },
+    {
+      id: 'wi_bluepeak_window', projectId: 'proj_bluepeak_depot', projectTitle: 'Bluepeak Depot Upgrade',
+      stageId: 'bluepeak_scheduled', stageLabel: 'Scheduled', title: 'Lock maintenance window',
+      note: 'Confirm a dispatch-safe installation window and the rollback contact list.',
+      dueAt: iso(4, 15), priority: 'normal', assignee: 'Devon Park', assignedContactId: 'ct_devon',
+      linkedEntityType: 'tasks', linkedRecordId: 'tk_prep_deck', status: 'open', rank: 0,
+      assignmentStage: 'assigned', assignmentRank: 30,
+    },
+    {
+      id: 'wi_bluepeak_switches', projectId: 'proj_bluepeak_depot', projectTitle: 'Bluepeak Depot Upgrade',
+      stageId: 'bluepeak_field', stageLabel: 'Field work', title: 'Stage edge switches',
+      note: 'Apply the approved configuration and prepare labeled replacements for the loading bays.',
+      dueAt: iso(7, 9), priority: 'high', assignee: 'Sam Okafor', assignedContactId: 'ct_sam',
+      linkedEntityType: 'tickets', linkedRecordId: 'tkt_bluepeak_mail', status: 'open', rank: 0,
+      assignmentStage: 'active', assignmentRank: 30,
+    },
+    {
+      id: 'wi_bluepeak_roaming', projectId: 'proj_bluepeak_depot', projectTitle: 'Bluepeak Depot Upgrade',
+      stageId: 'bluepeak_validate', stageLabel: 'Validate', title: 'Record roaming validation',
+      note: 'Handheld roaming and dispatch failover passed the depot walkthrough.',
+      dueAt: iso(-1, 16), completedAt: iso(-1, 16), priority: 'normal', assignee: 'Devon Park', assignedContactId: 'ct_devon',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_devon', status: 'completed', rank: 0,
+      assignmentStage: 'done', assignmentRank: 20,
+    },
+    {
+      id: 'wi_foxglove_archive', projectId: 'proj_foxglove_storage', projectTitle: 'Foxglove Storage Refresh',
+      stageId: 'foxglove_backlog', stageLabel: 'Backlog', title: 'Select archive set',
+      note: 'Agree on the active, nearline, and deep-archive boundaries before migration.',
+      dueAt: iso(3, 11), priority: 'normal', assignee: null, assignedContactId: null,
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_iris', status: 'open', rank: 0,
+      assignmentStage: 'unassigned', assignmentRank: 10,
+    },
+    {
+      id: 'wi_foxglove_media', projectId: 'proj_foxglove_storage', projectTitle: 'Foxglove Storage Refresh',
+      stageId: 'foxglove_moving', stageLabel: 'Migrating', title: 'Move active media library',
+      note: 'Transfer the live studio library with checksums and preserve current share paths.',
+      dueAt: iso(6, 13), priority: 'high', assignee: 'Iris Chen', assignedContactId: 'ct_iris',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_iris', status: 'open', rank: 0,
+      assignmentStage: 'active', assignmentRank: 40,
+    },
+    {
+      id: 'wi_foxglove_mounts', projectId: 'proj_foxglove_storage', projectTitle: 'Foxglove Storage Refresh',
+      stageId: 'foxglove_verify', stageLabel: 'Verify', title: 'Verify workstation mounts',
+      note: 'Check permissions and reconnect behavior on each production workstation.',
+      dueAt: iso(8, 10), priority: 'normal', assignee: 'Iris Chen', assignedContactId: 'ct_iris',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_iris', status: 'open', rank: 0,
+      assignmentStage: 'active', assignmentRank: 50,
+    },
+    {
+      id: 'wi_foxglove_recovery', projectId: 'proj_foxglove_storage', projectTitle: 'Foxglove Storage Refresh',
+      stageId: 'foxglove_complete', stageLabel: 'Complete', title: 'Record recovery test',
+      note: 'A representative project was restored and opened successfully from backup.',
+      dueAt: iso(-3, 14), completedAt: iso(-3, 14), priority: 'normal', assignee: 'Iris Chen', assignedContactId: 'ct_iris',
+      linkedEntityType: 'contacts', linkedRecordId: 'ct_iris', status: 'completed', rank: 0,
+      assignmentStage: 'done', assignmentRank: 30,
+    },
+  ].map((item) => ({
+    ...item,
+    commitmentId: `com_${item.id}`,
+    workflowEntryId: `flow_${item.id}`,
+  }));
+  const commitments = workItems.map((item) => ({
+    id: item.commitmentId, title: item.title, kind: 'pipeline-work', status: item.status,
+    dueAt: item.dueAt, completedAt: item.completedAt || null, priority: item.priority, assignee: item.assignee,
+    projectId: item.projectId, projectTitle: item.projectTitle, stageId: item.stageId, stageLabel: item.stageLabel,
+    assignmentStage: item.assignmentStage, assignmentRank: item.assignmentRank, assignedContactId: item.assignedContactId,
+    links: [
+      { entityType: 'workItems', recordId: item.id, relation: 'regarding' },
+      ...(item.linkedEntityType && item.linkedRecordId
+        ? [{ entityType: item.linkedEntityType, recordId: item.linkedRecordId, relation: 'supports' }]
+        : []),
+    ],
+  }));
+  const workflowEntries = workItems.map((item) => ({
+    id: item.workflowEntryId, workflowKey: `project:${item.projectId}`, entityType: 'workItems',
+    recordId: item.id, stage: item.stageId, rank: item.rank, owner: item.assignee,
+  }));
+  return {
+    companies, contacts, deals, bills, invoices, tasks, tickets, calendarItems, projects, workItems,
+    interactions, commitments, workflowEntries,
+  };
 }
 
 async function post(apiUrl, entity, fields) {
@@ -436,16 +589,31 @@ async function post(apiUrl, entity, fields) {
   return json.record;
 }
 
+async function postDomain(apiUrl, resource, fields) {
+  const res = await fetch(`${apiUrl}/api/domain/${resource}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(`Seeding ${resource}/${fields.id} failed: ${json.error}`);
+  return json.record;
+}
+
 // Interactions fan lastTouchAt onto their related records, so seed them LAST —
 // and seed base entities before anything that references them.
 async function seed(apiUrl = 'http://127.0.0.1:3899') {
   const data = rosaDataset();
-  const order = ['companies', 'contacts', 'deals', 'bills', 'invoices', 'tasks', 'tickets', 'calendarItems', 'interactions'];
+  const order = ['companies', 'contacts', 'deals', 'bills', 'invoices', 'tasks', 'tickets', 'calendarItems', 'projects', 'workItems', 'interactions'];
   const counts = {};
   for (const entity of order) {
     for (const fields of data[entity]) await post(apiUrl, entity, fields);
     counts[entity] = data[entity].length;
   }
+  for (const fields of data.commitments) await postDomain(apiUrl, 'commitments', fields);
+  counts.commitments = data.commitments.length;
+  for (const fields of data.workflowEntries) await postDomain(apiUrl, 'workflow-entries', fields);
+  counts.workflowEntries = data.workflowEntries.length;
   return counts;
 }
 

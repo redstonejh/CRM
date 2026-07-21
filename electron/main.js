@@ -79,6 +79,9 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // stale arrows, controls, or styling while replacement captures are prepared.
 const HOME_PREVIEW_VERSION = 'filtered-home-v40';
 const homePreviewCache = new Map();
+const homePreviewViewStates = new Map();
+const homePreviewViewStateGenerations = new Map();
+let homePreviewViewStateGeneration = 0;
 const PROJECT_PREVIEW_VERSION = 'project-tile-v1';
 const projectPreviewCache = new Map();
 let homeMotionSnapshot = null;
@@ -88,6 +91,10 @@ let homePreviewBoundsKey = '';
 let homePreviewQueue = Promise.resolve();
 let homePreviewRefreshTimer = null;
 let homePreviewStartupTimer = null;
+let projectGalleryHomeRefreshTimer = null;
+let projectPreviewCaptureCount = 0;
+let plannerHomeCaptureRequestGeneration = 0;
+let projectPreviewBatchPlannerGeneration = 0;
 let homePreviewActivityGeneration = 0;
 
 // ─── Main window ────────────────────────────────────────────────────────────────
@@ -159,10 +166,14 @@ function createMainWindow() {
     clearTimeout(homePreviewResizeTimer);
     clearTimeout(homePreviewRefreshTimer);
     clearTimeout(homePreviewStartupTimer);
+    clearTimeout(projectGalleryHomeRefreshTimer);
     homePreviewResizeTimer = null;
     homePreviewRefreshTimer = null;
     homePreviewStartupTimer = null;
+    projectGalleryHomeRefreshTimer = null;
     homePreviewBoundsKey = '';
+    if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
+    previewWindow = null;
     mainWindow = null;
   });
   return mainWindow;
@@ -247,7 +258,7 @@ async function prepareCapture(win, matte = null, options = {}) {
     .window-control-cluster,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
     .crm-module-switch,.db-loading { display:none !important; }
     .crm-home-title-glass { display:none !important; }
-    ${preserveHomePreviewFilter ? '' : '.crm-home-preview-foreground { filter:none !important; }'}
+    ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
@@ -347,12 +358,44 @@ function publishProjectPreview(projectId, capture, viewState = null) {
   };
   projectPreviewCache.set(String(projectId), preview);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project-preview:changed', preview);
+  if (previewWindow && !previewWindow.isDestroyed()) previewWindow.webContents.send('project-preview:changed', preview);
   return preview;
+}
+
+function scheduleProjectGalleryHomeRefresh() {
+  clearTimeout(projectGalleryHomeRefreshTimer);
+  projectGalleryHomeRefreshTimer = setTimeout(() => {
+    projectGalleryHomeRefreshTimer = null;
+    if (mainWindow && !mainWindow.isDestroyed()) capturePreviewKeys(['planner'], 'project gallery ready');
+  }, 220);
+}
+
+async function waitForProjectGalleryImages(worker) {
+  await worker.webContents.executeJavaScript(`new Promise((resolve) => {
+    const started = performance.now();
+    const settle = () => {
+      const projectCount = window.crmPlanner?.projects?.().length || 0;
+      const images = [...document.querySelectorAll('.crm-project-bucket[data-planner-project] > .crm-home-preview > .crm-home-preview-foreground')];
+      if ((projectCount && images.length >= projectCount) || performance.now() - started >= 800) {
+        Promise.race([
+          Promise.all(images.map((image) => image.decode?.().catch(() => null))),
+          new Promise((done) => setTimeout(done, 800)),
+        ]).then(resolve);
+        return;
+      }
+      setTimeout(settle, 40);
+    };
+    requestAnimationFrame(() => requestAnimationFrame(settle));
+  })`, true);
 }
 
 function captureProjectPreview(projectId, viewState = {}) {
   const key = String(projectId || '').trim();
   if (!key) return Promise.resolve(null);
+  clearTimeout(projectGalleryHomeRefreshTimer);
+  projectGalleryHomeRefreshTimer = null;
+  if (!projectPreviewCaptureCount) projectPreviewBatchPlannerGeneration = plannerHomeCaptureRequestGeneration;
+  projectPreviewCaptureCount += 1;
   homePreviewActivityGeneration += 1;
   homePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
     let worker;
@@ -370,8 +413,15 @@ function captureProjectPreview(projectId, viewState = {}) {
       console.error(`[project-preview] capture failed at ${key}:`, error?.message || error);
       return null;
     } finally {
-      if (worker && !worker.isDestroyed()) worker.destroy();
-      if (previewWindow === worker) previewWindow = null;
+      projectPreviewCaptureCount = Math.max(0, projectPreviewCaptureCount - 1);
+      if (!projectPreviewCaptureCount) {
+        // Reuse one renderer for the whole project batch, then retire it. A
+        // subsequent Projects/Home capture starts with the completed cache
+        // instead of the worker's pre-batch placeholder state.
+        if (worker && !worker.isDestroyed()) worker.destroy();
+        if (previewWindow === worker) previewWindow = null;
+        if (plannerHomeCaptureRequestGeneration === projectPreviewBatchPlannerGeneration) scheduleProjectGalleryHomeRefresh();
+      }
     }
   });
   return homePreviewQueue;
@@ -415,6 +465,16 @@ async function captureHomeMotionSnapshot(worker) {
 
 function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
   const requested = keys.filter((key) => HOME_PREVIEW_KEYS.includes(key));
+  if (requested.includes('planner')) {
+    plannerHomeCaptureRequestGeneration += 1;
+    clearTimeout(projectGalleryHomeRefreshTimer);
+    projectGalleryHomeRefreshTimer = null;
+  }
+  requested.forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(viewStates || {}, key) || !viewStates[key]) return;
+    homePreviewViewStates.set(key, viewStates[key]);
+    homePreviewViewStateGenerations.set(key, ++homePreviewViewStateGeneration);
+  });
   homePreviewActivityGeneration += 1;
   homePreviewQueue = homePreviewQueue.then(async () => {
     let worker;
@@ -425,10 +485,12 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
         activeCaptureKey = key;
         await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive(${JSON.stringify(key)})`, true);
         await waitForRenderer(worker, `document.body.dataset.crmModule === ${JSON.stringify(key)} && !!document.querySelector('[data-crm-theater]:not([hidden])')`);
-        const viewState = viewStates?.[key] ?? null;
+        const viewStateGeneration = homePreviewViewStateGenerations.get(key) || 0;
+        const viewState = viewStates?.[key] ?? homePreviewViewStates.get(key) ?? null;
         if (viewState) {
           await worker.webContents.executeJavaScript(`window.crmHome?.applyCaptureState?.(${JSON.stringify(key)}, ${JSON.stringify(viewState)})`, true);
         }
+        if (key === 'planner') await waitForProjectGalleryImages(worker);
         await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
         const layoutSignature = await worker.webContents.executeJavaScript(`(() => {
           const theater = document.querySelector('[data-crm-theater]:not([hidden])');
@@ -441,7 +503,12 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
           ]);
           return { module: document.body.dataset.crmModule || '', objects, calendarYear: window.fractalCalendar?.year?.() || null };
         })()`, true);
-        publishHomePreview(key, await captureRoom(worker), layoutSignature, viewState);
+        const capture = await captureRoom(worker);
+        // An explicit room-state request may arrive while a broad background
+        // refresh is already painting this key. Never publish that older frame:
+        // the queued stateful capture must be the observable handoff.
+        if ((homePreviewViewStateGenerations.get(key) || 0) !== viewStateGeneration) continue;
+        publishHomePreview(key, capture, layoutSignature, viewState);
       }
       // A one-room refresh (for example after a Large/Small choice) must also
       // refresh the resting Home composite. Otherwise the reverse camera would

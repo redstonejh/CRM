@@ -228,7 +228,7 @@
     if (!host || !preview?.foregroundSrc) return false;
     const current = host.querySelector(":scope > .crm-home-preview-foreground");
     const commit = () => {
-      if (!host.isConnected && !host.closest?.(".crm-planner-surface")) return;
+      if (!host.isConnected && !host.closest?.(".crm-project-gallery-level,.crm-planner-surface")) return;
       let image = host.querySelector(":scope > .crm-home-preview-foreground");
       if (!image) {
         image = document.createElement("img"); image.className = "crm-home-preview-image crm-home-preview-foreground";

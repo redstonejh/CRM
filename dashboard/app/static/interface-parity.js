@@ -71,7 +71,6 @@
     ".crm-home-hand-card",
     ".crm-company-face",
     ".crm-home-flight",
-    ".crm-project-tile",
     ".crm-planner-card",
     ".crm-assignment-work-card",
     ".crm-overview-project",

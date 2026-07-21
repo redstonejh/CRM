@@ -162,6 +162,9 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
   motionSnapshot: () => ipcRenderer.invoke('home-preview:motion'),
   onChanged: (cb) => ipcRenderer.on('home-preview:changed', (_event, preview) => cb(preview)),
   onMotionSnapshotChanged: (cb) => ipcRenderer.on('home-preview:motion-changed', (_event, snapshot) => cb(snapshot)),
+  projectList: () => ipcRenderer.invoke('project-preview:list'),
+  captureProject: (projectId, viewState = null) => ipcRenderer.invoke('project-preview:capture', { projectId, viewState }),
+  onProjectChanged: (cb) => ipcRenderer.on('project-preview:changed', (_event, preview) => cb(preview)),
 });
 
 // Bind the immutable frameless-window buttons before application hydration.

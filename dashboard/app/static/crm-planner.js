@@ -4,6 +4,7 @@
   const LEGACY_KEY = "crm-planner-projects-v1";
   const MIGRATED_KEY = "crm-planner-projects-migrated-v2";
   const EXPANDED_KEY = "crm-planner-stack-expansion-v1";
+  const PROJECT_PREVIEW_VERSION = "project-tile-v1";
   const listeners = new Set();
   const rows = (result) => result?.records || [];
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
@@ -40,6 +41,11 @@
   let detailSaveTail = Promise.resolve();
   const plannerScrollPositions = new Map();
   let galleryScrollTop = 0;
+  let projectPreviewSubscribed = false;
+  let projectPreviewTimer = 0;
+  let projectEnvironmentObserver = null;
+  const projectPreviews = new Map();
+  const pendingProjectPreviews = new Map();
   const pendingDetailFields = new Map();
   let model = { projects:[], items:[], flows:[], commitments:[], contacts:[], tasks:[], tickets:[] };
   let expandedStacks = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
@@ -92,10 +98,9 @@
     const style = document.createElement("style"); style.id = "crm-planner-styles"; style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
       .crm-planner-level{position:absolute;inset:0;transform-origin:0 0}.crm-planner-warm,.crm-planner-warm *{pointer-events:none!important}.crm-planner-contracting{pointer-events:none!important}
-      .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}.crm-project-gallery-head{display:flex;align-items:center;height:40px}.crm-project-gallery-title{font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em}.crm-project-gallery-grid{min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:18px;padding:12px 4px 22px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
-      .crm-project-tile{appearance:none;position:relative;display:block;min-width:0;aspect-ratio:2.22;padding:0;border:0;border-radius:18px;overflow:hidden;text-align:left;color:#fff;cursor:pointer;contain:layout paint;content-visibility:auto;contain-intrinsic-size:auto 300px;background:linear-gradient(160deg,rgba(23,33,47,.88),rgba(8,15,24,.82));box-shadow:inset 0 0 0 1px rgba(225,237,252,.22),inset 0 1px rgba(255,255,255,.15),0 18px 40px -28px rgba(0,0,0,.9);transition:box-shadow .16s ease,background .16s ease}.crm-project-tile:hover,.crm-project-tile:focus-visible{outline:0;background:linear-gradient(160deg,rgba(35,47,65,.9),rgba(11,19,29,.86));box-shadow:inset 0 0 0 1px rgba(225,237,252,.38),inset 0 1px rgba(255,255,255,.2),0 20px 44px -28px rgba(0,0,0,.94)}.crm-project-tile-title{position:absolute;z-index:2;left:17px;right:17px;top:15px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--crm-type-object,14px);font-weight:700;color:rgba(255,255,255,.9)}
-      .crm-project-preview{position:absolute;inset:48px 16px 16px;display:flex;align-items:stretch;gap:7px;min-width:0;min-height:0;overflow:hidden}.crm-project-preview-stage{flex:1 1 0;min-width:0;display:flex;flex-direction:column;padding:8px 7px;border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.035));box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}.crm-project-preview-stage-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--crm-type-micro,9px);font-weight:700;color:rgba(255,255,255,.48)}.crm-project-preview-cards{display:flex;flex-direction:column;gap:4px;margin-top:7px;min-height:0}.crm-project-preview-card{display:block;height:clamp(8px,2.1vh,17px);border-radius:5px;background:linear-gradient(180deg,rgba(132,147,170,.62),rgba(79,92,113,.58));box-shadow:inset 0 1px rgba(255,255,255,.12)}.crm-project-preview-stage[data-kind="done"] .crm-project-preview-card{background:linear-gradient(180deg,rgba(111,151,137,.58),rgba(68,104,91,.54))}.crm-project-preview-empty{display:block;height:2px;margin-top:8px;border-radius:2px;background:rgba(255,255,255,.08)}
-      .crm-project-create{display:grid;place-items:center;background:linear-gradient(160deg,rgba(21,30,42,.72),rgba(7,13,21,.68));box-shadow:inset 0 0 0 1px rgba(225,237,252,.18),inset 0 1px rgba(255,255,255,.12)}.crm-project-create-copy{display:grid;justify-items:center;gap:9px;color:rgba(255,255,255,.68);font-size:var(--crm-type-control,13px);font-weight:650}.crm-project-create-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:rgba(255,255,255,.055);box-shadow:inset 0 0 0 1px rgba(255,255,255,.11);font:300 26px/1 system-ui;color:rgba(255,255,255,.52)}
+      .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;min-width:0;min-height:0}.crm-project-gallery-scroll{width:100%;height:100%;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 4px 18px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}.crm-project-gallery-canvas{position:relative;width:100%;min-height:100%}
+      .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}
+      .crm-planner-project-live{position:absolute;inset:0;z-index:1}.crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}.crm-planner-surface.crm-project-camera-moving .crm-project-title-grid{visibility:hidden}.crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket{transition:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
       .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 0 auto;font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
       .crm-planner-project-back.crm-menu-action{flex:0 0 auto;height:30px;padding:0 8px!important;color:rgba(255,255,255,.5)!important;font-size:var(--crm-type-caption,11px)!important}.crm-planner-project-separator{color:rgba(255,255,255,.24);font-size:13px}.crm-planner-world-spacer{flex:1 1 auto;min-width:0}.crm-planner-world-map{flex:0 1 130px;display:flex;height:3px;gap:2px}.crm-planner-world-map i{flex:1 1 0;border-radius:2px;background:rgba(214,229,248,.12)}.crm-planner-world-map i[data-occupied="true"]{background:rgba(160,193,234,.32)}.crm-planner-world-map i[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.38)}
@@ -117,8 +122,7 @@
       .crm-planner-custom-builder{display:grid;gap:7px;padding-top:1px}.crm-planner-custom-builder[hidden]{display:none}.crm-planner-stage-entry{display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:4px}.crm-planner-stage-entry .crm-menu-action{width:34px;padding:0!important;font-size:16px!important}.crm-planner-stage-list{display:flex;flex-wrap:wrap;gap:4px;min-height:0}.crm-planner-stage-pill{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:25px;padding:0 5px 0 8px;border-radius:8px;background:rgba(255,255,255,.065);color:rgba(255,255,255,.72);font-size:var(--crm-type-caption,11px)}.crm-planner-stage-pill span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.crm-planner-stage-remove{appearance:none;width:18px;height:18px;padding:0;border:0;border-radius:5px;background:transparent;color:rgba(255,255,255,.38);font:600 13px/1 system-ui;cursor:pointer}.crm-planner-stage-remove:hover,.crm-planner-stage-remove:focus-visible{outline:0;background:rgba(255,255,255,.08);color:#fff}.crm-planner-creator-status{min-height:14px;padding:0 3px;color:rgba(255,162,162,.9);font-size:var(--crm-type-meta,10px);line-height:1.35}.crm-planner-creator-status:empty{display:none}
       .crm-planner-context{position:fixed;z-index:9320;width:172px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}.crm-planner-card.is-focus-target{outline:1px solid rgba(159,199,250,.72);box-shadow:0 0 0 5px rgba(90,151,232,.12),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
       .crm-planner-zero{width:100%;height:100%;min-height:0;display:grid;place-items:center}.crm-planner-zero-copy{width:min(330px,calc(100vw - 48px));display:grid;justify-items:center;gap:7px;text-align:center}.crm-planner-zero-copy strong{font-size:var(--crm-type-object,14px)}.crm-planner-zero-copy span{color:rgba(255,255,255,.48);font-size:var(--crm-type-caption,11px);line-height:1.45}.crm-planner-zero .crm-menu-action{height:34px;margin-top:6px;padding-inline:13px!important;color:rgba(238,245,254,.86)!important;background:rgba(13,19,28,.62)!important;border-color:rgba(213,230,250,.18)!important;box-shadow:inset 0 1px rgba(255,255,255,.08),0 12px 26px -20px rgba(0,0,0,.9)!important;font-weight:650}
-      @media(max-width:1100px){.crm-project-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:900px){.crm-project-gallery-grid{grid-template-columns:1fr}.crm-planner-projects{gap:6px}.crm-planner-project.crm-menu-action{width:112px}.crm-planner-head-actions{padding-left:4px}.crm-planner-text-action.crm-menu-action{padding-inline:6px!important}}
+      @media(max-width:900px){.crm-planner-projects{gap:6px}.crm-planner-project.crm-menu-action{width:112px}.crm-planner-head-actions{padding-left:4px}.crm-planner-text-action.crm-menu-action{padding-inline:6px!important}}
     `; document.head.appendChild(style);
   }
 
@@ -205,18 +209,76 @@
   const itemsInStage = (project, stage) => model.items
     .filter((item) => item.projectId === project?.id && item.stageId === stage?.id)
     .sort((a, b) => a.rank - b.rank || String(a.createdAt).localeCompare(String(b.createdAt)));
-  function projectPreviewHTML(project) {
-    return `<span class="crm-project-preview" aria-hidden="true">${stagesOf(project).map((stage) => {
-      const items = itemsInStage(project, stage).slice(0, 4);
-      return `<span class="crm-project-preview-stage" data-kind="${esc(stage.kind)}"><span class="crm-project-preview-stage-name">${esc(stage.title)}</span><span class="crm-project-preview-cards">${items.length ? items.map(() => '<i class="crm-project-preview-card"></i>').join("") : '<i class="crm-project-preview-empty"></i>'}</span></span>`;
-    }).join("")}</span>`;
+  const projectPreviewSignature = (project) => JSON.stringify([
+    document.documentElement.dataset.background || "",
+    project?.id, project?.title, project?.note,
+    ...stagesOf(project).map((stage) => [stage.id, stage.title, stage.kind, ...itemsInStage(project, stage).map((item) => [item.id, item.title, item.note, item.priority, item.assignee, item.rank])]),
+  ]);
+  const projectPreviewStateHTML = () => `<div class="crm-home-preview-state" role="status" aria-live="polite"><i class="crm-home-preview-state-mark" aria-hidden="true"></i><span>Preparing view</span></div>`;
+  const projectBucketHTML = (project) => `<button type="button" class="crm-home-bucket crm-project-bucket" data-planner-project="${esc(project.id)}" data-preview-signature="${esc(projectPreviewSignature(project))}" aria-label="Open ${esc(project.title)}"><div class="crm-home-preview" data-project-preview="${esc(project.id)}" data-preview-state="waiting" aria-label="Loading ${esc(project.title)} preview">${projectPreviewStateHTML()}</div></button>`;
+  const projectTitleHTML = (project) => `<div class="crm-home-title-slot" data-project-title="${esc(project.id)}"><div class="crm-home-title-glass"><div class="crm-home-title">${esc(project.title)}</div></div></div>`;
+  const createProjectHTML = () => `<button type="button" class="crm-home-bucket crm-project-bucket crm-project-create" data-planner-action="new-project" aria-label="Create project"><div class="crm-home-preview" data-preview-state="ready"><span class="crm-project-create-glyph" aria-hidden="true">+</span></div></button>`;
+  const createProjectTitleHTML = () => `<div class="crm-home-title-slot crm-project-create-title" data-project-title="create"><div class="crm-home-title-glass"><div class="crm-home-title">Create project</div></div></div>`;
+  const galleryHTML = () => `<div class="crm-project-gallery-shell"><div class="crm-project-gallery-scroll"><div class="crm-project-gallery-canvas"><section class="crm-project-tile-grid" aria-label="Projects"></section><div class="crm-project-title-grid"></div></div></div></div>`;
+  const isProjectPreviewCurrent = (preview, project) => !!preview?.foregroundSrc && !!preview?.exactSrc
+    && preview.version === PROJECT_PREVIEW_VERSION
+    && preview.viewState?.signature === projectPreviewSignature(project)
+    && Number(preview.width) === innerWidth && Number(preview.height) === innerHeight;
+  function mountProjectPreview(host, preview) {
+    if (!host || !preview?.foregroundSrc) return false;
+    const current = host.querySelector(":scope > .crm-home-preview-foreground");
+    const commit = () => {
+      if (!host.isConnected && !host.closest?.(".crm-planner-surface")) return;
+      let image = host.querySelector(":scope > .crm-home-preview-foreground");
+      if (!image) {
+        image = document.createElement("img"); image.className = "crm-home-preview-image crm-home-preview-foreground";
+        image.alt = ""; image.draggable = false; image.decoding = "async"; image.dataset.previewVariant = "filtered"; host.appendChild(image);
+      }
+      if (image.src !== preview.foregroundSrc) image.src = preview.foregroundSrc;
+      host.dataset.previewState = isProjectPreviewCurrent(preview, projectById(preview.key)) ? "ready" : "stale";
+      host.dataset.previewVersion = preview.version || ""; host.dataset.capturedAt = String(preview.capturedAt || 0);
+      host.closest(".crm-project-bucket")?.setAttribute("data-preview-ready", "true");
+    };
+    if (!current || current.src === preview.foregroundSrc) { commit(); return true; }
+    const image = new Image(); image.decoding = "async"; image.src = preview.foregroundSrc;
+    (image.decode?.() || Promise.resolve()).catch(() => null).then(() => { if (projectPreviews.get(String(preview.key))?.foregroundSrc === preview.foregroundSrc) commit(); });
+    return true;
   }
-  const projectPreviewSignature = (project) => JSON.stringify([project.title, ...stagesOf(project).map((stage) => [stage.id, stage.title, stage.kind, Math.min(4, itemsInStage(project, stage).length)])]);
-  const projectTileContentsHTML = (project) => `<span class="crm-project-tile-title">${esc(project.title)}</span>${projectPreviewHTML(project)}`;
-  function projectTileHTML(project) {
-    return `<button type="button" class="crm-project-tile" data-planner-project="${esc(project.id)}" data-preview-signature="${esc(projectPreviewSignature(project))}" aria-label="Open ${esc(project.title)}">${projectTileContentsHTML(project)}</button>`;
+  function acceptProjectPreview(preview) {
+    const key = String(preview?.key || ""); if (!key || !preview?.foregroundSrc || !preview?.exactSrc) return false;
+    projectPreviews.set(key, preview);
+    document.querySelectorAll(`.crm-home-preview[data-project-preview="${cssValue(key)}"]`).forEach((host) => mountProjectPreview(host, preview));
+    document.querySelectorAll(`.crm-planner-project-world[data-project-id="${cssValue(key)}"]`).forEach((layer) => ensureProjectTransitionPreview(layer, projectById(key)));
+    camera?.layout?.(); return true;
   }
-  const galleryHTML = () => `<div class="crm-project-gallery-shell"><header class="crm-project-gallery-head"><span class="crm-project-gallery-title">Projects</span></header><section class="crm-project-gallery-grid" aria-label="Projects">${model.projects.map(projectTileHTML).join("")}<button type="button" class="crm-project-tile crm-project-create" data-planner-action="new-project"><span class="crm-project-create-copy"><span class="crm-project-create-mark" aria-hidden="true">+</span><span>Create project</span></span></button></section></div>`;
+  const projectPreviewState = (project) => ({
+    revision:1, view:"project", selectedId:project.id, signature:projectPreviewSignature(project),
+    expandedStages:[...expandedStacks].filter((key) => key.startsWith(`${project.id}:`)),
+    scrollPositions:{ [project.id]:plannerScrollPositions.get(project.id) || 0 },
+  });
+  function requestProjectPreview(project, force = false) {
+    if (!project || window.crmHomePreviews?.isCaptureWorker || !window.crmHomePreviews?.captureProject) return Promise.resolve(null);
+    const signature = projectPreviewSignature(project); const existing = projectPreviews.get(project.id);
+    if (!force && isProjectPreviewCurrent(existing, project)) return Promise.resolve(existing);
+    if (pendingProjectPreviews.get(project.id)?.signature === signature) return pendingProjectPreviews.get(project.id).promise;
+    const promise = Promise.resolve(window.crmHomePreviews.captureProject(project.id, projectPreviewState(project)))
+      .then((result) => { if (result?.preview) acceptProjectPreview(result.preview); return result?.preview || null; })
+      .catch(() => null)
+      .finally(() => { if (pendingProjectPreviews.get(project.id)?.promise === promise) pendingProjectPreviews.delete(project.id); });
+    pendingProjectPreviews.set(project.id, { signature, promise }); return promise;
+  }
+  function scheduleProjectPreviews(forceProjectId = "") {
+    if (window.crmHomePreviews?.isCaptureWorker) return;
+    clearTimeout(projectPreviewTimer); projectPreviewTimer = setTimeout(() => {
+      projectPreviewTimer = 0; model.projects.forEach((project) => requestProjectPreview(project, forceProjectId === project.id));
+    }, 90);
+  }
+  function subscribeProjectPreviews() {
+    if (projectPreviewSubscribed) return;
+    projectPreviewSubscribed = true;
+    Promise.resolve(window.crmHomePreviews?.projectList?.()).then((result) => result?.previews?.forEach(acceptProjectPreview)).finally(() => scheduleProjectPreviews()).catch(() => {});
+    try { window.crmHomePreviews?.onProjectChanged?.(acceptProjectPreview); } catch {}
+  }
   function projectMapHTML(project, className = "crm-planner-project-map") {
     return `<span class="${className}" aria-hidden="true">${stagesOf(project).map((stage) => `<i class="crm-planner-project-segment" data-kind="${esc(stage.kind)}" data-occupied="${model.items.some((item) => item.projectId === project.id && item.stageId === stage.id)}"></i>`).join("")}</span>`;
   }
@@ -231,44 +293,79 @@
           <div class="crm-planner-card-list${expanded ? " is-expanded" : ""}" data-card-detail-track data-card-detail-clip>${items.length ? items.map(cardHTML).join("") : '<div class="crm-planner-empty">No cards yet</div>'}</div><button type="button" class="crm-planner-add-card crm-menu-action" data-planner-action="new-card">+ Add card</button></section>`;
       }).join("")}</div></section></div>`;
   }
+  function ensureProjectTransitionPreview(layer, project) {
+    if (!layer || !project || window.crmHomePreviews?.isCaptureWorker) return null;
+    const preview = projectPreviews.get(project.id); if (!preview?.exactSrc) return null;
+    let image = layer.querySelector(":scope > .crm-project-transition-preview");
+    if (!image) {
+      image = document.createElement("img"); image.className = "crm-project-transition-preview";
+      image.alt = ""; image.draggable = false; image.decoding = "sync"; layer.appendChild(image);
+    }
+    if (image.src !== preview.exactSrc) image.src = preview.exactSrc;
+    return image;
+  }
+  function revealProjectWorld(layer) {
+    const image = layer?.querySelector?.(":scope > .crm-project-transition-preview"); if (!image) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!image.isConnected) return; image.style.transition = "opacity 112ms linear"; image.style.opacity = "0";
+    }));
+  }
+  function coverProjectWorld(layer, project) {
+    const image = ensureProjectTransitionPreview(layer, project); if (!image) return;
+    image.style.transition = "none"; image.style.opacity = "1";
+  }
   function renderGalleryLayer(layer) {
     if (!layer) return;
-    const previous = layer.querySelector(".crm-project-gallery-grid"); if (previous) galleryScrollTop = previous.scrollTop;
+    const previous = layer.querySelector(".crm-project-gallery-scroll"); if (previous) galleryScrollTop = previous.scrollTop;
     layer.classList.add("crm-project-gallery-level");
     if (!previous) layer.innerHTML = galleryHTML();
-    const grid = layer.querySelector(".crm-project-gallery-grid"); if (!grid) return;
+    const scroller = layer.querySelector(".crm-project-gallery-scroll"); const grid = layer.querySelector(".crm-project-tile-grid"); const titles = layer.querySelector(".crm-project-title-grid"); if (!scroller || !grid || !titles) return;
     const wanted = new Set(model.projects.map((project) => project.id));
-    grid.querySelectorAll(".crm-project-tile[data-planner-project]").forEach((tile) => { if (!wanted.has(tile.dataset.plannerProject)) tile.remove(); });
+    grid.querySelectorAll(".crm-project-bucket[data-planner-project]").forEach((tile) => { if (!wanted.has(tile.dataset.plannerProject)) tile.remove(); });
+    titles.querySelectorAll(".crm-home-title-slot[data-project-title]:not([data-project-title='create'])").forEach((title) => { if (!wanted.has(title.dataset.projectTitle)) title.remove(); });
     let createTile = grid.querySelector(".crm-project-create");
+    let createTitle = titles.querySelector("[data-project-title='create']");
     model.projects.forEach((project, index) => {
-      let tile = grid.querySelector(`.crm-project-tile[data-planner-project="${cssValue(project.id)}"]`);
+      let tile = grid.querySelector(`.crm-project-bucket[data-planner-project="${cssValue(project.id)}"]`);
       if (!tile) {
-        const template = document.createElement("template"); template.innerHTML = projectTileHTML(project); tile = template.content.firstElementChild;
+        const template = document.createElement("template"); template.innerHTML = projectBucketHTML(project); tile = template.content.firstElementChild;
         grid.insertBefore(tile, createTile);
       }
       const signature = projectPreviewSignature(project);
-      if (tile.dataset.previewSignature !== signature) { tile.dataset.previewSignature = signature; tile.innerHTML = projectTileContentsHTML(project); }
+      tile.dataset.previewSignature = signature;
       tile.setAttribute("aria-label", `Open ${project.title}`);
-      const atIndex = grid.querySelectorAll(".crm-project-tile[data-planner-project]")[index];
+      mountProjectPreview(tile.querySelector(":scope > .crm-home-preview"), projectPreviews.get(project.id));
+      let title = titles.querySelector(`[data-project-title="${cssValue(project.id)}"]`);
+      if (!title) { const template=document.createElement("template"); template.innerHTML=projectTitleHTML(project); title=template.content.firstElementChild; titles.insertBefore(title, createTitle); }
+      const titleText = title.querySelector(".crm-home-title"); if (titleText?.textContent !== project.title) titleText.textContent = project.title;
+      const atIndex = grid.querySelectorAll(".crm-project-bucket[data-planner-project]")[index];
       if (atIndex !== tile) grid.insertBefore(tile, atIndex || createTile);
+      const titleAtIndex = titles.querySelectorAll(".crm-home-title-slot[data-project-title]:not([data-project-title='create'])")[index];
+      if (titleAtIndex !== title) titles.insertBefore(title, titleAtIndex || createTitle);
     });
-    if (!createTile) { const template=document.createElement("template"); template.innerHTML=galleryHTML(); createTile=template.content.querySelector(".crm-project-create"); if (createTile) grid.appendChild(createTile); }
+    if (!createTile) { const template=document.createElement("template"); template.innerHTML=createProjectHTML(); createTile=template.content.firstElementChild; grid.appendChild(createTile); }
     else if (createTile !== grid.lastElementChild) grid.appendChild(createTile);
-    grid.scrollTop = galleryScrollTop;
-    if (grid.dataset.plannerGalleryWired !== "true") { grid.dataset.plannerGalleryWired = "true"; grid.addEventListener("scroll", () => { galleryScrollTop = grid.scrollTop; }, { passive:true }); }
+    if (!createTitle) { const template=document.createElement("template"); template.innerHTML=createProjectTitleHTML(); createTitle=template.content.firstElementChild; titles.appendChild(createTitle); }
+    else if (createTitle !== titles.lastElementChild) titles.appendChild(createTitle);
+    scroller.scrollTop = galleryScrollTop;
+    if (scroller.dataset.plannerGalleryWired !== "true") { scroller.dataset.plannerGalleryWired = "true"; scroller.addEventListener("scroll", () => { galleryScrollTop = scroller.scrollTop; }, { passive:true }); }
+    scheduleProjectPreviews();
   }
   function renderProjectLayer(layer, project) {
     if (!layer || !project) return;
     const previous = layer.querySelector(".crm-planner-buckets");
     if (previous?.dataset.plannerScrollProject) plannerScrollPositions.set(previous.dataset.plannerScrollProject, previous.scrollLeft);
-    plannerResizeObserver?.disconnect(); layer.classList.add("crm-planner-project-world"); layer.dataset.projectId = project.id; layer.innerHTML = projectWorldHTML(project);
+    plannerResizeObserver?.disconnect(); layer.classList.add("crm-planner-project-world"); layer.dataset.projectId = project.id;
+    let live = layer.querySelector(":scope > .crm-planner-project-live"); if (!live) { live=document.createElement("div"); live.className="crm-planner-project-live"; layer.prepend(live); }
+    live.innerHTML = projectWorldHTML(project); ensureProjectTransitionPreview(layer, project);
     window.crmObjectSizing?.scan?.(layer); wirePlannerScroller(project.id, layer);
   }
   function buildProjectGallery() {
     const layer = document.createElement("div"); renderGalleryLayer(layer); return layer;
   }
   function buildProjectWorld(project) {
-    const layer = document.createElement("div"); layer.className = "crm-planner-level crm-planner-project-world"; layer.dataset.projectId = project?.id || ""; layer.innerHTML = projectWorldHTML(project); return layer;
+    const layer = document.createElement("div"); layer.className = "crm-planner-level crm-planner-project-world"; layer.dataset.projectId = project?.id || "";
+    const live=document.createElement("div"); live.className="crm-planner-project-live"; live.innerHTML=projectWorldHTML(project); layer.appendChild(live); ensureProjectTransitionPreview(layer, project); return layer;
   }
   function render() {
     if (!camera) return;
@@ -493,7 +590,7 @@
       camera.back(); await camera.whenSettled();
     }
     selectedId = project.id; writeSelected(); announce("project-opened"); render();
-    const tile = camera?.layers?.()[0]?.querySelector?.(`.crm-project-tile[data-planner-project="${cssValue(project.id)}"]`);
+    const tile = camera?.layers?.()[0]?.querySelector?.(`.crm-project-bucket[data-planner-project="${cssValue(project.id)}"]`);
     if (!tile) return false;
     camera.expand(tile); await camera.whenSettled(); return camera.level() === 1;
   }
@@ -586,6 +683,15 @@
 
   function wire() {
     if (!root || wired) return; wired = true;
+    const emphasizeProjectTitle = (tile, emphasized) => {
+      if (!tile?.dataset?.plannerProject) return;
+      tile.classList.toggle("is-preview-hovered", emphasized);
+      camera?.layers?.()[0]?.querySelector?.(`[data-project-title="${cssValue(tile.dataset.plannerProject)}"]`)?.classList.toggle("is-deemphasized", emphasized);
+    };
+    root.addEventListener("pointermove", (event) => { const tile=event.target.closest?.(".crm-project-bucket[data-planner-project]"); if (tile) emphasizeProjectTitle(tile, true); });
+    root.addEventListener("pointerout", (event) => { const tile=event.target.closest?.(".crm-project-bucket[data-planner-project]"); if (tile && !tile.contains(event.relatedTarget)) emphasizeProjectTitle(tile, false); });
+    root.addEventListener("focusin", (event) => emphasizeProjectTitle(event.target.closest?.(".crm-project-bucket[data-planner-project]"), true));
+    root.addEventListener("focusout", (event) => emphasizeProjectTitle(event.target.closest?.(".crm-project-bucket[data-planner-project]"), false));
     root.addEventListener("click", (event) => {
       const projectButton = event.target.closest("[data-planner-project]"); if (projectButton) return; // the nested camera owns this zoom
       const card = event.target.closest("[data-planner-card]"); if (card) { const item = itemById(card.dataset.plannerCard); if (item) openPlannerItem(item, card); return; }
@@ -608,8 +714,8 @@
       scroller.scrollLeft = next; updatePlannerScrollEdges(); event.preventDefault();
     }, { passive:false });
     root.addEventListener("keydown", (event) => {
-      const current = event.target.closest(".crm-project-tile"); if (!current || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(event.key)) return;
-      const grid = current.closest(".crm-project-gallery-grid"); const tiles = [...(grid?.querySelectorAll(".crm-project-tile") || [])]; const index = tiles.indexOf(current); if (index < 0) return;
+      const current = event.target.closest(".crm-project-bucket"); if (!current || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(event.key)) return;
+      const grid = current.closest(".crm-project-tile-grid"); const tiles = [...(grid?.querySelectorAll(".crm-project-bucket") || [])]; const index = tiles.indexOf(current); if (index < 0) return;
       const columns = Math.max(1, String(getComputedStyle(grid).gridTemplateColumns || "").split(" ").filter(Boolean).length); const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" ? -columns : columns;
       const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tiles.length - 1 : Math.max(0, Math.min(tiles.length - 1, index + delta));
       if (nextIndex === index) return; event.preventDefault(); tiles[nextIndex]?.focus({ preventScroll:true }); tiles[nextIndex]?.scrollIntoView?.({ block:"nearest", inline:"nearest" });
@@ -628,8 +734,22 @@
   }
 
   function layoutProjects() {
-    const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-grid");
-    if (gallery && !camera?.isTransitioning?.()) gallery.scrollTop = galleryScrollTop;
+    const layer = camera?.layers?.()[0]; const scroller = layer?.querySelector?.(".crm-project-gallery-scroll"); const canvas = layer?.querySelector?.(".crm-project-gallery-canvas");
+    const grid = layer?.querySelector?.(".crm-project-tile-grid"); const titles = layer?.querySelector?.(".crm-project-title-grid");
+    if (scroller && canvas && grid && titles) {
+      const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--crm-object-gap")) || 18;
+      const count = Math.max(1, model.projects.length + 1); const columns = count === 1 ? 1 : 2; const rows = Math.ceil(count / columns);
+      const preview = model.projects.map((project) => projectPreviews.get(project.id)).find((item) => Number(item?.width) > 0 && Number(item?.height) > 0);
+      const aspect = preview ? preview.width / preview.height : innerWidth / innerHeight;
+      const availableWidth = Math.max(1, scroller.clientWidth - 8); const availableHeight = Math.max(1, scroller.clientHeight);
+      const cellWidth = Math.max(1, Math.min((availableWidth - gap) / 2, ((availableHeight - gap) / 2) * aspect));
+      const cellHeight = Math.max(1, cellWidth / aspect); const gridWidth = cellWidth * columns + gap * Math.max(0, columns - 1); const gridHeight = cellHeight * rows + gap * Math.max(0, rows - 1);
+      const left = Math.max(0, (availableWidth - gridWidth) / 2); const top = rows <= 2 ? Math.max(0, (availableHeight - gridHeight) / 2) : 10;
+      const geometry = { left:`${left}px`, top:`${top}px`, width:`${gridWidth}px`, height:`${gridHeight}px`, gridTemplateColumns:`repeat(${columns},${cellWidth}px)`, gridTemplateRows:`repeat(${rows},${cellHeight}px)` };
+      Object.assign(grid.style, geometry); Object.assign(titles.style, geometry); canvas.style.height = `${Math.max(availableHeight, top + gridHeight + 18)}px`;
+      camera?.surface?.()?.style.setProperty("--home-r", `${Math.min(64, Math.max(2, 16 / 245 * Math.min(cellWidth, cellHeight) * 2)).toFixed(1)}px`);
+      if (!camera?.isTransitioning?.()) scroller.scrollTop = Math.min(galleryScrollTop, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+    }
     if (camera?.level?.() > 0) requestAnimationFrame(updatePlannerScrollEdges);
   }
   function mount() {
@@ -649,19 +769,25 @@
       buildExpander:(target) => buildProjectWorld(projectById(target?.dataset?.plannerProject)),
       targetFromEvent:(event, context) => {
         if (context.level !== 0 || event.target?.closest?.("[data-planner-action]")) return null;
-        const tile = event.target?.closest?.(".crm-project-tile[data-planner-project]");
+        const tile = event.target?.closest?.(".crm-project-bucket[data-planner-project]");
         return tile && context.layers[0]?.contains(tile) ? tile : null;
       },
       targetAtPoint:(x, y, context) => {
         if (context.level !== 0) return null;
-        return [...(context.layers[0]?.querySelectorAll?.(".crm-project-tile[data-planner-project]") || [])].find((tile) => {
+        return [...(context.layers[0]?.querySelectorAll?.(".crm-project-bucket[data-planner-project]") || [])].find((tile) => {
           const bounds = tile.getBoundingClientRect(); return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
         }) || null;
       },
-      sourceSelector:(target) => `.crm-project-tile[data-planner-project="${cssValue(target?.dataset?.plannerProject)}"]`,
+      sourceSelector:(target) => `.crm-project-bucket[data-planner-project="${cssValue(target?.dataset?.plannerProject)}"]`,
       keyOf:(target) => String(target?.dataset?.plannerProject || ""),
+      onTransitionStart:(direction, context) => {
+        context.surface?.classList.add("crm-project-camera-moving");
+        if (direction === "contract") coverProjectWorld(context.layers[1], selectedProject());
+      },
       onTransitionEnd:(direction, context) => {
+        context.surface?.classList.remove("crm-project-camera-moving");
         if (direction === "expand") {
+          revealProjectWorld(context.layers[1]);
           const project = selectedProject(); if (project) wirePlannerScroller(project.id, context.layers[1]);
           window.crmObjectSizing?.scan?.(context.layers[1]);
         }
@@ -670,6 +796,11 @@
       onRootBack:() => window.crmDeskTransit?.driveTo?.("home"),
     });
     camera.init(); root = camera.surface(); wire();
+    subscribeProjectPreviews();
+    if (!projectEnvironmentObserver) {
+      projectEnvironmentObserver = new MutationObserver(() => scheduleProjectPreviews());
+      projectEnvironmentObserver.observe(document.documentElement, { attributes:true, attributeFilter:["data-background"] });
+    }
     try { window.crmStore?.onChanged?.(schedule); } catch {} try { window.crmDomain?.onChanged?.(schedule); } catch {}
     refresh(); return root;
   }
@@ -692,9 +823,10 @@
   const homePreviewState = () => {
     const scroller = root?.querySelector(".crm-planner-buckets");
     if (scroller?.dataset.plannerScrollProject) plannerScrollPositions.set(scroller.dataset.plannerScrollProject, scroller.scrollLeft);
-    const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-grid");
+    const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-scroll");
     if (gallery) galleryScrollTop = gallery.scrollTop;
     return {
+      view:"projects",
       selectedId,
       expandedStages:[...expandedStacks],
       scrollPositions:Object.fromEntries(plannerScrollPositions),
@@ -715,8 +847,15 @@
     if (Number.isFinite(requestedGalleryTop)) galleryScrollTop = Math.max(0, requestedGalleryTop);
     camera?.rebuildRoot?.();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-grid");
+    const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-scroll");
     if (gallery) gallery.scrollTop = Math.min(galleryScrollTop, Math.max(0, gallery.scrollHeight - gallery.clientHeight));
+    if (state.view === "project" && projectById(selectedId)) {
+      const tile = camera?.layers?.()[0]?.querySelector?.(`.crm-project-bucket[data-planner-project="${cssValue(selectedId)}"]`);
+      if (tile) {
+        camera.jumpTo(tile); await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        window.crmObjectSizing?.scan?.(camera.layers()[1]); wirePlannerScroller(selectedId, camera.layers()[1]);
+      }
+    }
     return homePreviewState();
   };
   async function miniature() {
@@ -734,8 +873,10 @@
     card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); if (card) openPlannerItem(item, card);
     return !!card;
   }
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), createProject, createPipeline:createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), createProject, createPipeline:createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
+  document.addEventListener("crm:object-size-change", (event) => { if (event.detail?.homeKey === "planner") scheduleProjectPreviews(selectedId); });
+  window.addEventListener("resize", () => { camera?.layout?.(); scheduleProjectPreviews(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmPlanner = api;
   window.crmProjects = api;

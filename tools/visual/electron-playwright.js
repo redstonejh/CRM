@@ -346,7 +346,7 @@ async function main() {
     throw new Error(`Home previews did not recapture after restoring size: ${JSON.stringify(restoreState)} (${error.message})`);
   }
   const loadingSignal = await page.evaluate(() => {
-    const source = document.querySelector('.crm-home-preview');
+    const source = document.querySelector('.crm-home-surface .crm-home-preview');
     const probe = source?.cloneNode(true);
     if (!probe) return null;
     probe.dataset.previewState = 'waiting';
@@ -593,6 +593,36 @@ async function main() {
     if(after<=before||synchronizedPreview.state!=='ready'||!synchronizedPreview.sameNode||synchronizedPreview.hostCapturedAt!==after||JSON.stringify(synchronizedPreview.viewState)!==JSON.stringify(expectedViewState)||synchronizedPixelMae>12)throw new Error(`${room.key} Home tile did not synchronize with the displayed room: ${JSON.stringify({before,after,synchronization,expectedViewState,actualViewState:synchronizedPreview.viewState,sameNode:synchronizedPreview.sameNode,hostCapturedAt:synchronizedPreview.hostCapturedAt,synchronizedPixelMae})}`);
     transitions.push({key:room.key,mid,outboundMid,pixelMae,synchronizedPixelMae,fps:probe.settled.fps,companyRailMotion,inbound:probe.transition,outbound,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewRefreshed:after>before,previewNodePreserved:synchronizedPreview.sameNode});
   }
+  const nativeProjectId=await page.evaluate(async()=>{
+    const project=await window.crmPlanner.createProject('Native preview project','',['Backlog','In progress','Done']);
+    const stage=window.crmPlanner.projects().find((item)=>item.id===project?.id)?.buckets?.[1];
+    if(project&&stage)await window.crmPlanner.createCard(project.id,stage.id,'Native preview card');
+    return project?.id||'';
+  });
+  if(!nativeProjectId)throw new Error('Could not create native project-preview fixture');
+  await page.evaluate(()=>window.crmWorkspaces.setActive('planner'));
+  await page.waitForFunction((projectId)=>window.crmPlanner?.projectPreviewStatus?.().some((item)=>item.id===projectId&&item.ready),nativeProjectId,{timeout:60000});
+  const projectPreviewBefore=await page.evaluate(async(projectId)=>{
+    const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const image=tile?.querySelector(':scope>.crm-home-preview>.crm-home-preview-foreground');const rect=tile?.getBoundingClientRect();
+    const preview=(await window.crmHomePreviews.projectList()).previews.find((item)=>item.key===projectId);if(image)image.dataset.nativeProjectProbe='preserve';
+    return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],image:!!image,natural:[image?.naturalWidth||0,image?.naturalHeight||0],filter:image?getComputedStyle(image).filter:'',exactSrc:preview?.exactSrc||'',foregroundSrc:preview?.foregroundSrc||'',title:document.querySelector(`[data-project-title="${CSS.escape(projectId)}"] .crm-home-title`)?.textContent.trim()||''};
+  },nativeProjectId);
+  if(!projectPreviewBefore.image||!projectPreviewBefore.exactSrc||!projectPreviewBefore.foregroundSrc||!projectPreviewBefore.filter.includes('blur(1.8px)')||projectPreviewBefore.natural[0]!==1280||projectPreviewBefore.natural[1]!==860||projectPreviewBefore.title!=='Native preview project')throw new Error(`Nested project tile did not use the native Home preview contract: ${JSON.stringify({...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc})}`);
+  await page.screenshot({path:path.join(out,'projects-nested.png')});
+  const projectDiveStart=await page.evaluate((projectId)=>new Promise((resolve)=>{
+    const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const source=tile?.getBoundingClientRect();window.__nativeProjectOpen=window.crmPlanner.openProject(projectId);requestAnimationFrame(()=>{const layer=window.crmProjectsCamera?.layers?.()[1]||document.querySelector('.crm-planner-project-world');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const rect=layer?.getBoundingClientRect();resolve({source:source&&[source.x,source.y,source.width,source.height],rect:rect&&[rect.x,rect.y,rect.width,rect.height],overlay:!!overlay,opacity:overlay?Number(getComputedStyle(overlay).opacity):0,src:overlay?.src||'',level:window.crmPlanner.level(),transitioning:window.crmProjectsCamera?.isTransitioning?.()})})
+  }),nativeProjectId);
+  if(!projectDiveStart.overlay||projectDiveStart.opacity<.99||projectDiveStart.src!==projectPreviewBefore.exactSrc||!projectDiveStart.rect||projectDiveStart.rect.some((value,index)=>Math.abs(value-projectDiveStart.source[index])>1.25))throw new Error(`Project zoom did not carry the tile's exact pixels from its source: ${JSON.stringify({...projectDiveStart,src:!!projectDiveStart.src})}`);
+  await page.waitForFunction(()=>window.crmPlanner?.view?.()==='project'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});await sleep(180);
+  const projectDiveSettled=await page.evaluate(()=>{const layer=window.crmProjectsCamera.layers()[1];const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const rect=layer?.getBoundingClientRect();return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],opacity:overlay?Number(getComputedStyle(overlay).opacity):null,buckets:layer?.querySelectorAll('.crm-planner-bucket').length||0,cards:layer?.querySelectorAll('.crm-planner-card').length||0}});
+  if(!projectDiveSettled.rect||projectDiveSettled.rect.some((value,index)=>Math.abs(value-[0,0,1280,860][index])>1)||projectDiveSettled.opacity!==0||projectDiveSettled.buckets!==3||projectDiveSettled.cards!==1)throw new Error(`Project zoom did not hand off to its real settled workspace: ${JSON.stringify(projectDiveSettled)}`);
+  await page.screenshot({path:path.join(out,'project-world.png')});
+  const projectReturnStart=await page.evaluate(()=>new Promise((resolve)=>{window.crmPlanner.back();requestAnimationFrame(()=>{const layer=document.querySelector('.crm-planner-project-world.crm-planner-contracting');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');resolve({overlay:!!overlay,opacity:overlay?Number(getComputedStyle(overlay).opacity):0})})}));
+  if(!projectReturnStart.overlay||projectReturnStart.opacity<.99)throw new Error(`Project return did not restore its exact tile raster: ${JSON.stringify(projectReturnStart)}`);
+  await page.waitForFunction(()=>window.crmPlanner?.view?.()==='projects'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});
+  const projectReturn=await page.evaluate((projectId)=>{const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const rect=tile?.getBoundingClientRect();const image=tile?.querySelector(':scope>.crm-home-preview>.crm-home-preview-foreground');return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],sameNode:image?.dataset.nativeProjectProbe==='preserve',layers:window.crmProjectsCamera.layers().filter(Boolean).length}},nativeProjectId);
+  if(!projectReturn.sameNode||projectReturn.layers!==1||projectReturn.rect.some((value,index)=>Math.abs(value-projectPreviewBefore.rect[index])>1))throw new Error(`Project return replaced or shifted its source tile: ${JSON.stringify(projectReturn)}`);
+  await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   const unsettled=transitTimings.filter((item)=>item.settled===false);
   if(unsettled.length)throw new Error(`Destinations were revealed before stable geometry: ${JSON.stringify(unsettled)}`);
@@ -622,7 +652,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeDrag,sameNodes,homeComposition,homeCompositeMae,homeFps,settledFps,instantControls,domainProbe,transitions,transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeDrag,sameNodes,homeComposition,homeCompositeMae,homeFps,settledFps,instantControls,domainProbe,transitions,projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},settled:projectDiveSettled,returnStart:projectReturnStart,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
 }

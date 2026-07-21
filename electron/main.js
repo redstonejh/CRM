@@ -79,6 +79,8 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // stale arrows, controls, or styling while replacement captures are prepared.
 const HOME_PREVIEW_VERSION = 'filtered-home-v40';
 const homePreviewCache = new Map();
+const PROJECT_PREVIEW_VERSION = 'project-tile-v1';
+const projectPreviewCache = new Map();
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;
 let homePreviewResizeTimer = null;
@@ -333,6 +335,46 @@ function publishHomePreview(key, capture, layoutSignature, viewState = null) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:changed', preview);
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.webContents.send('home-preview:changed', preview);
   return preview;
+}
+
+function publishProjectPreview(projectId, capture, viewState = null) {
+  if (!capture?.foreground || !capture?.exact) return null;
+  const size = capture.exact.getSize();
+  const preview = {
+    key:String(projectId), version:PROJECT_PREVIEW_VERSION, width:size.width, height:size.height, capturedAt:Date.now(),
+    foregroundSrc:capture.foreground.toDataURL(), exactSrc:capture.exact.toDataURL(),
+    foregroundBounds:capture.bounds, viewState,
+  };
+  projectPreviewCache.set(String(projectId), preview);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project-preview:changed', preview);
+  return preview;
+}
+
+function captureProjectPreview(projectId, viewState = {}) {
+  const key = String(projectId || '').trim();
+  if (!key) return Promise.resolve(null);
+  homePreviewActivityGeneration += 1;
+  homePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
+    let worker;
+    try {
+      worker = await createPreviewWindow();
+      await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('planner')`, true);
+      await waitForRenderer(worker, `document.body.dataset.crmModule === 'planner' && !!window.crmPlanner`);
+      const state = { ...viewState, view:'project', selectedId:key };
+      await worker.webContents.executeJavaScript(`window.crmHome?.applyCaptureState?.('planner', ${JSON.stringify(state)})`, true);
+      await waitForRenderer(worker, `window.crmPlanner?.view?.() === 'project'
+        && !!document.querySelector('.crm-planner-project-world .crm-planner-buckets')`);
+      await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
+      return publishProjectPreview(key, await captureRoom(worker), state);
+    } catch (error) {
+      console.error(`[project-preview] capture failed at ${key}:`, error?.message || error);
+      return null;
+    } finally {
+      if (worker && !worker.isDestroyed()) worker.destroy();
+      if (previewWindow === worker) previewWindow = null;
+    }
+  });
+  return homePreviewQueue;
 }
 
 async function captureHomeMotionSnapshot(worker) {
@@ -598,6 +640,16 @@ ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) mainWindo
 ipcMain.handle('home-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
   return { ok: true, version: HOME_PREVIEW_VERSION, previews: [...homePreviewCache.values()] };
+});
+ipcMain.handle('project-preview:list', (event) => {
+  if (!isMainSender(event) && !isPreviewSender(event)) return { ok:false, previews:[] };
+  return { ok:true, version:PROJECT_PREVIEW_VERSION, previews:[...projectPreviewCache.values()] };
+});
+ipcMain.handle('project-preview:capture', async (event, { projectId, viewState = null } = {}) => {
+  const key = String(projectId || '').trim();
+  if (!isMainSender(event) || !key || key.length > 200) return { ok:false, error:'Invalid project preview key' };
+  const preview = await captureProjectPreview(key, viewState || {});
+  return preview ? { ok:true, preview } : { ok:false, error:'Project preview capture failed' };
 });
 ipcMain.handle('home-preview:idle', async (event) => {
   if (!isMainSender(event)) return { ok: false };

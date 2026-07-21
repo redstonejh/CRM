@@ -1159,36 +1159,38 @@ async function main() {
   await page.keyboard.press('Escape');
 
   await activate('planner');
-  await check('Projects opens as a gallery of nested project tiles with truthful low-cost previews', () => {
+  await check('Projects is a true tile-within-tile world using the Home tile primitive', () => {
     const theater = document.querySelector('[data-crm-theater="planner"]:not([hidden])');
-    const projects = [...(theater?.querySelectorAll('.crm-project-tile[data-planner-project]') || [])];
-    const gallery = theater?.querySelector('.crm-project-gallery-grid');
+    const projects = [...(theater?.querySelectorAll('.crm-project-bucket[data-planner-project]') || [])];
+    const gallery = theater?.querySelector('.crm-project-tile-grid');
     const snapshots = window.crmPlanner.projects();
+    const homeTile = document.querySelector('.crm-home-bucket[data-module="planner"]');
+    const homeStyle = homeTile && getComputedStyle(homeTile); const firstStyle = projects[0] && getComputedStyle(projects[0]);
     return { ok:window.crmPlanner.level() === 0 && window.crmPlanner.view() === 'projects'
       && projects.length >= 3 && !theater.querySelector('.crm-planner-bucket,.crm-planner-card')
-      && theater.querySelector('.crm-project-gallery-title')?.textContent.trim() === 'Projects'
       && gallery?.getAttribute('aria-label') === 'Projects'
-      && theater.querySelector('[data-planner-action="new-project"]')?.textContent.trim() === '+Create project'
+      && theater.querySelector('[data-project-title="create"] .crm-home-title')?.textContent.trim() === 'Create project'
       && projects.every((project) => {
         const snapshot = snapshots.find((item) => item.id === project.dataset.plannerProject);
-        const stages = [...project.querySelectorAll('.crm-project-preview-stage')];
-        const miniatureCards = stages.reduce((count, stage) => count + stage.querySelectorAll('.crm-project-preview-card').length, 0);
-        const expectedCards = snapshot?.buckets.reduce((count, bucket) => count + Math.min(4, bucket.cards.length), 0);
-        return project.tagName === 'BUTTON' && !project.classList.contains('crm-menu-action') && !!project.querySelector('.crm-project-tile-title')
-          && stages.length === snapshot?.buckets.length && miniatureCards === expectedCards
-          && !project.querySelector('.tk-card,.crm-planner-card,.crm-planner-bucket');
+        const title = theater.querySelector(`[data-project-title="${CSS.escape(project.dataset.plannerProject)}"] .crm-home-title`);
+        const preview = project.querySelector(':scope > .crm-home-preview');
+        return !!snapshot && project.tagName === 'BUTTON' && project.classList.contains('crm-home-bucket')
+          && !project.classList.contains('crm-menu-action') && title?.textContent.trim() === snapshot.title
+          && !!preview && !!preview.querySelector(':scope > .crm-home-preview-state[role="status"]')
+          && !project.querySelector('.crm-project-preview,.crm-project-preview-stage,.tk-card,.crm-planner-card,.crm-planner-bucket');
       })
       && !theater.querySelector('.crm-project-create.crm-menu-action')
-      && getComputedStyle(theater.querySelector('.crm-project-gallery-title')).fontSize === '17px'
-      && getComputedStyle(projects[0].querySelector('.crm-project-tile-title')).fontSize === '14px',
+      && firstStyle?.backgroundImage === homeStyle?.backgroundImage
+      && firstStyle?.borderRadius === homeStyle?.borderRadius
+      && getComputedStyle(theater.querySelector('[data-project-title] .crm-home-title')).fontSize === getComputedStyle(document.querySelector('.crm-home-title-layer .crm-home-title')).fontSize,
       detail:`${projects.length} project tiles / ${snapshots.length} projects` };
   });
-  const plannerTileStart = await page.$eval('.crm-project-tile[data-planner-project]', (tile) => tile.dataset.plannerProject);
-  await page.focus('.crm-project-tile[data-planner-project]'); await page.keyboard.press('ArrowRight');
-  await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-tile') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
+  const plannerTileStart = await page.$eval('.crm-project-bucket[data-planner-project]', (tile) => tile.dataset.plannerProject);
+  await page.focus('.crm-project-bucket[data-planner-project]'); await page.keyboard.press('ArrowRight');
+  await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-bucket') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
   await check('Project tiles support spatial keyboard navigation', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project'));
   const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
-    const tile = document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = [];
+    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = [];
     if (!tile || !source) { resolve(null); return; }
     tile.click();
     const tick = () => {
@@ -1226,12 +1228,12 @@ async function main() {
       && !!first && !!head && first.top >= head.bottom + 8 && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1,
       detail:`${project?.title} / ${buckets.length} stages` };
   }, plannerTileStart);
-  const plannerTileBeforeBack = await page.$eval(`.crm-project-tile[data-planner-project="${plannerTileStart}"]`, (tile) => { const rect=tile.getBoundingClientRect(); return [rect.x,rect.y,rect.width,rect.height]; });
+  const plannerTileBeforeBack = await page.$eval(`.crm-project-bucket[data-planner-project="${plannerTileStart}"]`, (tile) => { const rect=tile.getBoundingClientRect(); return [rect.x,rect.y,rect.width,rect.height]; });
   await page.click('[data-planner-action="projects-back"]');
   await page.waitForFunction(() => window.crmPlanner.level() === 0 && !document.querySelector('.crm-planner-bucket'));
   await check('Back from a project returns to the unchanged Projects gallery', ({ projectId, before }) => {
-    const tile = document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(projectId)}"]`); const rect=tile?.getBoundingClientRect();
-    return window.crmPlanner.view() === 'projects' && document.querySelectorAll('.crm-project-tile[data-planner-project]').length >= 3
+    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const rect=tile?.getBoundingClientRect();
+    return window.crmPlanner.view() === 'projects' && document.querySelectorAll('.crm-project-bucket[data-planner-project]').length >= 3
       && !!rect && [rect.x,rect.y,rect.width,rect.height].every((value,index) => Math.abs(value-before[index]) <= 1)
       && !document.querySelector('.crm-planner-contracting') && window.crmProjectsCamera.layers().filter(Boolean).length === 1;
   }, { projectId:plannerTileStart, before:plannerTileBeforeBack });
@@ -1269,7 +1271,7 @@ async function main() {
   await page.waitForFunction(() => window.crmPlanner.projects().some((project) => project.title === 'Interaction plan'));
   await page.waitForFunction(() => window.crmPlanner.level() === 1 && document.querySelectorAll('.crm-planner-bucket').length === 4);
   const plannerReviewStageId = await page.evaluate(() => window.crmPlanner.projects().find((item) => item.title === 'Interaction plan')?.buckets.find((bucket) => bucket.title === 'Review')?.id || '');
-  await page.evaluate(() => { const project=window.crmPlanner.projects().find((item) => item.title === 'Interaction plan'); window.__interactionProjectTile=document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(project?.id || '')}"]`); });
+  await page.evaluate(() => { const project=window.crmPlanner.projects().find((item) => item.title === 'Interaction plan'); window.__interactionProjectTile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(project?.id || '')}"]`); window.__interactionProjectTileSignature=window.__interactionProjectTile?.dataset.previewSignature || ''; });
   await sleep(260);
   await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] [data-planner-action="new-card"]`)?.click(), plannerReviewStageId);
   await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
@@ -1357,11 +1359,12 @@ async function main() {
     const review = project?.buckets.find((bucket) => bucket.title === 'Review');
     const item = review?.cards.find((card) => card.title === 'Ship the polished flow');
     const card = item && document.querySelector(`.crm-planner-card[data-planner-card="${CSS.escape(item.id)}"]`);
-    const projectTile = project && document.querySelector(`.crm-project-tile[data-planner-project="${CSS.escape(project.id)}"]`);
+    const projectTile = project && document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(project.id)}"]`);
     const commitment = item && window.crmHome?.handStatus?.();
     return { ok:!!project && project.buckets.length === 4 && !!item && item.entityType === 'workItems'
       && !!item.commitmentId && !!item.workflowEntryId && !!commitment
-      && projectTile === window.__interactionProjectTile && projectTile.querySelectorAll('.crm-project-preview-card').length >= 1
+      && projectTile === window.__interactionProjectTile && projectTile.dataset.previewSignature !== window.__interactionProjectTileSignature
+      && !!projectTile.querySelector(':scope > .crm-home-preview') && !projectTile.querySelector('.crm-project-preview-card')
       && card?.getAttribute('data-record-entity') === 'workItems'
       && card.querySelectorAll('.crm-planner-card-progress .tk-seg').length === project.buckets.length
       && card.querySelectorAll('.crm-planner-card-progress .tk-seg.g').length === review.rank + 1,

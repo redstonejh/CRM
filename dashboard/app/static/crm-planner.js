@@ -8,6 +8,7 @@
   const listeners = new Set();
   const rows = (result) => result?.records || [];
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[character]));
   const cssValue = (value) => window.CSS?.escape?.(String(value ?? "")) || String(value ?? "").replace(/["\\]/g, "\\$&");
   const uid = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -36,11 +37,12 @@
   let selectedId = localStorage.getItem(SELECTED_KEY) || "";
   let dragItemId = "";
   let plannerResizeObserver = null;
+  let projectGalleryResizeObserver = null;
   let plannerDetail = null;
   let detailSaveTimer = 0;
   let detailSaveTail = Promise.resolve();
   const plannerScrollPositions = new Map();
-  let galleryScrollTop = 0;
+  let galleryScrollLeft = 0;
   let projectPreviewSubscribed = false;
   let projectPreviewTimer = 0;
   let projectEnvironmentObserver = null;
@@ -98,11 +100,11 @@
     const style = document.createElement("style"); style.id = "crm-planner-styles"; style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
       .crm-planner-level{position:absolute;inset:0;transform-origin:0 0}.crm-planner-warm,.crm-planner-warm *{pointer-events:none!important}.crm-planner-contracting{pointer-events:none!important}
-      .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;min-width:0;min-height:0}.crm-project-gallery-scroll{width:100%;height:100%;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 4px 18px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}.crm-project-gallery-canvas{position:relative;width:100%;min-height:100%}
-      .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}
+      .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{--crm-project-shadow-left:0;--crm-project-shadow-right:0;--crm-project-rail-inset:clamp(18px,2vw,28px);position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;min-width:0;min-height:0;overflow:hidden;-webkit-app-region:no-drag}.crm-project-gallery-shell:before,.crm-project-gallery-shell:after{content:"";position:absolute;z-index:5;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-project-gallery-shell:before{left:0;opacity:var(--crm-project-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-shell:after{right:0;opacity:var(--crm-project-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-scroll{position:absolute;inset:0 0 20px;min-width:0;min-height:0;overflow-x:auto;overflow-y:hidden;padding:0;box-sizing:border-box;scrollbar-width:none;overscroll-behavior-inline:contain;outline:0}.crm-project-gallery-scroll::-webkit-scrollbar{display:none}.crm-project-gallery-scroll:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}.crm-project-gallery-canvas{position:relative;height:100%;min-width:100%}
+      .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-auto-flow:column;gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}.crm-project-gallery-hsb{position:absolute;z-index:6;left:var(--crm-project-rail-inset);right:var(--crm-project-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-project-gallery-hsb.is-on{opacity:1;pointer-events:auto}.crm-project-gallery-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.crm-project-gallery-hth:hover{background:rgba(255,255,255,.88)}.crm-project-gallery-hth:active{cursor:grabbing;background:#fff}
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}.crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}.crm-planner-surface.crm-project-camera-moving .crm-project-title-grid{visibility:hidden}.crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket{transition:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
-      .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 0 auto;font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
+      .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 1 auto;min-width:0;max-width:min(34vw,430px);font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.4);font-size:var(--crm-type-meta,10px);white-space:nowrap;overflow:hidden}.crm-planner-project-context span{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context i{width:2px;height:2px;border-radius:50%;background:currentColor;opacity:.65}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
       .crm-planner-project-back.crm-menu-action{flex:0 0 auto;height:30px;padding:0 8px!important;color:rgba(255,255,255,.5)!important;font-size:var(--crm-type-caption,11px)!important}.crm-planner-project-separator{color:rgba(255,255,255,.24);font-size:13px}.crm-planner-world-spacer{flex:1 1 auto;min-width:0}.crm-planner-world-map{flex:0 1 130px;display:flex;height:3px;gap:2px}.crm-planner-world-map i{flex:1 1 0;border-radius:2px;background:rgba(214,229,248,.12)}.crm-planner-world-map i[data-occupied="true"]{background:rgba(160,193,234,.32)}.crm-planner-world-map i[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.38)}
       .crm-planner-project.crm-menu-action{position:relative;flex:0 0 auto;width:clamp(88px,12vw,176px);height:34px;padding:5px 10px 4px!important;text-align:left;font-size:var(--crm-type-body,12px)!important;display:grid;grid-template-rows:minmax(0,1fr) 3px;gap:4px;overflow:hidden;color:rgba(255,255,255,.5)!important}.crm-planner-project.is-selected{color:rgba(255,255,255,.96)!important}.crm-planner-project.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:rgba(175,211,255,.78);box-shadow:0 0 10px rgba(115,177,252,.22)}.crm-planner-project-name{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-map{display:flex;align-items:stretch;gap:2px;min-width:0;height:3px}.crm-planner-project-segment{flex:1 1 0;min-width:3px;border-radius:2px;background:rgba(214,229,248,.09);box-shadow:inset 0 0 0 1px rgba(225,237,251,.045)}.crm-planner-project-segment[data-occupied="true"]{background:rgba(160,193,234,.28)}.crm-planner-project-segment[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.34)}.crm-planner-project.is-selected .crm-planner-project-segment{box-shadow:inset 0 0 0 1px rgba(226,238,252,.08)}
       .crm-planner-new-project.crm-menu-action{flex:0 0 auto;width:auto;height:30px;padding:0 9px!important;font-size:var(--crm-type-caption,11px)!important;white-space:nowrap;color:rgba(255,255,255,.7)!important}.crm-planner-head-actions{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding-left:6px;border-left:1px solid rgba(255,255,255,.1)}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
@@ -118,7 +120,7 @@
       .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;height:90px;padding:11px 12px}.crm-planner-card.crm-object-small+.crm-planner-card{margin-top:-50px}.crm-planner-card-list.is-expanded .crm-planner-card.crm-object-small+.crm-planner-card{margin-top:0}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{padding-right:40px;font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{padding-top:7px}.crm-planner-card.crm-object-small .crm-planner-card-progress{top:10px;right:10px;width:36px;gap:1px}.crm-planner-card.crm-object-small .crm-planner-card-progress .tk-seg{height:3px}
       .crm-planner-add-card.crm-menu-action{flex:0 0 31px;width:100%;height:31px;text-align:left;padding-left:4px!important;font-size:var(--crm-type-caption,11px)!important;color:rgba(255,255,255,.48)!important}.crm-planner-add-card:hover{color:#fff!important}.crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:var(--crm-type-caption,11px)}
       .crm-planner-popover{position:fixed;z-index:9300;width:min(280px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-planner-popover-hint{padding:0 3px 3px;color:rgba(255,255,255,.48);font-size:var(--crm-type-meta,10px);line-height:1.4}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
-      .crm-planner-project-creator{width:min(360px,calc(100vw - 28px));gap:9px}.crm-planner-preset-label{padding:1px 3px 0;color:rgba(255,255,255,.46);font-size:var(--crm-type-meta,10px);font-weight:700;letter-spacing:.045em;text-transform:uppercase}.crm-planner-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px}.crm-planner-preset.crm-menu-action{position:relative;height:48px!important;padding:7px 8px 6px!important;text-align:left;display:grid;align-content:center;gap:4px;color:rgba(255,255,255,.56)!important}.crm-planner-preset.is-selected{color:rgba(255,255,255,.96)!important;background:rgba(255,255,255,.08)!important}.crm-planner-preset-name{font-weight:700}.crm-planner-preset-map{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,.34);font-size:var(--crm-type-micro,9px);font-weight:500}.crm-planner-preset.is-selected .crm-planner-preset-map{color:rgba(255,255,255,.54)}
+      .crm-planner-project-creator{width:min(380px,calc(100vw - 28px));gap:8px}.crm-planner-project-creator textarea,.crm-planner-project-editor textarea{min-height:54px;padding-top:9px;resize:none}.crm-planner-project-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}.crm-planner-project-field{min-width:0;display:grid;gap:4px}.crm-planner-project-field>span{padding-left:3px;color:rgba(255,255,255,.42);font-size:var(--crm-type-meta,10px);font-weight:650}.crm-planner-project-field .crm-menu-input{width:100%;min-width:0;box-sizing:border-box}.crm-planner-project-editor{width:min(380px,calc(100vw - 28px));gap:8px}.crm-planner-preset-label{padding:1px 3px 0;color:rgba(255,255,255,.46);font-size:var(--crm-type-meta,10px);font-weight:700;letter-spacing:.045em;text-transform:uppercase}.crm-planner-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px}.crm-planner-preset.crm-menu-action{position:relative;height:48px!important;padding:7px 8px 6px!important;text-align:left;display:grid;align-content:center;gap:4px;color:rgba(255,255,255,.56)!important}.crm-planner-preset.is-selected{color:rgba(255,255,255,.96)!important;background:rgba(255,255,255,.08)!important}.crm-planner-preset-name{font-weight:700}.crm-planner-preset-map{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,.34);font-size:var(--crm-type-micro,9px);font-weight:500}.crm-planner-preset.is-selected .crm-planner-preset-map{color:rgba(255,255,255,.54)}
       .crm-planner-custom-builder{display:grid;gap:7px;padding-top:1px}.crm-planner-custom-builder[hidden]{display:none}.crm-planner-stage-entry{display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:4px}.crm-planner-stage-entry .crm-menu-action{width:34px;padding:0!important;font-size:16px!important}.crm-planner-stage-list{display:flex;flex-wrap:wrap;gap:4px;min-height:0}.crm-planner-stage-pill{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:25px;padding:0 5px 0 8px;border-radius:8px;background:rgba(255,255,255,.065);color:rgba(255,255,255,.72);font-size:var(--crm-type-caption,11px)}.crm-planner-stage-pill span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.crm-planner-stage-remove{appearance:none;width:18px;height:18px;padding:0;border:0;border-radius:5px;background:transparent;color:rgba(255,255,255,.38);font:600 13px/1 system-ui;cursor:pointer}.crm-planner-stage-remove:hover,.crm-planner-stage-remove:focus-visible{outline:0;background:rgba(255,255,255,.08);color:#fff}.crm-planner-creator-status{min-height:14px;padding:0 3px;color:rgba(255,162,162,.9);font-size:var(--crm-type-meta,10px);line-height:1.35}.crm-planner-creator-status:empty{display:none}
       .crm-planner-context{position:fixed;z-index:9320;width:172px;padding:6px;display:grid;gap:1px}.crm-planner-context .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}.crm-planner-card.is-focus-target{outline:1px solid rgba(159,199,250,.72);box-shadow:0 0 0 5px rgba(90,151,232,.12),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
       .crm-planner-zero{width:100%;height:100%;min-height:0;display:grid;place-items:center}.crm-planner-zero-copy{width:min(330px,calc(100vw - 48px));display:grid;justify-items:center;gap:7px;text-align:center}.crm-planner-zero-copy strong{font-size:var(--crm-type-object,14px)}.crm-planner-zero-copy span{color:rgba(255,255,255,.48);font-size:var(--crm-type-caption,11px);line-height:1.45}.crm-planner-zero .crm-menu-action{height:34px;margin-top:6px;padding-inline:13px!important;color:rgba(238,245,254,.86)!important;background:rgba(13,19,28,.62)!important;border-color:rgba(213,230,250,.18)!important;box-shadow:inset 0 1px rgba(255,255,255,.08),0 12px 26px -20px rgba(0,0,0,.9)!important;font-weight:650}
@@ -211,7 +213,7 @@
     .sort((a, b) => a.rank - b.rank || String(a.createdAt).localeCompare(String(b.createdAt)));
   const projectPreviewSignature = (project) => JSON.stringify([
     document.documentElement.dataset.background || "",
-    project?.id, project?.title, project?.note,
+    project?.id, project?.title, project?.note, project?.ownerContactId, project?.owner, project?.dueAt,
     ...stagesOf(project).map((stage) => [stage.id, stage.title, stage.kind, ...itemsInStage(project, stage).map((item) => [item.id, item.title, item.note, item.priority, item.assignee, item.rank])]),
   ]);
   const projectPreviewStateHTML = () => `<div class="crm-home-preview-state" role="status" aria-live="polite"><i class="crm-home-preview-state-mark" aria-hidden="true"></i><span>Preparing view</span></div>`;
@@ -219,7 +221,7 @@
   const projectTitleHTML = (project) => `<div class="crm-home-title-slot" data-project-title="${esc(project.id)}"><div class="crm-home-title-glass"><div class="crm-home-title">${esc(project.title)}</div></div></div>`;
   const createProjectHTML = () => `<button type="button" class="crm-home-bucket crm-project-bucket crm-project-create" data-planner-action="new-project" aria-label="Create project"><div class="crm-home-preview" data-preview-state="ready"><span class="crm-project-create-glyph" aria-hidden="true">+</span></div></button>`;
   const createProjectTitleHTML = () => `<div class="crm-home-title-slot crm-project-create-title" data-project-title="create"><div class="crm-home-title-glass"><div class="crm-home-title">Create project</div></div></div>`;
-  const galleryHTML = () => `<div class="crm-project-gallery-shell"><div class="crm-project-gallery-scroll"><div class="crm-project-gallery-canvas"><section class="crm-project-tile-grid" aria-label="Projects"></section><div class="crm-project-title-grid"></div></div></div></div>`;
+  const galleryHTML = () => `<div class="crm-project-gallery-shell"><div class="crm-project-gallery-scroll" tabindex="0" aria-label="Scrollable projects"><div class="crm-project-gallery-canvas"><section class="crm-project-tile-grid" aria-label="Projects"></section><div class="crm-project-title-grid"></div></div></div><div class="crm-project-gallery-hsb" aria-hidden="true"><div class="crm-project-gallery-hth"></div></div></div>`;
   const isProjectPreviewCurrent = (preview, project) => !!preview?.foregroundSrc && !!preview?.exactSrc
     && preview.version === PROJECT_PREVIEW_VERSION
     && preview.viewState?.signature === projectPreviewSignature(project)
@@ -282,11 +284,22 @@
   function projectMapHTML(project, className = "crm-planner-project-map") {
     return `<span class="${className}" aria-hidden="true">${stagesOf(project).map((stage) => `<i class="crm-planner-project-segment" data-kind="${esc(stage.kind)}" data-occupied="${model.items.some((item) => item.projectId === project.id && item.stageId === stage.id)}"></i>`).join("")}</span>`;
   }
+  const projectTargetLabel = (value) => {
+    const date = value ? new Date(value) : null; if (!date || !Number.isFinite(date.getTime())) return "";
+    return new Intl.DateTimeFormat(undefined, { month:"short", day:"numeric", ...(date.getFullYear() === new Date().getFullYear() ? {} : { year:"numeric" }) }).format(date);
+  };
+  const projectOwnerName = (project) => {
+    const contact = model.contacts.find((candidate) => String(candidate.id) === String(project?.ownerContactId || "")); return first(project?.owner, contact && contactName(contact));
+  };
+  function projectContextHTML(project) {
+    const owner = projectOwnerName(project); const target = projectTargetLabel(project?.dueAt); if (!owner && !target) return "";
+    return `<span class="crm-planner-project-context">${owner ? `<span>${esc(owner)}</span>` : ""}${owner && target ? '<i aria-hidden="true"></i>' : ""}${target ? `<time datetime="${esc(String(project.dueAt || ""))}">${esc(target)}</time>` : ""}</span>`;
+  }
   function projectWorldHTML(project) {
     if (!project) return "";
     const stages = stagesOf(project);
     return `<div class="crm-planner-frame">
-      <header class="crm-planner-projects"><button type="button" class="crm-planner-project-back crm-menu-action" data-planner-action="projects-back">Projects</button><span class="crm-planner-project-separator" aria-hidden="true">/</span><span class="crm-planner-heading">${esc(project.title)}</span><span class="crm-planner-world-spacer"></span>${projectMapHTML(project, "crm-planner-world-map")}<div class="crm-planner-head-actions"><button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button></div></header>
+      <header class="crm-planner-projects"><button type="button" class="crm-planner-project-back crm-menu-action" data-planner-action="projects-back">Projects</button><span class="crm-planner-project-separator" aria-hidden="true">/</span><span class="crm-planner-heading">${esc(project.title)}</span>${projectContextHTML(project)}<span class="crm-planner-world-spacer"></span>${projectMapHTML(project, "crm-planner-world-map")}<div class="crm-planner-head-actions"><button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button></div></header>
       <section class="crm-planner-stage"><div class="crm-planner-buckets" data-planner-scroll-project="${esc(project.id)}" tabindex="0" aria-label="Scrollable project stages">${stages.map((stage) => {
         const items = itemsInStage(project, stage); const expanded = stageExpanded(project.id, stage.id);
         return `<section class="crm-planner-bucket tk-zone${expanded ? " is-stack-expanded" : ""}" data-planner-bucket="${esc(stage.id)}" data-stage="${esc(stage.id)}" data-card-detail-zone data-crm-size-key="${esc(`bucket:planner:${project.id}:${stage.id}`)}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r">${stageProgressHTML(project, stage.id)}<button type="button" class="crm-planner-stage-menu crm-menu-action" data-planner-action="stage-menu" aria-label="${esc(stage.title)} options">···</button></span></header>
@@ -316,7 +329,7 @@
   }
   function renderGalleryLayer(layer) {
     if (!layer) return;
-    const previous = layer.querySelector(".crm-project-gallery-scroll"); if (previous) galleryScrollTop = previous.scrollTop;
+    const previous = layer.querySelector(".crm-project-gallery-scroll"); if (previous) galleryScrollLeft = previous.scrollLeft;
     layer.classList.add("crm-project-gallery-level");
     if (!previous) layer.innerHTML = galleryHTML();
     const scroller = layer.querySelector(".crm-project-gallery-scroll"); const grid = layer.querySelector(".crm-project-tile-grid"); const titles = layer.querySelector(".crm-project-title-grid"); if (!scroller || !grid || !titles) return;
@@ -347,8 +360,8 @@
     else if (createTile !== grid.lastElementChild) grid.appendChild(createTile);
     if (!createTitle) { const template=document.createElement("template"); template.innerHTML=createProjectTitleHTML(); createTitle=template.content.firstElementChild; titles.appendChild(createTitle); }
     else if (createTitle !== titles.lastElementChild) titles.appendChild(createTitle);
-    scroller.scrollTop = galleryScrollTop;
-    if (scroller.dataset.plannerGalleryWired !== "true") { scroller.dataset.plannerGalleryWired = "true"; scroller.addEventListener("scroll", () => { galleryScrollTop = scroller.scrollTop; }, { passive:true }); }
+    scroller.scrollLeft = galleryScrollLeft;
+    wireProjectGalleryScroller(layer);
     scheduleProjectPreviews();
   }
   function renderProjectLayer(layer, project) {
@@ -488,6 +501,69 @@
     closeFloating(); ensurePlannerDetail()?.open(item, card); return true;
   }
 
+  const projectGalleryElements = (scope = camera?.layers?.()[0]) => ({
+    shell:scope?.querySelector?.(".crm-project-gallery-shell"),
+    scroller:scope?.querySelector?.(".crm-project-gallery-scroll"),
+    canvas:scope?.querySelector?.(".crm-project-gallery-canvas"),
+    bar:scope?.querySelector?.(".crm-project-gallery-hsb"),
+    thumb:scope?.querySelector?.(".crm-project-gallery-hth"),
+  });
+  function updateProjectGalleryScroll(scope = camera?.layers?.()[0]) {
+    const { shell, scroller, bar, thumb } = projectGalleryElements(scope); if (!shell || !scroller || !bar || !thumb) return;
+    const view = scroller.clientWidth; const content = scroller.scrollWidth; const maximum = Math.max(0, content - view); const position = clamp(scroller.scrollLeft, 0, maximum); const overflowing = maximum > 1;
+    galleryScrollLeft = position;
+    const fadeDistance = Math.min(72, Math.max(42, view * .06));
+    shell.style.setProperty("--crm-project-shadow-left", String(overflowing ? Math.min(1, position / fadeDistance) : 0));
+    shell.style.setProperty("--crm-project-shadow-right", String(overflowing ? Math.min(1, (maximum - position) / fadeDistance) : 0));
+    bar.classList.toggle("is-on", overflowing); bar.setAttribute("aria-hidden", String(!overflowing));
+    if (!overflowing) { if (scroller.scrollLeft) scroller.scrollLeft = 0; thumb.style.width = "100%"; thumb.style.left = "0px"; return; }
+    const trackWidth = Math.max(1, bar.clientWidth); const width = Math.max(28, trackWidth * (view / content)); const left = maximum ? position / maximum * (trackWidth - width) : 0;
+    thumb.style.width = `${Math.round(width)}px`; thumb.style.left = `${Math.round(left)}px`;
+  }
+  function scrollProjectGalleryBy(delta, scope = camera?.layers?.()[0]) {
+    const { scroller } = projectGalleryElements(scope); if (!scroller) return false; const maximum = Math.max(0, scroller.scrollWidth - scroller.clientWidth); if (maximum <= 1) return false;
+    const next = clamp(scroller.scrollLeft + delta, 0, maximum); if (Math.abs(next - scroller.scrollLeft) < .5) return false;
+    scroller.scrollLeft = next; updateProjectGalleryScroll(scope); return true;
+  }
+  function revealProjectTile(tile) {
+    const scope = tile?.closest?.(".crm-project-gallery-level"); const { scroller, bar } = projectGalleryElements(scope); if (!tile || !scroller) return false;
+    const view = scroller.getBoundingClientRect(); const bounds = tile.getBoundingClientRect(); const barBounds = bar?.getBoundingClientRect(); const inset = barBounds ? Math.max(0, barBounds.left - view.left) : 22; let delta = 0;
+    if (bounds.left < view.left + inset) delta = bounds.left - (view.left + inset);
+    else if (bounds.right > view.right - inset) delta = bounds.right - (view.right - inset);
+    return !delta || scrollProjectGalleryBy(delta, scope);
+  }
+  function wireProjectGalleryScroller(scope) {
+    const { shell, scroller, canvas, bar, thumb } = projectGalleryElements(scope); if (!shell || !scroller || !canvas || !bar || !thumb || shell.dataset.projectGalleryWired === "true") return;
+    shell.dataset.projectGalleryWired = "true";
+    scroller.addEventListener("scroll", () => updateProjectGalleryScroll(scope), { passive:true });
+    shell.addEventListener("wheel", (event) => {
+      if (event.defaultPrevented || event.target.closest?.("button,a,input,select,textarea,[contenteditable],.crm-menu-surface")) return;
+      const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY; if (!raw) return;
+      const pixels = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * scroller.clientWidth : raw;
+      if (scrollProjectGalleryBy(pixels, scope)) event.preventDefault();
+    }, { passive:false });
+    scroller.addEventListener("keydown", (event) => {
+      if (event.target !== scroller) return;
+      const amount = event.key === "ArrowLeft" ? -72 : event.key === "ArrowRight" ? 72 : event.key === "PageUp" ? -scroller.clientWidth * .82 : event.key === "PageDown" ? scroller.clientWidth * .82 : event.key === "Home" ? -scroller.scrollWidth : event.key === "End" ? scroller.scrollWidth : 0;
+      if (!amount || !scrollProjectGalleryBy(amount, scope)) return; event.preventDefault();
+    });
+    let dragging = false; let startX = 0; let startScroll = 0; let pointerId = null;
+    const move = (event) => {
+      if (!dragging) return; const maximum = Math.max(0, scroller.scrollWidth - scroller.clientWidth); const trackWidth = bar.clientWidth; const thumbWidth = thumb.getBoundingClientRect().width; const fraction = (event.clientX - startX) / Math.max(1, trackWidth - thumbWidth);
+      scroller.scrollLeft = clamp(startScroll + fraction * maximum, 0, maximum); updateProjectGalleryScroll(scope);
+    };
+    const up = () => {
+      if (!dragging) return; dragging = false; try { if (pointerId != null && thumb.hasPointerCapture?.(pointerId)) thumb.releasePointerCapture(pointerId); } catch {} pointerId = null;
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+    };
+    thumb.addEventListener("pointerdown", (event) => {
+      event.preventDefault(); event.stopPropagation(); dragging = true; pointerId = event.pointerId; try { thumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = scroller.scrollLeft;
+      window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+    });
+    projectGalleryResizeObserver?.disconnect(); projectGalleryResizeObserver = new ResizeObserver(() => updateProjectGalleryScroll(scope)); projectGalleryResizeObserver.observe(scroller); projectGalleryResizeObserver.observe(canvas);
+    requestAnimationFrame(() => updateProjectGalleryScroll(scope));
+  }
+
   function updatePlannerScrollEdges() {
     const scroller = root?.querySelector(".crm-planner-buckets"); const stage = scroller?.closest(".crm-planner-stage"); if (!stage) return;
     const maximum = Math.max(0, (scroller.scrollWidth || 0) - scroller.clientWidth); const position = Math.max(0, Math.min(maximum, scroller.scrollLeft)); const fadeDistance = Math.min(72, Math.max(42, scroller.clientWidth * .06));
@@ -517,14 +593,36 @@
   }, 0);
   function openTextEditor({ title, value = "", placeholder = "Name", submit = "Save", anchor, onSubmit }) {
     closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-menu-surface";
-    floating.innerHTML = `<div class="crm-planner-popover-title">${esc(title)}</div><input class="crm-menu-input" name="value" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off" required><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">${esc(submit)}</button></div>`;
-    floating.addEventListener("submit", async (event) => { event.preventDefault(); const input = floating.elements.value.value.trim(); if (!input) return; await onSubmit(input); closeFloating(); });
+    floating.innerHTML = `<div class="crm-planner-popover-title">${esc(title)}</div><input class="crm-menu-input" name="value" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off" required><div class="crm-planner-creator-status" role="status" aria-live="polite"></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">${esc(submit)}</button></div>`;
+    floating.addEventListener("submit", async (event) => { event.preventDefault(); const input = floating.elements.value.value.trim(); if (!input) return; const saved = await onSubmit(input); if (saved === false || saved == null) { floating.querySelector(".crm-planner-creator-status").textContent = "Use a unique name."; floating.elements.value.select(); return; } closeFloating(); });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.value?.focus());
+  }
+  const projectOwnerOptions = (selectedId = "") => [["", "Unassigned"], ...model.contacts.map((contact) => [contact.id, contactName(contact)])]
+    .map(([value, label]) => `<option value="${esc(value)}"${String(value) === String(selectedId || "") ? " selected" : ""}>${esc(label)}</option>`).join("");
+  const projectDateValue = (value) => {
+    const raw = String(value || ""); if (!raw) return null; const date = new Date(`${raw}T17:00:00`); return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  };
+  function openProjectEditor(anchor, project) {
+    if (!project) return;
+    closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-planner-project-editor crm-menu-surface";
+    floating.innerHTML = `<div class="crm-planner-popover-title">Project details</div><input class="crm-menu-input" name="title" value="${esc(project.title)}" placeholder="Project name" autocomplete="off" required><textarea class="crm-menu-input" name="note" placeholder="Brief">${esc(project.note || "")}</textarea><div class="crm-planner-project-fields"><label class="crm-planner-project-field"><span>Owner</span><select class="crm-menu-input" name="ownerContactId">${projectOwnerOptions(project.ownerContactId)}</select></label><label class="crm-planner-project-field"><span>Target</span><input class="crm-menu-input" type="date" name="dueAt" value="${esc(dateInputValue(project.dueAt))}"></label></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Save</button></div>`;
+    floating.addEventListener("submit", async (event) => {
+      event.preventDefault(); const data = new FormData(floating); const title = String(data.get("title") || "").trim(); if (!title) { floating.elements.title.focus(); return; }
+      const ownerContactId = String(data.get("ownerContactId") || ""); const owner = model.contacts.find((contact) => String(contact.id) === ownerContactId); const dueAt = projectDateValue(data.get("dueAt"));
+      const saved = await updateProject(project.id, { title, note:String(data.get("note") || "").trim(), ownerContactId:owner?.id || null, owner:owner ? contactName(owner) : null, dueAt }, "project-details-updated"); if (saved) closeFloating();
+    });
+    floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
+  }
+  function confirmProjectDelete(anchor, project) {
+    if (!project) return;
+    closeFloating(); floating = document.createElement("div"); floating.className = "crm-planner-popover crm-menu-surface"; const count = model.items.filter((item) => item.projectId === project.id).length;
+    floating.innerHTML = `<div class="crm-planner-popover-title">Delete project?</div><div class="crm-planner-popover-hint">${count ? `${count} linked card${count === 1 ? "" : "s"} will also be removed.` : "This project has no linked cards."}</div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="button" class="crm-menu-action tk-menu-danger" data-confirm-delete>Delete</button></div>`;
+    floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); floating.querySelector("[data-confirm-delete]")?.addEventListener("click", async () => { const deleted = await deleteProject(project); if (deleted) closeFloating(); }); place(floating, anchor); armOutside(floating);
   }
   function openProjectCreator(anchor) {
     closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-planner-project-creator crm-menu-surface";
     let presetId = "simple"; let customStages = [];
-    floating.innerHTML = `<div class="crm-planner-popover-title">Create project</div><input class="crm-menu-input" name="title" placeholder="Project name" autocomplete="off" required><div class="crm-planner-preset-label">Structure</div><div class="crm-planner-presets" role="radiogroup" aria-label="Project structure">${PIPELINE_PRESETS.map((preset) => `<button type="button" class="crm-planner-preset crm-menu-action${preset.id === presetId ? " is-selected" : ""}" data-planner-preset="${preset.id}" role="radio" aria-checked="${preset.id === presetId}"><span class="crm-planner-preset-name">${esc(preset.label)}</span><span class="crm-planner-preset-map">${preset.stages.length ? esc(preset.stages.join(" · ")) : "Add your stages"}</span></button>`).join("")}</div><div class="crm-planner-custom-builder" hidden><div class="crm-planner-stage-entry"><input class="crm-menu-input" name="stageName" placeholder="Stage name" autocomplete="off"><button type="button" class="crm-menu-action" data-add-stage aria-label="Add stage">+</button></div><div class="crm-planner-stage-list" aria-live="polite"></div><div class="crm-planner-popover-hint">Add each stage once, in the order work should move.</div></div><div class="crm-planner-creator-status" role="status" aria-live="polite"></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create project</button></div>`;
+    floating.innerHTML = `<div class="crm-planner-popover-title">Create project</div><input class="crm-menu-input" name="title" placeholder="Project name" autocomplete="off" required><textarea class="crm-menu-input" name="note" placeholder="Brief"></textarea><div class="crm-planner-project-fields"><label class="crm-planner-project-field"><span>Owner</span><select class="crm-menu-input" name="ownerContactId">${projectOwnerOptions()}</select></label><label class="crm-planner-project-field"><span>Target</span><input class="crm-menu-input" type="date" name="dueAt"></label></div><div class="crm-planner-preset-label">Structure</div><div class="crm-planner-presets" role="radiogroup" aria-label="Project structure">${PIPELINE_PRESETS.map((preset) => `<button type="button" class="crm-planner-preset crm-menu-action${preset.id === presetId ? " is-selected" : ""}" data-planner-preset="${preset.id}" role="radio" aria-checked="${preset.id === presetId}"><span class="crm-planner-preset-name">${esc(preset.label)}</span><span class="crm-planner-preset-map">${preset.stages.length ? esc(preset.stages.join(" · ")) : "Add your stages"}</span></button>`).join("")}</div><div class="crm-planner-custom-builder" hidden><div class="crm-planner-stage-entry"><input class="crm-menu-input" name="stageName" placeholder="Stage name" autocomplete="off"><button type="button" class="crm-menu-action" data-add-stage aria-label="Add stage">+</button></div><div class="crm-planner-stage-list" aria-live="polite"></div><div class="crm-planner-popover-hint">Add each stage once, in the order work should move.</div></div><div class="crm-planner-creator-status" role="status" aria-live="polite"></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Create project</button></div>`;
     const status = floating.querySelector(".crm-planner-creator-status"); const builder = floating.querySelector(".crm-planner-custom-builder"); const stageList = floating.querySelector(".crm-planner-stage-list"); const stageInput = floating.elements.stageName;
     const showStatus = (message = "") => { status.textContent = message; };
     const reposition = () => requestAnimationFrame(() => { if (floating?.isConnected) place(floating, anchor); });
@@ -550,8 +648,9 @@
       if (!title) { showStatus("Give this project a name."); floating.elements.title.focus(); return; }
       const preset = PIPELINE_PRESETS.find((candidate) => candidate.id === presetId) || PIPELINE_PRESETS[0];
       if (preset.id === "custom" && customStages.length < 2) { showStatus("Add at least two uniquely named stages."); stageInput.focus(); return; }
-      const created = await createProject(title, "", preset.id === "custom" ? customStages : preset.stages); closeFloating();
-      if (created) requestAnimationFrame(() => openProject(created.id));
+      const ownerContactId = String(data.get("ownerContactId") || ""); const owner = model.contacts.find((contact) => String(contact.id) === ownerContactId);
+      const created = await createProject(title, String(data.get("note") || "").trim(), preset.id === "custom" ? customStages : preset.stages, { ownerContactId:owner?.id || null, owner:owner ? contactName(owner) : null, dueAt:projectDateValue(data.get("dueAt")) });
+      if (created) { closeFloating(); requestAnimationFrame(() => openProject(created.id)); }
     });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
   }
@@ -560,19 +659,24 @@
     actions.filter(Boolean).forEach((action) => { const button = document.createElement("button"); button.type = "button"; button.className = `crm-menu-action${action.danger ? " tk-menu-danger" : ""}`; button.textContent = action.label; button.addEventListener("click", () => { closeFloating(); action.run(); }); floating.appendChild(button); });
     place(floating, anchor, x, y); armOutside(floating);
   }
-  async function createProject(title, note = "", stageTitles = null) {
+  async function createProject(title, note = "", stageTitles = null, options = {}) {
     const names = []; const seen = new Set();
     if (Array.isArray(stageTitles)) stageTitles.forEach((value) => { const name = String(value || "").trim(); const key = name.toLocaleLowerCase(); if (name && !seen.has(key)) { seen.add(key); names.push(name); } });
     const stages = names.length ? names.map((name, index) => normalizeStage({ id:uid("stage"), title:name, kind:index === 0 ? "queue" : index === names.length - 1 ? "done" : "active", rank:index }, index)) : clone(DEFAULT_STAGES);
-    const result = await window.crmStore.create("projects", { title, note, stages });
+    const result = await window.crmStore.create("projects", { title:String(title || "").trim(), note:String(note || "").trim(), stages, ownerContactId:options.ownerContactId || null, owner:options.owner || null, dueAt:options.dueAt || null });
     if (!result?.record) return null; selectedId = result.record.id; await refresh(true, "project-created"); return clone(projectById(selectedId));
   }
   async function createStage(projectId, title) {
-    const project = projectById(projectId); if (!project) return null; const stages = stagesOf(project);
+    const project = projectById(projectId); if (!project) return null; const stages = stagesOf(project); const name = String(title || "").trim();
+    if (!name || stages.some((candidate) => candidate.title.localeCompare(name, undefined, { sensitivity:"accent" }) === 0)) return null;
     const doneIndex = stages.findIndex((candidate) => candidate.kind === "done"); const insertAt = doneIndex >= 0 ? doneIndex : stages.length;
-    const stage = normalizeStage({ id:uid("stage"), title, kind:"active", rank:insertAt }, insertAt);
+    const stage = normalizeStage({ id:uid("stage"), title:name, kind:"active", rank:insertAt }, insertAt);
     const next = [...stages.slice(0, insertAt), stage, ...stages.slice(insertAt)].map((candidate, rank) => ({ ...candidate, rank }));
     const result = await window.crmStore.update("projects", project.id, { stages:next }); if (!result?.record) return null; await refresh(true, "stage-created"); return clone(stage);
+  }
+  async function renameStage(project, stage, title) {
+    const stages = stagesOf(project); const name = String(title || "").trim(); if (!name || stages.some((candidate) => candidate.id !== stage.id && candidate.title.localeCompare(name, undefined, { sensitivity:"accent" }) === 0)) return false;
+    return updateProject(project.id, { stages:stages.map((candidate) => candidate.id === stage.id ? { ...candidate, title:name } : candidate) }, "stage-renamed");
   }
   const createBucket = createStage;
   async function createCard(projectId, stageId, title, note = "", options = {}) {
@@ -645,7 +749,7 @@
     await refresh(true, "item-deleted"); return true;
   }
   async function deleteStage(project, stage) {
-    const stages = stagesOf(project); if (stages.length <= 1) return false; const fallback = stages.find((candidate) => candidate.id !== stage.id);
+    const stages = stagesOf(project); if (stages.length <= 1) return false; const index = stages.findIndex((candidate) => candidate.id === stage.id); const fallback = stages[index - 1] || stages[index + 1];
     for (const item of model.items.filter((record) => record.projectId === project.id && record.stageId === stage.id)) await moveCard(item.id, fallback.id);
     return updateProject(project.id, { stages:stages.filter((candidate) => candidate.id !== stage.id).map((candidate, index) => ({ ...candidate, rank:index })) }, "stage-deleted");
   }
@@ -658,15 +762,15 @@
   function projectMenu(anchor, project = selectedProject()) {
     if (!project) return;
     openMenu(anchor, [
-      { label:"Rename project", run:() => openTextEditor({ title:"Rename project", value:project.title, anchor, onSubmit:(value) => updateProject(project.id, { title:value }, "project-renamed") }) },
-      { label:"Delete project", danger:true, run:() => deleteProject(project) },
+      { label:"Project details", run:() => openProjectEditor(anchor, project) },
+      { label:"Delete project", danger:true, run:() => confirmProjectDelete(anchor, project) },
     ]);
   }
   function stageMenu(stage, anchor, x, y) {
     const project = selectedProject(); if (!project || !stage) return; const stages = stagesOf(project); const index = stages.findIndex((candidate) => candidate.id === stage.id); const sized = root?.querySelector(`[data-planner-bucket="${cssValue(stage.id)}"]`);
     openMenu(anchor, [
       { label:window.crmObjectSizing?.isSmall?.(sized, "bucket") ? "Make large" : "Make small", run:() => window.crmObjectSizing?.toggle?.(sized, "bucket") },
-      { label:"Rename", run:() => openTextEditor({ title:"Rename stage", value:stage.title, anchor, onSubmit:(value) => updateProject(project.id, { stages:stages.map((candidate) => candidate.id === stage.id ? { ...candidate, title:value } : candidate) }, "stage-renamed") }) },
+      { label:"Rename", run:() => openTextEditor({ title:"Rename stage", value:stage.title, anchor, onSubmit:(value) => renameStage(project, stage, value) }) },
       index > 0 && { label:"Move left", run:() => { const next=[...stages]; [next[index - 1],next[index]]=[next[index],next[index - 1]]; updateProject(project.id, { stages:next.map((candidate, rank) => ({ ...candidate, rank })) }, "stage-reordered"); } },
       index < stages.length - 1 && { label:"Move right", run:() => { const next=[...stages]; [next[index + 1],next[index]]=[next[index],next[index + 1]]; updateProject(project.id, { stages:next.map((candidate, rank) => ({ ...candidate, rank })) }, "stage-reordered"); } },
       { label:stage.kind === "done" ? "Make active stage" : "Mark as done stage", run:() => updateProject(project.id, { stages:stages.map((candidate) => candidate.id === stage.id ? { ...candidate, kind:stage.kind === "done" ? "active" : "done" } : candidate) }, "stage-kind-changed") },
@@ -716,9 +820,14 @@
     root.addEventListener("keydown", (event) => {
       const current = event.target.closest(".crm-project-bucket"); if (!current || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(event.key)) return;
       const grid = current.closest(".crm-project-tile-grid"); const tiles = [...(grid?.querySelectorAll(".crm-project-bucket") || [])]; const index = tiles.indexOf(current); if (index < 0) return;
-      const columns = Math.max(1, String(getComputedStyle(grid).gridTemplateColumns || "").split(" ").filter(Boolean).length); const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" ? -columns : columns;
-      const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tiles.length - 1 : Math.max(0, Math.min(tiles.length - 1, index + delta));
-      if (nextIndex === index) return; event.preventDefault(); tiles[nextIndex]?.focus({ preventScroll:true }); tiles[nextIndex]?.scrollIntoView?.({ block:"nearest", inline:"nearest" });
+      const rowCount = Math.max(1, Number(grid.dataset.projectRows) || 1); const row = index % rowCount; const column = Math.floor(index / rowCount); let nextIndex = index;
+      if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = tiles.length - 1;
+      else if (event.key === "ArrowUp" && row > 0) nextIndex = index - 1;
+      else if (event.key === "ArrowDown" && row + 1 < rowCount && index + 1 < tiles.length) nextIndex = index + 1;
+      else if (event.key === "ArrowLeft" && column > 0) nextIndex = Math.min(tiles.length - 1, (column - 1) * rowCount + row);
+      else if (event.key === "ArrowRight" && (column + 1) * rowCount < tiles.length) nextIndex = Math.min(tiles.length - 1, (column + 1) * rowCount + row);
+      if (nextIndex === index) return; event.preventDefault(); tiles[nextIndex]?.focus({ preventScroll:true }); revealProjectTile(tiles[nextIndex]);
     });
     root.addEventListener("contextmenu", (event) => {
       const projectElement = event.target.closest("[data-planner-project]"); const cardElement = event.target.closest("[data-planner-card]"); const stageElement = event.target.closest("[data-planner-bucket]");
@@ -734,21 +843,25 @@
   }
 
   function layoutProjects() {
-    const layer = camera?.layers?.()[0]; const scroller = layer?.querySelector?.(".crm-project-gallery-scroll"); const canvas = layer?.querySelector?.(".crm-project-gallery-canvas");
+    const layer = camera?.layers?.()[0]; const shell = layer?.querySelector?.(".crm-project-gallery-shell"); const scroller = layer?.querySelector?.(".crm-project-gallery-scroll"); const canvas = layer?.querySelector?.(".crm-project-gallery-canvas");
     const grid = layer?.querySelector?.(".crm-project-tile-grid"); const titles = layer?.querySelector?.(".crm-project-title-grid");
-    if (scroller && canvas && grid && titles) {
+    if (shell && scroller && canvas && grid && titles) {
       const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--crm-object-gap")) || 18;
-      const count = Math.max(1, model.projects.length + 1); const columns = count === 1 ? 1 : 2; const rows = Math.ceil(count / columns);
+      const railInset = parseFloat(getComputedStyle(shell).getPropertyValue("--crm-project-rail-inset")) || 24;
+      const count = Math.max(1, model.projects.length + 1); const rows = Math.min(2, count); const columns = Math.ceil(count / rows);
       const preview = model.projects.map((project) => projectPreviews.get(project.id)).find((item) => Number(item?.width) > 0 && Number(item?.height) > 0);
       const aspect = preview ? preview.width / preview.height : innerWidth / innerHeight;
-      const availableWidth = Math.max(1, scroller.clientWidth - 8); const availableHeight = Math.max(1, scroller.clientHeight);
-      const cellWidth = Math.max(1, Math.min((availableWidth - gap) / 2, ((availableHeight - gap) / 2) * aspect));
-      const cellHeight = Math.max(1, cellWidth / aspect); const gridWidth = cellWidth * columns + gap * Math.max(0, columns - 1); const gridHeight = cellHeight * rows + gap * Math.max(0, rows - 1);
-      const left = Math.max(0, (availableWidth - gridWidth) / 2); const top = rows <= 2 ? Math.max(0, (availableHeight - gridHeight) / 2) : 10;
+      const availableWidth = Math.max(1, scroller.clientWidth); const availableHeight = Math.max(1, scroller.clientHeight);
+      const heightBound = Math.max(1, (availableHeight - gap * Math.max(0, rows - 1)) / rows); const widthBound = Math.max(1, availableWidth - railInset * 2);
+      const cellWidth = Math.max(1, Math.min(heightBound * aspect, widthBound)); const cellHeight = Math.max(1, cellWidth / aspect);
+      const gridWidth = cellWidth * columns + gap * Math.max(0, columns - 1); const gridHeight = cellHeight * rows + gap * Math.max(0, rows - 1); const overflowing = gridWidth + railInset * 2 > availableWidth + 1;
+      const left = overflowing ? railInset : Math.max(railInset, (availableWidth - gridWidth) / 2); const right = overflowing ? railInset : left; const top = Math.max(0, (availableHeight - gridHeight) / 2);
       const geometry = { left:`${left}px`, top:`${top}px`, width:`${gridWidth}px`, height:`${gridHeight}px`, gridTemplateColumns:`repeat(${columns},${cellWidth}px)`, gridTemplateRows:`repeat(${rows},${cellHeight}px)` };
-      Object.assign(grid.style, geometry); Object.assign(titles.style, geometry); canvas.style.height = `${Math.max(availableHeight, top + gridHeight + 18)}px`;
+      grid.dataset.projectRows = String(rows); titles.dataset.projectRows = String(rows); Object.assign(grid.style, geometry); Object.assign(titles.style, geometry);
+      canvas.style.width = `${Math.max(availableWidth, left + gridWidth + right)}px`; canvas.style.height = `${availableHeight}px`;
       camera?.surface?.()?.style.setProperty("--home-r", `${Math.min(64, Math.max(2, 16 / 245 * Math.min(cellWidth, cellHeight) * 2)).toFixed(1)}px`);
-      if (!camera?.isTransitioning?.()) scroller.scrollTop = Math.min(galleryScrollTop, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+      if (!camera?.isTransitioning?.()) scroller.scrollLeft = clamp(galleryScrollLeft, 0, Math.max(0, scroller.scrollWidth - scroller.clientWidth));
+      requestAnimationFrame(() => updateProjectGalleryScroll(layer));
     }
     if (camera?.level?.() > 0) requestAnimationFrame(updatePlannerScrollEdges);
   }
@@ -824,13 +937,13 @@
     const scroller = root?.querySelector(".crm-planner-buckets");
     if (scroller?.dataset.plannerScrollProject) plannerScrollPositions.set(scroller.dataset.plannerScrollProject, scroller.scrollLeft);
     const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-scroll");
-    if (gallery) galleryScrollTop = gallery.scrollTop;
+    if (gallery) galleryScrollLeft = gallery.scrollLeft;
     return {
       view:"projects",
       selectedId,
       expandedStages:[...expandedStacks],
       scrollPositions:Object.fromEntries(plannerScrollPositions),
-      galleryScrollTop,
+      galleryScrollLeft,
     };
   };
   const applyHomePreviewState = async (state = {}) => {
@@ -843,12 +956,12 @@
         const position = Number(value); if (Number.isFinite(position)) plannerScrollPositions.set(String(projectId), Math.max(0, position));
       });
     }
-    const requestedGalleryTop = Number(state.galleryScrollTop);
-    if (Number.isFinite(requestedGalleryTop)) galleryScrollTop = Math.max(0, requestedGalleryTop);
+    const requestedGalleryLeft = Number(state.galleryScrollLeft ?? state.galleryScrollTop);
+    if (Number.isFinite(requestedGalleryLeft)) galleryScrollLeft = Math.max(0, requestedGalleryLeft);
     camera?.rebuildRoot?.();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const gallery = camera?.layers?.()[0]?.querySelector?.(".crm-project-gallery-scroll");
-    if (gallery) gallery.scrollTop = Math.min(galleryScrollTop, Math.max(0, gallery.scrollHeight - gallery.clientHeight));
+    if (gallery) { gallery.scrollLeft = Math.min(galleryScrollLeft, Math.max(0, gallery.scrollWidth - gallery.clientWidth)); updateProjectGalleryScroll(camera?.layers?.()[0]); }
     if (state.view === "project" && projectById(selectedId)) {
       const tile = camera?.layers?.()[0]?.querySelector?.(`.crm-project-bucket[data-planner-project="${cssValue(selectedId)}"]`);
       if (tile) {
@@ -873,7 +986,7 @@
     card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); if (card) openPlannerItem(item, card);
     return !!card;
   }
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), createProject, createPipeline:createProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), createProject, createPipeline:createProject, updateProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
   document.addEventListener("crm:object-size-change", (event) => { if (event.detail?.homeKey === "planner") scheduleProjectPreviews(selectedId); });
   window.addEventListener("resize", () => { camera?.layout?.(); scheduleProjectPreviews(); });

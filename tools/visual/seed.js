@@ -426,6 +426,7 @@ function rosaDataset() {
     {
       id: 'proj_harbor_launch', title: 'Harbor & Lane Launch',
       note: 'Move the approved support engagement from final scope to a clean client launch.',
+      ownerContactId: 'ct_marta', owner: 'Marta Reyes', dueAt: iso(10, 17),
       stages: [
         { id: 'harbor_scope', title: 'Scope', kind: 'queue', rank: 0 },
         { id: 'harbor_prepare', title: 'Prepare', kind: 'active', rank: 1 },
@@ -436,6 +437,7 @@ function rosaDataset() {
     {
       id: 'proj_bluepeak_depot', title: 'Bluepeak Depot Upgrade',
       note: 'Plan, install, and validate the Tacoma depot network refresh without interrupting dispatch.',
+      ownerContactId: 'ct_sam', owner: 'Sam Okafor', dueAt: iso(18, 17),
       stages: [
         { id: 'bluepeak_plan', title: 'Plan', kind: 'queue', rank: 0 },
         { id: 'bluepeak_scheduled', title: 'Scheduled', kind: 'active', rank: 1 },
@@ -446,6 +448,7 @@ function rosaDataset() {
     {
       id: 'proj_foxglove_storage', title: 'Foxglove Storage Refresh',
       note: 'Move the studio archive onto the new storage system and prove recovery before handoff.',
+      ownerContactId: 'ct_iris', owner: 'Iris Chen', dueAt: iso(14, 17),
       stages: [
         { id: 'foxglove_backlog', title: 'Backlog', kind: 'queue', rank: 0 },
         { id: 'foxglove_moving', title: 'Migrating', kind: 'active', rank: 1 },

@@ -1185,10 +1185,30 @@ async function main() {
       && getComputedStyle(theater.querySelector('[data-project-title] .crm-home-title')).fontSize === getComputedStyle(document.querySelector('.crm-home-title-layer .crm-home-title')).fontSize,
       detail:`${projects.length} project tiles / ${snapshots.length} projects` };
   });
+  const projectRail = await page.evaluate(() => {
+    const shell=document.querySelector('.crm-project-gallery-shell');const scroller=shell?.querySelector('.crm-project-gallery-scroll');const grid=shell?.querySelector('.crm-project-tile-grid');const bar=shell?.querySelector('.crm-project-gallery-hsb');const thumb=bar?.querySelector('.crm-project-gallery-hth');
+    const tiles=[...(grid?.querySelectorAll('.crm-project-bucket')||[])];const rects=tiles.slice(0,4).map((tile)=>{const rect=tile.getBoundingClientRect();return[Math.round(rect.left),Math.round(rect.top),Math.round(rect.width),Math.round(rect.height)]});const style=scroller&&getComputedStyle(scroller);
+    return{rows:Number(grid?.dataset.projectRows||0),overflow:[style?.overflowX,style?.overflowY],maximum:(scroller?.scrollWidth||0)-(scroller?.clientWidth||0),barOn:bar?.classList.contains('is-on'),thumb:thumb?.getBoundingClientRect().width||0,track:bar?.getBoundingClientRect().width||0,rects};
+  });
+  await check('Projects is a stable two-row horizontal rail, never a vertical gallery', (state) => ({
+    ok:state.rows===2&&state.overflow[0]==='auto'&&state.overflow[1]==='hidden'&&state.maximum>100&&state.barOn&&state.thumb>=28&&state.thumb<state.track-10
+      &&state.rects.length===4&&state.rects[0][0]===state.rects[1][0]&&state.rects[0][1]!==state.rects[1][1]&&state.rects[2][0]>state.rects[0][0]&&state.rects[2][1]===state.rects[0][1],
+    detail:JSON.stringify(state),
+  }), projectRail);
+  const projectRailWheel = await page.evaluate(() => {
+    const shell=document.querySelector('.crm-project-gallery-shell');const scroller=shell?.querySelector('.crm-project-gallery-scroll');const bar=shell?.querySelector('.crm-project-gallery-hsb');const thumb=bar?.querySelector('.crm-project-gallery-hth');scroller.scrollLeft=0;scroller.dispatchEvent(new Event('scroll'));
+    const before={left:scroller.scrollLeft,thumbLeft:thumb.getBoundingClientRect().left};const barRect=bar.getBoundingClientRect(),scrollRect=scroller.getBoundingClientRect();bar.dispatchEvent(new WheelEvent('wheel',{deltaY:420,bubbles:true,cancelable:true,clientX:barRect.left+barRect.width/2,clientY:barRect.top+barRect.height/2}));
+    return new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve({before,after:scroller.scrollLeft,thumbLeft:thumb.getBoundingClientRect().left,point:[barRect.top,scrollRect.bottom],shadows:[Number(getComputedStyle(shell).getPropertyValue('--crm-project-shadow-left')),Number(getComputedStyle(shell).getPropertyValue('--crm-project-shadow-right'))]}))));
+  });
+  await check('The project rail scrolls from its lower gutter with a moving thumb and adaptive edges', (state) => ({ ok:state.after>100&&state.thumbLeft>state.before.thumbLeft&&state.point[0]>=state.point[1]&&state.shadows[0]>0&&state.shadows[1]>0, detail:JSON.stringify(state) }), projectRailWheel);
+  const projectRailRestore = await page.evaluate(async() => {
+    const before=document.querySelector('.crm-project-gallery-scroll').scrollLeft;const state=window.crmPlanner.homePreviewState();document.querySelector('.crm-project-gallery-scroll').scrollLeft=0;await window.crmPlanner.applyHomePreviewState(state);const scroller=document.querySelector('.crm-project-gallery-scroll');const after=scroller.scrollLeft;const shadows=[Number(getComputedStyle(document.querySelector('.crm-project-gallery-shell')).getPropertyValue('--crm-project-shadow-left')),Number(getComputedStyle(document.querySelector('.crm-project-gallery-shell')).getPropertyValue('--crm-project-shadow-right'))];scroller.scrollLeft=0;scroller.dispatchEvent(new Event('scroll'));return{before,stored:state.galleryScrollLeft,after,shadows};
+  });
+  await check('Project rail position survives a gallery rebuild exactly', (state) => ({ ok:state.before>0&&Math.abs(state.stored-state.before)<1&&Math.abs(state.after-state.before)<1&&state.shadows[0]>0, detail:JSON.stringify(state) }), projectRailRestore);
   const plannerTileStart = await page.$eval('.crm-project-bucket[data-planner-project]', (tile) => tile.dataset.plannerProject);
   await page.focus('.crm-project-bucket[data-planner-project]'); await page.keyboard.press('ArrowRight');
   await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-bucket') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
-  await check('Project tiles support spatial keyboard navigation', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project'));
+  await check('Project tiles support spatial keyboard navigation without moving an already-visible rail', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project') && document.querySelector('.crm-project-gallery-scroll')?.scrollLeft === 0);
   const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
     const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = [];
     if (!tile || !source) { resolve(null); return; }
@@ -1222,12 +1242,36 @@ async function main() {
     return { ok:window.crmPlanner.view() === 'project' && window.crmPlanner.selected() === projectId
       && document.querySelector('.crm-planner-heading')?.textContent.trim() === project?.title
       && document.querySelector('[data-planner-action="projects-back"]')?.textContent.trim() === 'Projects'
+      && /Iris Chen/.test(document.querySelector('.crm-planner-project-context')?.textContent || '') && !!document.querySelector('.crm-planner-project-context time')
       && buckets.length === project?.buckets.length && buckets.every((bucket, index) => bucket.classList.contains('tk-zone')
         && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg').length === buckets.length
         && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg.g').length === index + 1)
       && !!first && !!head && first.top >= head.bottom + 8 && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1,
       detail:`${project?.title} / ${buckets.length} stages` };
   }, plannerTileStart);
+  await page.click('[data-planner-action="project-menu"]');
+  await page.waitForSelector('.crm-planner-context');
+  await check('Project options stay minimal and lifecycle-specific', () => [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].map((button)=>button.textContent.trim()).join('|') === 'Project details|Delete project');
+  await page.evaluate(() => [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button)=>button.textContent.trim()==='Project details')?.click());
+  await page.waitForSelector('.crm-planner-project-editor');
+  await check('Project details use one compact canonical surface with only essential fields', () => {
+    const form=document.querySelector('.crm-planner-project-editor');const fields=[...form.querySelectorAll('input,textarea,select')].map((field)=>field.name);
+    return form.classList.contains('crm-menu-surface')&&fields.join('|')==='title|note|ownerContactId|dueAt'&&form.getBoundingClientRect().width<=380&&getComputedStyle(form).overflowY!=='scroll';
+  });
+  await page.$eval('.crm-planner-project-editor textarea[name="note"]',(field)=>{field.value='Archive migration, validation, and recovery handoff.';field.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.$eval('.crm-planner-project-editor input[name="dueAt"]',(field)=>{field.value='2026-09-18';field.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.$eval('.crm-planner-project-editor select[name="ownerContactId"]',(field)=>{field.value='ct_iris';field.dispatchEvent(new Event('change',{bubbles:true}));});
+  await page.evaluate(() => document.querySelector('.crm-planner-project-editor')?.requestSubmit());
+  await page.waitForFunction((projectId)=>{const project=window.crmPlanner.projects().find((item)=>item.id===projectId);const due=new Date(project?.dueAt||'');return project?.note==='Archive migration, validation, and recovery handoff.'&&project?.ownerContactId==='ct_iris'&&due.getFullYear()===2026&&due.getMonth()===8&&due.getDate()===18},{},plannerTileStart);
+  await check('Project owner, target, and brief persist without adding tile chrome', (projectId) => {
+    const project=window.crmPlanner.projects().find((item)=>item.id===projectId);const context=document.querySelector('.crm-planner-project-context');const tile=window.crmProjectsCamera.layers()[0]?.querySelector(`[data-planner-project="${CSS.escape(projectId)}"]`);
+    const due=new Date(project?.dueAt||'');return project?.owner==='Iris Chen'&&due.getFullYear()===2026&&due.getMonth()===8&&due.getDate()===18&&/Iris Chen/.test(context?.textContent||'')&&/Sep 18/.test(context?.textContent||'')&&!tile?.querySelector('.crm-planner-project-context,.crm-project-meta');
+  }, plannerTileStart);
+  await page.click('[data-planner-action="project-menu"]');
+  await page.evaluate(() => [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button)=>button.textContent.trim()==='Delete project')?.click());
+  await page.waitForFunction(() => document.querySelector('.crm-planner-popover-title')?.textContent.trim() === 'Delete project?');
+  await check('Deleting a project requires one compact confirmation and names the linked-card impact', () => /linked cards? will also be removed/i.test(document.querySelector('.crm-planner-popover-hint')?.textContent || '') && !!document.querySelector('[data-confirm-delete]') && !document.querySelector('.crm-planner-project-editor'));
+  await page.click('.crm-planner-popover [data-cancel]');
   const plannerTileBeforeBack = await page.$eval(`.crm-project-bucket[data-planner-project="${plannerTileStart}"]`, (tile) => { const rect=tile.getBoundingClientRect(); return [rect.x,rect.y,rect.width,rect.height]; });
   await page.click('[data-planner-action="projects-back"]');
   await page.waitForFunction(() => window.crmPlanner.level() === 0 && !document.querySelector('.crm-planner-bucket'));
@@ -1241,7 +1285,7 @@ async function main() {
   await page.waitForSelector('.crm-planner-project-creator input[name="title"]');
   await check('A new project offers restrained presets and an explicit custom structure', () => {
     const form = document.querySelector('.crm-planner-project-creator');
-    return !!form && form.classList.contains('crm-menu-surface') && form.elements.title
+    return !!form && form.classList.contains('crm-menu-surface') && form.elements.title && form.elements.note && form.elements.ownerContactId && form.elements.dueAt
       && [...form.querySelectorAll('[data-planner-preset] .crm-planner-preset-name')].map((label) => label.textContent.trim()).join('|') === 'Simple|Review|Custom'
       && form.querySelector('[data-planner-preset="simple"]')?.getAttribute('aria-checked') === 'true'
       && form.querySelector('.crm-planner-custom-builder')?.hidden === true

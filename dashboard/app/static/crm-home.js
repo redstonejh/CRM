@@ -7,8 +7,9 @@
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v40";
+  const HOME_PREVIEW_VERSION = "filtered-home-v41";
   const DAY_MS = 86400000;
+  const HOME_HAND_WINDOW_DAYS = 7;
   const HAND_LIMIT = 7;
   const previews = new Map();
   const pendingPreviews = new Map();
@@ -58,7 +59,7 @@
   const dayNumber = (key) => { const [year, month, day] = String(key).split("-").map(Number); return year && month && day ? Date.UTC(year, month - 1, day) / DAY_MS : Number.POSITIVE_INFINITY; };
   const todayKey = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
   const plateDayOffset = (item) => dayNumber(dayKey(item?.dueAt)) - dayNumber(todayKey());
-  const isOnTodaysPlate = (item) => Number.isFinite(plateDayOffset(item)) && plateDayOffset(item) <= 0;
+  const isOnHomePlate = (item) => Number.isFinite(plateDayOffset(item)) && plateDayOffset(item) <= HOME_HAND_WINDOW_DAYS;
   const isDone = (item) => ["completed", "cancelled", "canceled"].includes(String(item?.status || "").toLowerCase());
 
   const ensureStyles = () => {
@@ -434,7 +435,7 @@
   const choosePriorityItems = (records, username = "") => {
     const userKey = String(username || "").trim().toLowerCase();
     return records.filter((item) => {
-      if (!item || item.deletedAt || isDone(item) || !priorityLink(item) || !isOnTodaysPlate(item)) return false;
+      if (!item || item.deletedAt || isDone(item) || !priorityLink(item) || !isOnHomePlate(item)) return false;
       const assignee = String(item.assignee || "").trim().toLowerCase();
       if (userKey && assignee && assignee !== userKey) return false;
       return true;

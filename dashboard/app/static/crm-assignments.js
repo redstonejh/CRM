@@ -1,6 +1,5 @@
 // crm-assignments.js — one real commitment moving through an assignment lifecycle.
 (() => {
-  const FILTER_KEY = "crm-assignments-filter-v2";
   const EXPANDED_KEY = "crm-assignments-expanded-v2";
   const STAGES = [
     { id:"unassigned", title:"Unassigned", kind:"queue" },
@@ -9,13 +8,6 @@
     { id:"blocked", title:"Blocked", kind:"blocked" },
     { id:"done", title:"Done", kind:"done" },
   ];
-  const FILTERS = [
-    { id:"all", label:"All work" },
-    { id:"mine", label:"Assigned to me" },
-    { id:"unassigned", label:"Unassigned" },
-    { id:"due", label:"Due soon" },
-  ];
-
   const rows = (result) => result?.records || [];
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[character]));
   const first = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
@@ -57,7 +49,6 @@
   const pendingDetailFields = new Map();
   let dragItemId = "";
   let currentUser = "";
-  let selectedFilter = localStorage.getItem(FILTER_KEY) || "all";
   let expandedStages = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
   let model = { commitments:[], flows:[], contacts:[], companies:[], tasks:[], tickets:[], workItems:[] };
   const boardScroll = { x:0, target:0, raf:0, wheeling:false, releaseTimer:0 };
@@ -70,12 +61,6 @@
   const targetRecord = (link) => !link ? null : ({
     contacts:model.contacts, companies:model.companies, tasks:model.tasks, tickets:model.tickets, workItems:model.workItems,
   }[link.entityType] || []).find((record) => String(record.id) === String(link.recordId));
-  const filteredItems = () => model.commitments.filter((item) => {
-    if (selectedFilter === "mine") return !!currentUser && String(item.assignee || "").trim().toLowerCase() === currentUser.toLowerCase();
-    if (selectedFilter === "unassigned") return stageOf(item) === "unassigned";
-    if (selectedFilter === "due") return !closed(item) && dueTime(item) <= Date.now() + 7 * 86400000;
-    return true;
-  });
   const sorted = (items) => [...items].sort((a, b) => {
     const rank = Number(a.assignmentRank ?? a.rank ?? Number.MAX_SAFE_INTEGER) - Number(b.assignmentRank ?? b.rank ?? Number.MAX_SAFE_INTEGER);
     return rank || dueTime(a) - dueTime(b) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
@@ -86,8 +71,7 @@
     const style = document.createElement("style"); style.id = "crm-assignments-styles"; style.textContent = `
       .crm-assignments-surface{--assignment-card-width:185px;--assignment-card-height:279px;--assignment-card-peek:42px;--assignment-card-small:.8;--assignment-bucket-width:268px;--assignment-bucket-small:.76;--crm-rail-inset:clamp(22px,2.2vw,30px);position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-assignments-surface[hidden]{display:none}
       .crm-assignments-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
-      .crm-assignment-tabs{min-width:0;height:40px;display:flex;align-items:center;gap:10px;-webkit-app-region:no-drag}.crm-assignment-title{flex:0 0 auto;font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em}.crm-assignment-filters{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-assignment-filters::-webkit-scrollbar{display:none}.crm-assignment-filter.crm-menu-action{position:relative;flex:0 0 auto;width:auto;height:32px;padding:0 11px!important;text-align:center;color:rgba(255,255,255,.5)!important}.crm-assignment-filter.is-selected{color:rgba(255,255,255,.96)!important}.crm-assignment-filter.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:1px;height:2px;border-radius:2px;background:rgba(175,211,255,.78);box-shadow:0 0 10px rgba(115,177,252,.22)}
-      .crm-assignment-tab-status{flex:0 0 auto;margin-left:auto;color:rgba(255,255,255,.38);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-assignment-new.crm-menu-action{flex:0 0 29px;width:29px;height:29px;padding:0!important;font-size:17px!important}
+      .crm-assignment-tabs{min-width:0;height:40px;display:flex;align-items:center;justify-content:space-between;-webkit-app-region:no-drag}.crm-assignment-title{flex:0 0 auto;font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em}.crm-assignment-new.crm-menu-action{flex:0 0 29px;width:29px;height:29px;padding:0!important;font-size:17px!important}
       .crm-assignment-board{--crm-scroll-shadow-left:0;--crm-scroll-shadow-right:0;position:relative;min-width:0;min-height:0;height:100%;margin-inline:calc(0px - var(--crm-canvas-x,64px));overflow:hidden;-webkit-app-region:no-drag}.crm-assignment-board:before,.crm-assignment-board:after{content:"";position:absolute;z-index:4;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-assignment-board:before{left:0;opacity:var(--crm-scroll-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-assignment-board:after{right:0;opacity:var(--crm-scroll-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-assignment-board-clip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0}.crm-assignment-board-clip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
       .crm-assignment-pipeline{position:relative;width:max-content;min-width:100%;height:100%;min-height:0;display:flex;align-items:flex-start;justify-content:space-between;gap:var(--crm-object-gap,18px);padding:0 var(--crm-rail-inset);box-sizing:border-box;will-change:transform}
       .crm-assignment-bucket{position:relative;flex:0 0 var(--assignment-bucket-width);width:var(--assignment-bucket-width);height:100%;min-height:0;box-sizing:border-box;overflow:visible;transition:width .18s cubic-bezier(.22,1,.26,1),flex-basis .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1)}.crm-assignment-bucket-shell.tk-zone{position:absolute;inset:0;z-index:auto;width:100%;height:100%;box-sizing:border-box;padding:12px 13px 13px;overflow:hidden;transform:scale(1);transform-origin:top left;transition:transform .18s cubic-bezier(.22,1,.26,1)}
@@ -103,7 +87,6 @@
       body[data-crm-module="assignments"] .crm-home-control-deadzone{pointer-events:none}
       .crm-assignment-menu{position:fixed;z-index:9320;width:178px;padding:6px;display:grid;gap:1px}.crm-assignment-menu .crm-menu-action{height:33px;text-align:left}
       .crm-assignment-editor{position:fixed;z-index:9330;width:min(380px,calc(100vw - 28px));padding:10px;display:grid;gap:8px}.crm-assignment-editor-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-assignment-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}.crm-assignment-fields>.crm-wide,.crm-assignment-fields>textarea{grid-column:1/-1}.crm-assignment-fields textarea{min-height:64px;resize:vertical;padding-top:9px}.crm-assignment-editor-actions{display:flex;justify-content:flex-end;gap:2px}.crm-assignment-editor .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
-      @media(max-width:900px){.crm-assignment-tab-status{display:none}.crm-assignment-tabs{gap:6px}.crm-assignment-filter.crm-menu-action{padding-inline:8px!important}}
       @media(prefers-reduced-motion:reduce){.crm-assignment-work-card,.crm-assignment-card-face,.crm-assignment-bucket{transition-duration:.01ms!important}}
     `; document.head.appendChild(style);
   }
@@ -223,10 +206,8 @@
   function render() {
     if (!root) return;
     root.classList.add("is-seating");
-    if (!FILTERS.some((filter) => filter.id === selectedFilter)) selectedFilter = "all";
-    const visible = filteredItems(); const openCount = model.commitments.filter((item) => !closed(item)).length; const unassignedCount = model.commitments.filter((item) => stageOf(item) === "unassigned").length;
-    root.innerHTML = `<div class="crm-assignments-frame"><header class="crm-assignment-tabs"><span class="crm-assignment-title">Assignments</span><nav class="crm-assignment-filters" role="tablist" aria-label="Assignment filters">${FILTERS.map((filter) => `<button type="button" role="tab" class="crm-assignment-filter crm-menu-action${filter.id === selectedFilter ? " is-selected" : ""}" data-assignment-filter="${filter.id}" aria-selected="${filter.id === selectedFilter}" aria-pressed="${filter.id === selectedFilter}">${esc(filter.label)}</button>`).join("")}</nav><span class="crm-assignment-tab-status">${openCount} open · ${unassignedCount} unassigned</span><button type="button" class="crm-assignment-new crm-menu-action" data-assignment-action="new" aria-label="Create assignment">+</button></header><section class="crm-assignment-board" aria-label="Assignment pipeline"><div class="crm-assignment-board-clip" tabindex="0" aria-label="Scrollable assignment buckets"><div class="crm-assignment-pipeline">${STAGES.map((stage) => {
-      const items = sorted(visible.filter((item) => stageOf(item) === stage.id)); const expanded = expandedStages.has(expansionKey(stage.id));
+    root.innerHTML = `<div class="crm-assignments-frame"><header class="crm-assignment-tabs"><span class="crm-assignment-title">Assignments</span><button type="button" class="crm-assignment-new crm-menu-action" data-assignment-action="new" aria-label="Create assignment">+</button></header><section class="crm-assignment-board" aria-label="Assignment pipeline"><div class="crm-assignment-board-clip" tabindex="0" aria-label="Scrollable assignment buckets"><div class="crm-assignment-pipeline">${STAGES.map((stage) => {
+      const items = sorted(model.commitments.filter((item) => stageOf(item) === stage.id)); const expanded = expandedStages.has(expansionKey(stage.id));
        return `<section class="crm-assignment-bucket${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-crm-size-key="bucket:assignments:${stage.id}"><div class="crm-assignment-bucket-shell tk-zone${expanded ? " is-stack-expanded" : ""}" data-assignment-stage="${stage.id}" data-stage="${stage.id}" data-card-detail-zone data-crm-size-key="bucket:assignments:${stage.id}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span></header><div class="crm-assignment-card-list${expanded ? " is-expanded" : ""}" data-card-detail-track data-card-detail-clip>${items.length ? items.map(cardHTML).join("") : '<div class="crm-assignment-empty">No work here</div>'}</div></div></section>`;
     }).join("")}</div></div><div class="crm-assignment-hsb" aria-hidden="true"><div class="crm-assignment-hth"></div></div></section></div>`;
     window.crmObjectSizing?.scan?.(root);
@@ -401,15 +382,8 @@
     bucket?.classList.toggle("is-stack-expanded", !!open); list?.classList.toggle("is-expanded", !!open);
     return expandedStages.has(key);
   };
-  function selectFilter(filterId, focus = false) {
-    const next = FILTERS.find((filter) => filter.id === String(filterId)); if (!next) return false;
-    selectedFilter = next.id; if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(FILTER_KEY, selectedFilter); render();
-    if (focus) requestAnimationFrame(() => root?.querySelector(`.crm-assignment-filter[data-assignment-filter="${next.id}"]`)?.focus({ preventScroll:true }));
-    return true;
-  }
   function wire() {
     root.addEventListener("click", (event) => {
-      const filter = event.target.closest("[data-assignment-filter]"); if (filter) { selectFilter(filter.dataset.assignmentFilter); return; }
       const action = event.target.closest("[data-assignment-action]");
       if (action?.dataset.assignmentAction === "new") { openEditor(null, action); return; }
       const card = event.target.closest("[data-assignment-card]"); if (card) openAssignmentDetail(itemById(card.dataset.assignmentCard), card);
@@ -420,12 +394,6 @@
       if (!clip || event.clientX < clip.left || event.clientX > clip.right || event.clientY < clip.bottom || event.clientY > innerHeight) return;
       routeBoardWheel(event);
     }, { passive:false });
-    root.addEventListener("keydown", (event) => {
-      const current = event.target.closest(".crm-assignment-filter"); if (!current || !["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
-      const tabs = [...root.querySelectorAll(".crm-assignment-filter")]; const index = tabs.indexOf(current); if (index < 0) return; event.preventDefault();
-      const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-      selectFilter(tabs[nextIndex]?.dataset.assignmentFilter, true);
-    });
     root.addEventListener("contextmenu", (event) => { const card = event.target.closest("[data-assignment-card]"); if (!card) return; event.preventDefault(); event.stopPropagation(); const item = itemById(card.dataset.assignmentCard); if (item) openMenu(item, card, event.clientX, event.clientY); });
     root.addEventListener("dragstart", (event) => { const card = event.target.closest("[data-assignment-card]"); if (!card) return; dragItemId = card.dataset.assignmentCard; card.classList.add("is-dragging"); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", dragItemId); });
     root.addEventListener("dragend", (event) => { event.target.closest("[data-assignment-card]")?.classList.remove("is-dragging"); root.querySelectorAll(".is-drop-target").forEach((node) => node.classList.remove("is-drop-target")); dragItemId = ""; stopBoardAutoScroll(); });
@@ -441,15 +409,12 @@
   const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); else if (active) requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); }); if (!active) { closeFloating(); stopBoardAutoScroll(); } return api; };
   const baseline = async () => { mount(); if (dirty || !model.commitments.length) await refresh(); render(); root.hidden = !active; return root; };
   const homePreviewState = () => ({
-    selectedFilter,
     expandedStages:[...expandedStages],
     scrollX:clamp(boardScroll.x, boardMinimum(), 0),
   });
   const applyHomePreviewState = async (state = {}) => {
     mount();
     if (dirty || !model.commitments.length) await refresh();
-    const filter = FILTERS.find((item) => item.id === String(state.selectedFilter || ""));
-    if (filter) selectedFilter = filter.id;
     if (Array.isArray(state.expandedStages)) {
       expandedStages = new Set(state.expandedStages.map(String).filter((stage) => !!stageById(stage)));
     }
@@ -463,7 +428,7 @@
   };
   async function miniature() { await baseline(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater"); Object.assign(copy.style, { position:"absolute", left:"50%", top:"50%", width:"1320px", height:"860px", transform:"translate(-50%,-50%) scale(.285)", transformOrigin:"center", pointerEvents:"none" }); return copy; }
   const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; revealStage(stageOf(item)); requestAnimationFrame(() => openAssignmentDetail(item, anchor || root?.querySelector(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`))); return true; };
-  const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), selectFilter, setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), homePreviewState, applyHomePreviewState, isActive:() => active };
+  const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), homePreviewState, applyHomePreviewState, isActive:() => active };
   document.addEventListener("crm:theater-switch", closeFloating);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmAssignments = api;

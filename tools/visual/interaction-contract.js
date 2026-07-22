@@ -124,29 +124,34 @@ async function main() {
     const task = (await window.crmStore.list('tasks', { includeDeleted:false })).records?.[0];
     const ticket = (await window.crmStore.list('tickets', { includeDeleted:false })).records?.find((record) => record.id === 'tkt_bluepeak_mail');
     if (!task || !ticket) return null;
-    const linked = await window.crmDomain.create('commitments', { title:'Home linked to-do contract', kind:'task', status:'open', priority:'urgent', dueAt:new Date().toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'regarding' }] });
+    const session = await window.auth?.session?.().catch?.(() => null);
+    const linked = await window.crmDomain.create('commitments', { title:'Home linked assignment contract', kind:'assignment', assignmentStage:'active', assignee:session?.user?.username || 'rosa', status:'open', priority:'urgent', dueAt:new Date().toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'assignment-context' }] });
     const ticketLinked = await window.crmDomain.create('commitments', { title:'Home linked ticket contract', kind:'ticket-work', status:'open', priority:'urgent', dueAt:new Date().toISOString(), links:[{ entityType:'tickets', recordId:ticket.id, relation:'regarding' }] });
     const orphan = await window.crmDomain.create('commitments', { title:'Orphan Home task contract', kind:'task', status:'open', priority:'urgent', dueAt:new Date().toISOString() });
     const future = new Date(); future.setDate(future.getDate() + 3);
     const futureLinked = await window.crmDomain.create('commitments', { title:'Future linked work contract', kind:'task', status:'open', priority:'urgent', dueAt:future.toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'regarding' }] });
+    const distant = new Date(); distant.setDate(distant.getDate() + 9);
+    const distantLinked = await window.crmDomain.create('commitments', { title:'Distant linked work contract', kind:'task', status:'open', priority:'urgent', dueAt:distant.toISOString(), links:[{ entityType:'tasks', recordId:task.id, relation:'regarding' }] });
     await window.crmHome.ensureHandReady();
-    return linked?.record && ticketLinked?.record && orphan?.record && futureLinked?.record
-      ? { id:linked.record.id, taskId:task.id, ticketId:ticket.id, ticketCommitmentId:ticketLinked.record.id, orphanId:orphan.record.id, futureId:futureLinked.record.id } : null;
+    return linked?.record && ticketLinked?.record && orphan?.record && futureLinked?.record && distantLinked?.record
+      ? { id:linked.record.id, taskId:task.id, ticketId:ticket.id, ticketCommitmentId:ticketLinked.record.id, orphanId:orphan.record.id, futureId:futureLinked.record.id, distantId:distantLinked.record.id } : null;
   });
   if (!linkedHomeTodo) throw new Error('Could not create linked-work Home contract records');
   await page.waitForFunction((id) => !!document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(id)}"]`), { timeout:10000 }, linkedHomeTodo.id);
-  await check('Home hand is only today and overdue linked work', (todo) => {
+  await check('Home hand projects due linked assignments instead of creating an Assignments filter', (todo) => {
     const cards = [...document.querySelectorAll('.crm-home-hand-card')];
     const created = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.id)}"]`);
     const ticket = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.ticketCommitmentId)}"]`);
     const orphan = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.orphanId)}"]`);
     const future = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.futureId)}"]`);
+    const distant = document.querySelector(`.crm-home-hand-card[data-commitment-id="${CSS.escape(todo.distantId)}"]`);
     const seededTicket = document.querySelector('.crm-home-hand-card[data-commitment-id="legacy_commitment_tasks_tk_clear_bluepeak_queue"]');
     const status = window.crmHome.handStatus();
-    return !document.querySelector('.crm-home-todo-toolbar,.crm-home-todo-add') && !orphan && !future
+    return !document.querySelector('.crm-home-todo-toolbar,.crm-home-todo-add') && !orphan && !!future && !distant
       && cards.length > 0 && cards.every((card) => card.dataset.commitmentId && card.dataset.recordEntity && card.dataset.recordId && !card.dataset.commitmentId.startsWith('signal:'))
       && status.targets.length === cards.length && status.targets.every((target) => target?.entityType && target?.recordId)
       && created?.dataset.recordEntity === 'tasks' && created?.dataset.recordId === todo.taskId
+      && future?.dataset.recordEntity === 'tasks' && future?.dataset.recordId === todo.taskId
       && ticket?.dataset.recordEntity === 'tickets' && ticket?.dataset.recordId === todo.ticketId
       && seededTicket?.dataset.recordEntity === 'tickets' && seededTicket?.dataset.recordId === 'tkt_bluepeak_mail';
   }, linkedHomeTodo);
@@ -160,7 +165,7 @@ async function main() {
   await check('Home editing cannot alter the source relationship', () => {
     const form = document.querySelector('.crm-home-todo-popover');
     return form?.getAttribute('aria-label') === 'Edit linked task' && !form.elements.target
-      && form.elements.title.value === 'Home linked to-do contract' && [...form.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
+      && form.elements.title.value === 'Home linked assignment contract' && [...form.querySelectorAll('button')].every((button) => button.classList.contains('crm-menu-action'));
   });
   await page.$eval('.crm-home-todo-popover input[name="title"]', (input) => { input.value = 'Edited linked to-do'; input.dispatchEvent(new Event('input', { bubbles:true })); });
   await page.click('.crm-home-todo-popover button[type="submit"]');
@@ -384,23 +389,26 @@ async function main() {
   await page.evaluate(() => window.crmAssignments.scrollBy(-100000, true));
   await check('Assignments is one real commitment pipeline, not a hand of copied people cards', () => {
     const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
-    const filters = [...(theater?.querySelectorAll('button.crm-assignment-filter.crm-menu-action') || [])];
+    const header = theater?.querySelector('.crm-assignment-tabs');
+    const headerControls = [...(header?.querySelectorAll('button') || [])];
     const buckets = [...(theater?.querySelectorAll('.crm-assignment-bucket') || [])];
     const cards = [...(theater?.querySelectorAll('.crm-assignment-work-card') || [])];
-    const actual = getComputedStyle(filters.find((filter) => !filter.classList.contains('is-selected')));
-    const tabsRect = theater?.querySelector('.crm-assignment-tabs')?.getBoundingClientRect();
+    const stageLabels = buckets.map((bucket) => bucket.querySelector('.tk-zone-title')?.textContent.trim());
+    const tabsRect = header?.getBoundingClientRect();
     const bucketRect = buckets[0]?.getBoundingClientRect();
     const pipeline = theater?.querySelector('.crm-assignment-pipeline'); const clip = theater?.querySelector('.crm-assignment-board-clip');
     const scrollbar = theater?.querySelector('.crm-assignment-hsb'); const thumb = theater?.querySelector('.crm-assignment-hth');
     const board = theater?.querySelector('.crm-assignment-board'); const pipelineRect = pipeline?.getBoundingClientRect(); const clipRect = clip?.getBoundingClientRect(); const scrollbarRect = scrollbar?.getBoundingClientRect();
     const firstCard = cards[0]; const firstCardRect = firstCard?.getBoundingClientRect(); const firstFaceRect = firstCard?.querySelector('.crm-assignment-card-face')?.getBoundingClientRect();
-    const pseudoTab = actual.backgroundColor === 'rgba(0, 0, 0, 0)' && actual.borderTopWidth === '0px' && actual.boxShadow === 'none' && actual.position === 'relative';
     const leftShadow = Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-left') || '0'); const rightShadow = Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-right') || '0');
     const ids = cards.map((card) => card.dataset.assignmentCard);
-    return { ok: filters.length === 4 && buckets.length === 5 && cards.length === window.crmAssignments.items().length
+    return { ok: buckets.length === 5 && cards.length === window.crmAssignments.items().length
       && cards.every((card) => card.dataset.recordEntity === 'commitments' && card.dataset.recordId === card.dataset.assignmentCard)
-      && new Set(ids).size === ids.length && filters.filter((filter) => filter.classList.contains('is-selected')).length === 1 && filters.every((filter) => filter.getAttribute('role') === 'tab')
-      && pseudoTab && !theater.querySelector('.crm-assignment-rail,aside,.crm-assignment-hand,.crm-assignment-hand-card,.crm-assignment-source-pool')
+      && new Set(ids).size === ids.length && JSON.stringify(stageLabels) === JSON.stringify(['Unassigned','Assigned','In progress','Blocked','Done'])
+      && headerControls.length === 1 && headerControls[0]?.matches('.crm-assignment-new[data-assignment-action="new"]')
+      && !theater.querySelector('.crm-assignment-filters,.crm-assignment-filter,.crm-assignment-tab-status,[role="tablist"]')
+      && !['All work','Assigned to me','Due soon'].some((label) => header?.textContent.includes(label))
+      && !theater.querySelector('.crm-assignment-rail,aside,.crm-assignment-hand,.crm-assignment-hand-card,.crm-assignment-source-pool')
       && !!tabsRect && !!bucketRect && bucketRect.top >= tabsRect.bottom + 8 && !!clipRect
       && bucketRect.left - clipRect.left >= 20 && bucketRect.left - clipRect.left <= 32 && tabsRect.left > bucketRect.left + 20
       && getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize === '17px'
@@ -415,12 +423,8 @@ async function main() {
       && !!firstCardRect && !!firstFaceRect && Math.abs(firstCardRect.width - 185) < 1 && Math.abs(firstCardRect.height - 279) < 1
       && Math.abs(firstFaceRect.width - firstCardRect.width) < 1 && Math.abs(firstFaceRect.height - firstCardRect.height) < 1
       && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head'),
-      detail: JSON.stringify({ pseudoTab, tabsBottom:tabsRect?.bottom, bucketTop:bucketRect?.top, bucketInset:bucketRect&&clipRect?bucketRect.left-clipRect.left:null, scrollbarInset:scrollbarRect&&clipRect?[scrollbarRect.left-clipRect.left,clipRect.right-scrollbarRect.right]:null, shadows:[leftShadow,rightShadow], cards:cards.length, unique:new Set(ids).size, overflow:(pipeline?.scrollWidth || 0) - (clip?.clientWidth || 0), card:firstCardRect && [firstCardRect.width, firstCardRect.height] }) };
+      detail: JSON.stringify({ stageLabels, headerControls:headerControls.length, tabsBottom:tabsRect?.bottom, bucketTop:bucketRect?.top, bucketInset:bucketRect&&clipRect?bucketRect.left-clipRect.left:null, scrollbarInset:scrollbarRect&&clipRect?[scrollbarRect.left-clipRect.left,clipRect.right-scrollbarRect.right]:null, shadows:[leftShadow,rightShadow], cards:cards.length, unique:new Set(ids).size, overflow:(pipeline?.scrollWidth || 0) - (clip?.clientWidth || 0), card:firstCardRect && [firstCardRect.width, firstCardRect.height] }) };
   });
-  await page.focus(`${assignmentScope} .crm-assignment-filter.is-selected`); await page.keyboard.press('ArrowRight');
-  await page.waitForFunction(() => document.activeElement?.classList.contains('crm-assignment-filter') && document.activeElement?.classList.contains('is-selected'));
-  await check('Assignment pseudo-tabs support horizontal keyboard navigation', () => document.activeElement?.dataset.assignmentFilter === 'mine' && document.activeElement?.getAttribute('aria-selected') === 'true');
-  await page.keyboard.press('ArrowLeft'); await page.waitForFunction(() => document.activeElement?.dataset.assignmentFilter === 'all');
   const assignmentScrollBefore = await page.evaluate(() => window.crmAssignments.scrollState());
   const assignmentGutterPoint = await page.evaluate(() => {
     const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect();
@@ -453,14 +457,6 @@ async function main() {
     return { ok:state.x < -30 && state.x >= state.min - 1 && !!bar && !!thumb && thumb.left > bar.left + 20 && thumb.right <= bar.right + 1, detail:JSON.stringify({ state, thumbLeft:thumb && bar ? thumb.left-bar.left : null }) };
   });
   await page.evaluate(() => window.crmAssignments.scrollBy(-100000, true));
-  await page.click(`${assignmentScope} .crm-assignment-filter[data-assignment-filter="unassigned"]`);
-  await check('Assignment filters change scope without manufacturing another card collection', () => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const cards = [...(theater?.querySelectorAll('.crm-assignment-work-card') || [])];
-    return theater?.querySelector('.crm-assignment-filter.is-selected')?.dataset.assignmentFilter === 'unassigned'
-      && cards.every((card) => card.closest('[data-assignment-stage]')?.dataset.assignmentStage === 'unassigned')
-      && new Set(cards.map((card) => card.dataset.assignmentCard)).size === cards.length;
-  });
-  await page.click(`${assignmentScope} .crm-assignment-filter[data-assignment-filter="all"]`);
 
   const assignmentMove = await page.evaluate(async () => {
     const item = window.crmAssignments.items().find((candidate) => !['completed','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
@@ -706,27 +702,28 @@ async function main() {
   const companyHistoryViewport = await page.evaluate(() => window.peopleCards.zoneScrollState());
   await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
-  await check('Viewport navigation places Back and Forward symmetrically around Home', () => {
-    const cluster=document.querySelector('.crm-module-switch');const back=cluster?.querySelector('[data-crm-history-back]');const home=cluster?.querySelector('.crm-home-control');const forward=cluster?.querySelector('[data-crm-history-forward]');
-    const rects=[back,home,forward].map((button)=>button?.getBoundingClientRect());const state=window.crmDeskTransit.historyState();
-    return { ok:!!cluster&&!cluster.hidden&&cluster.tagName==='NAV'&&back?.ariaLabel==='Back'&&home?.ariaLabel==='Return Home'&&forward?.ariaLabel==='Forward'
-      &&rects.every(Boolean)&&rects[0].right<rects[1].left&&rects[1].right<rects[2].left&&!back.disabled&&forward.disabled&&state.canBack&&!state.canForward,
-      detail:JSON.stringify({buttons:rects.map((rect)=>rect&&[rect.left,rect.width]),state:{index:state.index,length:state.length,canBack:state.canBack,canForward:state.canForward},hidden:cluster?.hidden}) };
+  await check('Home remains visually free of viewport navigation even when Back history exists', () => {
+    const cluster=document.querySelector('.crm-module-switch');const state=window.crmDeskTransit.historyState();
+    return { ok:!!cluster&&cluster.hidden&&state.canBack&&!state.canForward,
+      detail:JSON.stringify({state:{index:state.index,length:state.length,canBack:state.canBack,canForward:state.canForward},hidden:cluster?.hidden}) };
   });
-  await page.click('[data-crm-history-back]');
+  await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:3 })));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
-  await check('Back returns to the exact previous room and enables Forward', (expected) => {
-    const state=window.crmDeskTransit.historyState();const viewport=window.peopleCards.zoneScrollState();return document.body.dataset.crmModule==='people'&&state.canForward&&!document.querySelector('[data-crm-history-forward]')?.disabled&&Math.abs(viewport.x-expected.x)<1;
+  await check('Back restores the exact room viewport and reveals the symmetric room controls', (expected) => {
+    const cluster=document.querySelector('.crm-module-switch');const back=cluster?.querySelector('[data-crm-history-back]');const home=cluster?.querySelector('.crm-home-control');const forward=cluster?.querySelector('[data-crm-history-forward]');
+    const rects=[back,home,forward].map((button)=>button?.getBoundingClientRect());const state=window.crmDeskTransit.historyState();const viewport=window.peopleCards.zoneScrollState();
+    return document.body.dataset.crmModule==='people'&&!cluster.hidden&&cluster.tagName==='NAV'&&state.canForward&&!forward.disabled&&Math.abs(viewport.x-expected.x)<1
+      &&back?.ariaLabel==='Back'&&home?.ariaLabel==='Return Home'&&forward?.ariaLabel==='Forward'&&rects.every(Boolean)&&rects[0].right<rects[1].left&&rects[1].right<rects[2].left;
   }, companyHistoryViewport);
   await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:4 })));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
-  await check('Physical Mouse 5 follows the same Forward viewport history', () => document.body.dataset.crmModule==='home'&&window.crmDeskTransit.historyState().canBack);
+  await check('Physical Mouse 5 follows Forward history without exposing controls at Home', () => document.body.dataset.crmModule==='home'&&document.querySelector('.crm-module-switch')?.hidden&&window.crmDeskTransit.historyState().canBack);
   await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:3 })));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
   await check('Physical Mouse 4 follows the same Back viewport history', () => document.body.dataset.crmModule==='people'&&window.crmDeskTransit.historyState().canForward);
   await page.click('[data-crm-history-forward]');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
-  await check('Forward returns to the viewport that Back just left without going deeper', () => document.body.dataset.crmModule==='home'&&!window.crmDeskTransit.historyState().canForward);
+  await check('Forward returns Home without leaving the room controls instantiated onscreen', () => document.body.dataset.crmModule==='home'&&document.querySelector('.crm-module-switch')?.hidden&&!window.crmDeskTransit.historyState().canForward);
   await page.evaluate(() => window.crmHomePreviews?.waitForIdle?.());
   await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:3 })));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit.isBusy(), { timeout:10000 });

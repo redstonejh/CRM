@@ -7,7 +7,7 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { minFps: 95, maxP95Ms: 18, maxFrameMs: 50, maxOver34Ms: 1 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v40';
+const HOME_PREVIEW_VERSION = 'filtered-home-v41';
 const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
@@ -100,10 +100,11 @@ async function startEndpointProbe(page, label, room, direction) {
         const value = node.getBoundingClientRect();
         return [value.x, value.y, value.width, value.height].map((number) => Number(number.toFixed(3)));
       };
-      const signature = (nodes) => JSON.stringify(nodes.slice(0, 80).map((node) => [
-        node.dataset.id || node.dataset.recordId || node.dataset.stage || node.dataset.assignmentCommitment || node.className,
-        rect(node), getComputedStyle(node).transform, getComputedStyle(node).opacity,
-      ]));
+      const signature = (nodes) => JSON.stringify(nodes.slice(0, 80).map((node) => {
+        const style = getComputedStyle(node);
+        return [node.dataset.id || node.dataset.recordId || node.dataset.stage || node.dataset.assignmentCommitment || node.className,
+          rect(node), style.transform, style.opacity];
+      }));
       const onSettled = (event) => {
         if ((event.detail?.key || '') !== (motionDirection === 'in' ? config.key : 'home')) return;
         probe.settled = true;
@@ -123,9 +124,7 @@ async function startEndpointProbe(page, label, room, direction) {
         const targetRect = sampleAlignment ? rect(target) : null; const expanderRect = sampleAlignment ? rect(expander) : null;
         const theater = materializing && document.body.dataset.crmModule === config.key
           ? [...document.querySelectorAll(`[data-crm-theater="${theaterName}"]`)].find((node) => !node.hidden) : null;
-        const objects = theater ? [theater, ...theater.querySelectorAll(objectSelector)].filter((node) => {
-          const bounds = node.getBoundingClientRect(); return bounds.width > 0 && bounds.height > 0;
-        }) : [];
+        const objects = theater ? [theater, ...theater.querySelectorAll(objectSelector)] : [];
         const homeNodes = homeHandoff && root ? [root.querySelector('.crm-home-grid'), ...root.querySelectorAll('.crm-home-grid > .crm-home-bucket, .crm-home-priority-hand, .crm-home-hand-card')].filter(Boolean) : [];
         const snapshot = root?.querySelector?.(':scope > .crm-home-motion-snapshot');
         const homeBucket = homeHandoff ? root?.querySelector?.('.crm-home-grid > .crm-home-bucket') : null;
@@ -333,9 +332,9 @@ async function main() {
     win?.emit('app-command',{preventDefault(){}},'browser-forward');
   });
   await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.() && !window.crmDeskTransit?.canGoForward?.(), null, { timeout:15000 });
-  const nativeForwardState=await page.evaluate(()=>({module:document.body.dataset.crmModule,history:window.crmDeskTransit.historyState(),buttons:document.querySelectorAll('.crm-module-switch button').length}));
+  const nativeForwardState=await page.evaluate(()=>({module:document.body.dataset.crmModule,history:window.crmDeskTransit.historyState(),clusterHidden:document.querySelector('.crm-module-switch')?.hidden,buttons:document.querySelectorAll('.crm-module-switch button').length}));
   const nativeHistory={back:nativeBackState,forward:nativeForwardState};
-  if(nativeBackState.clusterHidden||nativeBackState.forwardDisabled||nativeBackState.module!=='home'||nativeForwardState.module!=='people'||nativeForwardState.buttons!==3)throw new Error(`Native mouse history commands failed: ${JSON.stringify(nativeHistory)}`);
+  if(!nativeBackState.clusterHidden||nativeBackState.forwardDisabled||nativeBackState.module!=='home'||nativeForwardState.module!=='people'||nativeForwardState.clusterHidden||nativeForwardState.buttons!==3)throw new Error(`Native mouse history commands failed: ${JSON.stringify(nativeHistory)}`);
   await page.evaluate(()=>window.crmDeskTransit.driveTo('home'));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.(), null, { timeout:15000 });
   const initialPreviewTime = Math.max(...await page.evaluate(() => window.crmHome.previewStatus().map((item) => item.capturedAt || 0)));
@@ -554,7 +553,8 @@ async function main() {
     let companyRailMotion=null;
     if(room.key==='people'){
       await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
-      companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,attributes:true,attributeFilter:['data-zone-lod']});const deltas=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';})});};requestAnimationFrame(tick)}));
+      await page.evaluate(()=>window.crmHomePreviews?.waitForIdle?.());await sleep(120);
+      companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{document.activeElement?.blur?.();const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,attributes:true,attributeFilter:['data-zone-lod']});const deltas=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';})});};requestAnimationFrame(tick)}));
       if(companyRailMotion.frames<60||companyRailMotion.fps<80||companyRailMotion.p95>20.5||companyRailMotion.max>55||companyRailMotion.over34>2||companyRailMotion.longTasks.length||companyRailMotion.mutations>28||companyRailMotion.parked!==6||companyRailMotion.deferred!==150||!companyRailMotion.hidden)throw new Error(`People horizontal LOD is not compositor-stable: ${JSON.stringify(companyRailMotion)}`);
       await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
     }
@@ -581,8 +581,8 @@ async function main() {
           if (selected && stage) { api.setStageExpanded(selected, stage, !api.expandedStages().includes(`${selected}:${stage}`)); changed = true; }
         }
       } else if (key === 'assignments') {
-        const api = window.crmAssignments; const current = document.querySelector('.crm-assignment-filter.is-selected')?.dataset.assignmentFilter || 'all';
-        api.selectFilter(current === 'unassigned' ? 'all' : 'unassigned');
+        const api = window.crmAssignments; const stage = document.querySelector('[data-crm-theater="assignments"] .crm-assignment-bucket')?.dataset.assignmentStage;
+        if (stage) api.setStageExpanded(stage, !api.expandedStages().includes(stage));
         api.scrollBy(190, true); changed = true;
       }
       return { changed };

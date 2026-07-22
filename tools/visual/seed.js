@@ -16,7 +16,9 @@ function iso(daysFromNow, hour = 10) {
   return d.toISOString();
 }
 function day(daysFromNow) {
-  return new Date(Date.now() + daysFromNow * DAY).toISOString().slice(0, 10);
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function rosaDataset() {

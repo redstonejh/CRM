@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v43';
+const HOME_PREVIEW_VERSION = 'filtered-home-v44';
 const homePreviewCache = new Map();
 const homePreviewViewStates = new Map();
 const homePreviewViewStateGenerations = new Map();
@@ -283,7 +283,7 @@ async function prepareCapture(win, matte = null, options = {}) {
     .crm-module-switch,.crm-viewport-date,.db-loading { display:none !important; }
     .crm-home-title-glass { display:none !important; }
     ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
-    ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { border-color:transparent !important; background:transparent !important; -webkit-backdrop-filter:none !important; backdrop-filter:none !important; box-shadow:none !important; }' : ''}
+    ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }' : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
@@ -477,9 +477,9 @@ async function captureHomeMotionSnapshot(worker) {
   await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
   const layoutSignature = await worker.webContents.executeJavaScript(`window.crmHome?.motionLayoutSignature?.() || ''`, true);
   if (!layoutSignature) throw new Error('Home motion layout signature unavailable');
-  // Capture only Home's objects. The fixed workspace backdrop and the tile
-  // glass are deliberately absent so the camera never scales a second surface.
-  // Preserve the resting preview blur to keep the return endpoint continuous.
+  // Capture Home's objects plus its translucent acrylic coat, never the fixed
+  // workspace backdrop or a live backdrop filter. One cached texture can then
+  // carry peripheral material without re-rasterizing moving glass every frame.
   const foreground = await captureForeground(worker, { preserveHomePreviewFilter: true, homeMotionObjectsOnly: true });
   if (!foreground?.image || foreground.image.isEmpty()) return null;
   const size = foreground.image.getSize();
@@ -492,7 +492,7 @@ async function captureHomeMotionSnapshot(worker) {
   homeMotionSnapshot = {
     version: HOME_PREVIEW_VERSION, width: size.width, height: size.height,
     capturedAt: Date.now(), src: foreground.image.toDataURL(), layoutSignature,
-    foregroundBounds: foreground.bounds, backgroundMode: 'shared', variants,
+    foregroundBounds: foreground.bounds, backgroundMode: 'shared', materialMode: 'cached-acrylic', variants,
   };
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:motion-changed', homeMotionSnapshot);
   return homeMotionSnapshot;

@@ -7,7 +7,7 @@
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v43";
+  const HOME_PREVIEW_VERSION = "filtered-home-v44";
   const DAY_MS = 86400000;
   const HOME_HAND_WINDOW_DAYS = 7;
   const HAND_LIMIT = 7;
@@ -100,10 +100,16 @@
       /* The expander owns the selected room during travel. One precomposed
          variant carries every other Home object with the selected tile cut
          transparent; the full Home raster is reserved for the endpoint. */
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket.is-camera-target{
-        border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket>.crm-home-preview{
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket:not(.is-camera-target)>.crm-home-preview{
         visibility:hidden}
+      /* The real selected tile and the full-size lid trade opacity while their
+         geometry is identical. Its acrylic, preview and shadow therefore have
+         one continuous owner instead of disappearing and being rebuilt. */
+      .crm-home-surface[data-level="1"] .crm-home-level:first-child>.crm-home-grid>.crm-home-bucket.is-camera-target{opacity:0}
+      .crm-home-surface.crm-home-camera-expanding .crm-home-level:first-child>.crm-home-grid>.crm-home-bucket.is-camera-target{
+        opacity:0;transition:opacity 70ms ease!important}
+      .crm-home-surface.crm-home-camera-contracting .crm-home-level:first-child>.crm-home-grid>.crm-home-bucket.is-camera-target{
+        opacity:1;transition:opacity 70ms ease 390ms!important}
       .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style;
         grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
       .crm-home-title-layer{position:absolute;z-index:4;display:grid;pointer-events:none;contain:layout style;
@@ -178,19 +184,22 @@
          native app-region map or its temporary rectangle can cancel (and on
          Windows, outlive) the persistent title-bar drag strip. */
       .crm-home-bucket.crm-home-expander{position:absolute;z-index:5;pointer-events:none;transform-origin:0 0;
-        overflow:visible;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
+        overflow:visible;border:0!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;
         will-change:transform,opacity;backface-visibility:hidden}
+      .crm-home-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;
+        border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));
+        -webkit-backdrop-filter:none;backdrop-filter:none;
+        transform:translateZ(0)}
+      .crm-home-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));
+        border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
+        opacity:0;transition:opacity var(--fractal-camera-morph-ms,460ms) var(--fractal-camera-ease,cubic-bezier(.22,1,.26,1))}
+      .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic:after{opacity:1}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket:not(.is-camera-target){transition:none!important;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket.is-camera-target{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3}
-      /* Tile material cannot be scaled at camera speed and would turn adjacent
-         tiles into dark edge bands. The object-only raster retains their exact
-         spatial context while one fixed wallpaper remains visible everywhere. */
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{
-        border-color:transparent!important;background:transparent!important;
-        -webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
       .crm-home-expander .crm-home-title-glass{display:none}
       .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transform:none;opacity:1;transition:none}
@@ -883,9 +892,15 @@
     bucket.className = "crm-home-bucket crm-home-expander";
     bucket.dataset.module = module.key;
     if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
+    if (!bucket.querySelector(":scope > .crm-home-transition-acrylic")) {
+      const acrylic = document.createElement("span");
+      acrylic.className = "crm-home-transition-acrylic";
+      acrylic.setAttribute("aria-hidden", "true");
+      bucket.prepend(acrylic);
+    }
     // One transparent, full-resolution room texture carries its objects and
-    // shadows. The fixed workspace wallpaper remains the only background
-    // paint throughout the camera move.
+    // shadows above a live acrylic lens. The fixed workspace wallpaper remains
+    // the only background paint throughout the camera move.
     mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key));
     return bucket;
   };
@@ -1093,6 +1108,6 @@
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
-    ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||""}),
+    ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||"",materialMode:motionSnapshot?.materialMode||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};
 })();

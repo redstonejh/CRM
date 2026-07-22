@@ -252,6 +252,21 @@ async function main() {
   await sleep(100);
   await check('Home-to-room handoff remains inside the original camera', () => document.body.dataset.crmModule === 'home'
     && window.crmHomeCamera?.isTransitioning?.() && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
+  await check('The moving tile keeps one acrylic coat over the shared wallpaper', () => {
+    const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+    const acrylic = expander?.querySelector(':scope > .crm-home-transition-acrylic');
+    const style = acrylic && getComputedStyle(acrylic); const rect = acrylic?.getBoundingClientRect(); const lid = expander?.getBoundingClientRect();
+    const status = window.crmHome?.motionStatus?.();
+    const state = { ready:status?.ready, materialMode:status?.materialMode, background:style?.backgroundImage,
+      opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
+      exact:!!expander?.querySelector('.crm-home-preview-exact'), foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
+      delta:rect&&lid?Math.max(Math.abs(rect.x-lid.x),Math.abs(rect.y-lid.y),Math.abs(rect.width-lid.width),Math.abs(rect.height-lid.height)):null };
+    return { ok:!!style && (!status?.ready || status.materialMode === 'cached-acrylic')
+      && style.backgroundImage.includes('rgba(22, 26, 36, 0.62)') && Number(style.opacity) > .99
+      && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
+      && !expander.querySelector('.crm-home-preview-exact') && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
+      && !!rect && !!lid && state.delta <= 1, detail:JSON.stringify(state) };
+  });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-in', () => {
     const root = window.crmHomeCamera?.layers?.()[0];
     const selected = root?.querySelector('.crm-home-bucket[data-module="people"]')?.getBoundingClientRect();
@@ -1248,19 +1263,22 @@ async function main() {
   await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-bucket') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
   await check('Project tiles support spatial keyboard navigation without moving an already-visible rail', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project') && document.querySelector('.crm-project-gallery-scroll')?.scrollLeft === 0);
   const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
-    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = [];
+    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = []; let acrylicFrames = 0; let objectFrames = 0;
     if (!tile || !source) { resolve(null); return; }
     tile.click();
     const tick = () => {
       const layer = window.crmProjectsCamera?.layers?.()[1] || document.querySelector('.crm-planner-project-world'); const rect = layer?.getBoundingClientRect();
       if (rect) samples.push([rect.x, rect.y, rect.width, rect.height]);
+      const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');
+      if(acrylic&&Number(getComputedStyle(acrylic).opacity)>.01&&getComputedStyle(acrylic).backgroundImage!=='none')acrylicFrames+=1;
+      if((overlay&&Number(getComputedStyle(overlay).opacity)>.01)||(live&&Number(getComputedStyle(live).opacity)>.01))objectFrames+=1;
       if (window.crmProjectsCamera?.isTransitioning?.()) { requestAnimationFrame(tick); return; }
       const stable = []; let frame = 0;
       const seat = () => {
         stable.push(JSON.stringify([...document.querySelectorAll('.crm-planner-bucket')].map((bucket) => { const bounds=bucket.getBoundingClientRect(); return [bounds.x,bounds.y,bounds.width,bounds.height]; })));
         if (++frame < 10) requestAnimationFrame(seat);
         else resolve({ source:[source.x,source.y,source.width,source.height], samples, unique:new Set(samples.map((sample) => sample.map((value) => value.toFixed(1)).join(','))).size,
-          stable:new Set(stable).size, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
+          stable:new Set(stable).size, acrylicFrames, objectFrames, wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
       };
       requestAnimationFrame(seat);
     };
@@ -1268,11 +1286,11 @@ async function main() {
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
     const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1);
-    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1
+    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= 8 && probe.objectFrames >= 8 && probe.wallpapers === 1
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,
-      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,source:probe?.source,last}) };
+      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,acrylicFrames:probe?.acrylicFrames,objectFrames:probe?.objectFrames,wallpapers:probe?.wallpapers,source:probe?.source,last}) };
   }, plannerNestedDive);
   await check('A project tile zooms into its real aligned custom pipeline', (projectId) => {
     const project = window.crmPlanner.projects().find((item) => item.id === projectId); const buckets = [...document.querySelectorAll('.crm-planner-bucket')];

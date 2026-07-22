@@ -102,7 +102,30 @@
       .crm-planner-level{position:absolute;inset:0;transform-origin:0 0}.crm-planner-warm,.crm-planner-warm *{pointer-events:none!important}.crm-planner-contracting{pointer-events:none!important}
       .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{--crm-project-shadow-left:0;--crm-project-shadow-right:0;--crm-project-rail-inset:clamp(18px,2vw,28px);position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;min-width:0;min-height:0;overflow:hidden;-webkit-app-region:no-drag}.crm-project-gallery-shell:before,.crm-project-gallery-shell:after{content:"";position:absolute;z-index:5;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-project-gallery-shell:before{left:0;opacity:var(--crm-project-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-shell:after{right:0;opacity:var(--crm-project-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-scroll{position:absolute;inset:0 0 20px;min-width:0;min-height:0;overflow-x:auto;overflow-y:hidden;padding:0;box-sizing:border-box;scrollbar-width:none;overscroll-behavior-inline:contain;outline:0}.crm-project-gallery-scroll::-webkit-scrollbar{display:none}.crm-project-gallery-scroll:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}.crm-project-gallery-canvas{position:relative;height:100%;min-width:100%}
       .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-auto-flow:column;gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}.crm-project-gallery-hsb{position:absolute;z-index:6;left:var(--crm-project-rail-inset);right:var(--crm-project-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-project-gallery-hsb.is-on{opacity:1;pointer-events:auto}.crm-project-gallery-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.crm-project-gallery-hth:hover{background:rgba(255,255,255,.88)}.crm-project-gallery-hth:active{cursor:grabbing;background:#fff}
-      .crm-planner-project-live{position:absolute;inset:0;z-index:1}.crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}.crm-planner-surface.crm-project-camera-moving .crm-project-title-grid{visibility:hidden}.crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket{transition:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+      .crm-planner-project-live{position:absolute;inset:0;z-index:1}
+      .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}
+      .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:1;border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));-webkit-backdrop-filter:none;backdrop-filter:none;transform:translateZ(0);will-change:opacity}
+      .crm-project-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);opacity:0;transition:opacity var(--fractal-camera-morph-ms,460ms) var(--fractal-camera-ease,cubic-bezier(.22,1,.26,1))}
+      .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic:after{opacity:1}
+      .crm-planner-project-world[data-fractal-frame="viewport"]>.crm-project-transition-acrylic{opacity:0}
+      @keyframes crm-project-live-in{0%,76%{opacity:.001}100%{opacity:1}}
+      @keyframes crm-project-texture-out{0%,76%{opacity:1}100%{opacity:0}}
+      @keyframes crm-project-live-out{0%{opacity:1}24%,100%{opacity:.001}}
+      @keyframes crm-project-texture-in{0%{opacity:0}24%,100%{opacity:1}}
+      .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-in var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview,
+      .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-texture-out var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-out var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview,
+      .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-texture-in var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0}
+      .crm-planner-surface.crm-project-camera-expanding .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0;transition:opacity 90ms ease!important}
+      .crm-planner-surface.crm-project-camera-contracting .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:1;transition:opacity 110ms ease 350ms!important}
+      .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-title-grid{opacity:0}
+      .crm-planner-surface.crm-project-camera-expanding .crm-project-title-grid{opacity:0;transition:opacity 90ms ease}
+      .crm-planner-surface.crm-project-camera-contracting .crm-project-title-grid{opacity:1;transition:opacity 110ms ease 350ms}
+      .crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+      .crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket:not(.is-camera-target){transition:none!important}
       .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
       .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 1 auto;min-width:0;max-width:min(34vw,430px);font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.4);font-size:var(--crm-type-meta,10px);white-space:nowrap;overflow:hidden}.crm-planner-project-context span{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context i{width:2px;height:2px;border-radius:50%;background:currentColor;opacity:.65}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
       .crm-planner-project-back.crm-menu-action{flex:0 0 auto;height:30px;padding:0 8px!important;color:rgba(255,255,255,.5)!important;font-size:var(--crm-type-caption,11px)!important}.crm-planner-project-separator{color:rgba(255,255,255,.24);font-size:13px}.crm-planner-world-spacer{flex:1 1 auto;min-width:0}.crm-planner-world-map{flex:0 1 130px;display:flex;height:3px;gap:2px}.crm-planner-world-map i{flex:1 1 0;border-radius:2px;background:rgba(214,229,248,.12)}.crm-planner-world-map i[data-occupied="true"]{background:rgba(160,193,234,.32)}.crm-planner-world-map i[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.38)}
@@ -308,24 +331,44 @@
   }
   function ensureProjectTransitionPreview(layer, project) {
     if (!layer || !project || window.crmHomePreviews?.isCaptureWorker) return null;
-    const preview = projectPreviews.get(project.id); if (!preview?.exactSrc) return null;
+    const preview = projectPreviews.get(project.id); if (!preview?.foregroundSrc) return null;
     let image = layer.querySelector(":scope > .crm-project-transition-preview");
     if (!image) {
       image = document.createElement("img"); image.className = "crm-project-transition-preview";
       image.alt = ""; image.draggable = false; image.decoding = "sync"; layer.appendChild(image);
     }
-    if (image.src !== preview.exactSrc) image.src = preview.exactSrc;
+    layer.classList.add("has-transition-preview");
+    // Keep the workspace backdrop singular. The moving layer carries only the
+    // project's transparent objects; its sibling acrylic samples the same live
+    // wallpaper that remains fixed behind both source and destination.
+    if (image.src !== preview.foregroundSrc) image.src = preview.foregroundSrc;
     return image;
   }
   function revealProjectWorld(layer) {
-    const image = layer?.querySelector?.(":scope > .crm-project-transition-preview"); if (!image) return;
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!image.isConnected) return; image.style.transition = "opacity 112ms linear"; image.style.opacity = "0";
-    }));
+    const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
+    const live = layer?.querySelector?.(":scope > .crm-planner-project-live"); if (!image || !live) return;
+    // The final camera frames already crossfade this predecoded texture into
+    // the live world. Seat those exact endpoint values in the same task so
+    // nothing continues materializing after the transform has stopped.
+    live.style.transition = "none"; live.style.opacity = "1";
+    image.style.transition = "none"; image.style.opacity = "0";
   }
   function coverProjectWorld(layer, project) {
     const image = ensureProjectTransitionPreview(layer, project); if (!image) return;
-    image.style.transition = "none"; image.style.opacity = "1";
+    const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
+    // Contract begins from the real settled world. Its first camera frames
+    // crossfade into the cached object/acrylic composition while both remain
+    // geometrically identical.
+    if (live) { live.style.transition = "none"; live.style.opacity = "1"; }
+    image.style.transition = "none"; image.style.opacity = "0";
+  }
+  function settleProjectWorld(layer) {
+    const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
+    const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
+    const acrylic = layer?.querySelector?.(":scope > .crm-project-transition-acrylic");
+    if (image) { image.style.transition = "none"; image.style.opacity = "0"; }
+    if (live) { live.style.transition = "none"; live.style.opacity = "1"; }
+    if (acrylic) acrylic.style.opacity = "";
   }
   function renderGalleryLayer(layer) {
     if (!layer) return;
@@ -378,7 +421,16 @@
   }
   function buildProjectWorld(project) {
     const layer = document.createElement("div"); layer.className = "crm-planner-level crm-planner-project-world"; layer.dataset.projectId = project?.id || "";
+    const acrylic=document.createElement("span"); acrylic.className="crm-project-transition-acrylic"; acrylic.setAttribute("aria-hidden","true"); layer.appendChild(acrylic);
     const live=document.createElement("div"); live.className="crm-planner-project-live"; live.innerHTML=projectWorldHTML(project); layer.appendChild(live); ensureProjectTransitionPreview(layer, project); return layer;
+  }
+  function markProjectCameraTarget(target, context) {
+    const gallery = context?.layers?.[0];
+    gallery?.querySelectorAll?.(".crm-project-bucket.is-camera-target")?.forEach?.((tile) => tile.classList.remove("is-camera-target"));
+    target?.classList?.add?.("is-camera-target");
+  }
+  function clearProjectCameraTarget(context) {
+    context?.layers?.[0]?.querySelectorAll?.(".crm-project-bucket.is-camera-target")?.forEach?.((tile) => tile.classList.remove("is-camera-target"));
   }
   function render() {
     if (!camera) return;
@@ -873,12 +925,15 @@
       warmClass:"crm-planner-warm", contractingClass:"crm-planner-contracting", active:false, maxLevel:1, margin:0,
       morphMs:460, expandFadeMs:90, belowFadeMs:90, contractFadeMs:110,
       keepBelowVisibleDuringTransition:true, precomposeTransitions:true, lockInputDuringTransitions:true,
+      expandFadeMs:90, contractFadeMs:110,
       contractExpanderAbove:true, holdContractEndpointFrame:true,
       measureTop:() => 0, ensureStyles, buildRoot:buildProjectGallery, layout:layoutProjects,
-      prepareTarget:(target) => {
+      prepareTarget:(target, context) => {
         const project = projectById(target?.dataset?.plannerProject); if (!project) return;
+        markProjectCameraTarget(target, context);
         selectedId = project.id; writeSelected(); announce("project-opened");
       },
+      prepareJump:(_expander, target, context) => markProjectCameraTarget(target, context),
       buildExpander:(target) => buildProjectWorld(projectById(target?.dataset?.plannerProject)),
       targetFromEvent:(event, context) => {
         if (context.level !== 0 || event.target?.closest?.("[data-planner-action]")) return null;
@@ -895,16 +950,18 @@
       keyOf:(target) => String(target?.dataset?.plannerProject || ""),
       onTransitionStart:(direction, context) => {
         context.surface?.classList.add("crm-project-camera-moving");
+        context.surface?.classList.toggle("crm-project-camera-expanding", direction === "expand");
+        context.surface?.classList.toggle("crm-project-camera-contracting", direction === "contract");
         if (direction === "contract") coverProjectWorld(context.layers[1], selectedProject());
       },
       onTransitionEnd:(direction, context) => {
-        context.surface?.classList.remove("crm-project-camera-moving");
+        context.surface?.classList.remove("crm-project-camera-moving", "crm-project-camera-expanding", "crm-project-camera-contracting");
         if (direction === "expand") {
           revealProjectWorld(context.layers[1]);
           const project = selectedProject(); if (project) wirePlannerScroller(project.id, context.layers[1]);
           window.crmObjectSizing?.scan?.(context.layers[1]);
         }
-        if (direction === "contract") closeFloating();
+        if (direction === "contract") { clearProjectCameraTarget(context); closeFloating(); }
       },
       onRootBack:() => window.crmDeskTransit?.driveTo?.("home"),
     });
@@ -966,6 +1023,7 @@
       const tile = camera?.layers?.()[0]?.querySelector?.(`.crm-project-bucket[data-planner-project="${cssValue(selectedId)}"]`);
       if (tile) {
         camera.jumpTo(tile); await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        settleProjectWorld(camera.layers()[1]);
         window.crmObjectSizing?.scan?.(camera.layers()[1]); wirePlannerScroller(selectedId, camera.layers()[1]);
       }
     }

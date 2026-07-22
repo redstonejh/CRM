@@ -49,6 +49,22 @@
       const sy = lr.height / layer.offsetHeight;
       return { x: (er.left - lr.left) / sx, y: (er.top - lr.top) / sy, w: er.width / sx, h: er.height / sy };
     };
+    // Transition material is deliberately separate from the captured room
+    // objects. These metrics let a live acrylic layer keep the source tile's
+    // exact corner geometry while the camera itself remains transform-only.
+    const setSourceGeometry = (expander, target, E = expRect()) => {
+      if (!expander || !target) return;
+      const rect = target.getBoundingClientRect();
+      const style = getComputedStyle(target);
+      const scaleX = Math.max(.0001, rect.width / Math.max(1, E.w));
+      const scaleY = Math.max(.0001, rect.height / Math.max(1, E.h));
+      const radiusX = Math.max(0, parseFloat(style.borderTopLeftRadius) || 0) / scaleX;
+      const radiusY = Math.max(0, parseFloat(style.borderTopLeftRadius) || 0) / scaleY;
+      expander.style.setProperty("--fractal-source-radius-x", `${radiusX.toFixed(2)}px`);
+      expander.style.setProperty("--fractal-source-radius-y", `${radiusY.toFixed(2)}px`);
+      expander.style.setProperty("--fractal-camera-morph-ms", `${morphMs}ms`);
+      expander.style.setProperty("--fractal-camera-ease", ease);
+    };
     const ctx = () => ({
       api,
       level,
@@ -146,6 +162,8 @@
       const source = layoutRect(target, layers[level]);
       const expander = config.buildExpander?.(target, { ...ctx(), sourceRect: source }) || document.createElement("div");
       Object.assign(expander.style, { left: `${E.x}px`, top: `${E.y}px`, width: `${E.w}px`, height: `${E.h}px` });
+      expander.dataset.fractalFrame = "viewport";
+      setSourceGeometry(expander, target, E);
       config.configureExpander?.(expander, target, { ...ctx(), sourceRect: source });
       return expander;
     };
@@ -180,6 +198,8 @@
         expander = buildExpander(target);
         surface.appendChild(expander);
       }
+      setSourceGeometry(expander, target, E);
+      expander.dataset.fractalFrame = "source";
       srcSel[level] = config.sourceSelector?.(target, ctx()) || "";
       Object.assign(expander.style, {
         zIndex: "5",
@@ -200,6 +220,7 @@
       // flush because their transition begins on the next frame.
       if (!precomposeTransitions) void expander.offsetWidth;
       transitionFrame(() => {
+        expander.dataset.fractalFrame = "viewport";
         expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
         expander.style.transform = "none";
         expander.style.opacity = "1";
@@ -249,6 +270,8 @@
       }
       const E = expRect();
       const sourceRect = layoutRect(source, below);
+      setSourceGeometry(expander, source, E);
+      expander.dataset.fractalFrame = "viewport";
       const kx = E.w / sourceRect.w;
       const ky = E.h / sourceRect.h;
       const dive = `translate(${(E.x - below.offsetLeft - sourceRect.x * kx).toFixed(2)}px, ${(E.y - below.offsetTop - sourceRect.y * ky).toFixed(2)}px) scale(${kx.toFixed(4)}, ${ky.toFixed(4)})`;
@@ -289,6 +312,7 @@
       if (!precomposeTransitions) void below.offsetWidth;
       const beginTransition = () => {
         if (seq !== transitionSeq) return;
+        expander.dataset.fractalFrame = "source";
         below.style.transition = keepBelowVisible
           ? `transform ${morphMs}ms ${ease}`
           : (config.contractFadeMs != null
@@ -339,6 +363,7 @@
       dropWarm();
       const expander = buildExpander(target);
       config.prepareJump?.(expander, target, ctx());
+      expander.dataset.fractalFrame = "viewport";
       srcSel[level] = config.sourceSelector?.(target, ctx()) || "";
       Object.assign(expander.style, { zIndex: "5", pointerEvents: "auto", transition: "none", opacity: "1", transform: "none" });
       surface.appendChild(expander);

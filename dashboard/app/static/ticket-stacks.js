@@ -2668,6 +2668,50 @@
     const id = source.dataset?.id || source.dataset?.ticketId || "";
     return String(id) === String(ticket?.id || "") && !!source.querySelector?.(".ticket-body, [data-ticket-mount]");
   };
+  const afterCardTransform = (card) => new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true; clearTimeout(timeout); card?.removeEventListener?.("transitionend", onEnd); resolve();
+    };
+    const onEnd = (event) => { if (event.target === card && event.propertyName === "transform") finish(); };
+    const timeout = setTimeout(finish, 470);
+    card?.addEventListener?.("transitionend", onEnd);
+  });
+  const openFromNativeCard = async (ticket) => {
+    if (!active || theater?.hidden || !ticket?.id) return false;
+    const selector = `[data-id="${cssEsc(ticket.id)}"]`;
+    const zoneCard = theater.querySelector(`.tk-zcard${selector}`);
+    if (zoneCard && isReferenceCard(zoneCard, ticket)) {
+      const stage = zoneCard.closest(".tk-zone")?.dataset?.stage;
+      await new Promise((resolve) => revealZoneCard(stage, zoneCard, resolve));
+      if (!zoneCard.isConnected || window.ticketDetail?.isOpen?.()) return false;
+      window.ticketDetail?.open?.(ticket, zoneCard);
+      return true;
+    }
+    for (const side of ["left", "right"]) {
+      const deck = decks[side];
+      const card = deck?.cards?.find((candidate) => String(candidate.dataset.id || "") === String(ticket.id));
+      if (!card || !isReferenceCard(card, ticket)) continue;
+      const index = deck.cards.indexOf(card);
+      if (!fanned[side] && index > 0) {
+        setFan(side, true);
+        const step = CARD_W + GAP_FAN;
+        deck.scrollX = clamp(-index * step, Math.min(0, deck.viewW - deck.contentW), 0);
+        layout(side);
+        await afterCardTransform(card);
+      } else if (fanned[side]) {
+        const step = CARD_W + GAP_FAN;
+        deck.scrollX = clamp(-index * step, Math.min(0, deck.viewW - deck.contentW), 0);
+        setTrack(side); placeArrow(side); updateDeckEdges();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      if (!card.isConnected || window.ticketDetail?.isOpen?.()) return false;
+      window.ticketDetail?.open?.(ticket, card);
+      return true;
+    }
+    return false;
+  };
   const makeTransientSource = (ticket, anchorRect) => {
     const width = CARD_W || 185, height = CARD_H || 279;
     const cx = anchorRect ? anchorRect.left + anchorRect.width / 2 : innerWidth / 2;
@@ -2694,6 +2738,7 @@
     const ticket = await ticketById(ticketOrId);
     if (!ticket || !window.ticketDetail?.open) return false;
     cleanupTransientSource();
+    if (!isReferenceCard(source, ticket) && await openFromNativeCard(ticket)) return true;
     let card = source;
     if (!isReferenceCard(source, ticket)) {
       transientSource = card = makeTransientSource(ticket, rect);

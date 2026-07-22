@@ -1566,18 +1566,19 @@ async function main() {
   await check('The Home priority hand remains available beside the four worlds', () => window.crmHome.handStatus().count > 0);
   await page.hover('.crm-home-hand-trigger');
   await sleep(420);
-  await page.evaluate(() => {
-    const card = document.querySelector('.crm-home-hand-card.tk-card');
-    window.__priorityEntity = String(card?.dataset.recordEntity || '').toLowerCase();
-  });
-  await page.click('.crm-home-hand-card.tk-card');
-  await page.waitForFunction(() => !!document.querySelector('.record-world-shell:not([hidden]), .ticket-detail-overlay:not([hidden]) .ticket-detail'), { timeout: 5000 });
-  await check('A priority card opens its entity-native record screen', () => {
-    const ticket = ['ticket', 'tickets', 'case', 'cases'].includes(window.__priorityEntity);
-    return ticket
-      ? !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail') && !document.querySelector('.record-world-shell:not([hidden])')
-      : !!document.querySelector('.record-world-shell:not([hidden]) .record-world-title');
-  });
+  await page.click(`.crm-home-hand-card[data-commitment-id="${linkedHomeTodo.ticketCommitmentId}"]`);
+  await sleep(80);
+  await check('A Home ticket waits for the Tickets camera handoff before opening detail', () => document.body.dataset.crmModule === 'home'
+    && window.crmDeskTransit?.isBusy?.() && !document.querySelector('.ticket-detail-overlay:not([hidden]), .record-world-shell:not([hidden])'));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'cases' && !window.crmDeskTransit?.isBusy?.()
+    && !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail'), { timeout: 10000 });
+  await check('A Home ticket reveals from its native Tickets card with one detail system', (todo) => {
+    const selector = `[data-id="${CSS.escape(todo.ticketId)}"]`;
+    const native = document.querySelector(`[data-crm-theater="tickets"]:not([hidden]) .tk-zcard${selector}, [data-crm-theater="tickets"]:not([hidden]) .tk-deck .tk-card${selector}`);
+    return !!native && native.style.visibility === 'hidden'
+      && document.querySelectorAll('.ticket-detail-overlay:not([hidden])').length === 1
+      && !document.querySelector('.record-world-shell:not([hidden]), .tk-external-source, .crm-transit-veil, .crm-home-expander:not(.crm-home-warm)');
+  }, linkedHomeTodo);
   await page.keyboard.press('Escape');
   await check('No renderer exceptions during the complete scenario', () => true);
 

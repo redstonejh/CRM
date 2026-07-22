@@ -28,8 +28,8 @@
     const style = document.createElement("style");
     style.id = "crm-desk-transit-styles";
     style.textContent = `
-      /* The veil carries the fully-dived bucket lid for one beat while the
-         destination theater takes the stage beneath its frost, then fades. */
+      /* The veil carries the fully-dived object texture while the destination
+         theater takes the stage beneath it, then the two layers crossfade. */
       .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none;
         opacity: .999; transform: translateZ(0); will-change: opacity; contain: paint;
         transition: opacity 96ms linear; }
@@ -41,6 +41,13 @@
       html.crm-transit-materializing [data-crm-theater]:not([hidden]) * {
         animation: none !important; transition: none !important; scroll-behavior: auto !important;
       }
+      /* Transition lids now contain transparent room foregrounds. Keep the
+         live destination composited but effectively absent beneath the lid,
+         then exchange the two GPU layers together. The wallpaper is never
+         hidden or duplicated and remains the one fixed background paint. */
+      html.crm-transit-materializing [data-crm-transit-layer]{opacity:.001!important;will-change:opacity}
+      html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
+        opacity:var(--crm-transit-rest-opacity,1)!important;transition:opacity 96ms linear!important}
     `;
     document.head.appendChild(style);
   };
@@ -77,6 +84,32 @@
     planner: window.crmPlanner,
     assignments: window.crmAssignments,
   })[key];
+  let destinationLayers = [];
+  const clearDestinationLayers = () => {
+    destinationLayers.forEach((layer) => {
+      layer.removeAttribute("data-crm-transit-layer");
+      layer.style.removeProperty("--crm-transit-rest-opacity");
+    });
+    destinationLayers = [];
+  };
+  const stageDestinationLayers = (key) => {
+    clearDestinationLayers();
+    const theaterName = key === "cases" ? "tickets" : key;
+    const theater = [...document.querySelectorAll(`[data-crm-theater="${theaterName}"]`)].find((node) => !node.hidden);
+    if (!theater) return destinationLayers;
+    const boxesOf = (node) => {
+      if (!node || node.hidden || getComputedStyle(node).display === "none") return [];
+      if (getComputedStyle(node).display === "contents") return [...node.children].flatMap(boxesOf);
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 ? [node] : [...node.children].flatMap(boxesOf);
+    };
+    destinationLayers = getComputedStyle(theater).display === "contents" ? [...theater.children].flatMap(boxesOf) : [theater];
+    destinationLayers.forEach((layer) => {
+      layer.style.setProperty("--crm-transit-rest-opacity", getComputedStyle(layer).opacity || "1");
+      layer.setAttribute("data-crm-transit-layer", "");
+    });
+    return destinationLayers;
+  };
   const viewportApiFor = (key) => ({
     people:window.peopleCards,
     pipeline:window.dealPipeline,
@@ -158,11 +191,12 @@
   };
 
   // The dive-in ending: the expanded lid keeps covering the stage while the
-  // destination theater is committed beneath it, then unfrosts away. The swap
-  // happens behind blur(28px) glass — continuous to the eye, never a cut.
+  // destination theater is committed beneath it, then crossfades away. The
+  // fixed wallpaper stays visible throughout, so the swap is never a cut.
   const finishDiveIn = async (key, done) => {
     const startedAt = performance.now();
     const destinationApi = destinationFor(key);
+    clearDestinationLayers();
     const destinationState = destinationApi?.performanceState?.() || null;
     const homePrewarm = window.crmHome?.prewarmStatus?.() || null;
     const cam = camera();
@@ -183,6 +217,7 @@
     try { await destinationApi?.baseline?.({ canRender: () => true }); } catch {}
     const commitAt = performance.now();
     commit(key);
+    stageDestinationLayers(key);
     const committedAt = performance.now();
     // Presence is not readiness: several card factories perform measured
     // layout after inserting their nodes. Keep the lid in place until sampled
@@ -206,16 +241,18 @@
       // between them while both remain composited so backdrop filters and
       // shadows cannot first materialize on the uncovered frame.
       void veil.offsetWidth;
+      document.documentElement.classList.add("crm-transit-revealing");
       veil.classList.add("is-releasing");
       await afterOpacity(veil);
       veil.remove();
-    }
+    } else document.documentElement.classList.add("crm-transit-revealing");
     if (cam?.restoreRoot) cam.restoreRoot();
     else cam?.rebuildRoot?.();
     try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
     if (surface) surface.style.zIndex = "";
     await paint(2);
-    document.documentElement.classList.remove("crm-transit-materializing");
+    document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
+    clearDestinationLayers();
     const doneAt = performance.now();
     performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
       commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,

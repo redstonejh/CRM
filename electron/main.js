@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v41';
+const HOME_PREVIEW_VERSION = 'filtered-home-v43';
 const homePreviewCache = new Map();
 const homePreviewViewStates = new Map();
 const homePreviewViewStateGenerations = new Map();
@@ -261,14 +261,29 @@ function foregroundFromMattes(blackImage, whiteImage) {
   return { image, bounds };
 }
 
+function transparentImageRegion(image, region, viewport) {
+  if (!image || image.isEmpty() || !Array.isArray(region) || region.length < 4 || !Array.isArray(viewport) || viewport.length < 2) return '';
+  const png = PNG.sync.read(image.toPNG());
+  const scaleX = png.width / Math.max(1, Number(viewport[0]) || png.width);
+  const scaleY = png.height / Math.max(1, Number(viewport[1]) || png.height);
+  const left = Math.max(0, Math.floor(Number(region[0]) * scaleX));
+  const top = Math.max(0, Math.floor(Number(region[1]) * scaleY));
+  const right = Math.min(png.width, Math.ceil((Number(region[0]) + Number(region[2])) * scaleX));
+  const bottom = Math.min(png.height, Math.ceil((Number(region[1]) + Number(region[3])) * scaleY));
+  for (let y = top; y < bottom; y += 1) png.data.fill(0, (y * png.width + left) * 4, (y * png.width + right) * 4);
+  return nativeImage.createFromBuffer(PNG.sync.write(png)).toDataURL();
+}
+
 async function prepareCapture(win, matte = null, options = {}) {
   const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
+  const homeMotionObjectsOnly = options.homeMotionObjectsOnly === true;
   const css = `
     *,*::before,*::after { animation:none !important; transition:none !important; }
-    .window-control-cluster,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
-    .crm-module-switch,.db-loading { display:none !important; }
+    .window-control-cluster,.window-glass-control,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
+    .crm-module-switch,.crm-viewport-date,.db-loading { display:none !important; }
     .crm-home-title-glass { display:none !important; }
     ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
+    ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { border-color:transparent !important; background:transparent !important; -webkit-backdrop-filter:none !important; backdrop-filter:none !important; box-shadow:none !important; }' : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
@@ -295,14 +310,18 @@ async function prepareCapture(win, matte = null, options = {}) {
   await new Promise((resolve) => setTimeout(resolve, 60));
 }
 
+async function captureForeground(win, options = {}) {
+  await prepareCapture(win, '#000000', options);
+  const black = await win.webContents.capturePage();
+  await prepareCapture(win, '#ffffff', options);
+  const white = await win.webContents.capturePage();
+  return foregroundFromMattes(black, white);
+}
+
 async function captureRoom(win) {
   await prepareCapture(win, null);
   const exact = await win.webContents.capturePage();
-  await prepareCapture(win, '#000000');
-  const black = await win.webContents.capturePage();
-  await prepareCapture(win, '#ffffff');
-  const white = await win.webContents.capturePage();
-  const foreground = foregroundFromMattes(black, white);
+  const foreground = await captureForeground(win);
   if (!foreground || exact.isEmpty()) return null;
   return { exact, foreground: foreground.image, bounds: foreground.bounds };
 }
@@ -458,16 +477,22 @@ async function captureHomeMotionSnapshot(worker) {
   await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
   const layoutSignature = await worker.webContents.executeJavaScript(`window.crmHome?.motionLayoutSignature?.() || ''`, true);
   if (!layoutSignature) throw new Error('Home motion layout signature unavailable');
-  // The transition raster must be visually identical to resting Home. Room
-  // mattes intentionally remove the preview blur; the Home motion composite
-  // must preserve it or the final exchange flashes from sharp back to blur.
-  await prepareCapture(worker, null, { preserveHomePreviewFilter: true });
-  const image = await worker.webContents.capturePage();
-  if (!image || image.isEmpty()) return null;
-  const size = image.getSize();
+  // Capture only Home's objects. The fixed workspace backdrop and the tile
+  // glass are deliberately absent so the camera never scales a second surface.
+  // Preserve the resting preview blur to keep the return endpoint continuous.
+  const foreground = await captureForeground(worker, { preserveHomePreviewFilter: true, homeMotionObjectsOnly: true });
+  if (!foreground?.image || foreground.image.isEmpty()) return null;
+  const size = foreground.image.getSize();
+  let layout = null;
+  try { layout = JSON.parse(layoutSignature); } catch {}
+  const [gridX = 0, gridY = 0] = layout?.grid || [];
+  const variants = Object.fromEntries((layout?.buckets || []).map(([key, x, y, width, height]) => [
+    key, transparentImageRegion(foreground.image, [gridX + x, gridY + y, width, height], layout.viewport),
+  ]).filter(([, src]) => !!src));
   homeMotionSnapshot = {
     version: HOME_PREVIEW_VERSION, width: size.width, height: size.height,
-    capturedAt: Date.now(), src: image.toDataURL(), layoutSignature,
+    capturedAt: Date.now(), src: foreground.image.toDataURL(), layoutSignature,
+    foregroundBounds: foreground.bounds, backgroundMode: 'shared', variants,
   };
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:motion-changed', homeMotionSnapshot);
   return homeMotionSnapshot;

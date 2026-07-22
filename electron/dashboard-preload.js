@@ -154,6 +154,14 @@ contextBridge.exposeInMainWorld('dashboardWindowControls', {
   minimize: () => ipcRenderer.invoke('dashboard-window:minimize'),
   close: () => ipcRenderer.invoke('dashboard-window:close'),
 });
+contextBridge.exposeInMainWorld('crmNavigationInput', {
+  onCommand: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, command) => callback(command);
+    ipcRenderer.on('crm:navigation-command', listener);
+    return () => ipcRenderer.off('crm:navigation-command', listener);
+  },
+});
 contextBridge.exposeInMainWorld('crmHomePreviews', {
   isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
   list: () => ipcRenderer.invoke('home-preview:list'),

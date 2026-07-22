@@ -12,6 +12,16 @@
   let busy = false;
   let queued = null;
   const performanceTimings = [];
+  const HISTORY_LIMIT = 48;
+  const HISTORY_CAMERAS = new Set(["crmProjectsCamera", "fractalCalendarCamera"]);
+  let navigationEntries = [];
+  let navigationIndex = -1;
+  let navigationSeeded = false;
+  let navigationRestoring = false;
+  let navigationCaptureToken = 0;
+  let lastPhysicalDirection = 0;
+  let lastPhysicalAt = 0;
+  let lastPhysicalSource = "";
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
@@ -67,6 +77,85 @@
     planner: window.crmPlanner,
     assignments: window.crmAssignments,
   })[key];
+  const viewportApiFor = (key) => ({
+    people:window.peopleCards,
+    pipeline:window.dealPipeline,
+    jobs:window.jobPipeline,
+    planner:window.crmPlanner,
+    assignments:window.crmAssignments,
+    calendar:window.fractalCalendar,
+    cases:window.ticketStacks,
+  })[key] || null;
+  const viewportCameraFor = (key) => ({
+    planner:window.crmProjectsCamera,
+    calendar:window.fractalCalendarCamera,
+  })[key] || null;
+  const safeClone = (value) => {
+    if (value == null) return value;
+    try { return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value)); }
+    catch { return null; }
+  };
+  const captureViewport = () => {
+    const module = window.crmWorkspaces?.active?.() || document.body.dataset.crmModule || "home";
+    const moduleApi = viewportApiFor(module);
+    const moduleCamera = viewportCameraFor(module);
+    let state = null; let cameraState = null;
+    try { state = safeClone(moduleApi?.homePreviewState?.() || null); } catch {}
+    try { cameraState = safeClone(moduleCamera?.historyState?.() || null); } catch {}
+    return { module, state, camera:cameraState };
+  };
+  const viewportSignature = (viewport) => {
+    try { return JSON.stringify(viewport || null); } catch { return ""; }
+  };
+  const navigationStatus = () => ({
+    index:navigationIndex,
+    length:navigationEntries.length,
+    canBack:!busy && !navigationRestoring && navigationIndex > 0,
+    canForward:!busy && !navigationRestoring && navigationIndex >= 0 && navigationIndex < navigationEntries.length - 1,
+    busy:busy || navigationRestoring,
+    module:navigationEntries[navigationIndex]?.module || window.crmWorkspaces?.active?.() || "home",
+  });
+  const announceNavigationHistory = () => document.dispatchEvent(new CustomEvent("crm:navigation-history-changed", { detail:navigationStatus() }));
+  const seedNavigationHistory = () => {
+    if (navigationSeeded || !window.crmWorkspaces?.active) return navigationSeeded;
+    const current = captureViewport();
+    navigationEntries = current.module === "home" ? [current] : [{ module:"home", state:null, camera:null }, current];
+    navigationIndex = navigationEntries.length - 1;
+    navigationSeeded = true;
+    announceNavigationHistory();
+    return true;
+  };
+  const replaceCurrentViewport = (viewport = captureViewport()) => {
+    if (!seedNavigationHistory()) return false;
+    navigationEntries[navigationIndex] = safeClone(viewport);
+    announceNavigationHistory();
+    return true;
+  };
+  const commitCurrentViewport = (viewport = captureViewport()) => {
+    if (!seedNavigationHistory()) return false;
+    const next = safeClone(viewport);
+    if (viewportSignature(navigationEntries[navigationIndex]) === viewportSignature(next)) navigationEntries[navigationIndex] = next;
+    else {
+      navigationEntries.splice(navigationIndex + 1);
+      navigationEntries.push(next);
+      if (navigationEntries.length > HISTORY_LIMIT) navigationEntries.splice(0, navigationEntries.length - HISTORY_LIMIT);
+      navigationIndex = navigationEntries.length - 1;
+    }
+    announceNavigationHistory();
+    return true;
+  };
+  const noteViewportDeparture = () => {
+    if (busy || navigationRestoring) return false;
+    return replaceCurrentViewport();
+  };
+  const noteViewportArrival = () => {
+    if (busy || navigationRestoring) return false;
+    const token = ++navigationCaptureToken;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (token === navigationCaptureToken && !busy && !navigationRestoring) commitCurrentViewport();
+    }));
+    return true;
+  };
 
   // The dive-in ending: the expanded lid keeps covering the stage while the
   // destination theater is committed beneath it, then unfrosts away. The swap
@@ -176,20 +265,67 @@
     });
   };
 
-  const driveTo = (key) => new Promise((resolve) => {
+  const restoreViewport = async (viewport) => {
+    const ws = window.crmWorkspaces;
+    const targetModule = String(viewport?.module || "home");
+    if (!ws?.modules?.().some((module) => module.key === targetModule)) return false;
+    const changedModule = ws.active?.() !== targetModule;
+    if (changedModule) {
+      const moved = await driveTo(targetModule, { history:false });
+      if (!moved) return false;
+    }
+    const moduleApi = viewportApiFor(targetModule);
+    const moduleCamera = viewportCameraFor(targetModule);
+    if (changedModule && viewport?.state && moduleApi?.applyHomePreviewState) {
+      try { await moduleApi.applyHomePreviewState(safeClone(viewport.state)); } catch {}
+    }
+    if (viewport?.camera && moduleCamera?.restoreHistoryState) {
+      try { await moduleCamera.restoreHistoryState(safeClone(viewport.camera)); } catch {}
+    } else if (!changedModule && viewport?.state && moduleApi?.applyHomePreviewState) {
+      try { await moduleApi.applyHomePreviewState(safeClone(viewport.state)); } catch {}
+    }
+    return ws.active?.() === targetModule;
+  };
+  const moveThroughHistory = async (delta) => {
+    if (busy || navigationRestoring) return false;
+    if (!seedNavigationHistory()) return false;
+    replaceCurrentViewport();
+    const targetIndex = navigationIndex + (delta < 0 ? -1 : 1);
+    if (targetIndex < 0 || targetIndex >= navigationEntries.length) return false;
+    const previousIndex = navigationIndex;
+    const target = safeClone(navigationEntries[targetIndex]);
+    navigationRestoring = true;
+    navigationCaptureToken += 1;
+    announceNavigationHistory();
+    let restored = false;
+    try { restored = await restoreViewport(target); }
+    finally {
+      navigationIndex = restored ? targetIndex : previousIndex;
+      if (restored) navigationEntries[navigationIndex] = captureViewport();
+      navigationRestoring = false;
+      announceNavigationHistory();
+    }
+    return restored;
+  };
+
+  const driveTo = (key, options = {}) => new Promise((resolve) => {
     const ws = window.crmWorkspaces;
     if (!ws || !(ws.modules?.() || []).some((module) => module.key === key)) { resolve(false); return; }
     const current = ws.active?.();
-    if (busy) { queued = { key, resolve }; return; }
+    if (busy) { queued = { key, options, resolve }; return; }
     if (key === current) { resolve(true); return; }
+    const recordHistory = options.history !== false && !navigationRestoring;
+    if (recordHistory) noteViewportDeparture();
     busy = true;
+    announceNavigationHistory();
     const done = () => {
       busy = false;
+      if (recordHistory) commitCurrentViewport(); else announceNavigationHistory();
       resolve(true);
       document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
       const next = queued;
       queued = null;
-      if (next) driveTo(next.key).then(next.resolve);
+      if (next) driveTo(next.key, next.options).then(next.resolve);
     };
     try {
       if (current === "home") diveIn(key, done);
@@ -206,16 +342,19 @@
   const adoptDive = (key) => new Promise((resolve) => {
     const ws = window.crmWorkspaces;
     if (!ws || busy) { resolve(false); return; }
+    noteViewportDeparture();
     busy = true;
+    announceNavigationHistory();
     const surface = camera()?.surface?.();
     if (surface) surface.style.zIndex = TRANSIT_Z;
     const done = () => {
       busy = false;
+      commitCurrentViewport();
       resolve(true);
       document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
       const next = queued;
       queued = null;
-      if (next) driveTo(next.key).then(next.resolve);
+      if (next) driveTo(next.key, next.options).then(next.resolve);
     };
     Promise.resolve(camera()?.whenSettled?.()).then(() => finishDiveIn(key, done));
   });
@@ -246,11 +385,23 @@
   };
   const zoomOutToCalendar = (fromKey = document.body.dataset.crmModule || "") => {
     if (!TEMPORAL_MODULES.has(fromKey)) return false;
+    noteViewportDeparture();
     window.crmWorkspaces?.setActive?.("calendar");
-    requestAnimationFrame(() => window.fractalCalendar?.openMonthFor?.(today()));
+    requestAnimationFrame(() => {
+      window.fractalCalendar?.openMonthFor?.(today());
+      noteViewportArrival();
+    });
     return true;
   };
-  document.addEventListener("crm:theater-switch", (event) => syncTemporalContext(event.detail?.key));
+  document.addEventListener("crm:theater-switch", (event) => {
+    syncTemporalContext(event.detail?.key);
+    if (!busy && !navigationRestoring) noteViewportArrival();
+  });
+  document.addEventListener("crm:camera-navigation", (event) => {
+    if (!HISTORY_CAMERAS.has(event.detail?.apiName) || busy || navigationRestoring) return;
+    if (event.detail?.phase === "start") noteViewportDeparture();
+    if (event.detail?.phase === "settled") noteViewportArrival();
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "b" && event.key !== "B" && event.key !== "Escape") return;
     if (event.defaultPrevented) return;
@@ -270,14 +421,53 @@
     driveTo("home");
   }, true);
 
+  const physicalHistory = (direction, event, source = "dom") => {
+    event?.preventDefault?.();
+    event?.stopImmediatePropagation?.();
+    const now = performance.now();
+    if (direction === lastPhysicalDirection && source !== lastPhysicalSource && now - lastPhysicalAt < 220) return true;
+    lastPhysicalDirection = direction;
+    lastPhysicalAt = now;
+    lastPhysicalSource = source;
+    void moveThroughHistory(direction);
+    return true;
+  };
+  window.addEventListener("mousedown", (event) => {
+    if (event.button === 3) physicalHistory(-1, event);
+    if (event.button === 4) physicalHistory(1, event);
+  }, true);
+  window.addEventListener("auxclick", (event) => {
+    if (event.button === 3 || event.button === 4) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+  try {
+    window.crmNavigationInput?.onCommand?.((command) => {
+      if (command === "back") physicalHistory(-1, null, "native");
+      if (command === "forward") physicalHistory(1, null, "native");
+    });
+  } catch {}
+
   window.crmDeskTransit = {
     driveTo,
     adoptDive,
+    back:() => moveThroughHistory(-1),
+    forward:() => moveThroughHistory(1),
+    canGoBack:() => navigationStatus().canBack,
+    canGoForward:() => navigationStatus().canForward,
+    historyState:navigationStatus,
+    noteViewportDeparture,
+    noteViewportArrival,
     zoomOutToCalendar,
     temporalModules: () => [...TEMPORAL_MODULES],
-    isBusy: () => busy,
+    isBusy: () => busy || navigationRestoring,
     performanceTimings: () => performanceTimings.map((item) => ({ ...item })),
   };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => syncTemporalContext(), { once: true });
-  else syncTemporalContext();
+  const initializeNavigation = () => {
+    syncTemporalContext();
+    requestAnimationFrame(() => requestAnimationFrame(() => seedNavigationHistory()));
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initializeNavigation, { once: true });
+  else initializeNavigation();
 })();

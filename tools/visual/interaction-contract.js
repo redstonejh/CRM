@@ -340,7 +340,6 @@ async function main() {
       && getComputedStyle(strip).webkitAppRegion === 'drag'
       && exclusions.length === 0;
   });
-
   await page.click('.crm-home-bucket[data-module="cases"]');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'cases', { timeout: 5000 });
   await check('The Tickets tile opens the existing ticketing screen', () => (
@@ -363,6 +362,14 @@ async function main() {
     const today = new Date();
     const month = document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${today.getMonth() + 1}"]`);
     return window.fractalCalendar.year() === today.getFullYear() && !!month && !month.hidden;
+  });
+  await page.click('[data-crm-history-back]');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'cases' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Back from Calendar restores the pipeline viewport that opened it', () => document.body.dataset.crmModule==='cases'&&window.crmDeskTransit.historyState().canForward);
+  await page.click('[data-crm-history-forward]');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1 && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Forward restores the same Calendar month viewport', () => {
+    const today=new Date();return window.fractalCalendar.year()===today.getFullYear()&&!!document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${today.getMonth()+1}"]`);
   });
   await page.keyboard.press('KeyB');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 0, { timeout: 5000 });
@@ -660,6 +667,13 @@ async function main() {
     const state={transform:getComputedStyle(track).transform,thumbTop:thumb.getBoundingClientRect().top};
     return { ok:state.transform!==before.transform&&state.thumbTop>before.thumbTop+2&&activeShadow, detail:JSON.stringify({before,state,activeShadow}) };
   }, peopleScrollBefore);
+  await page.evaluate((stage) => new Promise((resolve) => {
+    const track=document.querySelector(`[data-crm-theater="people"] .tk-zone[data-stage="${CSS.escape(stage)}"] .tk-zone-track`);
+    let previous="",stable=0;const started=performance.now();
+    const tick=()=>{const current=track?.style.transform||"";stable=current===previous?stable+1:0;previous=current;
+      if(stable>=4||performance.now()-started>1500)resolve();else requestAnimationFrame(tick);};requestAnimationFrame(tick);
+  }), peopleStage);
+  await page.evaluate(() => window.crmHomePreviews?.waitForIdle?.());
   const companyLodMotion = await page.evaluate(() => new Promise((resolve) => {
     document.activeElement?.blur?.();
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const identity=theater.querySelector('.tk-zcard'); identity.dataset.companyLodIdentity='retained';
@@ -689,6 +703,33 @@ async function main() {
     return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
       detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod]}) };
   });
+  const companyHistoryViewport = await page.evaluate(() => window.peopleCards.zoneScrollState());
+  await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Viewport navigation places Back and Forward symmetrically around Home', () => {
+    const cluster=document.querySelector('.crm-module-switch');const back=cluster?.querySelector('[data-crm-history-back]');const home=cluster?.querySelector('.crm-home-control');const forward=cluster?.querySelector('[data-crm-history-forward]');
+    const rects=[back,home,forward].map((button)=>button?.getBoundingClientRect());const state=window.crmDeskTransit.historyState();
+    return { ok:!!cluster&&!cluster.hidden&&cluster.tagName==='NAV'&&back?.ariaLabel==='Back'&&home?.ariaLabel==='Return Home'&&forward?.ariaLabel==='Forward'
+      &&rects.every(Boolean)&&rects[0].right<rects[1].left&&rects[1].right<rects[2].left&&!back.disabled&&forward.disabled&&state.canBack&&!state.canForward,
+      detail:JSON.stringify({buttons:rects.map((rect)=>rect&&[rect.left,rect.width]),state:{index:state.index,length:state.length,canBack:state.canBack,canForward:state.canForward},hidden:cluster?.hidden}) };
+  });
+  await page.click('[data-crm-history-back]');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Back returns to the exact previous room and enables Forward', (expected) => {
+    const state=window.crmDeskTransit.historyState();const viewport=window.peopleCards.zoneScrollState();return document.body.dataset.crmModule==='people'&&state.canForward&&!document.querySelector('[data-crm-history-forward]')?.disabled&&Math.abs(viewport.x-expected.x)<1;
+  }, companyHistoryViewport);
+  await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:4 })));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Physical Mouse 5 follows the same Forward viewport history', () => document.body.dataset.crmModule==='home'&&window.crmDeskTransit.historyState().canBack);
+  await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:3 })));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Physical Mouse 4 follows the same Back viewport history', () => document.body.dataset.crmModule==='people'&&window.crmDeskTransit.historyState().canForward);
+  await page.click('[data-crm-history-forward]');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Forward returns to the viewport that Back just left without going deeper', () => document.body.dataset.crmModule==='home'&&!window.crmDeskTransit.historyState().canForward);
+  await page.evaluate(() => window.crmHomePreviews?.waitForIdle?.());
+  await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown',{ bubbles:true,cancelable:true,button:3 })));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit.isBusy(), { timeout:10000 });
   await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true));
   await sleep(100);
   await page.evaluate(async () => { window.crmCompanyDive.setActive(true); await window.crmCompanyDive.refresh(); });
@@ -1272,6 +1313,12 @@ async function main() {
   await page.waitForFunction(() => document.querySelector('.crm-planner-popover-title')?.textContent.trim() === 'Delete project?');
   await check('Deleting a project requires one compact confirmation and names the linked-card impact', () => /linked cards? will also be removed/i.test(document.querySelector('.crm-planner-popover-hint')?.textContent || '') && !!document.querySelector('[data-confirm-delete]') && !document.querySelector('.crm-planner-project-editor'));
   await page.click('.crm-planner-popover [data-cancel]');
+  await page.click('[data-crm-history-back]');
+  await page.waitForFunction(() => window.crmPlanner.level() === 0 && !window.crmDeskTransit.isBusy(), { timeout:10000 });
+  await check('Global Back contracts a nested project to its prior Projects viewport', (projectId) => document.body.dataset.crmModule==='planner'&&window.crmPlanner.level()===0&&!!document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`)&&window.crmDeskTransit.historyState().canForward, plannerTileStart);
+  await page.click('[data-crm-history-forward]');
+  await page.waitForFunction((projectId) => window.crmPlanner.level() === 1 && window.crmPlanner.selected() === projectId && !window.crmDeskTransit.isBusy(), { timeout:10000 }, plannerTileStart);
+  await check('Global Forward replays the existing project dive to the viewport Back left', (projectId) => document.body.dataset.crmModule==='planner'&&window.crmPlanner.level()===1&&window.crmPlanner.selected()===projectId&&!window.crmDeskTransit.historyState().canForward, plannerTileStart);
   const plannerTileBeforeBack = await page.$eval(`.crm-project-bucket[data-planner-project="${plannerTileStart}"]`, (tile) => { const rect=tile.getBoundingClientRect(); return [rect.x,rect.y,rect.width,rect.height]; });
   await page.click('[data-planner-action="projects-back"]');
   await page.waitForFunction(() => window.crmPlanner.level() === 0 && !document.querySelector('.crm-planner-bucket'));

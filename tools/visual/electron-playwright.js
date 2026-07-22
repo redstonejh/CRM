@@ -319,6 +319,25 @@ async function main() {
   if (!startup.calendar.exists || !startup.calendar.hidden || startup.calendar.display !== 'none') {
     throw new Error(`The global calendar control must not appear at Home: ${JSON.stringify(startup.calendar)}`);
   }
+  await page.click('.crm-home-bucket[data-module="people"]');
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.() && window.crmDeskTransit?.canGoBack?.(), null, { timeout:15000 });
+  await app.evaluate(({BrowserWindow}) => {
+    const win=BrowserWindow.getAllWindows().find((item)=>item.isVisible()&&!item.isDestroyed());
+    win?.emit('app-command',{preventDefault(){}},'browser-backward');
+  });
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.() && window.crmDeskTransit?.canGoForward?.(), null, { timeout:15000 });
+  const nativeBackState=await page.evaluate(()=>({module:document.body.dataset.crmModule,history:window.crmDeskTransit.historyState(),clusterHidden:document.querySelector('.crm-module-switch')?.hidden,forwardDisabled:document.querySelector('[data-crm-history-forward]')?.disabled}));
+  await page.screenshot({path:path.join(out,'home-history.png')});
+  await app.evaluate(({BrowserWindow}) => {
+    const win=BrowserWindow.getAllWindows().find((item)=>item.isVisible()&&!item.isDestroyed());
+    win?.emit('app-command',{preventDefault(){}},'browser-forward');
+  });
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.() && !window.crmDeskTransit?.canGoForward?.(), null, { timeout:15000 });
+  const nativeForwardState=await page.evaluate(()=>({module:document.body.dataset.crmModule,history:window.crmDeskTransit.historyState(),buttons:document.querySelectorAll('.crm-module-switch button').length}));
+  const nativeHistory={back:nativeBackState,forward:nativeForwardState};
+  if(nativeBackState.clusterHidden||nativeBackState.forwardDisabled||nativeBackState.module!=='home'||nativeForwardState.module!=='people'||nativeForwardState.buttons!==3)throw new Error(`Native mouse history commands failed: ${JSON.stringify(nativeHistory)}`);
+  await page.evaluate(()=>window.crmDeskTransit.driveTo('home'));
+  await page.waitForFunction(() => document.body.dataset.crmModule === 'home' && !window.crmDeskTransit?.isBusy?.(), null, { timeout:15000 });
   const initialPreviewTime = Math.max(...await page.evaluate(() => window.crmHome.previewStatus().map((item) => item.capturedAt || 0)));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setContentSize(1360, 900));
   try {
@@ -652,7 +671,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeDrag,sameNodes,homeComposition,homeCompositeMae,homeFps,settledFps,instantControls,domainProbe,transitions,projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},settled:projectDiveSettled,returnStart:projectReturnStart,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeHistory,nativeDrag,sameNodes,homeComposition,homeCompositeMae,homeFps,settledFps,instantControls,domainProbe,transitions,projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},settled:projectDiveSettled,returnStart:projectReturnStart,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
 }

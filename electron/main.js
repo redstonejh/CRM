@@ -139,6 +139,16 @@ function createMainWindow() {
     },
   });
 
+  // Windows/Linux expose physical mouse Back/Forward buttons as app commands.
+  // Keep them inside the CRM's viewport history instead of Electron's file URL
+  // navigation, which has no understanding of the app's spatial cameras.
+  mainWindow.on('app-command', (event, command) => {
+    const direction = command === 'browser-backward' ? 'back' : command === 'browser-forward' ? 'forward' : '';
+    if (!direction || !mainWindow || mainWindow.isDestroyed()) return;
+    event.preventDefault();
+    mainWindow.webContents.send('crm:navigation-command', direction);
+  });
+
   mainWindow.loadFile(dashboardIndexPath());
 
   mainWindow.once('ready-to-show', () => {

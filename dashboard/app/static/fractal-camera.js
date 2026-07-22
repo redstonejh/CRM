@@ -123,6 +123,11 @@
       config.layout?.(ctx());
     };
     const keyOf = (target) => config.keyOf?.(target, ctx()) || "";
+    const navigationDetail = (phase, direction) => ({ apiName, phase, direction, level, state:historyState() });
+    const announceNavigation = (phase, direction) => {
+      if (!apiName) return;
+      document.dispatchEvent(new CustomEvent("crm:camera-navigation", { detail:navigationDetail(phase, direction) }));
+    };
     const targetFromEvent = (event) => {
       if (!active || transitioning || level >= maxLevel) return null;
       return config.targetFromEvent?.(event, ctx()) || null;
@@ -157,6 +162,7 @@
     };
     const expand = (target) => {
       if (!target || !active || transitioning || level >= maxLevel) return;
+      announceNavigation("start", "forward");
       config.prepareTarget?.(target, ctx());
       const seq = ++transitionSeq;
       transitioning = true;
@@ -211,6 +217,7 @@
         transitioning = false;
         config.onLevelChange?.(ctx());
         config.onTransitionEnd?.("expand", ctx());
+        announceNavigation("settled", "forward");
         settleWaiters();
       });
       config.onTransitionStart?.("expand", ctx());
@@ -227,6 +234,7 @@
     };
     const contract = () => {
       if (!active || level === 0 || transitioning) return;
+      announceNavigation("start", "back");
       const seq = ++transitionSeq;
       transitioning = true;
       const expander = layers[level];
@@ -274,6 +282,7 @@
         transitioning = false;
         config.onLevelChange?.(ctx());
         config.onTransitionEnd?.("contract", ctx());
+        announceNavigation("settled", "back");
         settleWaiters();
       });
       config.onTransitionStart?.("contract", ctx());
@@ -350,6 +359,7 @@
       dropWarm();
       layers.slice(1).forEach((el) => el?.remove?.());
       layers = [config.buildRoot?.(ctx()) || document.createElement("div")];
+      srcSel = [];
       layers[0].classList.add(layerClass);
       surface.replaceChildren(layers[0]);
       level = 0;
@@ -373,6 +383,7 @@
         transform: "none", opacity: "1",
       });
       layers = [root];
+      srcSel = [];
       level = 0;
       transitioning = false;
       surface.dataset.level = "0";
@@ -382,6 +393,30 @@
     const refresh = () => {
       if (!surface) return;
       rebuildRoot();
+    };
+    function historyState() {
+      return { level, selectors:srcSel.slice(0, level) };
+    }
+    const restoreHistoryState = async (state = {}) => {
+      ensure();
+      await whenSettled();
+      const selectors = Array.isArray(state.selectors)
+        ? state.selectors.slice(0, maxLevel).map((selector) => String(selector || ""))
+        : [];
+      let common = 0;
+      while (common < level && common < selectors.length && srcSel[common] === selectors[common]) common += 1;
+      while (level > common) {
+        contract();
+        await whenSettled();
+      }
+      for (let index = level; index < selectors.length; index += 1) {
+        const selector = selectors[index];
+        const target = selector ? layers[level]?.querySelector?.(selector) : null;
+        if (!target) break;
+        expand(target);
+        await whenSettled();
+      }
+      return historyState();
     };
     const setActive = (on) => {
       active = !!on;
@@ -440,6 +475,8 @@
       restoreRoot,
       dropWarm,
       layout,
+      historyState,
+      restoreHistoryState,
     };
     if (apiName) global[apiName] = api;
     const start = () => {

@@ -605,6 +605,22 @@
     },
   });
 
+  const homePreviewState = () => ({
+    year:currentYear,
+    camera:camera.historyState?.() || { level:camera.level(), selectors:[] },
+  });
+  const applyHomePreviewState = async (state = {}) => {
+    const year = Math.max(1901, Math.min(2200, Number(state.year) || currentYear));
+    if (year !== currentYear) {
+      currentYear = year;
+      localStorage.setItem(YEAR_STORE, String(currentYear));
+      camera.rebuildRoot();
+      await loadScheduled({ refresh:true });
+    }
+    await camera.restoreHistoryState?.(state.camera || {});
+    return homePreviewState();
+  };
+
   window.fractalCalendar = {
     setActive: (on) => camera.setActive(on),
     isActive: () => camera.isActive(),
@@ -615,6 +631,8 @@
     openMonthFor,
     level: () => camera.level(),
     back: () => camera.back(),
+    homePreviewState,
+    applyHomePreviewState,
     refresh: () => loadScheduled({ refresh: true }),
     // Census A1: the Home bucket receives the calendar's own year DOM and
     // scales it as a static, non-interactive view.

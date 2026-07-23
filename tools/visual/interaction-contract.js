@@ -254,15 +254,16 @@ async function main() {
     && window.crmHomeCamera?.isTransitioning?.() && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
   await check('The moving tile keeps one acrylic coat over the shared wallpaper', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
-    const acrylic = expander?.querySelector(':scope > .crm-home-transition-acrylic');
-    const style = acrylic && getComputedStyle(acrylic); const rect = acrylic?.getBoundingClientRect(); const lid = expander?.getBoundingClientRect();
+    const edge = expander?.querySelector(':scope > .crm-home-transition-acrylic'); const acrylic = edge;
+    const style = acrylic && getComputedStyle(acrylic); const rect = edge?.getBoundingClientRect(); const lid = expander?.getBoundingClientRect();
     const status = window.crmHome?.motionStatus?.();
     const state = { ready:status?.ready, materialMode:status?.materialMode, background:style?.backgroundImage,
-      opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
+      backdrop:style?.backdropFilter, opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
       exact:!!expander?.querySelector('.crm-home-preview-exact'), foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
       delta:rect&&lid?Math.max(Math.abs(rect.x-lid.x),Math.abs(rect.y-lid.y),Math.abs(rect.width-lid.width),Math.abs(rect.height-lid.height)):null };
     return { ok:!!style && (!status?.ready || status.materialMode === 'cached-acrylic')
-      && style.backgroundImage.includes('rgba(22, 26, 36, 0.62)') && Number(style.opacity) > .99
+      && style.backgroundImage.includes('rgba(22, 26, 36, 0.62)') && style.backdropFilter.includes('blur(8px)') && Number(style.opacity) > .99
+      && Number(getComputedStyle(expander).opacity) > .99 && !expander.style.transition.includes('opacity')
       && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
       && !expander.querySelector('.crm-home-preview-exact') && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
       && !!rect && !!lid && state.delta <= 1, detail:JSON.stringify(state) };
@@ -1270,7 +1271,7 @@ async function main() {
       const layer = window.crmProjectsCamera?.layers?.()[1] || document.querySelector('.crm-planner-project-world'); const rect = layer?.getBoundingClientRect();
       if (rect) samples.push([rect.x, rect.y, rect.width, rect.height]);
       const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');
-      if(acrylic&&Number(getComputedStyle(acrylic).opacity)>.01&&getComputedStyle(acrylic).backgroundImage!=='none')acrylicFrames+=1;
+      if(acrylic&&Number(getComputedStyle(acrylic).opacity)*Number(getComputedStyle(layer).opacity)>.99&&!layer.style.transition.includes('opacity')&&getComputedStyle(acrylic).backdropFilter.includes('blur(24px)')&&getComputedStyle(acrylic).backgroundImage!=='none')acrylicFrames+=1;
       if((overlay&&Number(getComputedStyle(overlay).opacity)>.01)||(live&&Number(getComputedStyle(live).opacity)>.01))objectFrames+=1;
       if (window.crmProjectsCamera?.isTransitioning?.()) { requestAnimationFrame(tick); return; }
       const stable = []; let frame = 0;
@@ -1286,7 +1287,7 @@ async function main() {
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
     const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1);
-    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= 8 && probe.objectFrames >= 8 && probe.wallpapers === 1
+    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-1 && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,

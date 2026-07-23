@@ -16,6 +16,7 @@
     const lockInputDuringTransitions = config.lockInputDuringTransitions === true;
     const contractExpanderAbove = config.contractExpanderAbove === true;
     const holdContractEndpointFrame = config.holdContractEndpointFrame === true;
+    const keepExpanderOpaque = config.keepExpanderOpaqueDuringTransition === true;
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -205,7 +206,7 @@
         zIndex: "5",
         pointerEvents: "auto",
         transition: "none",
-        opacity: "0",
+        opacity: keepExpanderOpaque ? "1" : "0",
         transform: `translate(${(rect.left - E.x).toFixed(2)}px, ${(rect.top - E.y).toFixed(2)}px) scale(${(rect.width / E.w).toFixed(5)}, ${(rect.height / E.h).toFixed(5)})`,
       });
       const below = layers[level];
@@ -221,7 +222,9 @@
       if (!precomposeTransitions) void expander.offsetWidth;
       transitionFrame(() => {
         expander.dataset.fractalFrame = "viewport";
-        expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
+        expander.style.transition = keepExpanderOpaque
+          ? `transform ${morphMs}ms ${ease}`
+          : `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
         expander.style.transform = "none";
         expander.style.opacity = "1";
         below.style.transition = keepBelowVisible
@@ -320,9 +323,11 @@
             : `transform ${morphMs}ms ${ease}`);
         below.style.transform = "none";
         below.style.opacity = "1";
-        expander.style.transition = `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`;
+        expander.style.transition = keepExpanderOpaque
+          ? `transform ${morphMs}ms ${ease}`
+          : `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`;
         expander.style.transform = `translate(${(rx - E.x).toFixed(2)}px, ${(ry - E.y).toFixed(2)}px) scale(${(sourceRect.w / E.w).toFixed(5)}, ${(sourceRect.h / E.h).toFixed(5)})`;
-        expander.style.opacity = "0";
+        expander.style.opacity = keepExpanderOpaque ? "1" : "0";
       };
       if (precomposeTransitions) requestAnimationFrame(() => {
         if (seq !== transitionSeq) return;

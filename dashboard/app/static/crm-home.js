@@ -188,18 +188,19 @@
         will-change:transform,opacity;backface-visibility:hidden}
       .crm-home-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;
         border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));
-        -webkit-backdrop-filter:none;backdrop-filter:none;
-        transform:translateZ(0)}
+        -webkit-backdrop-filter:blur(8px) saturate(140%);backdrop-filter:blur(8px) saturate(140%);
+        transform:translateZ(0);will-change:transform}
       .crm-home-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));
         border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:0;transition:opacity var(--fractal-camera-morph-ms,460ms) var(--fractal-camera-ease,cubic-bezier(.22,1,.26,1))}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic:after{opacity:1}
+      .crm-home-surface.crm-home-camera-moving .crm-home-transition-acrylic:after{opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
       .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket:not(.is-camera-target){transition:none!important;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
       .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket.is-camera-target{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3;opacity:0!important}
       .crm-home-expander .crm-home-title-glass{display:none}
       .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transform:none;opacity:1;transition:none}
@@ -968,7 +969,7 @@
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
-    contractExpanderAbove:true,holdContractEndpointFrame:true,
+    contractExpanderAbove:true,holdContractEndpointFrame:true,keepExpanderOpaqueDuringTransition:true,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareTarget:(target,context)=>markCameraTarget(target,context),
     prepareJump:(_expander,target,context)=>markCameraTarget(target,context),

@@ -104,10 +104,11 @@
       .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-auto-flow:column;gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}.crm-project-gallery-hsb{position:absolute;z-index:6;left:var(--crm-project-rail-inset);right:var(--crm-project-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-project-gallery-hsb.is-on{opacity:1;pointer-events:auto}.crm-project-gallery-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.crm-project-gallery-hth:hover{background:rgba(255,255,255,.88)}.crm-project-gallery-hth:active{cursor:grabbing;background:#fff}
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}
-      .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:1;border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));-webkit-backdrop-filter:blur(24px) saturate(140%);backdrop-filter:blur(24px) saturate(140%);transform:translateZ(0);will-change:opacity,transform}
-      .crm-project-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);opacity:0;transition:opacity var(--fractal-camera-morph-ms,460ms) var(--fractal-camera-ease,cubic-bezier(.22,1,.26,1))}
-      .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic:after{opacity:1}
-      .crm-planner-project-world[data-fractal-frame="viewport"]>.crm-project-transition-acrylic{opacity:0}
+      .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));-webkit-backdrop-filter:blur(24px) saturate(140%);backdrop-filter:blur(24px) saturate(140%);transform:translateZ(0);will-change:opacity,transform}
+      .crm-project-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);opacity:1}
+      .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
+      @keyframes crm-project-acrylic-expand{0%,80%{opacity:1}100%{opacity:0}}
+      @keyframes crm-project-acrylic-contract{0%{opacity:0}20%,100%{opacity:1}}
       @keyframes crm-project-live-in{0%,76%{opacity:.001}100%{opacity:1}}
       @keyframes crm-project-texture-out{0%,76%{opacity:1}100%{opacity:0}}
       @keyframes crm-project-live-out{0%{opacity:1}24%,100%{opacity:.001}}
@@ -116,10 +117,12 @@
       .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{animation:crm-project-texture-out var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-out var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{animation:crm-project-texture-in var(--fractal-camera-morph-ms,460ms) linear both}
-      /* Acrylic is the moving surface, not part of the object-texture handoff.
-         Keep the real backdrop blur fully owned for every transform frame; the
-         settled viewport takes over only after the camera reports completion. */
-      .crm-planner-surface.crm-project-camera-moving .crm-planner-project-world>.crm-project-transition-acrylic{opacity:1!important;animation:none!important}
+      /* The tile material changes owners while geometry is still moving: it
+         dissolves into the settled project surface on entry and reforms before
+         the return reaches its source tile. No endpoint style swap remains. */
+      .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-warm>.crm-project-transition-acrylic{opacity:1!important;animation:none!important}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0}
       .crm-planner-surface.crm-project-camera-expanding .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0;transition:opacity 90ms ease!important}
       .crm-planner-surface.crm-project-camera-contracting .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:1;transition:opacity 110ms ease 350ms!important}

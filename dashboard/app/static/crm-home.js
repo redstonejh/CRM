@@ -189,12 +189,15 @@
       .crm-home-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;
         border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));
         -webkit-backdrop-filter:blur(8px) saturate(140%);backdrop-filter:blur(8px) saturate(140%);
-        transform:translateZ(0);will-change:transform}
+        opacity:0;transform:translateZ(0);will-change:opacity,transform}
       .crm-home-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));
         border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
-        opacity:0;transition:opacity var(--fractal-camera-morph-ms,460ms) var(--fractal-camera-ease,cubic-bezier(.22,1,.26,1))}
-      .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic:after{opacity:1}
-      .crm-home-surface.crm-home-camera-moving .crm-home-transition-acrylic:after{opacity:1!important;transition:none!important}
+        opacity:1}
+      .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
+      @keyframes crm-home-acrylic-expand{0%,80%{opacity:1}100%{opacity:0}}
+      @keyframes crm-home-acrylic-contract{0%{opacity:0}20%,100%{opacity:1}}
+      .crm-home-surface.crm-home-camera-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-home-surface.crm-home-camera-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
@@ -208,6 +211,7 @@
          transparent room texture composited so the first camera frame never
          performs a wallpaper-sized upload. */
       .crm-home-warm .crm-home-preview-foreground{opacity:1!important;transform:translateZ(0);will-change:transform,opacity}
+      .crm-home-warm>.crm-home-transition-acrylic{opacity:1!important;animation:none!important}
       .crm-home-surface.crm-home-motion-priming .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
         display:block;opacity:.001;transform:translateZ(0)}
       .crm-home-surface.crm-home-motion-priming .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant{
@@ -1017,6 +1021,12 @@
     }
     if (on) {
       mountAll();
+      // The decoded transition texture survives while Home is inactive, but a
+      // layout/camera boundary can leave its readiness flag cleared. Re-seat
+      // that existing composition immediately so the next dive never begins
+      // with a late material upload.
+      requestAnimationFrame(() => syncMotionSnapshot());
+      requestMotionSnapshot();
       scheduleFactoryPrewarm();
       if (window.crmDeskTransit?.isBusy?.()) activeRefreshPending = handDirty;
       else {

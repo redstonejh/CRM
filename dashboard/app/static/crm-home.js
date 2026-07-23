@@ -72,34 +72,39 @@
     style.textContent = `
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
       .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0}
+      /* Inactive rooms that finished their idle baseline stay rasterized behind
+         Home instead of returning to display:none and paying their first paint
+         during a camera move. The attribute is semantic-only: [hidden] remains
+         present, the room is one .001 compositor group, and no descendant can
+         enter hit testing. */
+      html body [data-crm-home-precomposed][hidden]{
+        display:block!important;position:fixed!important;inset:0!important;
+        width:100vw!important;height:100vh!important;opacity:.001!important;
+        z-index:0!important;pointer-events:none!important;transition:none!important}
+      html body [data-crm-home-precomposed][hidden] *{pointer-events:none!important}
       .crm-home-motion-snapshot.crm-home-preview-image,
       .crm-home-motion-variant.crm-home-preview-image{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
         pointer-events:none;user-select:none;backface-visibility:hidden}
       .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint;will-change:transform,opacity;backface-visibility:hidden}
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block}
-      /* At the contract endpoint the full Home object raster remains above the
-         live root. Glass, previews, hand and shadows rejoin behind it, then the
-         two composited layers crossfade without a materialization frame. */
-      .crm-home-surface.crm-home-camera-handoff .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
-        display:block;z-index:30;opacity:.999;transform:translateZ(0);will-change:opacity;transition:opacity 112ms linear}
-      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-snapshot{
-        opacity:0}
-      .crm-home-surface.crm-home-camera-handoff .crm-home-level>.crm-home-grid>.crm-home-bucket,
-      .crm-home-surface.crm-home-camera-handoff .crm-home-level>.crm-home-priority-hand{
-        opacity:.001;transition:opacity 112ms linear!important}
-      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-level>.crm-home-grid>.crm-home-bucket,
-      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-level>.crm-home-priority-hand{opacity:1}
-      .crm-home-surface.crm-home-camera-handoff .crm-home-level>.crm-home-title-layer{z-index:31}
-      /* Removing .crm-home-camera-moving restores each complete live tile under
-         the endpoint raster. Only the compositor opacity is allowed to animate
-         while its material is re-established. */
+      .crm-home-surface:is(.crm-home-camera-moving,.crm-home-camera-handoff) .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block}
+      /* The live Home objects remain resident in the compositor throughout the
+         return. At the endpoint the motion texture and these live objects swap
+         in one style update; there is no full-screen snapshot crossfade. */
+      .crm-home-surface.crm-home-camera-handoff .crm-home-grid{z-index:3;opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket,
       .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand>.crm-home-hand-card{
-        animation:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{visibility:hidden}
+        animation:none!important;transition:none!important}
+      .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket:not(.is-camera-target),
+      .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand{
+        visibility:visible;opacity:.001!important;transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{
+        visibility:visible;opacity:.001;transition:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-priority-hand>.crm-home-hand-card{
+        animation:none!important;transition:none!important}
       /* The expander owns the selected room during travel. One precomposed
          variant carries every other Home object with the selected tile cut
-         transparent; the full Home raster is reserved for the endpoint. */
+         transparent and remains the covered owner while live Home acrylics
+         prepare for the endpoint exchange. */
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket:not(.is-camera-target)>.crm-home-preview{
         visibility:hidden}
       /* The real selected tile and the full-size lid trade opacity while their
@@ -194,20 +199,19 @@
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
       @keyframes crm-home-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
       @keyframes crm-home-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
-      @keyframes crm-home-endpoint-expand{0%,93%{opacity:0}100%{opacity:1}}
-      @keyframes crm-home-endpoint-contract{0%{opacity:1}7%,100%{opacity:0}}
       .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-home-expander .crm-home-preview-exact{z-index:2;filter:none;transform:translateZ(0);opacity:0;transition:none;will-change:opacity;backface-visibility:hidden}
-      .crm-home-expander[data-fractal-frame="viewport"] .crm-home-preview-exact{opacity:1}
-      .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander .crm-home-preview-exact{animation:crm-home-endpoint-expand var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander .crm-home-preview-exact{animation:crm-home-endpoint-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
+      /* The rasterized motion variant owns the non-selected Home objects while
+         the grid travels at .001 opacity. Keep the selected live acrylic ready
+         for its exact expander exchange, but defer the other three expensive
+         backdrop filters until the covered endpoint handoff. */
       .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket:not(.is-camera-target){transition:none!important;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket.is-camera-target{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3;opacity:0!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket.is-camera-target{transition:none!important}
+      .crm-home-surface.crm-home-camera-expanding .crm-home-grid>.crm-home-bucket.is-camera-target{border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3;opacity:.001!important;transition:none!important}
       .crm-home-expander .crm-home-title-glass{display:none}
       .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transform:none;opacity:1;transition:none}
@@ -726,6 +730,11 @@
       if (link?.entityType) card.dataset.recordEntity = link.entityType;
       if (link?.recordId) card.dataset.recordId = link.recordId;
       card.dataset.commitmentId = String(item.id || "");
+      card.addEventListener("pointerenter", () => {
+        const target = link?.entityType === "tickets" ? "cases"
+          : link?.entityType === "workItems" ? "planner" : "assignments";
+        focusPrecomposedModule(target);
+      });
       card.addEventListener("contextmenu", (event) => { event.preventDefault(); event.stopPropagation(); openTodoMenu(item, card, event.clientX, event.clientY); });
       card.style.setProperty("--hand-z", String(20 + index));
       hand.appendChild(card);
@@ -772,23 +781,23 @@
     && !camera?.isTransitioning?.()
     && !window.crmDeskTransit?.isBusy?.()
     && performance.now() >= factoryPrewarmAfter;
+  const moduleKeyForTheater = (node) => node?.dataset?.crmTheater === "tickets" ? "cases" : String(node?.dataset?.crmTheater || "");
+  const focusPrecomposedModule = (key) => {
+    const theater = key === "cases" ? "tickets" : key;
+    document.querySelectorAll("[data-crm-home-precomposed]").forEach((node) => {
+      if (node.dataset.crmTheater !== theater) node.removeAttribute("data-crm-home-precomposed");
+    });
+    const node = [...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((candidate) => candidate.hidden);
+    if (node) node.setAttribute("data-crm-home-precomposed", key);
+    return node;
+  };
   const primeInactiveTheater = (node, api) => new Promise((resolve) => {
     if (!node || api?.isActive?.() || !canPrewarmFactory()) { resolve(); return; }
-    const properties = ["display", "opacity", "z-index", "pointer-events"];
-    const saved = properties.map((property) => [property, node.style.getPropertyValue(property), node.style.getPropertyPriority(property)]);
     node.hidden = true;
-    node.style.setProperty("display", "block", "important");
-    node.style.setProperty("opacity", ".001", "important");
-    node.style.setProperty("z-index", "0", "important");
-    node.style.setProperty("pointer-events", "none", "important");
-    const restore = () => {
-      saved.forEach(([property, value, priority]) => value ? node.style.setProperty(property, value, priority) : node.style.removeProperty(property));
-      node.hidden = !api?.isActive?.();
-      resolve();
-    };
+    node.setAttribute("data-crm-home-precomposed", moduleKeyForTheater(node));
     requestAnimationFrame(() => {
-      if (!canPrewarmFactory()) { restore(); return; }
-      requestAnimationFrame(restore);
+      if (!canPrewarmFactory()) { node.removeAttribute("data-crm-home-precomposed"); resolve(); return; }
+      requestAnimationFrame(resolve);
     });
   });
   const scheduleFactoryPrewarm = () => {
@@ -845,6 +854,7 @@
       // Do not activate merely because a tile finishes loading beneath an
       // already-stationary pointer. Actual pointer movement arms the reveal.
       bucket.addEventListener("pointermove", () => {
+        focusPrecomposedModule(module.key);
         if (!bucket.dataset.previewReady || bucket.classList.contains("is-preview-hovered")) return;
         revealSharpPreview(bucket);
       });
@@ -914,7 +924,7 @@
     // One transparent, full-resolution room texture carries its objects and
     // shadows above a live acrylic lens. The fixed workspace wallpaper remains
     // the only background paint throughout the camera move.
-    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true);
+    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key));
     return bucket;
   };
   const recycleExpander = (key, expander) => {
@@ -935,7 +945,7 @@
     selectMotionVariant(root, "");
   };
   const finishHandoff = (clearTarget = true) => {
-    camera?.surface?.()?.classList.remove("crm-home-camera-handoff", "crm-home-camera-releasing");
+    camera?.surface?.()?.classList.remove("crm-home-camera-handoff");
     if (clearTarget) clearCameraTarget();
     const resolve = handoffResolve;
     handoffResolve = null;
@@ -945,8 +955,7 @@
   };
   const beginHomeHandoff = (context, sequence) => {
     const surface = context.surface;
-    const snapshot = context.layers?.[0]?.querySelector?.(":scope > .crm-home-motion-snapshot");
-    if (!surface || !snapshot || context.layers?.[0]?.dataset?.motionSnapshotReady !== "true") {
+    if (!surface) {
       finishHandoff();
       handoffPromise = Promise.resolve();
       return;
@@ -954,25 +963,13 @@
     finishHandoff(false);
     handoffPromise = new Promise((resolve) => { handoffResolve = resolve; });
     surface.classList.add("crm-home-camera-handoff");
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      snapshot.removeEventListener("transitionend", onEnd);
+    // The selected live tile is already composited beneath its geometrically
+    // identical expander. Keep the cut-out motion variant over the other tiles
+    // while their real acrylic layers paint underneath, then exchange all
+    // remaining owners atomically.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       if (sequence === handoffSequence) finishHandoff();
       else handoffResolve?.();
-    };
-    const onEnd = (event) => {
-      if (event.target === snapshot && event.propertyName === "opacity") finish();
-    };
-    const timeout = setTimeout(finish, 180);
-    snapshot.addEventListener("transitionend", onEnd);
-    // Two fully covered paints instantiate the live Home glass and shadows;
-    // the short overlap then trades identical pixels without a hard edge.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (sequence !== handoffSequence) { finish(); return; }
-      surface.classList.add("crm-home-camera-releasing");
     }));
   };
 
@@ -989,7 +986,7 @@
       finishHandoff(false);
       handoffSequence += 1;
       factoryPrewarmAfter = Number.POSITIVE_INFINITY;
-      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff","crm-home-camera-releasing");
+      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff");
       syncMotionSnapshot(context.layers?.[0]);
       context.surface?.classList.add("crm-home-camera-moving");
       context.surface?.classList.toggle("crm-home-camera-expanding",direction==="expand");
@@ -997,6 +994,7 @@
     },
     onTransformStart:(direction,context)=>{
       homeAcrylicLens.start(direction);
+      window.crmDeskTransit?.noteHomeTransformStart?.(direction, performance.now(), context.morphMs);
       context.surface?.classList.toggle("crm-home-acrylic-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
     },
@@ -1072,7 +1070,7 @@
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key;
     const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
-    let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
+    let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden||node.hasAttribute("data-crm-transit-destination"));
       const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
       const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
         node.dataset?.id||node.dataset?.recordId||node.dataset?.stage||node.dataset?.assignmentCommitment||node.className,

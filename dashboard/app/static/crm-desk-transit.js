@@ -22,32 +22,38 @@
   let lastPhysicalDirection = 0;
   let lastPhysicalAt = 0;
   let lastPhysicalSource = "";
+  let diveSequence = 0;
+  let activeDive = null;
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
     const style = document.createElement("style");
     style.id = "crm-desk-transit-styles";
     style.textContent = `
-      /* The veil carries the fully-dived object texture while the destination
-         theater takes the stage beneath it, then the two layers crossfade. */
-      .crm-transit-veil { position: fixed; inset: 0; z-index: ${TRANSIT_Z}; pointer-events: none;
-        opacity: .999; transform: translateZ(0); will-change: opacity; contain: paint;
-        transition: opacity 96ms linear; }
-      .crm-transit-veil.is-releasing { opacity: 0; }
-      /* A destination appears behind the camera lid in its final visual state.
-         Its own entrance transitions must not restart shadows or geometry when
-         the lid is removed one frame later. */
-      html.crm-transit-materializing [data-crm-theater]:not([hidden]),
-      html.crm-transit-materializing [data-crm-theater]:not([hidden]) * {
+      /* Only the incoming room is held still while it is built. Home remains a
+         live camera above it; no full-viewport veil or endpoint image exists. */
+      html.crm-transit-materializing [data-crm-transit-destination],
+      html.crm-transit-materializing [data-crm-transit-destination] * {
         animation: none !important; transition: none !important; scroll-behavior: auto !important;
       }
-      /* Transition lids now contain transparent room foregrounds. Keep the
-         live destination composited but effectively absent beneath the lid,
-         then exchange the two GPU layers together. The wallpaper is never
-         hidden or duplicated and remains the one fixed background paint. */
-      html.crm-transit-materializing [data-crm-transit-layer]{opacity:.001!important;will-change:opacity}
+      /* Card-system theaters intentionally use display:contents at rest. During
+         transit that would promote every acrylic bucket independently at the
+         reveal boundary. A temporary viewport box groups those unchanged fixed
+         children into one compositor surface; it adds no transform or new
+         fixed-position containing block. */
+      html.crm-transit-materializing [data-crm-transit-group]{
+        display:block!important;position:fixed!important;inset:0!important;
+        width:100vw!important;height:100vh!important;pointer-events:none!important}
+      /* The destination is already laid out and composited underneath the
+         camera. It takes ownership only during the same final 7% in which the
+         screen-space acrylic and moving foreground release it. */
+      html.crm-transit-materializing [data-crm-transit-layer]{
+        opacity:.001!important;will-change:opacity;transition:none!important}
+      html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][hidden]{
+        display:grid!important}
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
-        opacity:var(--crm-transit-rest-opacity,1)!important;transition:opacity 96ms linear!important}
+        opacity:var(--crm-transit-rest-opacity,1)!important;
+        transition:opacity var(--crm-transit-reveal-ms,32ms) linear var(--crm-transit-reveal-delay,0ms)!important}
     `;
     document.head.appendChild(style);
   };
@@ -57,22 +63,6 @@
   const paint = (frames = 1) => new Promise((resolve) => {
     const next = () => frames-- > 0 ? requestAnimationFrame(next) : resolve();
     requestAnimationFrame(next);
-  });
-  const afterOpacity = (element, timeoutMs = 150) => new Promise((resolve) => {
-    if (!element?.isConnected) { resolve(); return; }
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      element.removeEventListener("transitionend", onEnd);
-      resolve();
-    };
-    const onEnd = (event) => {
-      if (event.target === element && event.propertyName === "opacity") done();
-    };
-    const timeout = setTimeout(done, timeoutMs);
-    element.addEventListener("transitionend", onEnd);
   });
   const bucketFor = (key) => {
     const layer = camera()?.layers?.()[0];
@@ -85,17 +75,44 @@
     assignments: window.crmAssignments,
   })[key];
   let destinationLayers = [];
+  let destinationRoot = null;
   const clearDestinationLayers = () => {
     destinationLayers.forEach((layer) => {
       layer.removeAttribute("data-crm-transit-layer");
       layer.style.removeProperty("--crm-transit-rest-opacity");
+      layer.style.removeProperty("--crm-transit-reveal-ms");
+      layer.style.removeProperty("--crm-transit-reveal-delay");
     });
+    destinationRoot?.removeAttribute?.("data-crm-transit-destination");
+    destinationRoot?.removeAttribute?.("data-crm-transit-group");
+    destinationRoot?.removeAttribute?.("data-crm-home-precomposed");
+    destinationRoot = null;
     destinationLayers = [];
   };
-  const stageDestinationLayers = (key) => {
-    clearDestinationLayers();
+  const addDestinationLayer = (layer) => {
+    if (!layer || destinationLayers.includes(layer)) return;
+    layer.style.setProperty("--crm-transit-rest-opacity", getComputedStyle(layer).opacity || "1");
+    layer.setAttribute("data-crm-transit-layer", "");
+    destinationLayers.push(layer);
+  };
+  const findDestinationTheater = (key) => {
     const theaterName = key === "cases" ? "tickets" : key;
-    const theater = [...document.querySelectorAll(`[data-crm-theater="${theaterName}"]`)].find((node) => !node.hidden);
+    return [...document.querySelectorAll(`[data-crm-theater="${theaterName}"]`)].find((node) => !node.hidden)
+      || document.querySelector(`[data-crm-theater="${theaterName}"]`);
+  };
+  const primeDestinationLayers = (key, theater = findDestinationTheater(key)) => {
+    clearDestinationLayers();
+    if (!theater) return destinationLayers;
+    destinationRoot = theater;
+    destinationRoot.setAttribute("data-crm-transit-destination", "");
+    if (destinationRoot.matches(".crm-theater,[data-crm-home-precomposed]") || getComputedStyle(destinationRoot).display === "contents") {
+      destinationRoot.setAttribute("data-crm-transit-group", "");
+    }
+    addDestinationLayer(theater);
+    addDestinationLayer(document.querySelector(".crm-module-switch"));
+    return destinationLayers;
+  };
+  const stageDestinationLayers = (key, theater = findDestinationTheater(key)) => {
     if (!theater) return destinationLayers;
     const boxesOf = (node) => {
       if (!node || node.hidden || getComputedStyle(node).display === "none") return [];
@@ -103,11 +120,9 @@
       const rect = node.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 ? [node] : [...node.children].flatMap(boxesOf);
     };
-    destinationLayers = getComputedStyle(theater).display === "contents" ? [...theater.children].flatMap(boxesOf) : [theater];
-    destinationLayers.forEach((layer) => {
-      layer.style.setProperty("--crm-transit-rest-opacity", getComputedStyle(layer).opacity || "1");
-      layer.setAttribute("data-crm-transit-layer", "");
-    });
+    if (theater.hasAttribute("data-crm-transit-group")) addDestinationLayer(theater);
+    else if (getComputedStyle(theater).display === "contents") [...theater.children].flatMap(boxesOf).forEach(addDestinationLayer);
+    else addDestinationLayer(theater);
     return destinationLayers;
   };
   const viewportApiFor = (key) => ({
@@ -190,74 +205,166 @@
     return true;
   };
 
-  // The dive-in ending: the expanded lid keeps covering the stage while the
-  // destination theater is committed beneath it, then crossfades away. The
-  // fixed wallpaper stays visible throughout, so the swap is never a cut.
-  const finishDiveIn = async (key, done) => {
-    const startedAt = performance.now();
-    const destinationApi = destinationFor(key);
-    clearDestinationLayers();
-    const destinationState = destinationApi?.performanceState?.() || null;
-    const homePrewarm = window.crmHome?.prewarmStatus?.() || null;
+  const armDestinationReveal = (stage) => {
+    if (!stage || stage.revealArmed || !stage.ready || !Number.isFinite(stage.motionStartedAt)) return false;
+    stage.revealArmed = true;
+    const duration = Math.max(16, stage.morphMs * .07);
+    const revealAt = stage.motionStartedAt + stage.morphMs * .93;
+    const delay = Math.max(0, revealAt - performance.now());
+    stage.releaseAt = revealAt;
+    const beginReveal = () => {
+      if (stage.sequence !== activeDive?.sequence) return;
+      destinationLayers.forEach((layer) => {
+        layer.style.setProperty("--crm-transit-reveal-ms", `${duration.toFixed(2)}ms`);
+        layer.style.setProperty("--crm-transit-reveal-delay", "0ms");
+      });
+      // The retained destination has already painted at .001 for the entire
+      // camera move. Reading offsetWidth here used to force a viewport-wide
+      // layout exactly at the reveal boundary and could drop a native frame.
+      document.documentElement.classList.add("crm-transit-revealing");
+
+      // The moving foreground and the already-composited live room exchange
+      // ownership on the same timeline. No delayed transition remains active
+      // during the preceding camera frames.
+      const lid = camera()?.layers?.()[1];
+      const foreground = lid?.querySelector?.(".crm-home-preview-foreground");
+      if (foreground) {
+        stage.foregroundAnimation = foreground.animate(
+          [{ opacity:1 }, { opacity:0 }],
+          { duration, easing:"linear", fill:"both" },
+        );
+      }
+      stage.revealTimer = setTimeout(() => {
+        if (stage.sequence !== activeDive?.sequence) return;
+        requestAnimationFrame(() => {
+          stage.revealedAt = performance.now();
+          stage.resolveReveal?.();
+          stage.resolveReveal = null;
+        });
+      }, duration + 20);
+    };
+    stage.revealTimer = setTimeout(beginReveal, delay);
+    return true;
+  };
+
+  const prepareDiveDestination = async (stage) => {
+    const destinationApi = destinationFor(stage.key);
+    stage.destinationState = destinationApi?.performanceState?.() || null;
+    stage.homePrewarm = window.crmHome?.prewarmStatus?.() || null;
+    let theater = findDestinationTheater(stage.key);
+    let retainedPrecompose = !!theater?.hasAttribute?.("data-crm-home-precomposed");
+    if (!retainedPrecompose) {
+      try { await destinationApi?.baseline?.({ canRender: () => stage.sequence === activeDive?.sequence }); } catch {}
+      theater = findDestinationTheater(stage.key);
+      retainedPrecompose = !!theater?.hasAttribute?.("data-crm-home-precomposed");
+    }
+    if (stage.sequence !== activeDive?.sequence) return;
+
+    ensureStyles();
+    primeDestinationLayers(stage.key, theater);
+    document.documentElement.classList.remove("crm-transit-revealing");
+    document.documentElement.classList.add("crm-transit-materializing");
+    stageDestinationLayers(stage.key, theater);
+
+    if (retainedPrecompose) {
+      // This exact DOM already survived multiple idle paints as one .001
+      // viewport group. Re-measuring dozens of descendants during the camera
+      // move would itself create the hitch the cache exists to prevent.
+      stage.settledState = { stable:true, signature:"retained-precompose" };
+    } else {
+      try { stage.settledState = await window.crmHome?.waitForModuleSettled?.(stage.key); } catch {}
+      if (stage.settledState?.stable) window.crmHome?.noteModuleReady?.(stage.key);
+      if (stage.sequence !== activeDive?.sequence) return;
+      // A non-retained fallback needs complete covered paints before reveal.
+      await paint(1);
+    }
+    stage.readyAt = performance.now();
+    stage.ready = true;
+    armDestinationReveal(stage);
+  };
+
+  const beginDiveDestination = (key) => {
+    let resolveReveal = null;
+    const revealPromise = new Promise((resolve) => { resolveReveal = resolve; });
+    const stage = {
+      key,
+      sequence:++diveSequence,
+      startedAt:performance.now(),
+      morphMs:460,
+      motionStartedAt:Number.NaN,
+      ready:false,
+      revealArmed:false,
+      committed:false,
+      resolveReveal,
+      revealPromise,
+      foregroundAnimation:null,
+    };
+    activeDive = stage;
+    stage.preparePromise = prepareDiveDestination(stage);
+    return stage;
+  };
+
+  const noteHomeTransformStart = (direction, startedAt = performance.now(), morphMs = 460) => {
+    if (direction !== "expand" || !activeDive || Number.isFinite(activeDive.motionStartedAt)) return false;
+    activeDive.motionStartedAt = Number(startedAt) || performance.now();
+    activeDive.morphMs = Math.max(1, Number(morphMs) || 460);
+    armDestinationReveal(activeDive);
+    return true;
+  };
+
+  // The destination is staged and precomposed during the camera move. By the
+  // time transform completion reaches this function, its live pixels have
+  // already replaced the transparent moving foreground; the semantic route
+  // commit can happen afterward without introducing another visible layer.
+  const finishDiveIn = async (key, done, stage) => {
     const cam = camera();
     const surface = cam?.surface?.();
-    const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
-    let veil = null;
-    if (lid) {
-      ensureStyles();
-      veil = document.createElement("div");
-      veil.className = "crm-transit-veil";
-      veil.appendChild(lid);   // adopt the lid out of the camera so the theater toggle can't hide it
-      document.body.appendChild(veil);
+    try { await stage?.preparePromise; } catch {}
+    if (!Number.isFinite(stage.motionStartedAt)) {
+      stage.motionStartedAt = performance.now() - stage.morphMs;
     }
-    document.documentElement.classList.add("crm-transit-materializing");
-    // Build the destination while the fully expanded lid still covers the
-    // viewport. This consumes async data and every factory's first layout
-    // before the destination can contribute a visible frame.
-    try { await destinationApi?.baseline?.({ canRender: () => true }); } catch {}
-    const commitAt = performance.now();
-    commit(key);
-    stageDestinationLayers(key);
-    const committedAt = performance.now();
-    // Presence is not readiness: several card factories perform measured
-    // layout after inserting their nodes. Keep the lid in place until sampled
-    // geometry remains identical across consecutive frames.
-    let settledState = null;
-    try {
-      settledState = await window.crmHome?.waitForModuleSettled?.(key);
-    } catch {}
-    if (settledState?.stable) window.crmHome?.noteModuleReady?.(key);
-    const readyAt = performance.now();
-    // A fully opaque lid lets Chromium cull the live theater beneath it. The
-    // veil's .999 opacity keeps the picture visually exact while requiring the
-    // destination to composite. Give it one complete covered paint before the
-    // lid is retired, then keep entrance motion disabled for the first exposed
-    // paint. This is a handoff between already-painted layers, not a reveal that
-    // asks shadows and backdrop filters to instantiate on screen.
-    await paint(2);
-    const releaseAt = performance.now();
-    if (veil) {
-      // The exact lid and the final live room now occupy the same pixels. Fade
-      // between them while both remain composited so backdrop filters and
-      // shadows cannot first materialize on the uncovered frame.
-      void veil.offsetWidth;
-      document.documentElement.classList.add("crm-transit-revealing");
-      veil.classList.add("is-releasing");
-      await afterOpacity(veil);
-      veil.remove();
-    } else document.documentElement.classList.add("crm-transit-revealing");
+    if (!stage.ready) {
+      stage.ready = true;
+      stage.readyAt = performance.now();
+    }
+    armDestinationReveal(stage);
+    try { await stage.revealPromise; } catch {}
+
+    // The destination is already the visible full-strength owner. Commit only
+    // now, after camera motion and material exchange, so router/API activation
+    // cannot steal frames from the zoom. Hidden/display ownership changes, but
+    // the rendered destination pixels do not.
+    if (!stage.committed) {
+      stage.commitAt = performance.now();
+      commit(key);
+      stage.committedAt = performance.now();
+      stage.committed = true;
+    }
+    const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
     if (cam?.restoreRoot) cam.restoreRoot();
     else cam?.rebuildRoot?.();
     try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
-    if (surface) surface.style.zIndex = "";
-    await paint(2);
+    if (surface) {
+      surface.hidden = true;
+      surface.style.zIndex = "";
+    }
+    stage.foregroundAnimation?.cancel?.();
     document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
     clearDestinationLayers();
     const doneAt = performance.now();
-    performanceTimings.push({ key, destinationState, homePrewarm, settled: settledState?.stable === true,
-      commitMs: committedAt - commitAt, readyMs: readyAt - committedAt,
-      frameWaitMs: releaseAt - readyAt, releaseMs: doneAt - releaseAt, totalMs: doneAt - startedAt });
+    performanceTimings.push({
+      key,
+      destinationState:stage.destinationState,
+      homePrewarm:stage.homePrewarm,
+      settled:stage.settledState?.stable === true,
+      commitMs:(stage.committedAt || stage.commitAt || doneAt) - (stage.commitAt || stage.startedAt),
+      readyMs:(stage.readyAt || doneAt) - stage.startedAt,
+      frameWaitMs:Math.max(0, (stage.releaseAt || doneAt) - (stage.readyAt || doneAt)),
+      releaseMs:doneAt - (stage.releaseAt || doneAt),
+      totalMs:doneAt - stage.startedAt,
+    });
     if (performanceTimings.length > 24) performanceTimings.shift();
+    if (activeDive?.sequence === stage.sequence) activeDive = null;
     done();
   };
 
@@ -267,13 +374,14 @@
     const cam = camera();
     const bucket = bucketFor(key);
     if (!cam || !bucket) { commit(key); done(); return; }
+    const stage = beginDiveDestination(key);
     const surface = cam.surface();
     if (surface) surface.style.zIndex = TRANSIT_Z;
     if (expandFirst) {
       if (cam.level() > 0) cam.rebuildRoot();
       cam.expand(bucket);
     }
-    Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done));
+    Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
   };
 
   // Module → Home: seat the module's own bucket lid over the stage at full
@@ -384,6 +492,7 @@
     announceNavigationHistory();
     const surface = camera()?.surface?.();
     if (surface) surface.style.zIndex = TRANSIT_Z;
+    const stage = beginDiveDestination(key);
     const done = () => {
       busy = false;
       commitCurrentViewport();
@@ -393,7 +502,7 @@
       queued = null;
       if (next) driveTo(next.key, next.options).then(next.resolve);
     };
-    Promise.resolve(camera()?.whenSettled?.()).then(() => finishDiveIn(key, done));
+    Promise.resolve(camera()?.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
   });
 
   // B / Esc backs out to Home from any camera-less module. Camera surfaces
@@ -489,6 +598,7 @@
   window.crmDeskTransit = {
     driveTo,
     adoptDive,
+    noteHomeTransformStart,
     back:() => moveThroughHistory(-1),
     forward:() => moveThroughHistory(1),
     canGoBack:() => navigationStatus().canBack,

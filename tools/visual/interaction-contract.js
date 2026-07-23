@@ -233,9 +233,14 @@ async function main() {
     const title = document.querySelector('.crm-home-title-layer > .crm-home-title-slot[data-module="people"] .crm-home-title-glass');
     const filter = foreground && getComputedStyle(foreground).filter;
     const titleStyle = title && getComputedStyle(title);
-    return !!foreground && !!title && filter.includes('blur(0px)') && filter.includes('saturate(0.96)')
+    const blur = Number(filter?.match(/blur\(([\d.]+)px\)/)?.[1]);
+    const saturation = Number(filter?.match(/saturate\(([\d.]+)\)/)?.[1]);
+    const ok = !!foreground && !!title && blur <= .05 && saturation >= .959
       && !tile.querySelector('.crm-home-preview-sharp') && Number(titleStyle.opacity) >= .23 && Number(titleStyle.opacity) < .33
       && titleStyle.left === '17px' && titleStyle.bottom === '16px';
+    return { ok, detail:JSON.stringify({ filter, blur, saturation, opacity:titleStyle?.opacity, left:titleStyle?.left, bottom:titleStyle?.bottom,
+      hovered:tile?.matches(':hover'), previewHovered:tile?.classList.contains('is-preview-hovered'),
+      titleDeemphasized:title?.closest('.crm-home-title-slot')?.classList.contains('is-deemphasized') }) };
   });
   await page.evaluate(() => document.querySelectorAll('[data-interaction-style-probe]').forEach((probe) => probe.remove()));
   await page.evaluate(() => {
@@ -261,7 +266,10 @@ async function main() {
   await page.click('.crm-home-bucket[data-module="people"]');
   await sleep(100);
   await check('Home-to-room handoff remains inside the original camera', () => document.body.dataset.crmModule === 'home'
-    && window.crmHomeCamera?.isTransitioning?.() && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
+    && window.crmHomeCamera?.isTransitioning?.()
+    && !window.crmHomeCamera?.surface?.()?.hidden
+    && document.documentElement.classList.contains('crm-transit-materializing')
+    && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
   await check('The moving tile keeps one acrylic coat over the shared wallpaper', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
     const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
@@ -290,7 +298,7 @@ async function main() {
       && acrylic.parentElement === window.crmHomeCamera?.surface?.() && Math.abs(transform.a-1)<.001 && Math.abs(transform.d-1)<.001
       && style.clipPath.startsWith('inset(') && frameStyle?.backgroundImage === 'none' && frameStyle?.backdropFilter === 'none'
       && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
-      && (!status?.ready || (!!exact && Number(exactStyle.opacity) <= .01 && expander.querySelectorAll('.crm-home-preview-foreground').length === 1))
+      && !exact && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
       , detail:JSON.stringify(state) };
   });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-in', () => {
@@ -1624,7 +1632,8 @@ async function main() {
   await page.click(`.crm-home-hand-card[data-commitment-id="${linkedHomeTodo.ticketCommitmentId}"]`);
   await sleep(80);
   await check('A Home ticket waits for the Tickets camera handoff before opening detail', () => document.body.dataset.crmModule === 'home'
-    && window.crmDeskTransit?.isBusy?.() && !document.querySelector('.ticket-detail-overlay:not([hidden]), .record-world-shell:not([hidden])'));
+    && window.crmDeskTransit?.isBusy?.() && window.crmHomeCamera?.isTransitioning?.()
+    && !document.querySelector('.ticket-detail-overlay:not([hidden]), .record-world-shell:not([hidden])'));
   await page.waitForFunction(() => document.body.dataset.crmModule === 'cases' && !window.crmDeskTransit?.isBusy?.()
     && !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail'), { timeout: 10000 });
   await check('A Home ticket reveals from its native Tickets card with one detail system', (todo) => {

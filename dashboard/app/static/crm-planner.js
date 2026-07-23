@@ -49,7 +49,6 @@
   const projectPreviews = new Map();
   const pendingProjectPreviews = new Map();
   const pendingDetailFields = new Map();
-  const projectRevealTimers = new WeakMap();
   let model = { projects:[], items:[], flows:[], commitments:[], contacts:[], tasks:[], tickets:[] };
   let expandedStacks = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
 
@@ -105,18 +104,14 @@
       .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-auto-flow:column;gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}.crm-project-gallery-hsb{position:absolute;z-index:6;left:var(--crm-project-rail-inset);right:var(--crm-project-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-project-gallery-hsb.is-on{opacity:1;pointer-events:auto}.crm-project-gallery-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.crm-project-gallery-hth:hover{background:rgba(255,255,255,.88)}.crm-project-gallery-hth:active{cursor:grabbing;background:#fff}
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}
-      .crm-project-transition-exact{position:absolute;inset:0;z-index:21;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:0;transform:translateZ(0);will-change:opacity}
       .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);transform:translateZ(0);will-change:opacity,transform}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
-      .crm-planner-project-world[data-fractal-frame="viewport"]>.crm-project-transition-exact{opacity:1}
       @keyframes crm-project-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
       @keyframes crm-project-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
-      @keyframes crm-project-endpoint-expand{0%,93%{opacity:0}100%{opacity:1}}
-      @keyframes crm-project-endpoint-contract{0%{opacity:1}7%,100%{opacity:0}}
-      @keyframes crm-project-live-in{0%,76%{opacity:.001}100%{opacity:1}}
-      @keyframes crm-project-texture-out{0%,76%{opacity:1}100%{opacity:0}}
-      @keyframes crm-project-live-out{0%{opacity:1}24%,100%{opacity:.001}}
-      @keyframes crm-project-texture-in{0%{opacity:0}24%,100%{opacity:1}}
+      @keyframes crm-project-live-in{0%,93%{opacity:.001}100%{opacity:1}}
+      @keyframes crm-project-texture-out{0%,93%{opacity:1}100%{opacity:0}}
+      @keyframes crm-project-live-out{0%{opacity:1}7%,100%{opacity:.001}}
+      @keyframes crm-project-texture-in{0%{opacity:0}7%,100%{opacity:1}}
       .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-in var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{animation:crm-project-texture-out var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-out var(--fractal-camera-morph-ms,460ms) linear both}
@@ -126,8 +121,6 @@
          the return reaches its source tile. No endpoint style swap remains. */
       .crm-planner-surface.crm-project-acrylic-expanding .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-acrylic-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-planner-surface.crm-project-acrylic-expanding .crm-planner-project-world>.crm-project-transition-exact{animation:crm-project-endpoint-expand var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-planner-surface.crm-project-acrylic-contracting .crm-planner-project-world>.crm-project-transition-exact{animation:crm-project-endpoint-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-warm>.crm-project-transition-acrylic{opacity:1!important;animation:none!important}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0}
       .crm-planner-surface.crm-project-camera-expanding .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0;transition:opacity 90ms ease!important}
@@ -342,66 +335,42 @@
   }
   function ensureProjectTransitionPreview(layer, project) {
     if (!layer || !project || window.crmHomePreviews?.isCaptureWorker) return null;
-    const preview = projectPreviews.get(project.id); if (!preview?.foregroundSrc || !preview?.exactSrc) return null;
+    const preview = projectPreviews.get(project.id); if (!preview?.foregroundSrc) return null;
     let image = layer.querySelector(":scope > .crm-project-transition-preview");
     if (!image) {
       image = document.createElement("img"); image.className = "crm-project-transition-preview";
       image.alt = ""; image.draggable = false; image.decoding = "sync"; layer.appendChild(image);
-    }
-    let exact = layer.querySelector(":scope > .crm-project-transition-exact");
-    if (!exact) {
-      exact = document.createElement("img"); exact.className = "crm-project-transition-exact";
-      exact.alt = ""; exact.draggable = false; exact.decoding = "sync"; layer.appendChild(exact);
     }
     layer.classList.add("has-transition-preview");
     // Keep the workspace backdrop singular. The moving layer carries only the
     // project's transparent objects; its sibling acrylic samples the same live
     // wallpaper that remains fixed behind both source and destination.
     if (image.src !== preview.foregroundSrc) image.src = preview.foregroundSrc;
-    if (exact.src !== preview.exactSrc) exact.src = preview.exactSrc;
     return image;
   }
   function revealProjectWorld(layer) {
     const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
-    const exact = layer?.querySelector?.(":scope > .crm-project-transition-exact");
     const live = layer?.querySelector?.(":scope > .crm-planner-project-live"); if (!image || !live) return;
     // The final camera frames already crossfade this predecoded texture into
     // the live world. Seat those exact endpoint values in the same task so
     // nothing continues materializing after the transform has stopped.
     live.style.transition = "none"; live.style.opacity = "1";
     image.style.transition = "none"; image.style.opacity = "0";
-    if (!exact) return;
-    clearTimeout(projectRevealTimers.get(layer));
-    exact.style.transition = "none"; exact.style.opacity = "1";
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!exact.isConnected || camera?.isTransitioning?.()) return;
-      exact.style.transition = "opacity 96ms linear"; exact.style.opacity = "0";
-      const timer = setTimeout(() => {
-        exact.style.transition = "none";
-        projectRevealTimers.delete(layer);
-      }, 120);
-      projectRevealTimers.set(layer, timer);
-    }));
   }
   function coverProjectWorld(layer, project) {
     const image = ensureProjectTransitionPreview(layer, project); if (!image) return;
-    const exact = layer?.querySelector?.(":scope > .crm-project-transition-exact");
     const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
     // Contract begins from the real settled world. Its first camera frames
     // crossfade into the cached object/acrylic composition while both remain
     // geometrically identical.
-    clearTimeout(projectRevealTimers.get(layer)); projectRevealTimers.delete(layer);
     if (live) { live.style.transition = "none"; live.style.opacity = "1"; }
     image.style.transition = "none"; image.style.opacity = "0";
-    if (exact) { exact.style.transition = "none"; exact.style.opacity = "1"; }
   }
   function settleProjectWorld(layer) {
     const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
-    const exact = layer?.querySelector?.(":scope > .crm-project-transition-exact");
     const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
     const acrylic = layer?.querySelector?.(":scope > .crm-project-transition-acrylic");
     if (image) { image.style.transition = "none"; image.style.opacity = "0"; }
-    if (exact) { exact.style.transition = "none"; exact.style.opacity = "0"; }
     if (live) { live.style.transition = "none"; live.style.opacity = "1"; }
     if (acrylic) acrylic.style.opacity = "";
   }

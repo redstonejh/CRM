@@ -104,8 +104,7 @@
       .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-auto-flow:column;gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}.crm-project-gallery-hsb{position:absolute;z-index:6;left:var(--crm-project-rail-inset);right:var(--crm-project-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-project-gallery-hsb.is-on{opacity:1;pointer-events:auto}.crm-project-gallery-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.crm-project-gallery-hth:hover{background:rgba(255,255,255,.88)}.crm-project-gallery-hth:active{cursor:grabbing;background:#fff}
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}
-      .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));-webkit-backdrop-filter:blur(24px) saturate(140%);backdrop-filter:blur(24px) saturate(140%);transform:translateZ(0);will-change:opacity,transform}
-      .crm-project-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);opacity:1}
+      .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));-webkit-backdrop-filter:var(--crm-menu-filter,blur(26px) saturate(140%));backdrop-filter:var(--crm-menu-filter,blur(26px) saturate(140%));box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);transform:translateZ(0);will-change:opacity,transform}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
       @keyframes crm-project-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
       @keyframes crm-project-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
@@ -428,6 +427,21 @@
     const layer = document.createElement("div"); layer.className = "crm-planner-level crm-planner-project-world"; layer.dataset.projectId = project?.id || "";
     const acrylic=document.createElement("span"); acrylic.className="crm-project-transition-acrylic"; acrylic.setAttribute("aria-hidden","true"); layer.appendChild(acrylic);
     const live=document.createElement("div"); live.className="crm-planner-project-live"; live.innerHTML=projectWorldHTML(project); layer.appendChild(live); ensureProjectTransitionPreview(layer, project); return layer;
+  }
+  function copyProjectAcrylicMaterial(layer, target) {
+    const acrylic = layer?.querySelector?.(":scope > .crm-project-transition-acrylic");
+    if (!acrylic || !target) return;
+    const source = getComputedStyle(target);
+    acrylic.style.backgroundColor = source.backgroundColor;
+    acrylic.style.backgroundImage = source.backgroundImage;
+    acrylic.style.backgroundPosition = source.backgroundPosition;
+    acrylic.style.backgroundSize = source.backgroundSize;
+    acrylic.style.backgroundRepeat = source.backgroundRepeat;
+    acrylic.style.webkitBackdropFilter = source.webkitBackdropFilter || source.backdropFilter;
+    acrylic.style.backdropFilter = source.backdropFilter || source.webkitBackdropFilter;
+    acrylic.style.borderColor = source.borderColor;
+    acrylic.style.borderStyle = source.borderStyle;
+    acrylic.style.boxShadow = source.boxShadow;
   }
   function markProjectCameraTarget(target, context) {
     const gallery = context?.layers?.[0];
@@ -931,7 +945,7 @@
       morphMs:460, expandFadeMs:90, belowFadeMs:90, contractFadeMs:110,
       keepBelowVisibleDuringTransition:true, precomposeTransitions:true, lockInputDuringTransitions:true,
       contractExpanderAbove:true, holdContractEndpointFrame:true, keepExpanderOpaqueDuringTransition:true,
-      measureTop:() => 0, ensureStyles, buildRoot:buildProjectGallery, layout:layoutProjects,
+      measureTop:() => 0, ensureStyles, buildRoot:buildProjectGallery, layout:layoutProjects, configureExpander:copyProjectAcrylicMaterial,
       prepareTarget:(target, context) => {
         const project = projectById(target?.dataset?.plannerProject); if (!project) return;
         markProjectCameraTarget(target, context);

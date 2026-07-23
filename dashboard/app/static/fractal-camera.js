@@ -213,6 +213,10 @@
       below.style.zIndex = "0";
       below.style.pointerEvents = "none";
       const source = layoutRect(target, below);
+      // A warm expander may have been built several pointer frames earlier.
+      // Refresh source-owned paint immediately before motion so its acrylic
+      // handoff carries the material that is actually visible at click time.
+      config.configureExpander?.(expander, target, { ...ctx(), sourceRect: source, direction: "expand" });
       const kx = E.w / source.w;
       const ky = E.h / source.h;
       const dive = `translate(${(E.x - below.offsetLeft - source.x * kx).toFixed(2)}px, ${(E.y - below.offsetTop - source.y * ky).toFixed(2)}px) scale(${kx.toFixed(4)}, ${ky.toFixed(4)})`;
@@ -275,6 +279,7 @@
       const E = expRect();
       const sourceRect = layoutRect(source, below);
       setSourceGeometry(expander, source, E);
+      config.configureExpander?.(expander, source, { ...ctx(), sourceRect, direction: "contract" });
       expander.dataset.fractalFrame = "viewport";
       const kx = E.w / sourceRect.w;
       const ky = E.h / sourceRect.h;

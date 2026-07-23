@@ -264,26 +264,32 @@ async function main() {
     && window.crmHomeCamera?.isTransitioning?.() && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
   await check('The moving tile keeps one acrylic coat over the shared wallpaper', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
-    const edge = expander?.querySelector(':scope > .crm-home-transition-acrylic'); const acrylic = edge;
-    const style = acrylic && getComputedStyle(acrylic); const rect = edge?.getBoundingClientRect(); const lid = expander?.getBoundingClientRect();
+    const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
+    const acrylic = document.querySelector('.crm-home-surface > .crm-home-screen-acrylic');
+    const style = acrylic && getComputedStyle(acrylic);
+    const frameStyle = frame && getComputedStyle(frame);
+    const transform = style?.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : new DOMMatrix();
     const status = window.crmHome?.motionStatus?.();
     const source = window.__homeAcrylicMaterial;
     const exactMaterial = !!style && !!source
       && style.backgroundColor === source.backgroundColor && style.backgroundImage === source.backgroundImage
-      && (style.webkitBackdropFilter || style.backdropFilter) === source.backdropFilter
-      && style.borderColor === source.borderColor && style.borderStyle === source.borderStyle
-      && style.boxShadow === source.boxShadow;
+      && (style.webkitBackdropFilter || style.backdropFilter) === source.backdropFilter;
+    const exactFrame = !!frameStyle && !!source
+      && frameStyle.borderColor === source.borderColor && frameStyle.borderStyle === source.borderStyle
+      && frameStyle.boxShadow === source.boxShadow;
     const state = { ready:status?.ready, materialMode:status?.materialMode, background:style?.backgroundImage,
       backdrop:style?.backdropFilter, opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
       exact:!!expander?.querySelector('.crm-home-preview-exact'), foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
-      exactMaterial, source, shadow:style?.boxShadow,
-      delta:rect&&lid?Math.max(Math.abs(rect.x-lid.x),Math.abs(rect.y-lid.y),Math.abs(rect.width-lid.width),Math.abs(rect.height-lid.height)):null };
+      exactMaterial, exactFrame, source, clip:style?.clipPath, screenScale:[transform.a,transform.d],
+      transformedFrame:{ background:frameStyle?.backgroundImage, backdrop:frameStyle?.backdropFilter } };
     return { ok:!!style && (!status?.ready || status.materialMode === 'cached-acrylic')
-      && exactMaterial && Number(style.opacity) > .99
+      && exactMaterial && exactFrame && Number(style.opacity) > .99
       && Number(getComputedStyle(expander).opacity) > .99 && !expander.style.transition.includes('opacity')
+      && acrylic.parentElement === window.crmHomeCamera?.surface?.() && Math.abs(transform.a-1)<.001 && Math.abs(transform.d-1)<.001
+      && style.clipPath.startsWith('inset(') && frameStyle?.backgroundImage === 'none' && frameStyle?.backdropFilter === 'none'
       && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
       && !expander.querySelector('.crm-home-preview-exact') && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
-      && !!rect && !!lid && state.delta <= 1, detail:JSON.stringify(state) };
+      , detail:JSON.stringify(state) };
   });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-in', () => {
     const root = window.crmHomeCamera?.layers?.()[0];
@@ -1281,7 +1287,7 @@ async function main() {
   await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-bucket') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
   await check('Project tiles support spatial keyboard navigation without moving an already-visible rail', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project') && document.querySelector('.crm-project-gallery-scroll')?.scrollLeft === 0);
   const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
-    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = []; const acrylicOpacities = []; let acrylicFrames = 0; let objectFrames = 0; let acrylicKeyframes = [];
+    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = []; const acrylicOpacities = []; let acrylicFrames = 0; let objectFrames = 0; let acrylicKeyframes = []; let screenSpaceFrames = 0;
     if (!tile || !source) { resolve(null); return; }
     const sourceStyle = getComputedStyle(tile);
     const sourceMaterial = {
@@ -1296,8 +1302,9 @@ async function main() {
     const tick = () => {
       const layer = window.crmProjectsCamera?.layers?.()[1] || document.querySelector('.crm-planner-project-world'); const rect = layer?.getBoundingClientRect();
       if (rect) samples.push([rect.x, rect.y, rect.width, rect.height]);
-      const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();
-      if(acrylic&&(document.querySelector('.crm-planner-surface.crm-project-acrylic-expanding')||!moving)){const acrylicStyle=getComputedStyle(acrylic);const layerStyle=getComputedStyle(layer);acrylicOpacities.push(Number(acrylicStyle.opacity)*Number(layerStyle.opacity));if(!acrylicKeyframes.length){const animation=acrylic.getAnimations().find((candidate)=>candidate.animationName==='crm-project-acrylic-expand');acrylicKeyframes=(animation?.effect?.getKeyframes?.()||[]).map((frame)=>({offset:frame.computedOffset,opacity:Number(frame.opacity)}));}const exactMaterial=acrylicStyle.backgroundColor===sourceMaterial.backgroundColor&&acrylicStyle.backgroundImage===sourceMaterial.backgroundImage&&(acrylicStyle.webkitBackdropFilter||acrylicStyle.backdropFilter)===sourceMaterial.backdropFilter&&acrylicStyle.borderColor===sourceMaterial.borderColor&&acrylicStyle.borderStyle===sourceMaterial.borderStyle&&acrylicStyle.boxShadow===sourceMaterial.boxShadow;if(Number(layerStyle.opacity)>.99&&!layer.style.transition.includes('opacity')&&exactMaterial)acrylicFrames+=1;}
+      const acrylic=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');const acrylicFrame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();
+      if(acrylic){const acrylicStyle=getComputedStyle(acrylic);const layerStyle=getComputedStyle(layer);const frameStyle=acrylicFrame&&getComputedStyle(acrylicFrame);acrylicOpacities.push(Number(acrylicStyle.opacity));if(!acrylicKeyframes.length){const animation=acrylic.getAnimations().find((candidate)=>(candidate.effect?.getKeyframes?.()||[]).some((keyframe)=>keyframe.opacity!=null));acrylicKeyframes=(animation?.effect?.getKeyframes?.()||[]).map((keyframe)=>({offset:keyframe.computedOffset,opacity:Number(keyframe.opacity)}));}const exactMaterial=acrylicStyle.backgroundColor===sourceMaterial.backgroundColor&&acrylicStyle.backgroundImage===sourceMaterial.backgroundImage&&(acrylicStyle.webkitBackdropFilter||acrylicStyle.backdropFilter)===sourceMaterial.backdropFilter;const matrix=acrylicStyle.transform&&acrylicStyle.transform!=='none'?new DOMMatrix(acrylicStyle.transform):new DOMMatrix();if(Math.abs(matrix.a-1)<.001&&Math.abs(matrix.d-1)<.001&&acrylic.parentElement===window.crmProjectsCamera?.surface?.())screenSpaceFrames+=1;if(Number(layerStyle.opacity)>.99&&!layer.style.transition.includes('opacity')&&exactMaterial&&frameStyle?.backgroundImage==='none'&&frameStyle?.backdropFilter==='none')acrylicFrames+=1;}
+      else if(!moving&&acrylicOpacities.length&&acrylicOpacities.at(-1)>.05)acrylicOpacities.push(0);
       if((overlay&&Number(getComputedStyle(overlay).opacity)>.01)||(live&&Number(getComputedStyle(live).opacity)>.01))objectFrames+=1;
       if (moving) { requestAnimationFrame(tick); return; }
       const stable = []; let frame = 0;
@@ -1305,7 +1312,7 @@ async function main() {
         stable.push(JSON.stringify([...document.querySelectorAll('.crm-planner-bucket')].map((bucket) => { const bounds=bucket.getBoundingClientRect(); return [bounds.x,bounds.y,bounds.width,bounds.height]; })));
         if (++frame < 10) requestAnimationFrame(seat);
         else resolve({ source:[source.x,source.y,source.width,source.height], sourceMaterial, acrylicKeyframes, samples, unique:new Set(samples.map((sample) => sample.map((value) => value.toFixed(1)).join(','))).size,
-          stable:new Set(stable).size, acrylicFrames, acrylicOpacities, objectFrames, wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
+          stable:new Set(stable).size, acrylicFrames, acrylicOpacities, screenSpaceFrames, objectFrames, wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
       };
       requestAnimationFrame(seat);
     };
@@ -1313,12 +1320,12 @@ async function main() {
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
     const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.93)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
-    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-3 && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
+    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
       && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 4 && fadeTail <= 5 && opacitySteps.every((step)=>step<=.04)
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,
-      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,acrylicFrames:probe?.acrylicFrames,acrylicFirst:acrylic[0],acrylicLast:acrylic.at(-1),acrylicFadeTail:fadeTail,acrylicIntermediateFrames:intermediateFrames,acrylicMaxStep:Math.max(0,...opacitySteps.map(Math.abs)),acrylicKeyframes:keyframes,objectFrames:probe?.objectFrames,wallpapers:probe?.wallpapers,source:probe?.source,last}) };
+      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,acrylicFrames:probe?.acrylicFrames,screenSpaceFrames:probe?.screenSpaceFrames,acrylicFirst:acrylic[0],acrylicLast:acrylic.at(-1),acrylicFadeTail:fadeTail,acrylicIntermediateFrames:intermediateFrames,acrylicMaxStep:Math.max(0,...opacitySteps.map(Math.abs)),acrylicKeyframes:keyframes,objectFrames:probe?.objectFrames,wallpapers:probe?.wallpapers,source:probe?.source,last}) };
   }, plannerNestedDive);
   await check('A project tile zooms into its real aligned custom pipeline', (projectId) => {
     const project = window.crmPlanner.projects().find((item) => item.id === projectId); const buckets = [...document.querySelectorAll('.crm-planner-bucket')];

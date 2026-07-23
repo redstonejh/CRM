@@ -192,6 +192,8 @@
         -webkit-backdrop-filter:var(--crm-menu-filter,blur(26px) saturate(140%));backdrop-filter:var(--crm-menu-filter,blur(26px) saturate(140%));
         box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:0;transform:translateZ(0);will-change:opacity,transform}
+      .crm-home-expander.fractal-camera-screen-acrylic>.crm-home-transition-acrylic{
+        background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
       @keyframes crm-home-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
       @keyframes crm-home-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
@@ -889,21 +891,10 @@
     const target = event.target.closest?.('.crm-home-bucket[data-enabled="true"]');
     return target && context.layers[0]?.contains(target) ? target : null;
   };
-  const copyAcrylicMaterial = (expander, target) => {
-    const acrylic = expander?.querySelector?.(":scope > .crm-home-transition-acrylic");
-    if (!acrylic || !target) return;
-    const source = getComputedStyle(target);
-    acrylic.style.backgroundColor = source.backgroundColor;
-    acrylic.style.backgroundImage = source.backgroundImage;
-    acrylic.style.backgroundPosition = source.backgroundPosition;
-    acrylic.style.backgroundSize = source.backgroundSize;
-    acrylic.style.backgroundRepeat = source.backgroundRepeat;
-    acrylic.style.webkitBackdropFilter = source.webkitBackdropFilter || source.backdropFilter;
-    acrylic.style.backdropFilter = source.backdropFilter || source.webkitBackdropFilter;
-    acrylic.style.borderColor = source.borderColor;
-    acrylic.style.borderStyle = source.borderStyle;
-    acrylic.style.boxShadow = source.boxShadow;
-  };
+  const homeAcrylicLens = window.createFractalAcrylicLens({
+    frameSelector:":scope > .crm-home-transition-acrylic",
+    lensClass:"crm-home-screen-acrylic",
+  });
   const buildExpander = (target) => {
     const module = MODULES.find(({ key }) => key === target?.dataset?.module) || MODULES[0];
     const bucket = recycledExpanders.get(module.key) || document.createElement("div");
@@ -986,7 +977,7 @@
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
-    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,configureExpander:copyAcrylicMaterial,
+    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,configureExpander:homeAcrylicLens.prepare,
     contractExpanderAbove:true,holdContractEndpointFrame:true,keepExpanderOpaqueDuringTransition:true,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareTarget:(target,context)=>markCameraTarget(target,context),
@@ -1002,10 +993,12 @@
       context.surface?.classList.toggle("crm-home-camera-contracting",direction==="contract");
     },
     onTransformStart:(direction,context)=>{
+      homeAcrylicLens.start(direction);
       context.surface?.classList.toggle("crm-home-acrylic-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
     },
     onTransitionEnd:(direction,context)=>{
+      homeAcrylicLens.finish();
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting");
       const sequence = ++handoffSequence;
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {

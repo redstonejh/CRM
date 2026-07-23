@@ -1,5 +1,154 @@
 // fractal-camera.js - shared nested-bucket camera for calendar/home/drill-in views.
 ((global) => {
+  // Backdrop blur is a screen-space effect. Putting it inside the camera's
+  // scaled expander changes its apparent radius throughout the transform and
+  // can leave only the translucent tint visibly stable. This sibling lens
+  // never scales: only its clip expands or contracts with the camera.
+  global.createFractalAcrylicLens = function createFractalAcrylicLens(config = {}) {
+    const frameSelector = config.frameSelector || ":scope > [data-fractal-acrylic-frame]";
+    const ownerClass = config.ownerClass || "fractal-camera-screen-acrylic";
+    const lensClass = config.lensClass || "fractal-camera-acrylic-lens";
+    const entryHold = Number.isFinite(Number(config.entryHold)) ? Number(config.entryHold) : .93;
+    const exitReveal = Number.isFinite(Number(config.exitReveal)) ? Number(config.exitReveal) : .07;
+    let lens = null;
+    let owner = null;
+    let state = null;
+    let clipAnimation = null;
+    let opacityAnimation = null;
+
+    const material = (node) => {
+      const style = node && getComputedStyle(node);
+      if (!style) return null;
+      return {
+        backgroundColor:style.backgroundColor,
+        backgroundImage:style.backgroundImage,
+        backgroundPosition:style.backgroundPosition,
+        backgroundSize:style.backgroundSize,
+        backgroundRepeat:style.backgroundRepeat,
+        backdropFilter:style.webkitBackdropFilter || style.backdropFilter,
+        borderColor:style.borderColor,
+        borderStyle:style.borderStyle,
+        boxShadow:style.boxShadow,
+        radiusX:Math.max(0, parseFloat(style.borderTopLeftRadius) || 0),
+        radiusY:Math.max(0, parseFloat(style.borderTopLeftRadius) || 0),
+      };
+    };
+    const copyFrameMaterial = (frame, source) => {
+      if (!frame || !source) return;
+      frame.style.backgroundColor = source.backgroundColor;
+      frame.style.backgroundImage = source.backgroundImage;
+      frame.style.backgroundPosition = source.backgroundPosition;
+      frame.style.backgroundSize = source.backgroundSize;
+      frame.style.backgroundRepeat = source.backgroundRepeat;
+      frame.style.webkitBackdropFilter = source.backdropFilter;
+      frame.style.backdropFilter = source.backdropFilter;
+      frame.style.borderColor = source.borderColor;
+      frame.style.borderStyle = source.borderStyle;
+      frame.style.boxShadow = source.boxShadow;
+    };
+    const stop = () => {
+      clipAnimation?.cancel();
+      opacityAnimation?.cancel();
+      clipAnimation = null;
+      opacityAnimation = null;
+    };
+    const finish = () => {
+      stop();
+      lens?.remove();
+      lens = null;
+      owner?.classList.remove(ownerClass);
+      owner = null;
+      state = null;
+    };
+    const clipFor = (rect, surfaceRect, radiusX, radiusY) => {
+      const top = Math.max(0, rect.top - surfaceRect.top);
+      const right = Math.max(0, surfaceRect.right - rect.right);
+      const bottom = Math.max(0, surfaceRect.bottom - rect.bottom);
+      const left = Math.max(0, rect.left - surfaceRect.left);
+      return `inset(${top.toFixed(2)}px ${right.toFixed(2)}px ${bottom.toFixed(2)}px ${left.toFixed(2)}px round ${Math.max(0, radiusX).toFixed(2)}px / ${Math.max(0, radiusY).toFixed(2)}px)`;
+    };
+    const prepare = (expander, target, context = {}) => {
+      const sourceMaterial = material(target);
+      const frame = expander?.querySelector?.(frameSelector);
+      copyFrameMaterial(frame, sourceMaterial);
+      if (!context.direction || !expander || !target || !context.surface || !sourceMaterial) {
+        expander?.classList.remove(ownerClass);
+        return null;
+      }
+
+      finish();
+      owner = expander;
+      owner.classList.add(ownerClass);
+      const surfaceRect = context.surface.getBoundingClientRect();
+      const sourceRect = target.getBoundingClientRect();
+      const destination = context.expRect?.() || { x:surfaceRect.left, y:surfaceRect.top, w:surfaceRect.width, h:surfaceRect.height };
+      const destinationRect = {
+        left:destination.x,
+        top:destination.y,
+        right:destination.x + destination.w,
+        bottom:destination.y + destination.h,
+        width:destination.w,
+        height:destination.h,
+      };
+      const scaleX = Math.max(.0001, sourceRect.width / Math.max(1, destinationRect.width));
+      const scaleY = Math.max(.0001, sourceRect.height / Math.max(1, destinationRect.height));
+      const sourceClip = clipFor(sourceRect, surfaceRect, sourceMaterial.radiusX, sourceMaterial.radiusY);
+      const destinationClip = clipFor(destinationRect, surfaceRect, sourceMaterial.radiusX / scaleX, sourceMaterial.radiusY / scaleY);
+
+      lens = document.createElement("span");
+      lens.className = lensClass;
+      lens.dataset.fractalAcrylicLens = context.direction;
+      lens.setAttribute("aria-hidden", "true");
+      Object.assign(lens.style, {
+        position:"absolute",
+        inset:"0",
+        zIndex:context.direction === "contract" ? String(config.contractZIndex ?? 5) : String(config.expandZIndex ?? 4),
+        boxSizing:"border-box",
+        pointerEvents:"none",
+        backgroundColor:sourceMaterial.backgroundColor,
+        backgroundImage:sourceMaterial.backgroundImage,
+        backgroundPosition:sourceMaterial.backgroundPosition,
+        backgroundSize:sourceMaterial.backgroundSize,
+        backgroundRepeat:sourceMaterial.backgroundRepeat,
+        webkitBackdropFilter:sourceMaterial.backdropFilter,
+        backdropFilter:sourceMaterial.backdropFilter,
+        clipPath:context.direction === "expand" ? sourceClip : destinationClip,
+        webkitClipPath:context.direction === "expand" ? sourceClip : destinationClip,
+        opacity:context.direction === "expand" ? "1" : "0",
+        transform:"translateZ(0)",
+        willChange:"clip-path,opacity",
+        backfaceVisibility:"hidden",
+      });
+      context.surface.appendChild(lens);
+      state = {
+        direction:context.direction,
+        sourceClip,
+        destinationClip,
+        duration:Number(context.morphMs) || 460,
+        easing:context.ease || "cubic-bezier(.22, 1, .26, 1)",
+      };
+      return lens;
+    };
+    const start = (direction) => {
+      if (!lens || !state || state.direction !== direction) return null;
+      stop();
+      const from = direction === "expand" ? state.sourceClip : state.destinationClip;
+      const to = direction === "expand" ? state.destinationClip : state.sourceClip;
+      clipAnimation = lens.animate(
+        [{ clipPath:from }, { clipPath:to }],
+        { duration:state.duration, easing:state.easing, fill:"forwards" },
+      );
+      opacityAnimation = lens.animate(
+        direction === "expand"
+          ? [{ opacity:1, offset:0 }, { opacity:1, offset:entryHold }, { opacity:0, offset:1 }]
+          : [{ opacity:0, offset:0 }, { opacity:1, offset:exitReveal }, { opacity:1, offset:1 }],
+        { duration:state.duration, easing:"linear", fill:"forwards" },
+      );
+      return lens;
+    };
+    return { prepare, start, finish, element:() => lens };
+  };
+
   global.createFractalCamera = function createFractalCamera(config = {}) {
     const apiName = config.apiName || "";
     const surfaceClass = config.surfaceClass || "fractal-camera-surface";
@@ -75,6 +224,7 @@
       layoutRect,
       margin,
       morphMs,
+      ease,
       active,
     });
     const once = (fn) => {

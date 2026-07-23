@@ -35,13 +35,16 @@
     };
     const copyFrameMaterial = (frame, source) => {
       if (!frame || !source) return;
-      frame.style.backgroundColor = source.backgroundColor;
-      frame.style.backgroundImage = source.backgroundImage;
-      frame.style.backgroundPosition = source.backgroundPosition;
-      frame.style.backgroundSize = source.backgroundSize;
-      frame.style.backgroundRepeat = source.backgroundRepeat;
-      frame.style.webkitBackdropFilter = source.backdropFilter;
-      frame.style.backdropFilter = source.backdropFilter;
+      // The transformed child is only the persistent edge/shadow frame. Never
+      // give it a backdrop again: toggling a transformed backdrop at the
+      // endpoint forces Chromium to rebuild the whole moving composition.
+      frame.style.backgroundColor = "transparent";
+      frame.style.backgroundImage = "none";
+      frame.style.backgroundPosition = "";
+      frame.style.backgroundSize = "";
+      frame.style.backgroundRepeat = "";
+      frame.style.webkitBackdropFilter = "none";
+      frame.style.backdropFilter = "none";
       frame.style.borderColor = source.borderColor;
       frame.style.borderStyle = source.borderStyle;
       frame.style.boxShadow = source.boxShadow;

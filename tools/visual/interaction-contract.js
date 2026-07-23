@@ -266,8 +266,10 @@ async function main() {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
     const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
     const acrylic = document.querySelector('.crm-home-surface > .crm-home-screen-acrylic');
+    const exact = expander?.querySelector('.crm-home-preview-exact');
     const style = acrylic && getComputedStyle(acrylic);
     const frameStyle = frame && getComputedStyle(frame);
+    const exactStyle = exact && getComputedStyle(exact);
     const transform = style?.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : new DOMMatrix();
     const status = window.crmHome?.motionStatus?.();
     const source = window.__homeAcrylicMaterial;
@@ -279,7 +281,7 @@ async function main() {
       && frameStyle.boxShadow === source.boxShadow;
     const state = { ready:status?.ready, materialMode:status?.materialMode, background:style?.backgroundImage,
       backdrop:style?.backdropFilter, opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
-      exact:!!expander?.querySelector('.crm-home-preview-exact'), foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
+      exact:!!exact, exactOpacity:exactStyle ? Number(exactStyle.opacity) : null, foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
       exactMaterial, exactFrame, source, clip:style?.clipPath, screenScale:[transform.a,transform.d],
       transformedFrame:{ background:frameStyle?.backgroundImage, backdrop:frameStyle?.backdropFilter } };
     return { ok:!!style && (!status?.ready || status.materialMode === 'cached-acrylic')
@@ -288,7 +290,7 @@ async function main() {
       && acrylic.parentElement === window.crmHomeCamera?.surface?.() && Math.abs(transform.a-1)<.001 && Math.abs(transform.d-1)<.001
       && style.clipPath.startsWith('inset(') && frameStyle?.backgroundImage === 'none' && frameStyle?.backdropFilter === 'none'
       && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
-      && !expander.querySelector('.crm-home-preview-exact') && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
+      && (!status?.ready || (!!exact && Number(exactStyle.opacity) <= .01 && expander.querySelectorAll('.crm-home-preview-foreground').length === 1))
       , detail:JSON.stringify(state) };
   });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-in', () => {

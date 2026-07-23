@@ -109,7 +109,7 @@
       .crm-home-surface.crm-home-camera-expanding .crm-home-level:first-child>.crm-home-grid>.crm-home-bucket.is-camera-target{
         opacity:0;transition:opacity 70ms ease!important}
       .crm-home-surface.crm-home-camera-contracting .crm-home-level:first-child>.crm-home-grid>.crm-home-bucket.is-camera-target{
-        opacity:1;transition:opacity 70ms ease 390ms!important}
+        opacity:0;transition:none!important}
       .crm-home-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;will-change:transform;contain:layout style;
         grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
       .crm-home-title-layer{position:absolute;z-index:4;display:grid;pointer-events:none;contain:layout style;
@@ -188,17 +188,20 @@
         will-change:transform,opacity;backface-visibility:hidden}
       .crm-home-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;
         border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);
-        background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));
-        -webkit-backdrop-filter:var(--crm-menu-filter,blur(26px) saturate(140%));backdrop-filter:var(--crm-menu-filter,blur(26px) saturate(140%));
+        background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;
         box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:0;transform:translateZ(0);will-change:opacity,transform}
-      .crm-home-expander.fractal-camera-screen-acrylic>.crm-home-transition-acrylic{
-        background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
       @keyframes crm-home-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
       @keyframes crm-home-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
+      @keyframes crm-home-endpoint-expand{0%,93%{opacity:0}100%{opacity:1}}
+      @keyframes crm-home-endpoint-contract{0%{opacity:1}7%,100%{opacity:0}}
       .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-home-expander .crm-home-preview-exact{z-index:2;filter:none;transform:translateZ(0);opacity:0;transition:none;will-change:opacity;backface-visibility:hidden}
+      .crm-home-expander[data-fractal-frame="viewport"] .crm-home-preview-exact{opacity:1}
+      .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander .crm-home-preview-exact{animation:crm-home-endpoint-expand var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander .crm-home-preview-exact{animation:crm-home-endpoint-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
@@ -911,7 +914,7 @@
     // One transparent, full-resolution room texture carries its objects and
     // shadows above a live acrylic lens. The fixed workspace wallpaper remains
     // the only background paint throughout the camera move.
-    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key));
+    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true);
     return bucket;
   };
   const recycleExpander = (key, expander) => {

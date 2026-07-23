@@ -221,6 +221,7 @@
       // flush because their transition begins on the next frame.
       if (!precomposeTransitions) void expander.offsetWidth;
       transitionFrame(() => {
+        config.onTransformStart?.("expand", ctx());
         expander.dataset.fractalFrame = "viewport";
         expander.style.transition = keepExpanderOpaque
           ? `transform ${morphMs}ms ${ease}`
@@ -315,6 +316,7 @@
       if (!precomposeTransitions) void below.offsetWidth;
       const beginTransition = () => {
         if (seq !== transitionSeq) return;
+        config.onTransformStart?.("contract", ctx());
         expander.dataset.fractalFrame = "source";
         below.style.transition = keepBelowVisible
           ? `transform ${morphMs}ms ${ease}`

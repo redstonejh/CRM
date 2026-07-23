@@ -129,6 +129,7 @@ async function startEndpointProbe(page, label, room, direction) {
       };
       document.addEventListener('crm:desk-transit-settled', onSettled);
       const startedAt = performance.now();
+      let activatedAt = 0;
       const capture = () => {
         const surface = window.crmHomeCamera?.surface?.();
         const root = window.crmHomeCamera?.layers?.()[0];
@@ -147,8 +148,9 @@ async function startEndpointProbe(page, label, room, direction) {
         const snapshot = root?.querySelector?.(':scope > .crm-home-motion-snapshot');
         const homeBucket = homeHandoff ? root?.querySelector?.('.crm-home-grid > .crm-home-bucket') : null;
         const veil = document.querySelector('.crm-transit-veil');
-        const acrylic = surface?.querySelector?.('.crm-home-expander:not(.crm-home-warm) > .crm-home-transition-acrylic');
+        const acrylic = document.querySelector('.crm-home-expander:not(.crm-home-warm) > .crm-home-transition-acrylic');
         const alignment = targetRect && expanderRect ? Math.max(...targetRect.map((value, index) => Math.abs(value - expanderRect[index]))) : null;
+        if (!activatedAt && (moving || materializing || homeHandoff || veil)) activatedAt = performance.now();
         probe.samples.push({
           at: performance.now() - startedAt,
           module: document.body.dataset.crmModule || '', busy: !!window.crmDeskTransit?.isBusy?.(),
@@ -157,6 +159,7 @@ async function startEndpointProbe(page, label, room, direction) {
           roomRevealing: document.documentElement.classList.contains('crm-transit-revealing'), roomOpacity: roomLayers.length ? Math.max(...roomLayers.map((layer) => Number(getComputedStyle(layer).opacity))) : null,
           homeHandoff,
           homeReleasing: !!surface?.classList.contains('crm-home-camera-releasing'),
+          materialMoving: !!surface?.classList.contains(motionDirection === 'in' ? 'crm-home-acrylic-expanding' : 'crm-home-acrylic-contracting'),
           acrylicOpacity: acrylic ? Number(getComputedStyle(acrylic).opacity) : null,
           snapshotDisplay: snapshot ? getComputedStyle(snapshot).display : '', snapshotOpacity: snapshot ? Number(getComputedStyle(snapshot).opacity) : null,
           roomSignature: objects.length ? signature(objects, roomLayers) : '', roomObjects: objects.length,
@@ -164,14 +167,26 @@ async function startEndpointProbe(page, label, room, direction) {
           homeShadow: homeBucket ? getComputedStyle(homeBucket).boxShadow : '',
         });
         if (probe.settled) probe.tailFrames -= 1;
-        if ((probe.settled && probe.tailFrames <= 0) || performance.now() - startedAt > 1800) {
+        const timedOut = activatedAt ? performance.now() - activatedAt > 1800 : performance.now() - startedAt > 5000;
+        if ((probe.settled && probe.tailFrames <= 0) || timedOut) {
           document.removeEventListener('crm:desk-transit-settled', onSettled);
           const endpoint = motionDirection === 'in'
             ? probe.samples.filter((sample) => sample.veilReleasing && sample.module === config.key && sample.roomSignature)
             : probe.samples.filter((sample) => sample.homeHandoff && sample.homeSignature);
           const aligned = probe.samples.filter((sample) => sample.moving && Number.isFinite(sample.alignment)).map((sample) => sample.alignment);
-          const acrylicOpacities = probe.samples.filter((sample) => sample.moving && Number.isFinite(sample.acrylicOpacity)).map((sample) => sample.acrylicOpacity);
+          const materialIndexes = probe.samples.map((sample, index) => sample.materialMoving && Number.isFinite(sample.acrylicOpacity) ? index : -1).filter((index) => index >= 0);
+          const acrylicOpacities = materialIndexes.map((index) => probe.samples[index].acrylicOpacity);
+          if (motionDirection === 'out' && materialIndexes.length) {
+            const start = probe.samples.slice(0, materialIndexes[0]).reverse().find((sample) => Number.isFinite(sample.acrylicOpacity));
+            if (start) acrylicOpacities.unshift(start.acrylicOpacity);
+          }
+          if (motionDirection === 'in' && materialIndexes.length) {
+            const endpoint = probe.samples.slice(materialIndexes.at(-1) + 1).find((sample) => Number.isFinite(sample.acrylicOpacity));
+            if (endpoint) acrylicOpacities.push(endpoint.acrylicOpacity);
+          }
           const acrylicSteps = acrylicOpacities.slice(1).map((value, index) => value - acrylicOpacities[index]);
+          const acrylicFirstBelowFull = acrylicOpacities.findIndex((opacity) => opacity < .99);
+          const acrylicFirstFull = acrylicOpacities.findIndex((opacity) => opacity > .99);
           const result = {
             label: probeLabel,
             sawVeilRelease: probe.samples.some((sample) => sample.veilReleasing && sample.veilOpacity < .999 && sample.veilOpacity > 0),
@@ -186,6 +201,9 @@ async function startEndpointProbe(page, label, room, direction) {
             acrylicFirst: acrylicOpacities[0] ?? null,
             acrylicLast: acrylicOpacities.at(-1) ?? null,
             acrylicMaxStep: acrylicSteps.length ? Math.max(...acrylicSteps.map(Math.abs)) : 0,
+            acrylicIntermediateFrames: acrylicOpacities.filter((opacity) => opacity > .01 && opacity < .99).length,
+            acrylicEntryTailFrames: acrylicFirstBelowFull < 0 ? 0 : acrylicOpacities.length - acrylicFirstBelowFull,
+            acrylicExitLeadFrames: acrylicFirstFull < 0 ? acrylicOpacities.length : acrylicFirstFull,
             acrylicNonIncreasing: acrylicSteps.every((step) => step <= .04),
             acrylicNonDecreasing: acrylicSteps.every((step) => step >= -.04),
             timeline: probe.samples.filter((sample, index, samples) => index === 0 || ['module','busy','moving','materializing','veil','veilReleasing','roomRevealing','homeHandoff','homeReleasing'].some((key) => sample[key] !== samples[index - 1][key])).map((sample) => ({ at:sample.at,module:sample.module,busy:sample.busy,moving:sample.moving,materializing:sample.materializing,veil:sample.veil,veilReleasing:sample.veilReleasing,roomRevealing:sample.roomRevealing,homeHandoff:sample.homeHandoff,homeReleasing:sample.homeReleasing })),
@@ -602,7 +620,7 @@ async function main() {
     await page.screenshot({path:path.join(out,`transition-${room.key}.png`)});
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key&&!window.crmDeskTransit?.isBusy?.()&&!document.querySelector('.crm-transit-veil'),room.key,{timeout:15000});
     const inboundEndpoint=await finishEndpointProbe(page,`in-${room.key}`);
-    if(!inboundEndpoint.sawVeilRelease||!inboundEndpoint.sawRoomReveal||inboundEndpoint.endpointFrames<3||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.minAlignmentError>1.25||inboundEndpoint.acrylicFrames<20||inboundEndpoint.acrylicFirst<.9||inboundEndpoint.acrylicLast>.15||inboundEndpoint.acrylicMaxStep>.45||!inboundEndpoint.acrylicNonIncreasing||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound endpoint handoff is discontinuous: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
+    if(!inboundEndpoint.sawVeilRelease||!inboundEndpoint.sawRoomReveal||inboundEndpoint.endpointFrames<3||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.minAlignmentError>1.25||inboundEndpoint.acrylicFrames<20||inboundEndpoint.acrylicFirst<.99||inboundEndpoint.acrylicLast>.05||inboundEndpoint.acrylicIntermediateFrames<1||inboundEndpoint.acrylicIntermediateFrames>4||inboundEndpoint.acrylicEntryTailFrames>5||inboundEndpoint.acrylicMaxStep>.9||!inboundEndpoint.acrylicNonIncreasing||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound acrylic did not stay full until its final camera frames: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
     await page.mouse.move(1,1); await sleep(80);
     const inboundStability=await sampleLayoutStability(page,`[data-crm-theater="${room.theater}"]:not([hidden])`);
     if(inboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after inbound transition: ${JSON.stringify(inboundStability)}`);
@@ -671,7 +689,7 @@ async function main() {
     if(!outboundMid.moving||outboundMid.rootOpacity<.99||!outboundMid.signatureMatches||!outboundMid.expanderAbove||!outboundMid.titlesVisible||!outboundMid.contracting||!outboundAcrylic.objects||!outboundAcrylic.sharedWallpaper||!outboundAcrylic.acrylicLive||!outboundAcrylic.lensAligned||outboundAcrylic.opacityTotal<.94||outboundAcrylic.opacityTotal>1.08)throw new Error(`${room.key} return composition diverged from resting Home: ${JSON.stringify({outboundMid,outboundAcrylic})}`);
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outboundEndpoint=await finishEndpointProbe(page,`out-${room.key}`);
-    if(!outboundEndpoint.sawHomeRelease||outboundEndpoint.endpointFrames<3||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||outboundEndpoint.minAlignmentError>1.25||outboundEndpoint.acrylicFrames<20||outboundEndpoint.acrylicFirst>.4||outboundEndpoint.acrylicLast<.9||outboundEndpoint.acrylicMaxStep>.45||!outboundEndpoint.acrylicNonDecreasing||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} Home endpoint handoff is discontinuous: ${JSON.stringify(outboundEndpoint)}`);
+    if(!outboundEndpoint.sawHomeRelease||outboundEndpoint.endpointFrames<3||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||outboundEndpoint.minAlignmentError>1.25||outboundEndpoint.acrylicFrames<20||outboundEndpoint.acrylicFirst>.05||outboundEndpoint.acrylicLast<.99||outboundEndpoint.acrylicIntermediateFrames<1||outboundEndpoint.acrylicIntermediateFrames>4||outboundEndpoint.acrylicExitLeadFrames>5||outboundEndpoint.acrylicMaxStep>.9||!outboundEndpoint.acrylicNonDecreasing||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound acrylic did not reach full strength in its first camera frames: ${JSON.stringify(outboundEndpoint)}`);
     const outbound=await finishMotionProbe(page,`out-${room.key}`);
     assertMotion(`${room.key} outbound`,outbound);
     const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
@@ -720,11 +738,11 @@ async function main() {
   await page.screenshot({path:path.join(out,'projects-nested.png')});
   await page.evaluate(()=>{window.__startNativeProjectContinuity=(layerForFrame)=>new Promise((resolve)=>{
     const samples=[];let sawOwnedMotion=false;const armedAt=performance.now();
-    const tick=()=>{const layer=layerForFrame();const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();
-      if(moving&&acrylic){sawOwnedMotion=true;const style=getComputedStyle(acrylic),owner=getComputedStyle(layer);samples.push({opacity:Number(style.opacity)*Number(owner.opacity),owned:Number(owner.opacity)>.99&&!layer.style.transition.includes('opacity'),backdrop:style.backdropFilter||'',objects:Number(overlay?getComputedStyle(overlay).opacity:0)+Number(live?getComputedStyle(live).opacity:0),frame:layer?.dataset.fractalFrame||''})}
+    const tick=()=>{const layer=layerForFrame();const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();const materialMoving=!!document.querySelector('.crm-planner-surface.crm-project-acrylic-expanding,.crm-planner-surface.crm-project-acrylic-contracting');
+      if(acrylic&&((moving&&(materialMoving||!sawOwnedMotion))||(sawOwnedMotion&&!moving))){sawOwnedMotion=true;const style=getComputedStyle(acrylic),owner=getComputedStyle(layer);samples.push({opacity:Number(style.opacity)*Number(owner.opacity),owned:Number(owner.opacity)>.99&&!layer.style.transition.includes('opacity'),backdrop:style.backdropFilter||'',objects:Number(overlay?getComputedStyle(overlay).opacity:0)+Number(live?getComputedStyle(live).opacity:0),frame:layer?.dataset.fractalFrame||'',material:materialMoving,animation:style.animationName||''})}
       if(moving||(!sawOwnedMotion&&performance.now()-armedAt<2000)){requestAnimationFrame(tick);return}
-      const opacities=samples.map((sample)=>sample.opacity);const opacitySteps=opacities.slice(1).map((value,index)=>value-opacities[index]);
-      resolve({frames:samples.length,firstOpacity:opacities[0]??null,lastOpacity:opacities.at(-1)??null,maxOpacityStep:opacitySteps.length?Math.max(...opacitySteps.map(Math.abs)):0,nonIncreasing:opacitySteps.every((step)=>step<=.04),nonDecreasing:opacitySteps.every((step)=>step>=-.04),ownedEveryFrame:samples.length>0&&samples.every((sample)=>sample.owned),realEveryFrame:samples.length>0&&samples.every((sample)=>sample.backdrop.includes('blur(24px)')),minObjectCoverage:samples.length?Math.min(...samples.map((sample)=>sample.objects)):0,maxObjectCoverage:samples.length?Math.max(...samples.map((sample)=>sample.objects)):0,framesSeen:[...new Set(samples.map((sample)=>sample.frame))],wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length});
+      const opacities=samples.map((sample)=>sample.opacity);const opacitySteps=opacities.slice(1).map((value,index)=>value-opacities[index]);const firstBelowFull=opacities.findIndex((opacity)=>opacity<.99);const firstFull=opacities.findIndex((opacity)=>opacity>.99);const materialSamples=samples.filter((sample)=>sample.material);
+      resolve({frames:samples.length,materialFrames:materialSamples.length,firstOpacity:opacities[0]??null,lastOpacity:opacities.at(-1)??null,maxOpacityStep:opacitySteps.length?Math.max(...opacitySteps.map(Math.abs)):0,intermediateFrames:opacities.filter((opacity)=>opacity>.01&&opacity<.99).length,entryTailFrames:firstBelowFull<0?0:opacities.length-firstBelowFull,exitLeadFrames:firstFull<0?opacities.length:firstFull,nonIncreasing:opacitySteps.every((step)=>step<=.04),nonDecreasing:opacitySteps.every((step)=>step>=-.04),timedEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.animation.includes('crm-project-acrylic-')),ownedEveryFrame:samples.length>0&&samples.every((sample)=>sample.owned),realEveryFrame:samples.length>0&&samples.every((sample)=>sample.backdrop.includes('blur(24px)')),minObjectCoverage:samples.length?Math.min(...samples.map((sample)=>sample.objects)):0,maxObjectCoverage:samples.length?Math.max(...samples.map((sample)=>sample.objects)):0,framesSeen:[...new Set(samples.map((sample)=>sample.frame))],wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length});
     };requestAnimationFrame(tick);
   })});
   const projectDiveStart=await page.evaluate((projectId)=>new Promise((resolve)=>{
@@ -733,7 +751,7 @@ async function main() {
   }),nativeProjectId);
   if(!projectDiveStart.overlay||projectDiveStart.opacity<.99||projectDiveStart.src!==projectPreviewBefore.foregroundSrc||!projectDiveStart.acrylic||projectDiveStart.acrylicOpacity<.99||!projectDiveStart.acrylicBackdrop.includes('blur(24px)')||projectDiveStart.layerOpacity<.99||projectDiveStart.layerTransition.includes('opacity')||projectDiveStart.liveOpacity>.01||projectDiveStart.wallpapers!==1||!projectDiveStart.rect||projectDiveStart.rect.some((value,index)=>Math.abs(value-projectDiveStart.source[index])>1.25))throw new Error(`Project zoom did not carry one acrylic/object composition from its source: ${JSON.stringify({...projectDiveStart,src:!!projectDiveStart.src})}`);
   const projectDiveContinuity=await page.evaluate(()=>window.__nativeProjectContinuity);
-  if(projectDiveContinuity.frames<20||projectDiveContinuity.firstOpacity<.9||projectDiveContinuity.lastOpacity>.15||projectDiveContinuity.maxOpacityStep>.45||!projectDiveContinuity.nonIncreasing||!projectDiveContinuity.ownedEveryFrame||!projectDiveContinuity.realEveryFrame||projectDiveContinuity.minObjectCoverage<.94||projectDiveContinuity.maxObjectCoverage>1.08)throw new Error(`Project zoom did not dissolve its real acrylic continuously inside the motion: ${JSON.stringify(projectDiveContinuity)}`);
+  if(projectDiveContinuity.frames<20||projectDiveContinuity.materialFrames<20||projectDiveContinuity.firstOpacity<.99||projectDiveContinuity.lastOpacity>.05||projectDiveContinuity.intermediateFrames>4||projectDiveContinuity.entryTailFrames>5||!projectDiveContinuity.nonIncreasing||!projectDiveContinuity.timedEveryFrame||!projectDiveContinuity.ownedEveryFrame||!projectDiveContinuity.realEveryFrame||projectDiveContinuity.minObjectCoverage<.94||projectDiveContinuity.maxObjectCoverage>1.08)throw new Error(`Project zoom acrylic did not remain full until its final camera frames: ${JSON.stringify(projectDiveContinuity)}`);
   await page.waitForFunction(()=>window.crmPlanner?.view?.()==='project'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});await sleep(30);
   const projectDiveSettled=await page.evaluate(()=>{const layer=window.crmProjectsCamera.layers()[1];const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const rect=layer?.getBoundingClientRect();return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],opacity:overlay?Number(getComputedStyle(overlay).opacity):null,acrylicOpacity:acrylic?Number(getComputedStyle(acrylic).opacity):null,liveOpacity:live?Number(getComputedStyle(live).opacity):null,buckets:layer?.querySelectorAll('.crm-planner-bucket').length||0,cards:layer?.querySelectorAll('.crm-planner-card').length||0}});
   if(!projectDiveSettled.rect||projectDiveSettled.rect.some((value,index)=>Math.abs(value-[0,0,1280,860][index])>1)||projectDiveSettled.opacity!==0||projectDiveSettled.acrylicOpacity!==0||projectDiveSettled.liveOpacity!==1||projectDiveSettled.buckets!==3||projectDiveSettled.cards!==1)throw new Error(`Project zoom did not hand off to its real settled workspace: ${JSON.stringify(projectDiveSettled)}`);
@@ -741,7 +759,7 @@ async function main() {
   const projectReturnStart=await page.evaluate(()=>new Promise((resolve)=>{window.__nativeProjectReturnContinuity=window.__startNativeProjectContinuity(()=>document.querySelector('.crm-planner-project-world.crm-planner-contracting'));window.crmPlanner.back();requestAnimationFrame(()=>{const layer=document.querySelector('.crm-planner-project-world.crm-planner-contracting');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const acrylicStyle=acrylic&&getComputedStyle(acrylic);resolve({overlay:!!overlay,opacity:overlay?Number(getComputedStyle(overlay).opacity):0,src:overlay?.src||'',liveOpacity:live?Number(getComputedStyle(live).opacity):1,acrylic:!!acrylic,acrylicOpacity:acrylicStyle?Number(acrylicStyle.opacity):null,acrylicBackdrop:acrylicStyle?.backdropFilter||'',layerOpacity:layer?Number(getComputedStyle(layer).opacity):0,layerTransition:layer?.style.transition||''})})}));
   if(!projectReturnStart.overlay||projectReturnStart.src!==projectPreviewBefore.foregroundSrc||projectReturnStart.opacity<0||projectReturnStart.opacity>1||projectReturnStart.liveOpacity<0||projectReturnStart.liveOpacity>1.01||projectReturnStart.opacity+projectReturnStart.liveOpacity<.94||projectReturnStart.opacity+projectReturnStart.liveOpacity>1.08||!projectReturnStart.acrylic||projectReturnStart.acrylicOpacity>.4||!projectReturnStart.acrylicBackdrop.includes('blur(24px)')||projectReturnStart.layerOpacity<.99||projectReturnStart.layerTransition.includes('opacity'))throw new Error(`Project return did not begin as one clear, covered composition: ${JSON.stringify({...projectReturnStart,src:!!projectReturnStart.src})}`);
   const projectReturnContinuity=await page.evaluate(()=>window.__nativeProjectReturnContinuity);
-  if(projectReturnContinuity.frames<20||projectReturnContinuity.firstOpacity>.4||projectReturnContinuity.lastOpacity<.9||projectReturnContinuity.maxOpacityStep>.45||!projectReturnContinuity.nonDecreasing||!projectReturnContinuity.ownedEveryFrame||!projectReturnContinuity.realEveryFrame||projectReturnContinuity.minObjectCoverage<.94||projectReturnContinuity.maxObjectCoverage>1.08||projectReturnContinuity.wallpapers!==1||!projectReturnContinuity.framesSeen.includes('source'))throw new Error(`Project return did not reform its real acrylic continuously inside the motion: ${JSON.stringify(projectReturnContinuity)}`);
+  if(projectReturnContinuity.frames<20||projectReturnContinuity.materialFrames<20||projectReturnContinuity.firstOpacity>.05||projectReturnContinuity.lastOpacity<.99||projectReturnContinuity.intermediateFrames>4||projectReturnContinuity.exitLeadFrames>5||!projectReturnContinuity.nonDecreasing||!projectReturnContinuity.timedEveryFrame||!projectReturnContinuity.ownedEveryFrame||!projectReturnContinuity.realEveryFrame||projectReturnContinuity.minObjectCoverage<.94||projectReturnContinuity.maxObjectCoverage>1.08||projectReturnContinuity.wallpapers!==1||!projectReturnContinuity.framesSeen.includes('source'))throw new Error(`Project return acrylic did not reach full strength in its first camera frames: ${JSON.stringify(projectReturnContinuity)}`);
   await page.waitForFunction(()=>window.crmPlanner?.view?.()==='projects'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});
   const projectReturn=await page.evaluate((projectId)=>{const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const rect=tile?.getBoundingClientRect();const image=tile?.querySelector(':scope>.crm-home-preview>.crm-home-preview-foreground');return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],sameNode:image?.dataset.nativeProjectProbe==='preserve',layers:window.crmProjectsCamera.layers().filter(Boolean).length}},nativeProjectId);
   if(!projectReturn.sameNode||projectReturn.layers!==1||projectReturn.rect.some((value,index)=>Math.abs(value-projectPreviewBefore.rect[index])>1))throw new Error(`Project return replaced or shifted its source tile: ${JSON.stringify(projectReturn)}`);

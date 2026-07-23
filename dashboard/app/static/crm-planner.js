@@ -107,8 +107,8 @@
       .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:var(--crm-menu-background,linear-gradient(180deg,rgba(22,26,36,.62),rgba(12,16,24,.55)));-webkit-backdrop-filter:blur(24px) saturate(140%);backdrop-filter:blur(24px) saturate(140%);transform:translateZ(0);will-change:opacity,transform}
       .crm-project-transition-acrylic:after{content:"";position:absolute;inset:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);opacity:1}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
-      @keyframes crm-project-acrylic-expand{0%,80%{opacity:1}100%{opacity:0}}
-      @keyframes crm-project-acrylic-contract{0%{opacity:0}20%,100%{opacity:1}}
+      @keyframes crm-project-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
+      @keyframes crm-project-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
       @keyframes crm-project-live-in{0%,76%{opacity:.001}100%{opacity:1}}
       @keyframes crm-project-texture-out{0%,76%{opacity:1}100%{opacity:0}}
       @keyframes crm-project-live-out{0%{opacity:1}24%,100%{opacity:.001}}
@@ -120,8 +120,8 @@
       /* The tile material changes owners while geometry is still moving: it
          dissolves into the settled project surface on entry and reforms before
          the return reaches its source tile. No endpoint style swap remains. */
-      .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface.crm-project-acrylic-expanding .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-planner-surface.crm-project-acrylic-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-warm>.crm-project-transition-acrylic{opacity:1!important;animation:none!important}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0}
       .crm-planner-surface.crm-project-camera-expanding .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0;transition:opacity 90ms ease!important}
@@ -958,8 +958,12 @@
         context.surface?.classList.toggle("crm-project-camera-contracting", direction === "contract");
         if (direction === "contract") coverProjectWorld(context.layers[1], selectedProject());
       },
+      onTransformStart:(direction, context) => {
+        context.surface?.classList.toggle("crm-project-acrylic-expanding", direction === "expand");
+        context.surface?.classList.toggle("crm-project-acrylic-contracting", direction === "contract");
+      },
       onTransitionEnd:(direction, context) => {
-        context.surface?.classList.remove("crm-project-camera-moving", "crm-project-camera-expanding", "crm-project-camera-contracting");
+        context.surface?.classList.remove("crm-project-camera-moving", "crm-project-camera-expanding", "crm-project-camera-contracting", "crm-project-acrylic-expanding", "crm-project-acrylic-contracting");
         if (direction === "expand") {
           revealProjectWorld(context.layers[1]);
           const project = selectedProject(); if (project) wirePlannerScroller(project.id, context.layers[1]);

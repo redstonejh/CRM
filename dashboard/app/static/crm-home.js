@@ -194,10 +194,10 @@
         border-radius:inherit;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:1}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
-      @keyframes crm-home-acrylic-expand{0%,80%{opacity:1}100%{opacity:0}}
-      @keyframes crm-home-acrylic-contract{0%{opacity:0}20%,100%{opacity:1}}
-      .crm-home-surface.crm-home-camera-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-home-surface.crm-home-camera-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
+      @keyframes crm-home-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
+      @keyframes crm-home-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
+      .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
+      .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
@@ -987,8 +987,12 @@
       context.surface?.classList.toggle("crm-home-camera-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-camera-contracting",direction==="contract");
     },
+    onTransformStart:(direction,context)=>{
+      context.surface?.classList.toggle("crm-home-acrylic-expanding",direction==="expand");
+      context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
+    },
     onTransitionEnd:(direction,context)=>{
-      context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting");
+      context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting");
       const sequence = ++handoffSequence;
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
         beginHomeHandoff(context, sequence);

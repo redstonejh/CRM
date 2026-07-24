@@ -755,6 +755,33 @@ async function main() {
       return assertSecondaryControlContract(stackControls, bucketAcrylic, 2);
     });
     await screenshot('06-tickets-controls-and-icons.png');
+    const staleFanReset = await page.evaluate(async () => {
+      const paint = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const arrow = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left .tk-arrow:not(.is-hidden)');
+      arrow?.click();
+      await paint();
+      const opened = arrow?.getAttribute('aria-expanded') === 'true'
+        && !!arrow?.closest('.tk-deck')?.classList.contains('is-fanned');
+      const staleState = window.ticketStacks.homePreviewState();
+      staleState.fan ||= {};
+      staleState.fan.left = { open:true, scrollX:-240 };
+      await window.ticketStacks.applyHomePreviewState(staleState);
+      await paint();
+      return {
+        opened,
+        serialized:window.ticketStacks.homePreviewState().fan,
+        expanded:[...document.querySelectorAll('[data-crm-theater="tickets"] .tk-deck-left .tk-arrow, [data-crm-theater="tickets"] .tk-deck-right .tk-arrow')]
+          .map((control) => control.getAttribute('aria-expanded')),
+        fanned:document.querySelectorAll('[data-crm-theater="tickets"] .tk-deck-left.is-fanned, [data-crm-theater="tickets"] .tk-deck-right.is-fanned').length,
+      };
+    });
+    await check('Ticket previews ignore stale fan state and restore collapsed buckets', () => {
+      invariant(staleFanReset.opened, 'Fan control no longer opens intentionally');
+      invariant(Object.values(staleFanReset.serialized || {}).every((state) => state.open === false && state.scrollX === 0), 'Preview state still serializes an open fan');
+      invariant(staleFanReset.expanded.every((value) => value === 'false'), `A fan control remained expanded: ${staleFanReset.expanded.join(',')}`);
+      invariant(staleFanReset.fanned === 0, `${staleFanReset.fanned} ticket deck(s) remained fanned`);
+      return staleFanReset;
+    });
 
     await activate('assignments');
     await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card]').length > 0);

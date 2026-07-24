@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-07-24T21:40:33.316Z",
+  "generatedAt": "2026-07-24T22:01:23.303Z",
   "viewport": {
     "width": 1600,
     "height": 1000
   },
-  "passed": 25,
+  "passed": 26,
   "failed": 0,
   "pageErrors": [],
   "consoleErrors": [
@@ -268,6 +268,28 @@
           "Fan out resolved tickets"
         ],
         "iconSize": "18px"
+      }
+    },
+    {
+      "name": "Ticket previews ignore stale fan state and restore collapsed buckets",
+      "ok": true,
+      "detail": {
+        "opened": true,
+        "serialized": {
+          "left": {
+            "open": false,
+            "scrollX": 0
+          },
+          "right": {
+            "open": false,
+            "scrollX": 0
+          }
+        },
+        "expanded": [
+          "false",
+          "false"
+        ],
+        "fanned": 0
       }
     },
     {

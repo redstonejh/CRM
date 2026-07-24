@@ -1219,6 +1219,20 @@
     trackFanEdges();               // edge shadows appear as the cards animate out (not on next scroll)
     return fanned[side];
   };
+  const collapseCornerFans = () => {
+    const openSides = ["left", "right"].filter((side) => !!fanned[side]);
+    if (!openSides.length) return false;
+    openSides.forEach((side) => {
+      fanned[side] = false;
+      if (decks[side]) decks[side].scrollX = 0;
+    });
+    if (trashMode) setTrashMode(false);
+    else {
+      DECK_SIDES.forEach(layout);
+      trackFanEdges();
+    }
+    return true;
+  };
   const toggleFan = (side) => setFan(side, !fanned[side]);
 
   // ── Overscroll: Apple-style rubber-band at the ends of a fanned scroll ──────────
@@ -2171,8 +2185,8 @@
     expandedStages:[...expandedStages],
     zoneScroll:Object.fromEntries(STAGE_KEYS.map((stage) => [stage, zoneScroll[stage]?.sy || 0])),
     fan:Object.fromEntries(["left", "right"].map((side) => [side, {
-      open:!!fanned[side],
-      scrollX:decks[side] ? clamp(decks[side].scrollX || 0, scrollMinOf(decks[side]), 0) : 0,
+      open:false,
+      scrollX:0,
     }])),
   });
   const applyHomePreviewState = async (state = {}) => {
@@ -2183,11 +2197,7 @@
       renderZones();
       layoutZones();
     }
-    const requestedFan = ["left", "right"].find((side) => !!state.fan?.[side]?.open) || null;
-    ["left", "right"].forEach((side) => {
-      if (decks[side] && fanned[side] && side !== requestedFan) setFan(side, false);
-    });
-    if (requestedFan && decks[requestedFan] && !fanned[requestedFan]) setFan(requestedFan, true);
+    collapseCornerFans();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (state.zoneScroll && typeof state.zoneScroll === "object") {
       STAGE_KEYS.forEach((stage) => {
@@ -2199,12 +2209,6 @@
         scroll.sy = scroll.ty = clamp(requested, zMin(stage), 0);
         positionZone(stage);
       });
-    }
-    if (requestedFan && decks[requestedFan]) {
-      const requested = Number(state.fan?.[requestedFan]?.scrollX);
-      decks[requestedFan].scrollX = clamp(Number.isFinite(requested) ? requested : 0, scrollMinOf(decks[requestedFan]), 0);
-      layout(requestedFan);
-      updateDeckEdges();
     }
     return homePreviewState();
   };
@@ -2814,6 +2818,7 @@
       const visible = active = !!on;
       if (theater) theater.hidden = !visible;
       if (!visible) {
+        collapseCornerFans();
         hideTicketMenu();
         stopTrashRing();
         window.ticketDetail?.close?.();

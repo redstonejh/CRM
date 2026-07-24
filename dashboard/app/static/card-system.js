@@ -1796,6 +1796,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     DECK_SIDES.forEach(layout);   // re-lay ALL: each arrow's z + dimming depend on which deck is fanned
     trackFanEdges();               // edge shadows appear as the cards animate out (not on next scroll)
   };
+  const collapseCornerFans = () => {
+    const openSides = CORNER_SIDES.filter((side) => !!fanned[side]);
+    if (!openSides.length) return false;
+    openSides.forEach((side) => {
+      fanned[side] = false;
+      if (decks[side]) decks[side].scrollX = 0;
+    });
+    if (trashMode) setTrashMode(false);
+    else {
+      DECK_SIDES.forEach(layout);
+      trackFanEdges();
+    }
+    return true;
+  };
   const toggleFan = (side) => setFan(side, !fanned[side]);
 
   // ── Overscroll: Apple-style rubber-band at the ends of a fanned scroll ──────────
@@ -3238,8 +3252,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneX:horizontalZones ? clamp(zoneHScroll.x, zoneHMin(), 0) : 0,
     zoneY:scrollZoneRows ? clamp(zoneVClip?.scrollTop || 0, 0, zoneVMax()) : 0,
     fan:Object.fromEntries(CORNER_SIDES.map((side) => [side, {
-      open:!!fanned[side],
-      scrollX:decks[side] ? clamp(decks[side].scrollX || 0, scrollMinOf(decks[side]), 0) : 0,
+      // Fan-out is an in-viewport interaction, not restorable navigation
+      // state. Home previews and history always represent the canonical
+      // collapsed buckets so an old capture cannot strand cards open.
+      open:false,
+      scrollX:0,
     }])),
   });
   const applyHomePreviewState = async (state = {}) => {
@@ -3250,11 +3267,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       renderZones();
       layoutZones();
     }
-    const requestedFan = CORNER_SIDES.find((side) => !!state.fan?.[side]?.open) || null;
-    CORNER_SIDES.forEach((side) => {
-      if (decks[side] && fanned[side] && side !== requestedFan) setFan(side, false);
-    });
-    if (requestedFan && decks[requestedFan] && !fanned[requestedFan]) setFan(requestedFan, true);
+    // Ignore fan state from older preview/history payloads. Those payloads
+    // predate the collapsed-rest contract and are the source of "stuck"
+    // fanned tickets after returning to this viewport.
+    collapseCornerFans();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (state.zoneScroll && typeof state.zoneScroll === "object") {
       STAGE_KEYS.forEach((stage) => {
@@ -3272,12 +3288,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     }
     if (scrollZoneRows && zoneVClip) {
       const requested = Number(state.zoneY); zoneVClip.scrollTop = clamp(Number.isFinite(requested) ? requested : 0, 0, zoneVMax()); positionZoneRows(); updateVerticalZoneLod();
-    }
-    if (requestedFan && decks[requestedFan]) {
-      const requested = Number(state.fan?.[requestedFan]?.scrollX);
-      decks[requestedFan].scrollX = clamp(Number.isFinite(requested) ? requested : 0, scrollMinOf(decks[requestedFan]), 0);
-      layout(requestedFan);
-      updateDeckEdges();
     }
     return homePreviewState();
   };
@@ -4320,6 +4330,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         applyActiveVisibility();
       }
     } else {
+      collapseCornerFans();
       applyActiveVisibility();
       hideTicketMenu();
       clearDropFocus();

@@ -39,6 +39,7 @@
   let root = null;
   let active = false;
   let dirty = true;
+  let renderPending = true;
   let refreshTimer = 0;
   let refreshPromise = null;
   let refreshTail = Promise.resolve();
@@ -232,9 +233,16 @@
     }));
   }
 
-  async function refresh(force = false) {
+  const renderPermitted = (options = {}) => typeof options.canRender !== "function" || options.canRender();
+  async function refresh(force = false, options = {}) {
     if (!force && refreshPromise) return refreshPromise;
-    const run = refreshTail.catch(() => null).then(async () => { model = await load(); dirty = false; render(); return model; });
+    const run = refreshTail.catch(() => null).then(async () => {
+      model = await load();
+      dirty = false;
+      if (renderPermitted(options)) { render(); renderPending = false; }
+      else renderPending = true;
+      return model;
+    });
     refreshTail = run; refreshPromise = run; run.finally(() => { if (refreshPromise === run) refreshPromise = null; }).catch(() => {}); return run;
   }
   const schedule = () => { dirty = true; clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (active && !assignmentDetail?.isOpen?.()) refresh(); }, 100); };
@@ -422,10 +430,27 @@
 
   function mount() {
     if (root) return root; ensureStyles(); root = document.createElement("main"); root.className = "crm-assignments-surface"; root.dataset.crmTheater = "assignments"; root.hidden = true; document.body.appendChild(root); wire();
-    try { window.crmDomain?.onChanged?.(schedule); } catch {} try { window.crmStore?.onChanged?.(schedule); } catch {} refresh(); return root;
+    try { window.crmDomain?.onChanged?.(schedule); } catch {} try { window.crmStore?.onChanged?.(schedule); } catch {} refresh(false, { canRender:() => active }); return root;
   }
-  const setActive = (on) => { active = !!on; mount(); root.hidden = !active; if (active && dirty) refresh(); else if (active) requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); }); if (!active) { closeFloating(); stopBoardAutoScroll(); } return api; };
-  const baseline = async () => { mount(); if (dirty || !model.commitments.length) await refresh(); render(); root.hidden = !active; return root; };
+  const setActive = (on) => {
+    active = !!on;
+    mount();
+    root.hidden = !active;
+    if (active && (dirty || !model.commitments.length)) refresh();
+    else if (active && renderPending) { render(); renderPending = false; }
+    else if (active) requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); });
+    if (!active) { closeFloating(); stopBoardAutoScroll(); }
+    return api;
+  };
+  const baseline = async (options = {}) => {
+    mount();
+    const needed = dirty || !model.commitments.length;
+    if (needed) await refresh(false, options);
+    if (!renderPermitted(options)) { renderPending = true; root.hidden = !active; return root; }
+    if (!needed || renderPending) { render(); renderPending = false; }
+    root.hidden = !active;
+    return root;
+  };
   const homePreviewState = () => ({
     expandedStages:[...expandedStages],
     scrollX:clamp(boardScroll.x, boardMinimum(), 0),

@@ -41,6 +41,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   let wired = false;
   let active = false;
   let dirty = true;
+  let renderPending = true;
+  let pendingRenderReason = "refreshed";
   let refreshTimer = 0;
   let refreshPromise = null;
   let refreshTail = Promise.resolve();
@@ -291,7 +293,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     return migrated;
   }
 
-  async function refresh(force = false, reason = "refreshed") {
+  const renderPermitted = (options = {}) => typeof options.canRender !== "function" || options.canRender();
+  async function refresh(force = false, reason = "refreshed", options = {}) {
     if (!force && refreshPromise) return refreshPromise;
     clearTimeout(refreshTimer); refreshTimer = 0;
     const run = refreshTail.catch(() => null).then(async () => {
@@ -299,7 +302,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (await migrateLegacy()) model = await load();
       if (await migrateProjectTiles()) model = await load();
       if (!model.projects.some((project) => project.id === selectedId)) selectedId = model.projects[0]?.id || "";
-      clearTimeout(refreshTimer); refreshTimer = 0; dirty = false; publish(reason); return model;
+      clearTimeout(refreshTimer); refreshTimer = 0;
+      dirty = false;
+      if (renderPermitted(options)) { publish(reason); renderPending = false; }
+      else { renderPending = true; pendingRenderReason = reason; }
+      return model;
     });
     refreshTail = run;
     refreshPromise = run;
@@ -1104,7 +1111,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       projectEnvironmentObserver.observe(document.documentElement, { attributes:true, attributeFilter:["data-background"] });
     }
     try { window.crmStore?.onChanged?.(schedule); } catch {} try { window.crmDomain?.onChanged?.(schedule); } catch {}
-    refresh(); return root;
+    refresh(false, "refreshed", { canRender:() => active }); return root;
   }
   const resetToGallery = () => {
     if (!camera || camera.level() === 0) return;
@@ -1113,13 +1120,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   const setActive = (on) => {
     active = !!on; mount(); camera?.setActive?.(active);
-    if (active && dirty) refresh();
+    if (active && (dirty || !model.projects.length)) refresh();
+    else if (active && renderPending) { publish(pendingRenderReason); renderPending = false; }
     if (!active) { closeFloating(); resetToGallery(); }
     return api;
   };
-  const baseline = async () => {
-    mount(); if (dirty || !model.projects.length) await refresh();
-    if (!active && camera?.level?.() > 0) camera.rebuildRoot(); else render();
+  const baseline = async (options = {}) => {
+    mount();
+    const needed = dirty || !model.projects.length;
+    if (needed) await refresh(false, "refreshed", options);
+    if (!renderPermitted(options)) { renderPending = true; root.hidden = !active; return root; }
+    const mustPublish = renderPending;
+    if (mustPublish) { publish(pendingRenderReason); renderPending = false; }
+    if (!active && camera?.level?.() > 0) camera.rebuildRoot();
+    else if (!needed && !mustPublish) render();
     camera?.setActive?.(active); return root;
   };
   const homePreviewState = () => {

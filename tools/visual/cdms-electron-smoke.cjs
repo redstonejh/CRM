@@ -63,17 +63,39 @@ async function run() {
     }, null, { timeout: 120_000 });
 
     const evidence = await page.evaluate(async () => {
-      const [session, status, catalog, tickets, projects, workItems] = await Promise.all([
+      const [session, status, catalog, tickets, projects, workItems, report] = await Promise.all([
         window.auth.session(),
         window.crmCdms.status(),
         window.crmCdms.catalog(),
         window.tickets.list(),
         window.crmStore.list('projects', { includeDeleted: false }),
         window.crmStore.list('workItems', { includeDeleted: false }),
+        window.crmReportsApi.summary(),
       ]);
       const demoTickets = (tickets.tickets || []).filter((record) => /^tkt_demo_/i.test(record.id || ''));
       const demoProjects = (projects.records || []).filter((record) => /^proj_/i.test(record.id || ''));
       const demoItems = (workItems.records || []).filter((record) => /^wi_/i.test(record.id || ''));
+      const reportDatasets = report?.summary?.datasets || {};
+      const reportRows = Object.values(reportDatasets).flatMap((value) => Array.isArray(value) ? value : []);
+      const reportContacts = reportRows.filter((row) => String(row?.entity || row?.type || '').toLowerCase() === 'contacts');
+      const reportTickets = Array.isArray(reportDatasets.openTickets) ? reportDatasets.openTickets : [];
+      const reportSecrets = [];
+      const scanReport = (value, prefix = 'report') => {
+        if (Array.isArray(value)) {
+          value.forEach((item, index) => scanReport(item, `${prefix}[${index}]`));
+          return;
+        }
+        if (!value || typeof value !== 'object') return;
+        Object.entries(value).forEach(([key, item]) => {
+          if (key !== 'mustChangePassword'
+            && (/(password|passwd|passcode|secret|token|private[\s_-]*key|recovery[\s_-]*code|mfa|otp)/i.test(key)
+              || /^notes?(?:\s*\d+)?$/i.test(key))) {
+            reportSecrets.push(`${prefix}.${key}`);
+          }
+          scanReport(item, `${prefix}.${key}`);
+        });
+      };
+      scanReport(report);
       return {
         session: {
           provider: session.provider,
@@ -96,7 +118,14 @@ async function run() {
           projectsWithOwner: demoProjects.filter((record) => /^cdms-contact-/.test(record.ownerContactId || '')).length,
           workItems: demoItems.length,
           workItemsWithPerson: demoItems.filter((record) => /^cdms-contact-/.test(record.assignedContactId || '')).length,
+          reportIdentitySource: report?.summary?.identitySource,
+          reportContacts: reportContacts.length,
+          reportContactsWithCdmsId: reportContacts.filter((record) => /^cdms-contact-/.test(record.id || '')).length,
+          reportTickets: reportTickets.length,
+          reportTicketsWithCompany: reportTickets.filter((record) => /^cdms-company-/.test(record.companyId || '')).length,
+          reportTicketsWithIp: reportTickets.filter((record) => !!record.ipAddress).length,
         },
+        reportSecrets,
       };
     });
     assert.equal(evidence.session.provider, 'cdms');
@@ -113,6 +142,13 @@ async function run() {
     assert.equal(evidence.references.projectsWithOwner, evidence.references.projects);
     assert.ok(evidence.references.workItems > 0);
     assert.equal(evidence.references.workItemsWithPerson, evidence.references.workItems);
+    assert.equal(evidence.references.reportIdentitySource, 'cdms');
+    assert.ok(evidence.references.reportContacts > 0);
+    assert.equal(evidence.references.reportContactsWithCdmsId, evidence.references.reportContacts);
+    assert.ok(evidence.references.reportTickets > 0);
+    assert.equal(evidence.references.reportTicketsWithCompany, evidence.references.reportTickets);
+    assert.equal(evidence.references.reportTicketsWithIp, evidence.references.reportTickets);
+    assert.deepEqual(evidence.reportSecrets, []);
 
     await page.evaluate(() => window.crmWorkspaces.setActive('people'));
     await page.waitForFunction(() => (

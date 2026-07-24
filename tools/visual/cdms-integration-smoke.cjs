@@ -113,6 +113,10 @@ async function liveContract() {
   assert.ok(status.contacts > 0, 'CDMS must return people');
   assert.ok(status.assets > 0, 'CDMS must return devices');
   assert.deepEqual(forbiddenPaths(client.catalog()), []);
+  const reportSeeds = Array.from({ length: Math.min(160, status.contacts) }, (_, index) => `fixture-contact-${index + 1}`);
+  const reportReferences = client.referencesFor('contacts', reportSeeds);
+  assert.equal(reportReferences.size, reportSeeds.length);
+  assert.equal(new Set([...reportReferences.values()].map((record) => record.id)).size, reportSeeds.length);
 
   const ticket = client.decorateRecord('tickets', {
     id: 'tkt_demo_cdms_contract',
@@ -156,6 +160,7 @@ async function liveContract() {
     partialFailures: status.partialFailures,
     profileSections: profile.summary.sections,
     profileRecords: profile.summary.records,
+    uniqueReportReferences: reportReferences.size,
     secretsExposed: 0,
     workflowReferences: {
       ticketCompany: !!ticket.cdmsCompanyId,

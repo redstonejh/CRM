@@ -660,6 +660,25 @@ function createCdmsClient(options = {}) {
     return parseInt(stableHash(seed), 36) % length;
   }
 
+  function referencesFor(entity, seeds = []) {
+    const pool = records(entity);
+    const keys = [...new Set((Array.isArray(seeds) ? seeds : [seeds]).map(text).filter(Boolean))].sort();
+    const assignments = new Map();
+    const used = new Set();
+    keys.forEach((key) => {
+      if (!pool.length) return;
+      let index = indexFor(`${entity}:${key}`, pool.length);
+      let probes = 0;
+      while (used.has(index) && probes < pool.length) {
+        index = (index + 1) % pool.length;
+        probes += 1;
+      }
+      assignments.set(key, pool[index]);
+      used.add(index);
+    });
+    return assignments;
+  }
+
   function decorateRecord(entity, input) {
     if (!input || input.source === 'cdms' || !catalog.companies.length) return input;
     const record = { ...input };
@@ -833,6 +852,7 @@ function createCdmsClient(options = {}) {
     }),
     records,
     getRecord,
+    referencesFor,
     overlayRecords,
     decorateRecord,
     companyProfile,

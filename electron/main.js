@@ -723,6 +723,95 @@ function storePayload(entity, options = {}) {
   };
 }
 
+const REPORT_IDENTITY_FIELDS = [
+  'source', 'readOnly', 'referenceSource', 'cdmsReference',
+  'companyId', 'company', 'companyName', 'companyLabel', 'companyCode', 'cdmsCompanyId',
+  'contactId', 'contact', 'contactName', 'ownerContactId', 'assignedContactId', 'cdmsContactId',
+  'assetId', 'cdmsAssetId', 'ipAddress', 'host',
+  'username', 'email', 'phone', 'role', 'owner', 'assignee',
+];
+
+function reportEntity(row) {
+  const raw = String(row?.entity || row?.type || '').trim();
+  const lower = raw.toLowerCase();
+  const aliases = {
+    ticket: 'tickets', contact: 'contacts', company: 'companies', deal: 'deals',
+    task: 'tasks', invoice: 'invoices', calendar: 'calendarItems',
+    calendaritem: 'calendarItems', calendaritems: 'calendarItems',
+  };
+  return aliases[lower] || raw;
+}
+
+function reportTitle(entity, record, fallback) {
+  const values = entity === 'tickets' || entity === 'cases' || entity === 'jobs'
+    ? [record?.companyLabel, record?.company, record?.client, record?.title, record?.name]
+    : [record?.title, record?.name, record?.client, record?.companyLabel, record?.company];
+  values.push(fallback);
+  return values.map((value) => String(value ?? '').trim()).find(Boolean) || 'Untitled';
+}
+
+function mergeReportIdentity(row, entity, record, { replaceId = false } = {}) {
+  if (!record) return row;
+  const output = { ...row };
+  if (replaceId && record.id) output.id = record.id;
+  output.title = reportTitle(entity, record, row.title);
+  REPORT_IDENTITY_FIELDS.forEach((field) => {
+    const value = record[field];
+    if (value !== undefined && value !== null && value !== '') output[field] = value;
+  });
+  return output;
+}
+
+function decorateReportPayload(payload) {
+  const status = cdms.status();
+  if (!payload?.summary?.datasets || status.connection !== 'live' || !status.contacts) return payload;
+  const datasets = payload.summary.datasets;
+  const rows = Object.values(datasets).flatMap((value) => Array.isArray(value) ? value : []);
+  const contactIds = rows.filter((row) => reportEntity(row) === 'contacts').map((row) => String(row.id || '')).filter(Boolean);
+  const companyIds = rows.filter((row) => reportEntity(row) === 'companies').map((row) => String(row.id || '')).filter(Boolean);
+  const contactReferences = cdms.referencesFor('contacts', contactIds);
+  const companyReferences = cdms.referencesFor('companies', companyIds);
+  let linkedRows = 0;
+
+  const decoratedDatasets = Object.fromEntries(Object.entries(datasets).map(([key, value]) => {
+    if (!Array.isArray(value)) return [key, value];
+    return [key, value.map((row) => {
+      if (!row || typeof row !== 'object') return row;
+      const entity = reportEntity(row);
+      let record = null;
+      let replaceId = false;
+      if (entity === 'contacts') {
+        record = contactReferences.get(String(row.id || '')) || null;
+        replaceId = true;
+      } else if (entity === 'companies') {
+        record = companyReferences.get(String(row.id || '')) || null;
+        replaceId = true;
+      } else {
+        try { record = getRecord(entity, row.id); } catch {}
+        record = cdms.decorateRecord(entity, record || row);
+      }
+      if (record?.source === 'cdms' || record?.cdmsReference || record?.referenceSource === 'cdms') linkedRows += 1;
+      return mergeReportIdentity(row, entity, record, { replaceId });
+    })];
+  }));
+
+  return {
+    ...payload,
+    identitySource: 'cdms',
+    summary: {
+      ...payload.summary,
+      identitySource: 'cdms',
+      identityCounts: {
+        companies: status.companies,
+        contacts: status.contacts,
+        assets: status.assets,
+        linkedRows,
+      },
+      datasets: decoratedDatasets,
+    },
+  };
+}
+
 function broadcastStore(entity = null) {
   const entities = entity ? [entity] : CRM_ENTITIES;
   openWindows().forEach((w) => {
@@ -1161,7 +1250,7 @@ ipcMain.handle('domain:delete', (_e, { resource, id, hard = false } = {}) => {
   return deleteDomain(resource, id, { hard: !!hard });
 });
 
-ipcMain.handle('reports:summary', () => reportSummary());
+ipcMain.handle('reports:summary', async () => decorateReportPayload(await reportSummary()));
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 

@@ -28,6 +28,9 @@ in main-process memory for the current authenticated session and receive stable
 into the CRM database. Local tickets, deals, tasks, assignments, and projects
 may reference those ids, so demo workflow remains local while its people,
 companies, hosts, and IPs are real CDMS records.
+Today and report feeds keep their CRM due dates and stages while resolving any
+displayed fixture identities to stable CDMS people, companies, owners, hosts,
+and IPs.
 
 Authentication follows CDMS:
 

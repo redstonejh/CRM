@@ -20,7 +20,14 @@ contextBridge.exposeInMainWorld('dashboard', {
   onCheck: () => {},
   onSetCompany: () => {},
   getHistory: () => Promise.resolve({ ok: true, history: [] }),
-  getCompanies: () => Promise.resolve([]),
+  getCompanies: async () => {
+    const result = await ipcRenderer.invoke('cdms:catalog');
+    return (result?.companies || []).map((company) => ({
+      id: company.id,
+      label: company.name || company.title || company.companyCode || company.id,
+      host: company.ipAddress || company.host || '',
+    }));
+  },
   getCompanyHistory: () => Promise.resolve({ results: [], rollups: [] }),
   getViewerIps: () => Promise.resolve({}),
   consumeCompanyFocus: () => Promise.resolve(null),
@@ -101,9 +108,20 @@ contextBridge.exposeInMainWorld('crmBackend', {
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
 });
+contextBridge.exposeInMainWorld('crmCdms', {
+  status: () => ipcRenderer.invoke('cdms:status'),
+  refresh: () => ipcRenderer.invoke('cdms:refresh'),
+  catalog: () => ipcRenderer.invoke('cdms:catalog'),
+  companyProfile: (companyId, options = {}) => ipcRenderer.invoke('cdms:company-profile', {
+    companyId,
+    force: !!options.force,
+  }),
+  onChanged: (cb) => ipcRenderer.on('auth:changed', (_event, session) => cb(session)),
+});
 contextBridge.exposeInMainWorld('deals', entityBridge('deals'));
 contextBridge.exposeInMainWorld('contacts', entityBridge('contacts'));
 contextBridge.exposeInMainWorld('companies', entityBridge('companies'));
+contextBridge.exposeInMainWorld('assets', entityBridge('assets'));
 contextBridge.exposeInMainWorld('tasks', entityBridge('tasks'));
 contextBridge.exposeInMainWorld('bills', entityBridge('bills'));
 contextBridge.exposeInMainWorld('invoices', entityBridge('invoices'));
@@ -151,6 +169,9 @@ contextBridge.exposeInMainWorld('dashboardPersistence', {
 // ─── Frameless window controls ────────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('dashboardWindowControls', {
   reload: () => ipcRenderer.invoke('dashboard-window:reload'),
+  hideToTray: () => ipcRenderer.invoke('dashboard-window:close'),
+  // Kept for compatibility with older renderer code; minimize now uses the
+  // same hide-to-tray lifecycle rather than creating a minimized taskbar item.
   minimize: () => ipcRenderer.invoke('dashboard-window:minimize'),
   close: () => ipcRenderer.invoke('dashboard-window:close'),
 });
@@ -184,14 +205,13 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
   onProjectChanged: (cb) => ipcRenderer.on('project-preview:changed', (_event, preview) => cb(preview)),
 });
 
-// Bind the immutable frameless-window buttons before application hydration.
-// Capture phase makes these handlers authoritative even if a renderer runtime
-// is rebuilt or goes stale after repeated camera navigation.
+// Bind only the immutable shell actions before application hydration. The
+// former minimize slot belongs to the renderer's context-aware Add control, so
+// preload must not intercept it or prescribe what can be created in a viewport.
 if (!new URLSearchParams(location.search).has('crmPreviewWorker')) {
   const installShellControls = () => {
     [
       ['.window-refresh-control', 'dashboard-window:reload'],
-      ['.window-minimize-control', 'dashboard-window:minimize'],
       ['.window-close-control', 'dashboard-window:close'],
     ].forEach(([selector, channel]) => {
       const control = document.querySelector(selector);

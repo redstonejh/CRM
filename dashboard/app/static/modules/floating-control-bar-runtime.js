@@ -37,11 +37,10 @@ const interactiveSelector = [
 export const initializeFloatingControlBarRuntime = async () => {
   const bar = document.querySelector("[data-floating-control-bar]");
   const gear = document.querySelector(".control-bar-gear");
-  const minimizeControl = document.querySelector(".window-minimize-control");
   const refreshControl = document.querySelector(".window-refresh-control");
   const closeControl = document.querySelector(".window-close-control");
 
-  // Window controls (minimize / refresh / close) live in the top-bar cluster and
+  // Window controls (refresh / hide-to-tray) live in the top-bar cluster and
   // MUST wire up regardless of whether the legacy floating builder bar + its gear
   // are present. The gear was replaced by the background picker, so don't let a
   // missing gear bail this whole function (that dead-locked the entire top bar).
@@ -58,11 +57,6 @@ export const initializeFloatingControlBarRuntime = async () => {
     window.location.reload();
   };
 
-  minimizeControl?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    window.dashboardWindowControls?.minimize?.();
-  });
   refreshControl?.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();

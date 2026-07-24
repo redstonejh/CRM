@@ -17,7 +17,7 @@
   );
   const entityLabel = (entity) => ({
     contacts: "Person", companies: "Company", deals: "Deal", jobs: "Job", cases: "Case",
-    tickets: "Ticket", bills: "Bill", invoices: "Invoice", tasks: "Task", calendarItems: "Event",
+    assets: "Device", tickets: "Ticket", bills: "Bill", invoices: "Invoice", tasks: "Task", calendarItems: "Event",
   }[entity] || "Record");
   const getRecord = async (entity, id) => (await window.crmStore?.get?.(entity, id))?.record || null;
   const isTicketEntity = (entity) => ["ticket", "tickets", "case", "cases"].includes(String(entity || "").trim().toLowerCase());
@@ -57,13 +57,18 @@
     const candidates = [
       ["Company", value(record, "company") || value(record, "companyName")],
       ["Role", value(record, "role")],
+      ["Login", value(record, "username") || value(record, "login")],
       ["Email", value(record, "email")],
       ["Phone", value(record, "phone")],
+      ["Workstation", value(record, "workstation") || value(record, "host")],
+      ["IP address", value(record, "ipAddress") || value(record, "IP")],
+      ["Service tag", value(record, "serviceTag")],
+      ["Location", value(record, "location")],
       ["Status", value(record, "state") || value(record, "status")],
       ["Owner", value(record, "assignee") || value(record, "owner")],
       ["Value", value(record, "amount") || value(record, "value")],
       ["Due", value(record, "dueDate") || value(record, "dueAt")],
-    ].filter(([, fact]) => fact !== undefined && fact !== null && fact !== "").slice(0, 4);
+    ].filter(([, fact]) => fact !== undefined && fact !== null && fact !== "").slice(0, 8);
     if (!candidates.length) candidates.push([entityLabel(entity), record?.id || "No details"]);
     return candidates.map(([label, fact]) => `<div class="record-world-fact crm-menu-item"><span class="record-world-fact-label">${esc(label)}</span><span class="record-world-fact-value" title="${esc(displayValue(label, fact))}">${esc(displayValue(label, fact))}</span></div>`).join("");
   }

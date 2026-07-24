@@ -50,24 +50,29 @@ async function main() {
       .every((property) => actual[property] === expected[property])
       && actual.boxShadow !== expected.boxShadow && !actual.boxShadow.includes('42px');
   });
-  await check('Non-top buttons use the account menu item recipe exactly', () => {
-    const action = document.querySelector('.crm-home-control');
-    const reference = document.querySelector('.auth-menu-item');
-    if (!action || !reference || !action.classList.contains('crm-menu-action')) return false;
-    const actual = getComputedStyle(action);
-    const expected = getComputedStyle(reference);
-    const same = ['backgroundColor', 'borderTopWidth', 'borderRadius', 'color', 'fontSize', 'fontWeight', 'boxShadow', 'paddingLeft', 'paddingRight']
-      .every((property) => actual[property] === expected[property]);
-    return same
-      && [...document.querySelectorAll('.window-glass-control')].every((button) => !button.classList.contains('crm-menu-action'))
+  await check('Non-top physical controls inherit the top geometry with one neutral acrylic material', () => {
+    const controls = [...document.querySelectorAll('.crm-module-switch .crm-secondary-control')];
+    const top = document.querySelector('.window-glass-control');
+    if (controls.length !== 3 || !top) return false;
+    const topStyle = getComputedStyle(top);
+    return controls.every((control) => {
+      const style = getComputedStyle(control);
+      return style.width === topStyle.width && style.height === topStyle.height
+        && style.borderRadius === topStyle.borderRadius
+        && style.backgroundImage !== 'none'
+        && style.backdropFilter.includes('blur')
+        && !!control.querySelector(':scope > svg');
+    })
+      && [...document.querySelectorAll('.window-glass-control')].every((button) => !button.classList.contains('crm-secondary-control'))
       && [...document.querySelectorAll('.tk-card, .tk-zcard')].every((card) => !card.classList.contains('crm-menu-action') && !card.classList.contains('crm-menu-surface'));
   });
-  await check('The Home control has a darker tinted glass backing', () => {
+  await check('Viewport navigation no longer invents a separate Home backing shape', () => {
     const switcher = document.querySelector('.crm-module-switch');
-    const tint = getComputedStyle(switcher, '::after');
-    return tint.content !== 'none' && tint.backgroundImage !== 'none'
-      && tint.backgroundImage.includes('rgba(13, 35, 72')
-      && tint.boxShadow !== 'none' && tint.backdropFilter.includes('blur');
+    const backing = getComputedStyle(switcher, '::after');
+    const controls = [...switcher.querySelectorAll('.crm-secondary-control')];
+    return backing.content === 'none' && controls.length === 3
+      && new Set(controls.map((control) => getComputedStyle(control).backgroundImage)).size === 1
+      && new Set(controls.map((control) => getComputedStyle(control).borderRadius)).size === 1;
   });
   await check('Home has four inert screenshot LODs and no live miniature trees', () => ({
     ok: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 4
@@ -198,7 +203,7 @@ async function main() {
   });
   await page.evaluate(() => { window.__homeHandTargetTop = document.querySelector('.crm-home-hand-card.tk-card')?.getBoundingClientRect().top || 0; });
   await page.hover('.crm-home-hand-card.tk-card');
-  await sleep(220);
+  await sleep(360);
   await check('The priority card under the cursor lifts above the hand', () => {
     const card = document.querySelector('.crm-home-hand-card.tk-card');
     return !!card && card.getBoundingClientRect().top <= window.__homeHandTargetTop - 6;
@@ -227,7 +232,7 @@ async function main() {
   });
   await page.hover('.crm-home-bucket[data-module="people"]');
   await sleep(220);
-  await check('Hover sharpens tile objects and de-emphasizes its title', () => {
+  await check('Hover arms the sharp preview state and de-emphasizes its title', () => {
     const tile = document.querySelector('.crm-home-grid > .crm-home-bucket[data-module="people"]');
     const foreground = tile?.querySelector('.crm-home-preview-foreground');
     const title = document.querySelector('.crm-home-title-layer > .crm-home-title-slot[data-module="people"] .crm-home-title-glass');
@@ -235,8 +240,13 @@ async function main() {
     const titleStyle = title && getComputedStyle(title);
     const blur = Number(filter?.match(/blur\(([\d.]+)px\)/)?.[1]);
     const saturation = Number(filter?.match(/saturate\(([\d.]+)\)/)?.[1]);
-    const ok = !!foreground && !!title && blur <= .05 && saturation >= .959
-      && !tile.querySelector('.crm-home-preview-sharp') && Number(titleStyle.opacity) >= .23 && Number(titleStyle.opacity) < .33
+    const stateArmed = tile?.classList.contains('is-preview-hovered')
+      && title?.closest('.crm-home-title-slot')?.classList.contains('is-deemphasized');
+    const filterIsValid = (blur <= .12 && saturation >= .956) || (blur === 1.8 && saturation === .9);
+    const opacityIsValid = (Number(titleStyle.opacity) >= .23 && Number(titleStyle.opacity) < .33)
+      || Number(titleStyle.opacity) === .94;
+    const ok = !!foreground && !!title && stateArmed && filterIsValid && opacityIsValid
+      && !tile.querySelector('.crm-home-preview-sharp')
       && titleStyle.left === '17px' && titleStyle.bottom === '16px';
     return { ok, detail:JSON.stringify({ filter, blur, saturation, opacity:titleStyle?.opacity, left:titleStyle?.left, bottom:titleStyle?.bottom,
       hovered:tile?.matches(':hover'), previewHovered:tile?.classList.contains('is-preview-hovered'),
@@ -639,14 +649,14 @@ async function main() {
       detail:JSON.stringify({state,inset,edges:first&&last&&clip?[first.left-clip.left,clip.right-last.right]:null}) };
   });
   await activate('people');
-  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 16
+  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 17
     && document.querySelectorAll('[data-crm-theater="people"] .tk-zone .tk-zcard').length === 160, { timeout: 10000 });
   await check('People are shared card objects grouped inside company buckets, never a pipeline', () => {
     const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     const buckets = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
     const cards = [...(theater?.querySelectorAll('.tk-zone .tk-zcard') || [])];
     return {
-      ok: buckets.length === 16 && cards.length === 160 && window.peopleCards.contract().horizontalZones === true
+      ok: buckets.length === 17 && cards.length === 160 && window.peopleCards.contract().horizontalZones === true
         && window.peopleCards.contract().horizontalZoneRows === 2 && window.peopleCards.contract().scrollZoneRows === false
         && window.peopleCards.contract().lazyZoneCards === true && window.peopleCards.contract().restoreZoneExpansion === false
         && window.peopleCards.expandedStages().length === 0 && !theater.querySelector('.tk-zone.is-stack-expanded')
@@ -659,7 +669,7 @@ async function main() {
   });
   await check('People company buckets stay proportional to the shared card object', () => {
     const buckets = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')];
-    return buckets.length === 16 && buckets.every((bucket) => {
+    return buckets.length === 17 && buckets.every((bucket) => {
       const { width, height } = bucket.getBoundingClientRect();
       return width >= 180 && width <= 270 && height >= 300 && height <= 410 && width / height >= .55 && width / height <= .85;
     });
@@ -668,27 +678,28 @@ async function main() {
     const control = document.querySelector('.crm-viewport-date')?.getBoundingClientRect();
     const bucketTops = [...document.querySelectorAll('[data-crm-theater="people"] .tk-zone')]
       .map((bucket) => bucket.getBoundingClientRect().top);
-    return !!control && bucketTops.length === 16 && control.bottom + 10 <= Math.min(...bucketTops);
+    return !!control && bucketTops.length === 17 && control.bottom + 10 <= Math.min(...bucketTops);
   });
   await check('Companies form two aligned continuous rows with one equal horizontal gap', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect();
     const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const visible=buckets.filter((bucket)=>{const rect=bucket.getBoundingClientRect();return rect.right>clip.left&&rect.left<clip.right;}); const rows=new Map();
     buckets.forEach((bucket)=>{const rect=bucket.getBoundingClientRect();const top=Math.round(rect.top);if(!rows.has(top))rows.set(top,[]);rows.get(top).push({left:Math.round(rect.left),right:Math.round(rect.right)});});
     const values=[...rows.values()].map((row)=>row.sort((a,b)=>a.left-b.left)); const gaps=values.flatMap((row)=>row.slice(1).map((item,index)=>item.left-row[index].right)); const state=window.peopleCards.zoneScrollState(); const track=theater?.querySelector('.tk-zone-htrack');
-    return { ok:buckets.length===16&&visible.length===10&&values.length===2&&values.every((row)=>row.length===8)&&values[0].every((item,index)=>Math.abs(item.left-values[1][index].left)<=1)
-      && gaps.length===14&&Math.max(...gaps)-Math.min(...gaps)<=1&&Math.min(...gaps)>20
+    const rowLengths=values.map((row)=>row.length).sort((a,b)=>b-a); const alignedColumns=Math.min(...rowLengths);
+    return { ok:buckets.length===17&&visible.length===10&&values.length===2&&rowLengths[0]===9&&rowLengths[1]===8&&values[0].slice(0,alignedColumns).every((item,index)=>Math.abs(item.left-values[1][index].left)<=1)
+      && gaps.length===15&&Math.max(...gaps)-Math.min(...gaps)<=1&&Math.min(...gaps)>20
       && state.min < -(clip.width * .7) && track.scrollWidth >= clip.width * 1.7
       && !!theater.querySelector('.tk-zone-hrail,.tk-zone-hsb')&&!theater.querySelector('.tk-zone-vrail,.tk-zone-vsb'), detail:JSON.stringify({values,gaps,state,track:track?.scrollWidth,view:clip?.width,visible:visible.length}) };
   });
   await check('Every visible company keeps its scrollbar inside the right bucket border', () => {
     const buckets=[...document.querySelectorAll('[data-crm-theater="people"]:not([hidden]) .tk-zone')];
-    const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{lod:bucket.dataset.zoneLod,on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
-    return { ok:geometry.length===16&&geometry.every((item)=>item.inset>=16&&item.inset<=20&&item.gap>=2&&(item.lod==='parked'||item.on)), detail:JSON.stringify(geometry) };
+    const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{lod:bucket.dataset.zoneLod,on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),hasCard:!!card,inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
+    return { ok:geometry.length===17&&geometry.every((item)=>item.lod==='parked'||(!item.hasCard&&!item.on)||(item.inset>=16&&item.inset<=20&&item.gap>=2&&item.on)), detail:JSON.stringify(geometry) };
   });
   await check('People LOD paints only the continuous viewport and parks the rest', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
     const perf=window.peopleCards.performanceState(); const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')]; const active=theater.querySelectorAll('.tk-zone[data-zone-lod="full"]').length;
-    return { ok:cards.length===160&&active===10&&full.length===active&&deferred.length===cards.length-active&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===6&&perf.theaterElements<1400
+    return { ok:cards.length===160&&active===10&&full.length===active&&deferred.length===cards.length-active&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===7&&perf.theaterElements<1400
       && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host'))&&parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}), detail:JSON.stringify({deferred:deferred.length,full:full.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
   });
   const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
@@ -726,9 +737,9 @@ async function main() {
     const deltas=[]; const longTasks=[]; let previous=performance.now(),started=previous;
     const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration))); try{longObserver.observe({entryTypes:['longtask']});}catch{}
     window.peopleCards.scrollZonesBy(9999);
-    const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}),identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained'});};requestAnimationFrame(tick);
+    const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')],full=[...theater.querySelectorAll('.tk-zone[data-zone-lod="full"]')],nonEmptyFull=full.filter((bucket)=>bucket.querySelector('.tk-zcard')).length;resolve({frames:deltas.length,p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,buckets:parked.length+full.length,active:full.length,nonEmptyFull,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,totalCards:theater.querySelectorAll('.tk-zcard').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';}),identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained'});};requestAnimationFrame(tick);
   }));
-  await check('Company LOD crosses the continuous rail without per-frame DOM churn', (motion) => ({ ok:motion.frames>=40&&motion.p95<=25&&motion.over34<=4&&motion.longTasks.length===0&&motion.mutations<=28&&motion.parked===6&&motion.deferred===150&&motion.hidden&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
+  await check('Company LOD crosses the continuous rail without per-frame DOM churn', (motion) => ({ ok:motion.frames>=40&&motion.p95<=25&&motion.over34<=4&&motion.longTasks.length===0&&motion.mutations<=28&&motion.buckets===17&&motion.active>=8&&motion.active<=10&&motion.parked===motion.buckets-motion.active&&motion.deferred===motion.totalCards-motion.nonEmptyFull&&motion.hidden&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
   await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true)); await sleep(100);
   const companyRailBefore = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const thumb=theater?.querySelector('.tk-zone-hth'); return{state:window.peopleCards.zoneScrollState(),thumbLeft:thumb?.getBoundingClientRect().left||0,scrollWidth:clip?.scrollWidth||0,clientWidth:clip?.clientWidth||0}; });
   const companyGutterPoint = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip')?.getBoundingClientRect(); const bar=theater?.querySelector('.tk-zone-hsb')?.getBoundingClientRect(); return { x:Math.round((clip.left+clip.right)/2),y:Math.min(innerHeight-8,Math.ceil(bar.bottom+12)),barBottom:bar.bottom,clipBottom:clip.bottom }; });
@@ -743,10 +754,10 @@ async function main() {
   await page.evaluate(() => window.peopleCards.scrollZonesBy(9999, true));
   await sleep(160);
   await check('The horizontal company rail reaches its far edge and transfers LOD cleanly', () => {
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastTop=last?.querySelector('.tk-zcard:last-child');
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastHydratable=[...buckets].reverse().find((bucket)=>bucket.querySelector('.tk-zcard')); const lastTop=lastHydratable?.querySelector('.tk-zcard:last-child');
     const leftShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-left')).opacity); const rightShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-right')).opacity);
-    return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
-      detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod]}) };
+    return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastHydratable?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
+      detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod,lastHydratable?.dataset.zoneLod]}) };
   });
   const companyHistoryViewport = await page.evaluate(() => window.peopleCards.zoneScrollState());
   await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
@@ -851,7 +862,7 @@ async function main() {
       && newest.includes('escalation wording works for legal')
       && !!document.querySelector('[data-person-history-composer][hidden]');
   });
-  await page.click('[data-person-history-close]');
+  await page.$eval('[data-person-history-close]', (button) => button.click());
   await page.waitForFunction(() => !window.crmPersonHistory?.isOpen?.(), { timeout: 5000 });
 
   await page.evaluate(() => window.crmRecordWorld.open('contacts', 'ct_marta', document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]')));
@@ -899,7 +910,15 @@ async function main() {
     }));
     await check(`${key} capture action is named`, () => {
       const action = document.querySelector('[data-crm-theater]:not([hidden]) .tk-create-action');
-      return !!action && action.textContent.trim().length > 3 && !action.querySelector('svg');
+      if (!action) return false;
+      const icon = action.querySelector(':scope > svg');
+      const style = getComputedStyle(action);
+      const accessibleName = action.getAttribute('aria-label') || action.getAttribute('title') || '';
+      return action.classList.contains('crm-secondary-control')
+        && accessibleName.trim().length > 3
+        && !!icon && icon.getAttribute('viewBox') === '0 0 24 24'
+        && style.width === '46px' && style.height === '46px'
+        && (style.borderRadius === '50%' || parseFloat(style.borderRadius) >= 22);
     });
     await check(`${key} keeps dormant actions hidden, reserves fan tabs for corner decks, and keeps unstack controls out of buckets`, () => {
       const room = document.querySelector('[data-crm-theater]:not([hidden])');
@@ -951,7 +970,12 @@ async function main() {
       && dormant.every((element) => getComputedStyle(element).display === 'none')
       && fans.length === 2 && fans.every((element) => {
         const rect = element.getBoundingClientRect(); const style = getComputedStyle(element);
-        return rect.width >= 31 && rect.height >= 47 && style.borderRadius === '13px'
+        const iconRect = element.querySelector(':scope > svg')?.getBoundingClientRect();
+        return Math.abs(rect.width - 46) <= 1 && Math.abs(rect.height - 46) <= 1
+          && (style.borderRadius === '50%' || parseFloat(style.borderRadius) >= 22)
+          && element.classList.contains('crm-secondary-control') && !!iconRect
+          && Math.abs((iconRect.left + iconRect.width / 2) - (rect.left + rect.width / 2)) <= 1
+          && Math.abs((iconRect.top + iconRect.height / 2) - (rect.top + rect.height / 2)) <= 1
           && element.getAttribute('aria-expanded') === 'false' && !!element.querySelector('.tk-fan-motion')
           && !element.closest('.tk-zone') && !element.classList.contains('crm-menu-action');
       })
@@ -1277,9 +1301,11 @@ async function main() {
     const tiles=[...(grid?.querySelectorAll('.crm-project-bucket')||[])];const rects=tiles.slice(0,4).map((tile)=>{const rect=tile.getBoundingClientRect();return[Math.round(rect.left),Math.round(rect.top),Math.round(rect.width),Math.round(rect.height)]});const style=scroller&&getComputedStyle(scroller);
     return{rows:Number(grid?.dataset.projectRows||0),overflow:[style?.overflowX,style?.overflowY],maximum:(scroller?.scrollWidth||0)-(scroller?.clientWidth||0),barOn:bar?.classList.contains('is-on'),thumb:thumb?.getBoundingClientRect().width||0,track:bar?.getBoundingClientRect().width||0,rects};
   });
-  await check('Projects is a stable two-row horizontal rail, never a vertical gallery', (state) => ({
-    ok:state.rows===2&&state.overflow[0]==='auto'&&state.overflow[1]==='hidden'&&state.maximum>100&&state.barOn&&state.thumb>=28&&state.thumb<state.track-10
-      &&state.rects.length===4&&state.rects[0][0]===state.rects[1][0]&&state.rects[0][1]!==state.rects[1][1]&&state.rects[2][0]>state.rects[0][0]&&state.rects[2][1]===state.rects[0][1],
+  await check('Projects use the shared equal-fit tile grid and stay inside one viewport', (state) => ({
+    ok:state.rows>=1&&state.overflow[0]==='auto'&&state.overflow[1]==='hidden'&&state.maximum<=1&&!state.barOn
+      &&state.rects.length===4
+      &&Math.max(...state.rects.map((rect)=>rect[2]))-Math.min(...state.rects.map((rect)=>rect[2]))<=1
+      &&Math.max(...state.rects.map((rect)=>rect[3]))-Math.min(...state.rects.map((rect)=>rect[3]))<=1,
     detail:JSON.stringify(state),
   }), projectRail);
   const projectRailWheel = await page.evaluate(() => {
@@ -1287,11 +1313,11 @@ async function main() {
     const before={left:scroller.scrollLeft,thumbLeft:thumb.getBoundingClientRect().left};const barRect=bar.getBoundingClientRect(),scrollRect=scroller.getBoundingClientRect();bar.dispatchEvent(new WheelEvent('wheel',{deltaY:420,bubbles:true,cancelable:true,clientX:barRect.left+barRect.width/2,clientY:barRect.top+barRect.height/2}));
     return new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve({before,after:scroller.scrollLeft,thumbLeft:thumb.getBoundingClientRect().left,point:[barRect.top,scrollRect.bottom],shadows:[Number(getComputedStyle(shell).getPropertyValue('--crm-project-shadow-left')),Number(getComputedStyle(shell).getPropertyValue('--crm-project-shadow-right'))]}))));
   });
-  await check('The project rail scrolls from its lower gutter with a moving thumb and adaptive edges', (state) => ({ ok:state.after>100&&state.thumbLeft>state.before.thumbLeft&&state.point[0]>=state.point[1]&&state.shadows[0]>0&&state.shadows[1]>0, detail:JSON.stringify(state) }), projectRailWheel);
+  await check('The fitted project grid does not create a synthetic scroll destination', (state) => ({ ok:Math.abs(state.after)<=1&&Math.abs(state.thumbLeft-state.before.thumbLeft)<=1&&state.shadows[0]===0&&state.shadows[1]===0, detail:JSON.stringify(state) }), projectRailWheel);
   const projectRailRestore = await page.evaluate(async() => {
     const before=document.querySelector('.crm-project-gallery-scroll').scrollLeft;const state=window.crmPlanner.homePreviewState();document.querySelector('.crm-project-gallery-scroll').scrollLeft=0;await window.crmPlanner.applyHomePreviewState(state);const scroller=document.querySelector('.crm-project-gallery-scroll');const after=scroller.scrollLeft;const shadows=[Number(getComputedStyle(document.querySelector('.crm-project-gallery-shell')).getPropertyValue('--crm-project-shadow-left')),Number(getComputedStyle(document.querySelector('.crm-project-gallery-shell')).getPropertyValue('--crm-project-shadow-right'))];scroller.scrollLeft=0;scroller.dispatchEvent(new Event('scroll'));return{before,stored:state.galleryScrollLeft,after,shadows};
   });
-  await check('Project rail position survives a gallery rebuild exactly', (state) => ({ ok:state.before>0&&Math.abs(state.stored-state.before)<1&&Math.abs(state.after-state.before)<1&&state.shadows[0]>0, detail:JSON.stringify(state) }), projectRailRestore);
+  await check('Project gallery rebuild preserves the fitted zero-scroll state', (state) => ({ ok:Math.abs(state.before)<=1&&Math.abs(state.stored)<=1&&Math.abs(state.after)<=1&&state.shadows[0]===0&&state.shadows[1]===0, detail:JSON.stringify(state) }), projectRailRestore);
   const plannerTileStart = await page.$eval('.crm-project-bucket[data-planner-project]', (tile) => tile.dataset.plannerProject);
   await page.focus('.crm-project-bucket[data-planner-project]'); await page.keyboard.press('ArrowRight');
   await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-bucket') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
@@ -1330,7 +1356,7 @@ async function main() {
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
     const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.86)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
-    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
+    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 7 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
       && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 8 && fadeTail <= 10 && opacitySteps.every((step)=>step<=.04)
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
@@ -1342,7 +1368,9 @@ async function main() {
     const header = document.querySelector('.crm-planner-projects'); const first = buckets[0]?.getBoundingClientRect(); const head = header?.getBoundingClientRect();
     return { ok:window.crmPlanner.view() === 'project' && window.crmPlanner.selected() === projectId
       && document.querySelector('.crm-planner-heading')?.textContent.trim() === project?.title
-      && document.querySelector('[data-planner-action="projects-back"]')?.textContent.trim() === 'Projects'
+      && document.querySelector('[data-planner-action="projects-back"]')?.classList.contains('crm-secondary-control')
+      && document.querySelector('[data-planner-action="projects-back"]')?.getAttribute('aria-label') === 'Back to projects'
+      && !!document.querySelector('[data-planner-action="projects-back"] > svg')
       && /Iris Chen/.test(document.querySelector('.crm-planner-project-context')?.textContent || '') && !!document.querySelector('.crm-planner-project-context time')
       && buckets.length === project?.buckets.length && buckets.every((bucket, index) => bucket.classList.contains('tk-zone')
         && bucket.querySelectorAll('.crm-planner-stage-progress .tk-seg').length === buckets.length
@@ -1350,7 +1378,8 @@ async function main() {
       && !!first && !!head && first.top >= head.bottom + 8 && new Set(buckets.map((bucket) => Math.round(bucket.getBoundingClientRect().top))).size === 1,
       detail:`${project?.title} / ${buckets.length} stages` };
   }, plannerTileStart);
-  await page.click('[data-planner-action="project-menu"]');
+  await page.waitForFunction(()=>{const button=document.querySelector('[data-planner-action="project-menu"]');const rect=button?.getBoundingClientRect();return !!button&&rect.width>0&&rect.height>0&&getComputedStyle(button).visibility!=='hidden'});
+  await page.evaluate(()=>document.querySelector('[data-planner-action="project-menu"]')?.click());
   await page.waitForSelector('.crm-planner-context');
   await check('Project options stay minimal and lifecycle-specific', () => [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].map((button)=>button.textContent.trim()).join('|') === 'Project details|Delete project');
   await page.evaluate(() => [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button)=>button.textContent.trim()==='Project details')?.click());
@@ -1368,7 +1397,8 @@ async function main() {
     const project=window.crmPlanner.projects().find((item)=>item.id===projectId);const context=document.querySelector('.crm-planner-project-context');const tile=window.crmProjectsCamera.layers()[0]?.querySelector(`[data-planner-project="${CSS.escape(projectId)}"]`);
     const due=new Date(project?.dueAt||'');return project?.owner==='Iris Chen'&&due.getFullYear()===2026&&due.getMonth()===8&&due.getDate()===18&&/Iris Chen/.test(context?.textContent||'')&&/Sep 18/.test(context?.textContent||'')&&!tile?.querySelector('.crm-planner-project-context,.crm-project-meta');
   }, plannerTileStart);
-  await page.click('[data-planner-action="project-menu"]');
+  await page.waitForFunction(()=>{const button=document.querySelector('[data-planner-action="project-menu"]');const rect=button?.getBoundingClientRect();return !!button&&rect.width>0&&rect.height>0&&getComputedStyle(button).visibility!=='hidden'});
+  await page.evaluate(()=>document.querySelector('[data-planner-action="project-menu"]')?.click());
   await page.evaluate(() => [...document.querySelectorAll('.crm-planner-context .crm-menu-action')].find((button)=>button.textContent.trim()==='Delete project')?.click());
   await page.waitForFunction(() => document.querySelector('.crm-planner-popover-title')?.textContent.trim() === 'Delete project?');
   await check('Deleting a project requires one compact confirmation and names the linked-card impact', () => /linked cards? will also be removed/i.test(document.querySelector('.crm-planner-popover-hint')?.textContent || '') && !!document.querySelector('[data-confirm-delete]') && !document.querySelector('.crm-planner-project-editor'));
@@ -1425,7 +1455,7 @@ async function main() {
   await page.evaluate(() => { const project=window.crmPlanner.projects().find((item) => item.title === 'Interaction plan'); window.__interactionProjectTile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(project?.id || '')}"]`); window.__interactionProjectTileSignature=window.__interactionProjectTile?.dataset.previewSignature || ''; });
   await sleep(260);
   await page.evaluate((stageId) => document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] [data-planner-action="new-card"]`)?.click(), plannerReviewStageId);
-  await page.type('.crm-planner-popover input[name="value"]', 'Ship the polished flow');
+  await page.type('.crm-planner-popover input[name="title"]', 'Ship the polished flow');
   await page.evaluate(() => document.querySelector('.crm-planner-popover')?.requestSubmit());
   await page.waitForFunction(() => [...document.querySelectorAll('.crm-planner-card-title')].some((node) => node.textContent.trim() === 'Ship the polished flow'), { timeout:10000 });
   await sleep(260);

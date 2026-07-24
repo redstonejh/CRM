@@ -5,6 +5,115 @@
 // detail opens. This factory keeps that choreography intact while lifting the
 // entity seams into config.
 ((global) => {
+// One face layer is shared by every card species, including legacy tickets and
+// detached cards rendered into Home's hand.  Keeping the content budget and
+// semantic glyph registry here prevents each viewport from acquiring its own
+// truncation rules or look-alike icon set.
+const crmCardFace = global.crmCardFace || (() => {
+  const ICON_PATHS = Object.freeze({
+    ticket: '<path d="M6.25 4.5h11.5a1.75 1.75 0 0 1 1.75 1.75v2.1a3.65 3.65 0 0 0 0 7.3v2.1a1.75 1.75 0 0 1-1.75 1.75H6.25a1.75 1.75 0 0 1-1.75-1.75v-2.1a3.65 3.65 0 0 0 0-7.3v-2.1A1.75 1.75 0 0 1 6.25 4.5Z"/><path d="M12 7.25v1.5m0 2.25v2m0 2.25v1.5"/>',
+    person: '<circle cx="12" cy="8.15" r="3.65"/><path d="M5.25 19.5c.42-4.05 2.67-6.1 6.75-6.1s6.33 2.05 6.75 6.1"/>',
+    money: '<rect x="3.75" y="6" width="16.5" height="12" rx="2.25"/><path d="M7 9.25c1.15 0 2.08-.93 2.08-2.08m7.92 2.08c-1.15 0-2.08-.93-2.08-2.08M7 14.75c1.15 0 2.08.93 2.08 2.08m7.92-2.08c-1.15 0-2.08.93-2.08 2.08"/><circle cx="12" cy="12" r="2.3"/>',
+    work: '<path d="M8.2 6.2V4.75c0-.69.56-1.25 1.25-1.25h5.1c.69 0 1.25.56 1.25 1.25V6.2"/><rect x="3.5" y="6.2" width="17" height="13.3" rx="2.25"/><path d="M3.75 11.35c5.5 2.4 11 2.4 16.5 0M10 12.35h4"/>',
+    task: '<rect x="4.25" y="4.25" width="15.5" height="15.5" rx="2.4"/><path d="m7.6 12 2.45 2.45 6.35-6.35"/>',
+    company: '<path d="M5 20V5.25c0-.69.56-1.25 1.25-1.25h7.5c.69 0 1.25.56 1.25 1.25V20m0-10.5h2.75c.69 0 1.25.56 1.25 1.25V20M3.5 20h17"/><path d="M8 7.5h1m2 0h1m-4 3h1m2 0h1m-4 3h1m2 0h1"/>',
+    card: '<rect x="4" y="3.75" width="16" height="16.5" rx="2.5"/><path d="M7.5 8h9M7.5 11.5h6M7.5 15h4"/>',
+  });
+  const ALIASES = Object.freeze({
+    ticket: ["ticket", "case", "incident", "support"],
+    person: ["person", "people", "contact", "customer", "client", "lead"],
+    money: ["money", "deal", "invoice", "bill", "payment", "quote", "revenue", "finance", "financial"],
+    work: ["work", "job", "project", "brief"],
+    task: ["task", "todo", "today", "assignment", "commitment", "milestone"],
+    company: ["company", "account", "organization", "organisation", "business"],
+    card: ["card", "record", "item"],
+  });
+  const cleanType = (value) => String(value ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-");
+  const semanticTypeOf = (record, fallback = "card") => {
+    const candidates = [
+      record?.semanticIcon, record?.semanticType, record?.cardType,
+      record?.entityType, record?.kind, record?.type, fallback,
+    ].map(cleanType).filter(Boolean);
+    for (const candidate of candidates) {
+      for (const [type, aliases] of Object.entries(ALIASES)) {
+        if (aliases.some((alias) => candidate === alias || candidate.includes(`${alias}-`) || candidate.includes(`-${alias}`))) return type;
+      }
+    }
+    if (record && ["amount", "total", "balance", "value", "revenue", "price"].some((key) => record[key] != null && record[key] !== "")) return "money";
+    return "card";
+  };
+  const markup = (record, fallback) => {
+    const type = semanticTypeOf(record, fallback);
+    return `<div class="crm-card-semantic-mark" data-card-semantic="${type}" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke">${ICON_PATHS[type] || ICON_PATHS.card}</svg></div>`;
+  };
+  const setAccent = (element, rgb) => {
+    if (!element) return;
+    const value = typeof rgb === "string"
+      ? rgb
+      : rgb && [rgb.r, rgb.g, rgb.b].every(Number.isFinite)
+        ? `${rgb.r}, ${rgb.g}, ${rgb.b}`
+        : "";
+    if (value) element.style.setProperty("--crm-card-mark-rgb", value);
+    else element.style.removeProperty("--crm-card-mark-rgb");
+  };
+  const lineHeightOf = (row) => {
+    const style = getComputedStyle(row);
+    return parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 12) * 1.35;
+  };
+  const visibleLines = (row) => Math.max(1, Math.round(row.getBoundingClientRect().height / lineHeightOf(row)));
+  // Expand every displayed entry first. Only when the full face exceeds its
+  // measured body do we remove one line at a time from the physically-longest
+  // entry. Titles participate in the same budget instead of carrying a fixed
+  // one-/two-line clamp that discards useful space on otherwise-empty cards.
+  const fit = (card) => {
+    const body = card?.querySelector?.(".ticket-body, [data-card-fit-body]");
+    if (!body) return false;
+    const entries = [...body.querySelectorAll(".ticket-company, .ticket-host, .ticket-field, [data-card-fit-entry]")]
+      .filter((row) => row.getClientRects().length && String(row.textContent || "").trim());
+    entries.forEach((row) => {
+      // Attribute-based consumers need no companion truncation implementation:
+      // the fitter establishes the same multi-line clamp substrate used by the
+      // canonical ticket/card entries before it starts measuring.
+      row.style.display = "-webkit-box";
+      row.style.webkitBoxOrient = "vertical";
+      row.style.overflow = "hidden";
+      row.style.overflowWrap = "anywhere";
+      row.style.webkitLineClamp = "unset";
+      // A flex column is allowed to shrink its children before scrollHeight is
+      // measured. That can hide the bottom of a long entry while making the
+      // whole body appear to fit. Keep vertically-stacked entries at their
+      // natural height so the shared budget, rather than flexbox, decides
+      // which longest entry loses a line.
+      const parentStyle = row.parentElement ? getComputedStyle(row.parentElement) : null;
+      if (parentStyle?.display.includes("flex") && parentStyle.flexDirection.startsWith("column")) {
+        row.style.flexShrink = "0";
+      }
+      row.removeAttribute("data-card-entry-clamped");
+    });
+    const fields = body.querySelector(".ticket-fields, [data-card-fit-fields]");
+    const over = () => body.scrollHeight > body.clientHeight + 1
+      || (fields && fields.scrollHeight > fields.clientHeight + 1);
+    let guard = 0;
+    while (entries.length && over() && guard++ < 80) {
+      const candidates = entries.map((row) => ({
+        row,
+        lines: visibleLines(row),
+        length: String(row.textContent || "").trim().length,
+      })).filter((entry) => entry.lines > 1);
+      if (!candidates.length) break;
+      candidates.sort((a, b) => b.lines - a.lines || b.length - a.length);
+      const longest = candidates[0];
+      longest.row.style.webkitLineClamp = String(longest.lines - 1);
+      longest.row.dataset.cardEntryClamped = "true";
+    }
+    card.dataset.cardContentFit = over() ? "clipped" : guard > 0 ? "adaptive" : "full";
+    return card.dataset.cardContentFit !== "clipped";
+  };
+  return Object.freeze({ fit, markup, semanticTypeOf, setAccent });
+})();
+global.crmCardFace = crmCardFace;
+global.crmCardPresentation = crmCardFace;
+
 global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const source = config.source || global.tickets;
   const detail = config.detail || global.ticketDetail;
@@ -120,7 +229,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let publicApi = null;
   let CARD_W = 185, CARD_H = 279;          // matched to the grid ticket card at render time
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
-  const FAN_CONTROL_W = 32, FAN_CONTROL_H = 48;
+  const FAN_CONTROL_W = 46, FAN_CONTROL_H = 46;
   const ZCARD_PEEK = 42;   // height of a zone card's title that peeks above the card stacked on it
   const SMALL_CARD_SCALE = .8;
   const SMALL_BUCKET_SCALE = .76;
@@ -530,11 +639,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   // The card fill: a random widget colour for a blank card, else its severity colour.
   const cardBg = (t) => { const c = colorFor(t); return c ? colorBg(c) : severityBg(sevOf(t)); };
+  const cardAccentRgb = (t) => {
+    const custom = colorFor(t);
+    if (custom) {
+      const { r, g, b } = hexToRgb(custom);
+      if ([r, g, b].every(Number.isFinite)) return `${r}, ${g}, ${b}`;
+    }
+    return SEV_RGB[sevOf(t)] || SEV_RGB.none || "120, 130, 140";
+  };
   // One paint call for every card / clone / flyer: the original full-body wash + staleness.
   const applyCardPaint = (el, t) => {
     if (!el) return;
     el.style.backgroundColor = baseColor();
     el.style.backgroundImage = cardBg(t);
+    crmCardFace.setAccent(el, cardAccentRgb(t));
     applyStaleness(el, t);
   };
   const stalenessOf = (t) => {
@@ -777,38 +895,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-act-by { color: rgba(255,255,255,0.5); }
       .tk-act-none { color: rgba(255,255,255,0.45); font-size: var(--crm-type-body,12px); }
 
-      .tk-arrow { position:absolute;width:${FAN_CONTROL_W}px;height:${FAN_CONTROL_H}px;padding:0;border-radius:13px;-webkit-appearance:none;appearance:none;z-index:5000;
-        border:1px solid rgba(222,236,252,.2);cursor:pointer;pointer-events:auto;
-        background:linear-gradient(155deg,rgba(27,36,49,.76),rgba(9,15,23,.66));
-        -webkit-backdrop-filter:blur(20px) saturate(132%);backdrop-filter:blur(20px) saturate(132%);
-        box-shadow:inset 0 1px rgba(255,255,255,.14),0 14px 26px -18px rgba(0,0,0,.9);
-        color:rgba(235,243,253,.68);display:grid;place-items:center;
-        transition:left .42s ${EASE},right .42s ${EASE},transform .16s ease,opacity .16s ease,color .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease; }
-      .tk-arrow:hover,.tk-arrow:focus-visible{outline:0;transform:translateY(-1px);color:#fff;border-color:rgba(222,236,252,.36);background:linear-gradient(155deg,rgba(38,51,69,.82),rgba(12,20,30,.72));box-shadow:inset 0 1px rgba(255,255,255,.18),0 16px 30px -18px rgba(0,0,0,.96)}
-      .tk-arrow:active{transform:scale(.97)}
-      .tk-arrow[aria-expanded="true"]{color:rgba(206,226,251,.96);border-color:rgba(145,187,239,.42);background:linear-gradient(155deg,rgba(31,53,78,.8),rgba(10,21,34,.7))}
-      .tk-arrow svg{width:20px;height:20px;overflow:visible}.tk-arrow .tk-fan-back{opacity:.42}.tk-arrow .tk-fan-motion{opacity:.88}
-      .tk-arrow.is-hidden{opacity:0;pointer-events:none;transform:scale(.94)}
-
-      /* Create (+) / trash buttons centred above each corner stack — same glass pill as .tk-arrow. */
-      .tk-stack-btn { position: absolute; width: 34px; height: 34px; border-radius: 50%; -webkit-appearance: none; appearance: none; z-index: 5000;
-        border: 1px solid rgba(255,255,255,0.22); cursor: pointer; pointer-events: auto;
-        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
-        -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 10px 26px rgba(0,0,0,0.34);
-        color: #fff; display: flex; align-items: center; justify-content: center;
-        transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, opacity .25s ease; }
-      .tk-stack-btn:hover { transform: scale(1.08); }
-      .tk-stack-btn.tk-create-action { width: auto; min-width: 88px; height: 32px; padding: 0 11px; border-radius: 10px;
-        transform: translateX(-50%); font: 650 10px/1 system-ui, sans-serif; color: rgba(235,242,252,.82); }
-      .tk-stack-btn.tk-create-action:hover { transform: translateX(-50%) scale(1.04); }
-      .tk-stack-btn svg { width: 16px; height: 16px; }
-      .tk-stack-btn.is-active { border-color: rgba(125,180,255,0.85);
-        box-shadow: inset 0 0 0 1px rgba(125,180,255,0.45), 0 0 18px rgba(90,150,255,0.45), inset 0 1px 0 rgba(255,255,255,0.24); }
+      /* Physical stack controls consume the global secondary-control primitive.
+         This module owns only their absolute placement, glyph sizing and stack
+         transition; material/shape/interaction stay identical across rooms. */
+      .tk-arrow, .tk-stack-btn { position:absolute;z-index:5000;pointer-events:auto; }
+      .tk-arrow { transition-property:left,right,transform,opacity,background,box-shadow,color,border-color; }
+      .tk-arrow svg, .tk-stack-btn > svg:not(.tk-ring) { display:block;flex:0 0 auto;overflow:visible; }
+      .tk-arrow .tk-fan-back{opacity:.42}.tk-arrow .tk-fan-motion{opacity:.88}
+      .tk-arrow.is-hidden{opacity:0;pointer-events:none}
+      .tk-stack-btn.is-active{color:#fff}
       /* "Hold to open the bin" ring: a blue stroke that draws a full trip AROUND the icon while a
          dragged ticket rests on it (completing the trip opens the bin — the JS timer matches the .72s).
          Centred on the button and sized just outside its edge; blue matches the toggled (.is-active) glow. */
-      /* NB: qualified with .tk-stack-btn to outrank ".tk-stack-btn svg { width:16px }" (the icon rule),
+      /* NB: qualified with .tk-stack-btn to outrank the control glyph rule,
          which would otherwise shrink the ring to 16px (smaller than + offset from the button). */
       .tk-stack-btn .tk-ring { position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; pointer-events: none; opacity: 0;
         transform: translate(-50%, -50%) rotate(-90deg); }
@@ -894,9 +993,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-bars-card { position: absolute; top: 11px; right: 13px; z-index: 7; pointer-events: none; }
       .tk-seg { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.20); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
       .tk-seg.g { background: #2fd16b; } .tk-seg.y { background: #ecc94b; } .tk-seg.r { background: #ef5350; }
-      /* Census D3: seeded names get two readable lines before ellipsis while
-         retaining the original's clear top-right progress/date column. */
-      .tk-card .ticket-company, .tk-zcard .ticket-company { -webkit-line-clamp: 2; padding-right: 56px; }
+      /* Card titles start fully expanded. crmCardFace.fit() gives the title the
+         same measured budget as every other displayed entry, so empty cards do
+         not throw away useful title space and dense cards clamp only as needed. */
+      .tk-card .ticket-company, .tk-zcard .ticket-company, .tk-zfly .ticket-company, .td-flyer .ticket-company {
+        -webkit-line-clamp: unset; white-space: normal; overflow-wrap: anywhere; padding-right: 56px;
+      }
       /* BLUEPRINT A6: the cold front is VISIBLE — if a screenshot can't show a
          24-day contact pale next to a 3-day one, the curve is too timid. The
          body drains saturation and dims; the frost sheet thickens with the
@@ -929,6 +1031,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       /* The description line joins the smart-fit too (scoped to OUR cards — the grid widget keeps its own look). */
       .tk-card .ticket-host, .tk-zcard .ticket-host, .tk-zfly .ticket-host, .td-flyer .ticket-host {
         display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+      /* One semantic mark sits under the face text, not in its layout budget.
+         Its accent comes from the exact card paint and multiply darkens that
+         same hue; opposing one-pixel shadows create a pressed/embossed edge. */
+      .tk-card, .tk-zcard, .tk-zfly, .td-flyer { isolation:isolate; }
+      .tk-card .ticket-body, .tk-zcard .ticket-body, .tk-zfly .ticket-body, .td-flyer .ticket-body {
+        position:relative;z-index:2;
+      }
+      .crm-card-semantic-mark {
+        position:absolute;z-index:1;left:50%;top:55%;width:clamp(72px,54%,108px);aspect-ratio:1;
+        translate:-50% -50%;display:grid;place-items:center;pointer-events:none;
+        color:rgb(var(--crm-card-mark-rgb,120,130,140));opacity:.25;mix-blend-mode:multiply;
+        filter:drop-shadow(0 1px 0 rgba(255,255,255,.18)) drop-shadow(0 -1px 0 rgba(0,0,0,.34));
+      }
+      .crm-card-semantic-mark svg{display:block;width:100%;height:100%}
       /* body no longer clips — an inner .tk-zone-clip clips the scrolling track, so the scrollbar can sit
          in the bucket's right gutter (breathing room) without being cut off. */
       .tk-zone-body { flex: 1 1 auto; min-height: 0; position: relative; overflow: visible; padding: 2px; }
@@ -1051,6 +1167,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (on) trashShowEmpty = showEmpty;   // opened deliberately? let an empty bin stay open to show its placeholder
     else { trashShowEmpty = false; if (decks.trash) { fanned.trash = false; decks.trash.scrollX = 0; } }
     decks.right?.action?.classList.toggle("is-active", on);
+    decks.right?.action?.setAttribute("aria-expanded", String(on));
     render();
   };
 
@@ -1271,7 +1388,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       track.className = "tk-track";
       box.appendChild(track);
       const arrow = document.createElement("button");
-      arrow.className = "tk-arrow"; arrow.type = "button";
+      arrow.className = "tk-arrow crm-secondary-control"; arrow.type = "button";
       const fanLabel = side === "left" ? deckCopy.leftFanAria : deckCopy.rightFanAria;
       arrow.dataset.fanLabel = fanLabel; arrow.setAttribute("aria-label", fanLabel); arrow.setAttribute("aria-expanded", "false");
       arrow.addEventListener("click", () => toggleFan(side));
@@ -1284,15 +1401,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // between resolved and deleted. Lives on root (not the deck box) so it stays visible when
       // the deck is empty (the box gets display:none via .is-empty).
       const action = document.createElement("button");
-      action.className = "tk-stack-btn"; action.type = "button";
+      action.className = "tk-stack-btn crm-secondary-control"; action.type = "button";
       if (side === "left") {
         action.setAttribute("aria-label", deckCopy.createAria);
         action.classList.add("tk-create-action");
-        action.textContent = deckCopy.createLabel || deckCopy.createAria;
+        action.title = deckCopy.createLabel || deckCopy.createAria;
+        action.innerHTML = PLUS_SVG;
         action.hidden = !createEnabled;
         if (createEnabled) action.addEventListener("click", openCreate);
       } else {
         action.setAttribute("aria-label", deckCopy.trashAria);
+        action.setAttribute("aria-expanded", "false");
         action.title = deckCopy.trashTitle;
         action.innerHTML = RECYCLE_SVG + '<svg class="tk-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="20"/></svg>';
         action.hidden = !trashEnabled;
@@ -1313,7 +1432,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const box = document.createElement("div");
       box.className = "tk-deck tk-deck-trash";
       const track = document.createElement("div"); track.className = "tk-track"; box.appendChild(track);
-      const arrow = document.createElement("button"); arrow.className = "tk-arrow"; arrow.type = "button";
+      const arrow = document.createElement("button"); arrow.className = "tk-arrow crm-secondary-control"; arrow.type = "button";
       arrow.dataset.fanLabel = deckCopy.trashFanAria; arrow.setAttribute("aria-label", deckCopy.trashFanAria); arrow.setAttribute("aria-expanded", "false");
       arrow.addEventListener("click", () => toggleFan("trash"));
       const bar = document.createElement("div"); bar.className = "tk-bar";
@@ -1370,7 +1489,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     document.addEventListener("pointermove", onFanHover);
   };
 
-  const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + 34}px`; };
+  const sizeRoot = () => { if (root) root.style.height = `${CARD_H + MARGIN * 2 + FAN_CONTROL_H}px`; };
 
   const fanViewW = () => Math.max(CARD_W, window.innerWidth - MARGIN * 2 - (CARD_W + 78));  // leave room for the opposite stack
 
@@ -1531,7 +1650,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     updateStackFocus();
     // create/trash button: centred above the stack's top card (independent of fan state)
     if (deck.action) {
-      deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - (side === "left" ? 0 : 17)}px`;
+      deck.action.style[side === "left" ? "left" : "right"] = `${MARGIN + CARD_W / 2 - FAN_CONTROL_W / 2}px`;
       deck.action.style.bottom = `${MARGIN + CARD_H + 18}px`;
       if (side === "left") deck.action.hidden = !createEnabled;
     }
@@ -2306,6 +2425,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       `<div class="ticket-fields">${faceRowsHTML(t)}</div>` +       // entity field rows from the face contract
       faceBadgesHTML(t) +
       `</div>` +
+      crmCardFace.markup(t, widgetType) +
       barsHTML(ticketBarClasses(t), true);
   };
 
@@ -2313,23 +2433,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // body overflows the card's fixed height does the LONGEST entry lose one line at a time (gaining an
   // ellipsis via line-clamp) until everything fits — so a card with room never truncates anything.
   // Runs after the card is in the DOM (it measures real layout); re-run whenever the text changes.
-  const fitCardFields = (card) => {
-    const body = card.querySelector(".ticket-body"); if (!body) return;
-    const rows = [...card.querySelectorAll(".ticket-host, .ticket-field")]; if (!rows.length) return;
-    rows.forEach((r) => { r.style.webkitLineClamp = ""; });   // reset → fully expanded
-    const fields = card.querySelector(".ticket-fields");
-    const over = () => body.scrollHeight > body.clientHeight + 1 || (fields && fields.scrollHeight > fields.clientHeight + 1);
-    for (let guard = 0; guard < 40 && over(); guard++) {
-      let tallest = null, h = 0;
-      for (const r of rows) { const rh = r.getBoundingClientRect().height; if (rh > h) { h = rh; tallest = r; } }
-      if (!tallest) return;
-      const cs = getComputedStyle(tallest);
-      const lineH = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 12) * 1.35;
-      const lines = Math.max(1, Math.round(h / lineH));
-      if (lines <= 1) return;   // every entry is single-line already — the container's clip takes the rest
-      tallest.style.webkitLineClamp = String(lines - 1);
-    }
-  };
+  const fitCardFields = (card) => crmCardFace.fit(card);
 
   // The visual card object is also used outside a deck (for example, a compact
   // hand on Home). Keep its construction in one place so those surfaces get
@@ -3817,7 +3921,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (deleted.length) trashShowEmpty = false;
     // An empty bin closes itself (e.g. after restoring the last deleted ticket) — UNLESS the user just
     // opened it empty on purpose (trashShowEmpty), in which case it stays open to show the placeholder.
-    if (trashMode && !deleted.length && !trashShowEmpty) { trashMode = false; fanned.trash = false; decks.right?.action?.classList.remove("is-active"); }
+    if (trashMode && !deleted.length && !trashShowEmpty) {
+      trashMode = false; fanned.trash = false;
+      decks.right?.action?.classList.remove("is-active");
+      decks.right?.action?.setAttribute("aria-expanded", "false");
+    }
     // Deliberately-opened empty bin: show the "get added here" placeholder in the lifted
     // open-bin spot (the deck box itself is display:none while empty), matching where the cards would fan up.
     if (decks.trash?.emptyPh) {
@@ -3835,10 +3943,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // fly it to the centre and expand its config. Creating fires several re-renders that REPLACE
     // the card element, so re-query the LIVE node at fire time — a detached node has a 0-rect and
     // the flyer would grow from (0,0).
-    if (pendingOpenId && decks.left?.box?.querySelector(`.tk-card[data-id="${cssEsc(pendingOpenId)}"]`)) {
+    const pendingCard = (id) => decks.left?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`)
+      || zonesRoot?.querySelector(`.tk-zcard[data-id="${cssEsc(id)}"]`);
+    if (pendingOpenId && pendingCard(pendingOpenId)) {
       const id = pendingOpenId; pendingOpenId = null;
       const tryOpen = (tries) => {
-        const card = decks.left?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`);
+        const card = pendingCard(id);
         const tk = tickets.find((x) => x.id === id);
         if (card && card.isConnected && card.getBoundingClientRect().width > 10 && tk) {
           // A brand-new ticket opens as a DRAFT: its config must be saved (all create fields filled) to

@@ -20,7 +20,7 @@
   const escapeHtml = (v) => String(v ?? "")
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-  const roleOf = (u) => ((u.isAdmin || u.permissions.canManageUsers) ? "Admin" : "Viewer");
+  const roleOf = (u) => ((u?.isAdmin || u?.permissions?.canManageUsers) ? "Admin" : "Viewer");
 
   injectStyles();
 
@@ -48,9 +48,11 @@
   const gateSwitch = gate.querySelector(".auth-switch");
   const gateUserField = gate.querySelector(".auth-field-username");
   const gatePwLabel = gate.querySelector(".auth-pw-label");
+  let authContext = { provider: "local", authDisabled: false, connection: "unknown" };
 
   function renderGateMode() {
     gateError.hidden = true;
+    const cdmsAccount = authContext.provider === "cdms";
     if (gateMode === "setpw") {
       gateSub.textContent = "Set a new password to continue";
       gatePwLabel.textContent = "New password";
@@ -65,11 +67,11 @@
       gateSwitch.hidden = false;
       gateSwitch.textContent = "Back to sign in";
     } else {
-      gateSub.textContent = "Sign in to your dashboard";
+      gateSub.textContent = cdmsAccount ? "Sign in with your CDMS account" : "Sign in to your dashboard";
       gatePwLabel.textContent = "Password";
       gateSubmit.textContent = "Sign in";
       gateUserField.hidden = false;
-      gateSwitch.hidden = false;
+      gateSwitch.hidden = cdmsAccount;
       gateSwitch.textContent = "Create an account";
     }
   }
@@ -122,6 +124,7 @@
   const nameEl = profile.querySelector(".auth-profile-name");
   const manageBtn = profile.querySelector(".auth-manage");
   const backendBtn = profile.querySelector(".auth-backend");
+  const signoutBtn = profile.querySelector(".auth-signout");
   // ┌─ READ THIS BEFORE TOUCHING ANY SUBMENU/FLYOUT GLASS ───────────────────────┐
   // │ A `backdrop-filter` element NESTED inside another `backdrop-filter` element │
   // │ is IGNORED by Chromium. So a flyout left as a child of .auth-profile-menu   │
@@ -151,7 +154,7 @@
     if (profile.classList.contains("open")) closeProfile();
     else profile.classList.add("open");
   });
-  profile.querySelector(".auth-signout").addEventListener("click", async () => {
+  signoutBtn.addEventListener("click", async () => {
     await bridge.logout();
     window.location.reload();
   });
@@ -272,6 +275,8 @@
 
   // ─── Session application ─────────────────────────────────────────────────────
   function applySession(s) {
+    authContext = { provider: "local", authDisabled: false, connection: "unknown", ...(s || {}) };
+    if (authContext.provider === "cdms" && gateMode !== "signin") gateMode = "signin";
     const user = s && s.user ? s.user : null;
     if (!user) {
       if (gateMode === "setpw") gateMode = "signin";
@@ -293,7 +298,9 @@
     profile.style.display = "block";
     document.body.classList.remove("auth-gated");
     nameEl.textContent = user.username;
-    manageBtn.hidden = !(user.isAdmin || user.permissions.canManageUsers);
+    nameEl.title = authContext.provider === "cdms" ? "Authenticated by CDMS" : "Local CRM account";
+    manageBtn.hidden = authContext.provider !== "local" || !(user.isAdmin || user.permissions?.canManageUsers);
+    signoutBtn.hidden = authContext.provider === "cdms" && !!authContext.authDisabled;
     // Everyone can edit dashboards (move/resize/recolour/backgrounds); there is
     // no viewer lockdown. IP visibility is enforced upstream by the company list.
   }
@@ -321,18 +328,44 @@
     return { label, detail, live: label === "Live" };
   };
 
+  const cdmsStatusText = (payload) => {
+    const source = payload?.cdms || {};
+    const label = source.connection === "live"
+      ? (source.authDisabled ? "Live · open access" : source.user ? "Live · signed in" : "Live · sign-in required")
+      : source.connection === "disabled" ? "Disabled" : source.connection === "connecting" ? "Connecting" : "Offline";
+    const counts = source.connection === "live" && source.user
+      ? `${Number(source.companies || 0).toLocaleString()} companies · ${Number(source.contacts || 0).toLocaleString()} people · ${Number(source.assets || 0).toLocaleString()} devices`
+      : "";
+    return {
+      label,
+      detail: counts || source.error || source.baseUrl || "CDMS not configured",
+      live: source.connection === "live",
+    };
+  };
+
   async function refreshBackendStatus() {
     if (!backendEl) return null;
-    const statusEl = backendEl.querySelector("[data-backend-status]");
+    const statusEl = backendEl.querySelector("[data-backend-status='crm']");
+    const cdmsStatusEl = backendEl.querySelector("[data-backend-status='cdms']");
     const apiInput = backendEl.querySelector('input[name="apiUrl"]');
-    statusEl.innerHTML = `<span class="auth-backend-dot"></span><span>Checking...</span>`;
+    const cdmsInput = backendEl.querySelector('input[name="cdmsUrl"]');
+    [statusEl, cdmsStatusEl].forEach((element) => {
+      if (element) element.innerHTML = `<span class="auth-backend-dot"></span><span>Checking...</span>`;
+    });
     let payload = null;
     try { payload = await backendBridge().status?.(); } catch (err) { payload = { ok: false, error: err?.message || "Status check failed" }; }
     const status = backendStatusText(payload);
+    const cdmsStatus = cdmsStatusText(payload);
     statusEl.classList.toggle("is-live", status.live);
     statusEl.classList.toggle("is-offline", !status.live);
     statusEl.innerHTML = `<span class="auth-backend-dot"></span><span>${escapeHtml(status.label)}</span><small>${escapeHtml(status.detail)}</small>`;
+    if (cdmsStatusEl) {
+      cdmsStatusEl.classList.toggle("is-live", cdmsStatus.live);
+      cdmsStatusEl.classList.toggle("is-offline", !cdmsStatus.live);
+      cdmsStatusEl.innerHTML = `<span class="auth-backend-dot"></span><span>${escapeHtml(cdmsStatus.label)}</span><small>${escapeHtml(cdmsStatus.detail)}</small>`;
+    }
     if (apiInput && !apiInput.matches(":focus")) apiInput.value = payload?.settings?.apiUrl || payload?.connection?.apiUrl || payload?.health?.apiUrl || apiInput.value;
+    if (cdmsInput && !cdmsInput.matches(":focus")) cdmsInput.value = payload?.settings?.cdmsUrl || payload?.cdms?.baseUrl || cdmsInput.value;
     return payload;
   }
 
@@ -352,14 +385,19 @@
         <form class="auth-backend-form">
           <label class="auth-field"><span>API URL</span>
             <input class="auth-input" name="apiUrl" value="${escapeHtml(settings.apiUrl || "")}" placeholder="http://127.0.0.1:3899"></label>
-          <div class="auth-backend-status" data-backend-status>
+          <div class="auth-backend-status" data-backend-status="crm">
+            <span class="auth-backend-dot"></span><span>Checking...</span>
+          </div>
+          <label class="auth-field"><span>CDMS URL</span>
+            <input class="auth-input" name="cdmsUrl" value="${escapeHtml(settings.cdmsUrl || "")}" placeholder="http://192.168.203.238:6030"></label>
+          <div class="auth-backend-status" data-backend-status="cdms">
             <span class="auth-backend-dot"></span><span>Checking...</span>
           </div>
           <div class="auth-backend-actions">
             <button class="auth-submit auth-backend-save" type="submit">Save</button>
             <button class="auth-secondary auth-backend-test" type="button">Test</button>
           </div>
-          <div class="auth-modal-hint">This endpoint is the shared Postgres/API backend used by tickets, deals, contacts, calendar, and reports.</div>
+          <div class="auth-modal-hint">Workflow data stays in the CRM API. CDMS supplies authenticated companies, people, logins, IPs, and infrastructure without copying passwords or secrets.</div>
           <div class="auth-error auth-backend-error" hidden></div>
         </form>
       </div>`;
@@ -374,7 +412,11 @@
       e.preventDefault();
       errorEl.hidden = true;
       const apiInput = form.querySelector('input[name="apiUrl"]');
-      const result = await backend.saveSettings?.({ apiUrl: apiInput.value.trim() }).catch((err) => ({ ok: false, error: err?.message }));
+      const cdmsInput = form.querySelector('input[name="cdmsUrl"]');
+      const result = await backend.saveSettings?.({
+        apiUrl: apiInput.value.trim(),
+        cdmsUrl: cdmsInput.value.trim(),
+      }).catch((err) => ({ ok: false, error: err?.message }));
       if (!result?.ok) {
         errorEl.textContent = result?.error || "Could not save backend settings";
         errorEl.hidden = false;

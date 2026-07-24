@@ -13,3 +13,6 @@ out/
 # visual harness working output (goldens ARE committed)
 tools/visual/candidate/
 tools/visual/electron-actual/
+
+# live CDMS QA output can contain client names, usernames, and IP addresses
+tools/visual/shots/cdms-integration/

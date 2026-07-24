@@ -6,8 +6,8 @@
  * names below from interface-parity.js; Search, Desk, and ticket UI are never
  * treated as visual sources.
  *
- * Card/ticket faces and the circular controls in the window's top corners are
- * never assigned these classes.
+ * Card/ticket faces and every circular physical control are never assigned
+ * these classes.
  */
 :root {
   --crm-menu-background: linear-gradient(180deg, rgba(22, 26, 36, 0.62), rgba(12, 16, 24, 0.55));
@@ -121,7 +121,8 @@
   display: none !important;
 }
 
-/* The only button-family exception requested: circular controls at the top. */
+/* Top chrome is excluded from menu-row classification. Viewport physical
+   controls use the sibling .crm-secondary-control primitive in themes.css. */
 .window-glass-control,
 .window-glass-control:hover,
 .window-glass-control:focus-visible,

@@ -92,7 +92,7 @@ async function main() {
   const app = await electron.launch({
     args:['.'],
     cwd:path.resolve(__dirname, '..', '..'),
-    env:{ ...process.env, CRM_API_URL:apiUrl, CRM_API_PORT:'3899' },
+    env:{ ...process.env, CRM_API_URL:apiUrl, CRM_API_PORT:'3899', CRM_CDMS_DISABLED:'1' },
     timeout:30000,
   });
   try {

@@ -8,6 +8,7 @@
   const entitySpecs = [
     { entity: "companies", label: "Company", bridge: () => window.companies },
     { entity: "contacts", label: "Contact", bridge: () => window.contacts, detail: () => window.contactDetail },
+    { entity: "assets", label: "Asset", bridge: () => window.assets },
     { entity: "deals", label: "Deal", bridge: () => window.deals, detail: () => window.dealDetail },
     { entity: "invoices", label: "Invoice", bridge: () => window.invoices, detail: () => window.invoiceDetail },
     { entity: "tickets", label: "Ticket", bridge: () => window.tickets, detail: () => window.ticketDetail },
@@ -19,7 +20,7 @@
     }) },
     { entity: "interactions", label: "Thread", bridge: () => window.interactions },
   ];
-  const recordEntities = ["contacts", "deals", "invoices", "tickets", "tasks", "calendarItems"];
+  const recordEntities = ["contacts", "assets", "deals", "invoices", "tickets", "tasks", "calendarItems"];
   const moneyRed = "239,68,68";
   const palette = {
     none: "120,130,140",
@@ -69,6 +70,7 @@
     if (lower === "ticket") return "tickets";
     if (lower === "deal") return "deals";
     if (lower === "contact") return "contacts";
+    if (lower === "asset" || lower === "device" || lower === "workstation") return "assets";
     if (lower === "invoice") return "invoices";
     if (lower === "task") return "tasks";
     if (lower === "calendar" || lower === "calendaritem" || lower === "calendaritems") return "calendarItems";
@@ -119,6 +121,11 @@
   };
   const subtitleOf = (entity, record) => {
     if (entity === "contacts") return firstText(valueOf(record, "company"), valueOf(record, "role"), valueOf(record, "description"), record?.host);
+    if (entity === "assets") return [
+      firstText(valueOf(record, "ipAddress")),
+      firstText(valueOf(record, "host")),
+      firstText(valueOf(record, "location")),
+    ].filter((value, index, values) => value && values.indexOf(value) === index).join(" / ");
     if (entity === "deals") return [moneyText(amountOf(record)), firstText(valueOf(record, "stage"), valueOf(record, "state")), valueOf(record, "description")].filter(Boolean).join(" / ");
     if (entity === "invoices") return [moneyText(amountOf(record)), firstText(valueOf(record, "state"), valueOf(record, "stage")), valueOf(record, "dueDate") ? `Due ${humanDate(valueOf(record, "dueDate"))}` : ""].filter(Boolean).join(" / ");
     return firstText(valueOf(record, "description"), valueOf(record, "host"), valueOf(record, "state"), valueOf(record, "status"));
@@ -131,7 +138,7 @@
     return !!due && due < new Date().toISOString().slice(0, 10);
   };
   const intensityOf = (entity, record) => {
-    if (entity === "contacts" || entity === "companies" || entity === "interactions") return "none";
+    if (entity === "contacts" || entity === "assets" || entity === "companies" || entity === "interactions") return "none";
     if (entity === "deals") return firstText(valueOf(record, "priority"), valueOf(record, "temperature"), "warm");
     if (entity === "invoices") {
       const state = invoiceState(record);
@@ -184,6 +191,7 @@
           label: firstText(label, "Company"),
           companyRecord,
           contacts: [],
+          assets: [],
           deals: [],
           invoices: [],
           tickets: [],
@@ -264,7 +272,7 @@
     });
     return [...summaries.values()].map((summary) => ({
       ...summary,
-      cardCount: summary.contacts.length + summary.deals.length + summary.invoices.length + summary.tickets.length + summary.tasks.length + summary.calendarItems.length,
+      cardCount: summary.contacts.length + summary.assets.length + summary.deals.length + summary.invoices.length + summary.tickets.length + summary.tasks.length + summary.calendarItems.length,
       totalThread: summary.interactions.length + recordEntities.reduce((total, entity) => (
         total + summary[entity].reduce((count, record) => count + (Array.isArray(record.history) ? record.history.length : 0), 0)
       ), 0),
@@ -464,6 +472,14 @@
       </div>
     </section>`;
 
+  const mixedLaneHTML = (title, entries) => `
+    <section class="crm-company-lane">
+      <div class="crm-company-lane-title">${esc(title)}</div>
+      <div class="crm-company-face-row">
+        ${entries.length ? entries.map(({ entity, record }) => cardFaceHTML(entity, record)).join("") : `<div class="crm-company-none">None</div>`}
+      </div>
+    </section>`;
+
   const historyEntries = (summary) => {
     const entries = [];
     recordEntities.forEach((entity) => {
@@ -518,8 +534,12 @@
       <div class="crm-company-world-body">
         <div class="crm-company-records">
           ${laneHTML("People", "contacts", summary.contacts)}
-          ${laneHTML("Deals", "deals", summary.deals)}
-          ${laneHTML("Invoices", "invoices", summary.invoices)}
+          ${laneHTML("Infrastructure", "assets", summary.assets)}
+          ${mixedLaneHTML("Active work", [
+            ...summary.deals.map((record) => ({ entity:"deals", record })),
+            ...summary.invoices.map((record) => ({ entity:"invoices", record })),
+            ...summary.tickets.map((record) => ({ entity:"tickets", record })),
+          ])}
         </div>
         ${threadHTML(summary)}
       </div>`;

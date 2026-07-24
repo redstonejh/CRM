@@ -23,6 +23,8 @@ import { initializeFloatingControlBarRuntime } from "./modules/floating-control-
 import { createClipboardRuntime } from "./modules/clipboard-runtime.js";
 import { initializeHistoryResetRuntime } from "./modules/history-reset-runtime.js";
 import { initializeDeleteRuntime } from "./modules/delete-runtime.js";
+import { initializeContextAddMenuRuntime } from "./modules/context-add-menu-runtime.js";
+import "./modules/context-add-registry.js";
 import { createResizeAutoZoomRuntime } from "./modules/resize-auto-zoom.js";
 import { createLayoutHistoryRuntime } from "./modules/layout-history-runtime.js";
 import { initializePanelRuntimes } from "./modules/panel-runtime-setup.js";
@@ -113,6 +115,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeBackgroundController({ portalFloatingMenu, restoreFloatingMenu, originalMenuParent });
 
   initializeNavStatusMenus();
+  initializeContextAddMenuRuntime({ showToast });
   void initializeFloatingControlBarRuntime();
 
   const { scheduleOverflowTitles } = initializeOverflowTitles();

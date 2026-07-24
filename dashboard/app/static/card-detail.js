@@ -185,6 +185,8 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
       .td-in { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.18); border-radius: 9px;
         background: rgba(255,255,255,0.06); color: #fff; font: inherit; font-size: var(--crm-type-body,12px); padding: 7px 10px; }
       .td-in:focus { border-color: rgba(255,255,255,0.34); }
+      .td-in[data-field-readonly="true"] { cursor: default; color: rgba(255,255,255,.72);
+        background: rgba(150,165,185,.075); border-color: rgba(205,220,240,.14); }
       .td-date { color-scheme: dark; }   /* render the native date picker + its glyph on the dark field */
       .td-ta { resize: none; min-height: 2.4em; line-height: 1.4; overflow-y: hidden; max-height: none; }
       .td-ta-big { min-height: 7.6em; }   /* Resolution: tall enough to show the long prompt un-truncated */
@@ -598,18 +600,20 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     const input = (f) => {
       const val = (getStacks()?.fieldValue?.(t.id, f.key)) ?? "";
       const required = f.req === false ? "false" : "true";
+      const readOnly = typeof f.readOnly === "function" ? !!f.readOnly(t) : !!f.readOnly;
+      const readOnlyAttr = readOnly ? ` data-field-readonly="true" readonly aria-readonly="true"` : "";
       if (f.prio) { const pr = val; return `<span class="td-prio">${PRIORITIES.map((p) => `<button type="button" class="td-prio-opt${p === pr ? " is-active" : ""}" data-prio="${esc(p)}">${esc(p)}</button>`).join("")}</span>`; }   // pr = the ticket's saved severity (meta-aware); unset → NO option highlighted
       if (f.options) {
         const raw = typeof f.options === "function" ? f.options(t) : f.options;
         const options = Array.isArray(raw) ? raw : [];
-        return `<select class="td-in" data-field="${esc(f.key)}" data-field-required="${required}">${options.map((option) => {
+        return `<select class="td-in" data-field="${esc(f.key)}" data-field-required="${required}"${readOnly ? ` data-field-readonly="true" disabled aria-disabled="true"` : ""}>${options.map((option) => {
           const pair = Array.isArray(option) ? option : [option?.value ?? option, option?.label ?? option?.value ?? option];
           return `<option value="${esc(pair[0])}"${String(pair[0] ?? "") === String(val ?? "") ? " selected" : ""}>${esc(pair[1])}</option>`;
         }).join("")}</select>`;
       }
-      if (f.date) return `<input type="date" class="td-in td-date" data-field="${esc(f.key)}" data-field-required="${required}" value="${esc(val)}" />`;
-      if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" data-field-required="${required}" placeholder="${esc(f.q || "")}">${esc(val)}</textarea>`;
-      return `<input class="td-in" data-field="${esc(f.key)}" data-field-required="${required}" value="${esc(val)}" placeholder="${esc(f.q || "")}" />`;
+      if (f.date) return `<input type="date" class="td-in td-date" data-field="${esc(f.key)}" data-field-required="${required}" value="${esc(val)}"${readOnlyAttr} />`;
+      if (f.area) return `<textarea class="td-in td-ta${f.big ? " td-ta-big" : ""}" rows="${f.big ? 4 : 2}" data-field="${esc(f.key)}" data-field-required="${required}" placeholder="${esc(f.q || "")}"${readOnlyAttr}>${esc(val)}</textarea>`;
+      return `<input class="td-in" data-field="${esc(f.key)}" data-field-required="${required}" value="${esc(val)}" placeholder="${esc(f.q || "")}"${readOnlyAttr} />`;
     };
     // The FIRST field's label shares the row with the close × (top-right); the rest are plain rows. A
     // "save" text-button at the bottom-right validates the required fields before it closes.
@@ -658,11 +662,12 @@ global.createCrmCardDetail = function createCrmCardDetail(config = {}) {
     // the previous one; Enter on the LAST prompt saves; Escape closes (a draft is abandoned entirely).
     // Textareas only hand arrows over at their text boundaries (else the caret moves normally); date
     // inputs keep their native arrow behaviour (segment +/-) and navigate via Enter.
-    const fieldEls = [...panel.querySelectorAll(".td-field [data-field]")];
+    const fieldEls = [...panel.querySelectorAll(".td-field [data-field]")].filter((el) => el.dataset.fieldReadonly !== "true");
     const focusField = (el) => { el.focus(); try { if (el.select && el.type !== "date") el.select(); } catch {} };
     const goFrom = (el, dir) => { const n = fieldEls[fieldEls.indexOf(el) + dir]; if (n) focusField(n); return !!n; };
     panel.querySelectorAll("[data-field]").forEach((el) => {
       grow(el);
+      if (el.dataset.fieldReadonly === "true") return;
       el.oninput = () => { getStacks()?.setMeta?.(t.id, { [el.dataset.field]: el.value }); grow(el); syncFlyer(); };
       el.onkeydown = (e) => {
         e.stopPropagation();   // typing never triggers dashboard-wide hotkeys…

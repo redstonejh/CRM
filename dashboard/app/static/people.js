@@ -6,8 +6,14 @@
   };
 
   const companyFields = [
-    { key: "company", label: "Company", q: "Company or account" },
-    { key: "role", label: "Role", q: "Role or buying influence" },
+    { key: "company", label: "Company", q: "Company or account", readOnly: (record) => record?.source === "cdms" },
+    { key: "role", label: "Role", q: "Role or buying influence", readOnly: (record) => record?.source === "cdms" },
+    { key: "email", label: "Email", q: "CDMS email", req: false, readOnly: true },
+    { key: "phone", label: "Phone", q: "CDMS phone", req: false, readOnly: true },
+    { key: "username", label: "Login", q: "CDMS username", req: false, readOnly: true },
+    { key: "workstation", label: "Workstation", q: "Assigned workstation", req: false, readOnly: true },
+    { key: "ipAddress", label: "IP address", q: "Assigned IP", req: false, readOnly: true },
+    { key: "location", label: "Location", q: "CDMS location", req: false, readOnly: true },
     { key: "lastContactAt", label: "Last touch", date: true, req: false },
     { key: "nextTouchAt", label: "Next touch", date: true, req: false },
     { key: "nextStep", label: "Next step", q: "What should happen next?", area: true, req: false },
@@ -53,6 +59,7 @@
 
   const linkContacts = (from, to) => {
     if (!from?.id || !to?.id || from.id === to.id) return;
+    if (from.source === "cdms" || to.source === "cdms") return;
     const fromIds = linkIds(from, to.id, "relatedContactIds");
     const toIds = linkIds(to, from.id, "relatedContactIds");
     from.relatedContactIds = fromIds;
@@ -73,16 +80,17 @@
   const companyModel = (nextCompanies, contacts = []) => {
     companies = nextCompanies.filter((company) => company && !company.deletedAt);
     companyByName = new Map(companies.map((company) => [String(company.name || company.title || "").trim().toLowerCase(), company]));
-    const missingCompany = contacts.some((contact) => {
-      const id = String(valueOf(contact, "companyId") || "");
-      const name = String(valueOf(contact, "company") || "").trim().toLowerCase();
-      return !companies.some((company) => String(company.id) === id) && !companyByName.has(name);
-    });
     const stages = companies.map((company) => ({
       key: String(company.id),
       label: String(company.name || company.title || "Company"),
     }));
-    if (missingCompany || !stages.length) stages.push({ key: "unassigned-company", label: "Unassigned company" });
+    // Keep a permanent landing bucket for contextual Person creation. Waiting
+    // until an unassigned contact already exists makes the first draft
+    // impossible to render, so its established card/detail animation has no
+    // source object to open from.
+    if (!stages.some((stage) => stage.key === "unassigned-company")) {
+      stages.push({ key: "unassigned-company", label: "Unassigned company" });
+    }
     stageKeys = new Set(stages.map((stage) => stage.key));
     return { stages, stageFields: Object.fromEntries(stages.map((stage) => [stage.key, companyFields])) };
   };
@@ -188,10 +196,12 @@
     rows: [
       (r) => [valueOf(r, "company"), valueOf(r, "role")].filter(Boolean).join(" · "),
       (r) => {
+        if (r?.source === "cdms") return [valueOf(r, "username"), valueOf(r, "email")].filter(Boolean).join(" · ");
         const age = daysSince(valueOf(r, "lastTouchAt") || valueOf(r, "lastContactAt"));
         return age == null ? "" : { label: "Last touch", value: `${age}d ago` };
       },
       (r) => {
+        if (r?.source === "cdms") return [valueOf(r, "workstation"), valueOf(r, "ipAddress")].filter(Boolean).join(" · ");
         const next = humanDate(valueOf(r, "nextTouchAt"));
         return next ? { label: "Next touch", value: next } : "";
       },
@@ -243,7 +253,7 @@
     intensityValues: ["none"],
     defaultIntensity: "none",
     intensityOf: () => "none",
-    stalenessOf: (contact) => window.crmColdFront?.staleness?.(contact, "contacts") || 0,
+    stalenessOf: (contact) => contact?.source === "cdms" ? 0 : (window.crmColdFront?.staleness?.(contact, "contacts") || 0),
     // Every person belongs in their company bucket. Staleness may change the
     // card's appearance, but it must never pull the person into a separate
     // attention pile or turn this grouped view into a pipeline.

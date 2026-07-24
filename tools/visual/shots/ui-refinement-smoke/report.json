@@ -1,0 +1,270 @@
+{
+  "generatedAt": "2026-07-24T19:41:43.274Z",
+  "viewport": {
+    "width": 1600,
+    "height": 1000
+  },
+  "passed": 22,
+  "failed": 0,
+  "pageErrors": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "results": [
+    {
+      "name": "Home + contains viewport tiles only",
+      "ok": true,
+      "detail": [
+        "home-tile-people",
+        "home-tile-cases",
+        "home-tile-planner",
+        "home-tile-assignments"
+      ]
+    },
+    {
+      "name": "Home hand cards retain adaptive titles and transferable semantic marks",
+      "ok": true,
+      "detail": {
+        "cards": 5,
+        "semanticTypes": [
+          "task",
+          "work"
+        ]
+      }
+    },
+    {
+      "name": "Home tiles share equal adaptive cells and canonical tile records",
+      "ok": true,
+      "detail": {
+        "columns": 2,
+        "rows": 2,
+        "cell": [
+          "478.40000000000003px",
+          "299px"
+        ]
+      }
+    },
+    {
+      "name": "Home tile add reflows every tile evenly",
+      "ok": true,
+      "detail": {
+        "columns": 3,
+        "rows": 2
+      }
+    },
+    {
+      "name": "Home tile removal restores an even grid",
+      "ok": true,
+      "detail": {
+        "columns": 2,
+        "rows": 2
+      }
+    },
+    {
+      "name": "People + exposes only Person",
+      "ok": true,
+      "detail": {
+        "id": "person",
+        "label": "Person",
+        "description": "",
+        "disabled": false
+      }
+    },
+    {
+      "name": "People Person action opens the existing contact creator",
+      "ok": true,
+      "detail": {
+        "api": "recordWorld",
+        "title": "New contact",
+        "inputs": 3
+      }
+    },
+    {
+      "name": "Visible secondary controls are 46px circular acrylic with centered symbols",
+      "ok": true,
+      "detail": {
+        "controls": 6,
+        "labels": [
+          "Fan out active tickets",
+          "Fan out resolved tickets",
+          "Create assignment",
+          "Back",
+          "Return Home",
+          "Forward"
+        ]
+      }
+    },
+    {
+      "name": "Planner root + exposes only Project",
+      "ok": true,
+      "detail": {
+        "id": "planner-project",
+        "label": "Project",
+        "description": "Create a project tile and its stage structure",
+        "disabled": false
+      }
+    },
+    {
+      "name": "Closing the contextual + menu stays in the current viewport",
+      "ok": true,
+      "detail": "planner"
+    },
+    {
+      "name": "Project gallery uses equal adaptive canonical tiles",
+      "ok": true,
+      "detail": {
+        "projects": 3,
+        "columns": 2,
+        "rows": 2
+      }
+    },
+    {
+      "name": "Project add reflows every project tile evenly",
+      "ok": true,
+      "detail": {
+        "columns": 3,
+        "rows": 2,
+        "bounds": {
+          "grid": [
+            1424,
+            596.328125
+          ],
+          "scroller": [
+            1472,
+            824
+          ]
+        }
+      }
+    },
+    {
+      "name": "Project removal restores an even gallery",
+      "ok": true,
+      "detail": {
+        "columns": 2,
+        "rows": 2,
+        "bounds": {
+          "grid": [
+            1307.59375,
+            824
+          ],
+          "scroller": [
+            1472,
+            824
+          ]
+        }
+      }
+    },
+    {
+      "name": "Nested Project hides its underlying gallery preview layers",
+      "ok": true,
+      "detail": {
+        "level": 1,
+        "preparing": 0
+      }
+    },
+    {
+      "name": "Project + exposes Stage and typed Cards only",
+      "ok": true,
+      "detail": [
+        "planner-stage",
+        "planner-card-generic",
+        "planner-card-person",
+        "planner-card-money",
+        "planner-card-ticket",
+        "planner-card-task"
+      ]
+    },
+    {
+      "name": "Typed Project card action opens the existing typed-card creator",
+      "ok": true,
+      "detail": {
+        "title": "New card",
+        "cardKind": "person",
+        "stageId": "foxglove_backlog"
+      }
+    },
+    {
+      "name": "Planner cards use embossed semantic marks and adaptive content fitting",
+      "ok": true,
+      "detail": {
+        "cards": 5,
+        "probe": {
+          "fit": "adaptive",
+          "clamped": 2,
+          "titleLines": 1.999927995391705
+        },
+        "seededTitles": [
+          {
+            "text": "Select archive set",
+            "lines": 1.999927995391705,
+            "clamp": "none"
+          },
+          {
+            "text": "Move active media library",
+            "lines": 1.999927995391705,
+            "clamp": "none"
+          },
+          {
+            "text": "Verify workstation mounts",
+            "lines": 1.999927995391705,
+            "clamp": "2"
+          },
+          {
+            "text": "Record recovery test",
+            "lines": 1.999927995391705,
+            "clamp": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Tickets retains the global top-right three-button scheme",
+      "ok": true,
+      "detail": {
+        "rect": [
+          1434,
+          12,
+          152,
+          46
+        ],
+        "controls": 3,
+        "hit": "window-glass-control window-refresh-control"
+      }
+    },
+    {
+      "name": "Ticket cards inherit semantic marks and the shared fit result",
+      "ok": true,
+      "detail": {
+        "sampled": 24,
+        "total": 31
+      }
+    },
+    {
+      "name": "Ticket stack controls keep the same centered 46px recipe",
+      "ok": true,
+      "detail": {
+        "controls": 2
+      }
+    },
+    {
+      "name": "Assignment cards consume transferable semantic/fit architecture",
+      "ok": true,
+      "detail": {
+        "cards": 19,
+        "semanticTypes": [
+          "work",
+          "task"
+        ]
+      }
+    },
+    {
+      "name": "Renderer completed without uncaught page errors",
+      "ok": true,
+      "detail": {
+        "consoleErrors": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ]
+      }
+    }
+  ]
+}

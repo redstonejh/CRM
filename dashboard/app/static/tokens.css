@@ -57,6 +57,17 @@
   --shadow-soft: 0 2px 6px rgba(15, 23, 42, .04);
   --shadow-glass: 0 18px 42px rgba(15, 23, 42, .10), inset 0 1px 0 var(--glass-highlight);
   --shadow-control: 0 8px 20px rgba(15, 23, 42, .08), inset 0 1px 0 var(--glass-highlight);
+  /* Physical controls outside the top chrome inherit the circular control
+     recipe, then add this one neutral acrylic material override. */
+  --secondary-control-surface:
+    linear-gradient(155deg, rgba(104, 112, 124, .66), rgba(48, 55, 66, .62));
+  --secondary-control-surface-hover:
+    linear-gradient(155deg, rgba(118, 127, 140, .72), rgba(55, 63, 75, .68));
+  --secondary-control-border: rgba(224, 230, 239, .30);
+  --secondary-control-shadow:
+    0 9px 20px rgba(15, 23, 42, .24),
+    inset 0 1px 0 rgba(255, 255, 255, .24),
+    inset 0 -8px 16px rgba(15, 23, 42, .14);
   --radius-lg: 24px;
   --radius-md: 16px;
   --radius-sm: 12px;

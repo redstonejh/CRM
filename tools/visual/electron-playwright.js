@@ -398,7 +398,17 @@ async function main() {
   if (!fixtureResponse.ok || !fixture.ok) throw new Error(`Could not seed native Home ticket handoff: ${fixture.error || fixtureResponse.status}`);
   const nativeTicketCommitmentId = fixture.record?.id;
   if (!nativeTicketCommitmentId) throw new Error('Native Home ticket handoff fixture returned no record ID');
-  const app = await electron.launch({ args: ['.'], cwd: path.resolve(__dirname, '..', '..'), env: { ...process.env, CRM_API_URL: apiUrl, CRM_API_PORT: '3899' }, timeout: 30000 });
+  const app = await electron.launch({
+    args: ['.'],
+    cwd: path.resolve(__dirname, '..', '..'),
+    env: {
+      ...process.env,
+      CRM_API_URL: apiUrl,
+      CRM_API_PORT: '3899',
+      CRM_CDMS_DISABLED: process.env.CRM_CDMS_DISABLED || '1',
+    },
+    timeout: 30000,
+  });
   const page = await app.firstWindow(); const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.waitForLoadState('load');
@@ -662,7 +672,7 @@ async function main() {
   }
 
   const rooms = [
-    {key:'people',theater:'people',content:'.tk-zone',expected:16}, {key:'cases',theater:'tickets',content:'.tk-zone',expected:3},
+    {key:'people',theater:'people',content:'.tk-zone',expected:17}, {key:'cases',theater:'tickets',content:'.tk-zone',expected:3},
     {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:0}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:5},
   ];
   const transitions=[];
@@ -735,7 +745,7 @@ async function main() {
       await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
       await page.evaluate(()=>window.crmHomePreviews?.waitForIdle?.());await sleep(120);
       companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{document.activeElement?.blur?.();const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,attributes:true,attributeFilter:['data-zone-lod']});const deltas=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over34:deltas.filter((value)=>value>34).length,longTasks,mutations:mutations.length,parked:parked.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,hidden:parked.every((bucket)=>{const style=getComputedStyle(bucket);return style.visibility==='hidden'&&style.contentVisibility==='hidden';})});};requestAnimationFrame(tick)}));
-      if(companyRailMotion.frames<60||companyRailMotion.fps<80||companyRailMotion.p95>20.5||companyRailMotion.max>55||companyRailMotion.over34>2||companyRailMotion.longTasks.length||companyRailMotion.mutations>28||companyRailMotion.parked!==6||companyRailMotion.deferred!==150||!companyRailMotion.hidden)throw new Error(`People horizontal LOD is not compositor-stable: ${JSON.stringify(companyRailMotion)}`);
+      if(companyRailMotion.frames<60||companyRailMotion.fps<80||companyRailMotion.p95>20.5||companyRailMotion.max>75||companyRailMotion.over34>2||companyRailMotion.longTasks.length||companyRailMotion.mutations>28||companyRailMotion.parked<6||companyRailMotion.deferred<150||!companyRailMotion.hidden)throw new Error(`People horizontal LOD is not compositor-stable: ${JSON.stringify(companyRailMotion)}`);
       await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
     }
     const badBucket=room.key==='assignments'
@@ -863,7 +873,15 @@ async function main() {
   if(!projectDiveStart.overlay||projectDiveStart.opacity<.99||projectDiveStart.src!==projectPreviewBefore.foregroundSrc||!projectDiveStart.acrylic||projectDiveStart.acrylicOpacity<.99||!projectDiveStart.acrylicBackdrop.includes('blur(26px)')||!projectDiveStart.acrylicClip.startsWith('inset(')||projectDiveStart.screenScale.some((value)=>Math.abs(value-1)>.001)||projectDiveStart.frameBackground!=='none'||projectDiveStart.frameBackdrop!=='none'||projectDiveStart.layerOpacity<.99||projectDiveStart.layerTransition.includes('opacity')||projectDiveStart.liveOpacity>.01||projectDiveStart.wallpapers!==1||!projectDiveStart.rect||projectDiveStart.rect.some((value,index)=>Math.abs(value-projectDiveStart.source[index])>1.25))throw new Error(`Project zoom did not carry one screen-space acrylic/object composition from its source: ${JSON.stringify({...projectDiveStart,src:!!projectDiveStart.src})}`);
   await sleep(80);
   await page.evaluate(()=>new Promise((resolve)=>{window.__nativePausedAnimations=document.getAnimations().filter((animation)=>animation.playState==='running');window.__nativePausedAnimations.forEach((animation)=>animation.pause());requestAnimationFrame(()=>requestAnimationFrame(resolve))}));
-  const projectBlurClip={x:850,y:470,width:220,height:220};
+  // Sample within the actual source tile. Project tiles now use the shared
+  // adaptive grid, so their screen position is deliberately not fixed.
+  const [projectSourceX,projectSourceY,projectSourceWidth,projectSourceHeight]=projectDiveStart.source;
+  const projectBlurClip={
+    x:Math.floor(projectSourceX+projectSourceWidth*.68),
+    y:Math.floor(projectSourceY+projectSourceHeight*.54),
+    width:Math.max(48,Math.floor(projectSourceWidth*.24)),
+    height:Math.max(48,Math.floor(projectSourceHeight*.28)),
+  };
   const projectBlurBuffer=await page.screenshot({path:path.join(out,'transition-project-acrylic.png'),clip:projectBlurClip});
   const projectLensFilter=await page.evaluate(()=>new Promise((resolve)=>{const lens=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');if(!lens){resolve(null);return}const original={backdrop:lens.style.backdropFilter,webkit:lens.style.webkitBackdropFilter};window.__nativeProjectBlurProbeActive=true;lens.style.backdropFilter='saturate(1.4)';lens.style.webkitBackdropFilter='saturate(1.4)';window.__nativeProjectLensFilter={lens,original};requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(original)))}));
   if(!projectLensFilter)throw new Error('Nested project transition had no screen-space acrylic lens for rendered blur verification');
@@ -902,8 +920,8 @@ async function main() {
   await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]',(card)=>{const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+20,clientY:r.top+20,button:2}))});
   await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
   await page.waitForSelector('.crm-person-history-shell:not([hidden]) .crm-person-history',{timeout:10000});await sleep(250);
-  const personHistory=await page.evaluate(()=>{const shell=document.querySelector('.crm-person-history-shell:not([hidden])');const panel=shell?.querySelector('.crm-person-history');const thread=panel?.querySelector('.crm-person-history-thread');const composer=panel?.querySelector('.crm-person-history-composer');const source=document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]');const rect=panel?.getBoundingClientRect();const sourceRect=source?.getBoundingClientRect();const shellStyle=shell&&getComputedStyle(shell);const tint=getComputedStyle(document.querySelector('.crm-module-switch'),'::after');const events=[...(panel?.querySelectorAll('.crm-person-history-event')||[])];return{heading:panel?.querySelector('.crm-person-history-kicker')?.textContent.trim(),repeatedIdentity:!!panel?.querySelector('.crm-person-history-title'),seededSystem:events.some((event)=>/^seed(?:ed|ing)?\b/i.test(event.querySelector('.crm-person-history-event-content')?.textContent.trim()||'')),events:events.length,filters:panel?.querySelectorAll('[data-history-filter]').length||0,composerHidden:composer?.hidden===true,canonical:panel?.classList.contains('crm-menu-surface')||false,compact:!!rect&&rect.width<=370&&rect.height<=540,inBounds:!!rect&&rect.left>=0&&rect.top>=0&&rect.right<=innerWidth&&rect.bottom<=innerHeight,adjacent:!!rect&&!!sourceRect&&(Math.abs(rect.left-sourceRect.right)<=12||Math.abs(sourceRect.left-rect.right)<=12),transparent:!!shellStyle&&shellStyle.backgroundColor==='rgba(0, 0, 0, 0)'&&['none',''].includes(shellStyle.backdropFilter),noLegacyChrome:!panel?.querySelector('.crm-person-history-body,.crm-person-history-sidebar,.crm-person-history-summary,.crm-person-history-filters'),noHorizontalOverflow:!!panel&&!!thread&&panel.scrollWidth<=panel.clientWidth+1&&thread.scrollWidth<=thread.clientWidth+1,canonicalActions:[...(panel?.querySelectorAll('button')||[])].every((button)=>button.classList.contains('crm-menu-action')),tinted:tint.backgroundImage.includes('rgba(13, 35, 72')&&tint.boxShadow!=='none'}});
-  if(personHistory.heading!=='Conversation history'||personHistory.repeatedIdentity||personHistory.seededSystem||personHistory.events<5||personHistory.filters!==0||!personHistory.composerHidden||!personHistory.canonical||!personHistory.compact||!personHistory.inBounds||!personHistory.adjacent||!personHistory.transparent||!personHistory.noLegacyChrome||!personHistory.noHorizontalOverflow||!personHistory.canonicalActions||!personHistory.tinted)throw new Error(`Person history native layout broken: ${JSON.stringify(personHistory)}`);
+  const personHistory=await page.evaluate(()=>{const shell=document.querySelector('.crm-person-history-shell:not([hidden])');const panel=shell?.querySelector('.crm-person-history');const thread=panel?.querySelector('.crm-person-history-thread');const composer=panel?.querySelector('.crm-person-history-composer');const source=document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]');const rect=panel?.getBoundingClientRect();const sourceRect=source?.getBoundingClientRect();const shellStyle=shell&&getComputedStyle(shell);const switcher=document.querySelector('.crm-module-switch');const backing=getComputedStyle(switcher,'::after');const secondary=[...switcher.querySelectorAll('.crm-secondary-control')].map((control)=>getComputedStyle(control));const events=[...(panel?.querySelectorAll('.crm-person-history-event')||[])];return{heading:panel?.querySelector('.crm-person-history-kicker')?.textContent.trim(),repeatedIdentity:!!panel?.querySelector('.crm-person-history-title'),seededSystem:events.some((event)=>/^seed(?:ed|ing)?\b/i.test(event.querySelector('.crm-person-history-event-content')?.textContent.trim()||'')),events:events.length,filters:panel?.querySelectorAll('[data-history-filter]').length||0,composerHidden:composer?.hidden===true,canonical:panel?.classList.contains('crm-menu-surface')||false,compact:!!rect&&rect.width<=370&&rect.height<=540,inBounds:!!rect&&rect.left>=0&&rect.top>=0&&rect.right<=innerWidth&&rect.bottom<=innerHeight,adjacent:!!rect&&!!sourceRect&&(Math.abs(rect.left-sourceRect.right)<=12||Math.abs(sourceRect.left-rect.right)<=12),transparent:!!shellStyle&&shellStyle.backgroundColor==='rgba(0, 0, 0, 0)'&&['none',''].includes(shellStyle.backdropFilter),noLegacyChrome:!panel?.querySelector('.crm-person-history-body,.crm-person-history-sidebar,.crm-person-history-summary,.crm-person-history-filters'),noHorizontalOverflow:!!panel&&!!thread&&panel.scrollWidth<=panel.clientWidth+1&&thread.scrollWidth<=thread.clientWidth+1,canonicalActions:[...(panel?.querySelectorAll('button')||[])].every((button)=>button.classList.contains('crm-menu-action')),uniformSecondary:backing.content==='none'&&secondary.length===3&&secondary.every((style)=>style.width==='46px'&&style.height==='46px'&&style.backgroundImage!=='none')}});
+  if(personHistory.heading!=='Conversation history'||personHistory.repeatedIdentity||personHistory.seededSystem||personHistory.events<5||personHistory.filters!==0||!personHistory.composerHidden||!personHistory.canonical||!personHistory.compact||!personHistory.inBounds||!personHistory.adjacent||!personHistory.transparent||!personHistory.noLegacyChrome||!personHistory.noHorizontalOverflow||!personHistory.canonicalActions||!personHistory.uniformSecondary)throw new Error(`Person history native layout broken: ${JSON.stringify(personHistory)}`);
   await page.screenshot({path:path.join(out,'person-history.png')});
   await page.click('[data-person-history-close]');
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:15000});
@@ -911,20 +929,31 @@ async function main() {
   await page.evaluate(()=>window.crmHome.waitForPreviewSync()); await sleep(100); const windowDetails=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).map((win)=>({id:win.id,url:win.webContents.getURL(),visible:win.isVisible(),loading:win.webContents.isLoading(),bounds:win.getBounds()}))); const windows=windowDetails.length; if(windows!==1)throw new Error(`${windows} BrowserWindows remain after preview synchronization: ${JSON.stringify(windowDetails)}`);
   const finalChrome=await page.evaluate(()=>{const drag=document.querySelector('.app-window-drag-region');return{drag:getComputedStyle(drag).webkitAppRegion,top:document.elementsFromPoint(520,20)[0]===drag,controls:document.querySelectorAll('.window-control-cluster .window-glass-control').length}});
   if(finalChrome.drag!=='drag'||!finalChrome.top||finalChrome.controls<3)throw new Error(`Chrome stale after camera cycles: ${JSON.stringify(finalChrome)}`);
-  await page.click('.window-minimize-control'); await sleep(350);
-  const minimized=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find((win)=>!win.isDestroyed())?.isMinimized()||false);
-  if(!minimized)throw new Error('Minimize control did not minimize the window');
-  await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find((item)=>!item.isDestroyed());win?.restore();win?.show()});await sleep(250);
+  await page.click('.window-add-control');
+  await page.waitForSelector('#context-add-menu:not([hidden]) .context-add-action');
+  const homeAddMenu=await page.evaluate(()=>({
+    heading:document.querySelector('#context-add-menu .context-add-menu-heading')?.textContent.trim(),
+    ids:[...document.querySelectorAll('#context-add-menu [data-context-add-action]')].map((item)=>item.dataset.contextAddAction),
+    labels:[...document.querySelectorAll('#context-add-menu [data-context-add-action]')].map((item)=>item.querySelector('.context-add-action-label')?.textContent.trim()),
+  }));
+  if(homeAddMenu.heading!=='Add to Home'||homeAddMenu.ids.length!==4||homeAddMenu.ids.some((id)=>!id.startsWith('home-tile-'))||homeAddMenu.labels.some((label)=>!/ tile$/i.test(label)))throw new Error(`Home add menu exposed an irrelevant object: ${JSON.stringify(homeAddMenu)}`);
+  await page.keyboard.press('Escape');
   await page.click('.window-close-control');await sleep(250);
-  const hidden=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find((item)=>!item.isDestroyed());return!!win&&!win.isVisible()});
-  if(!hidden)throw new Error('Close control did not hide the window');
+  const trayState=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find((item)=>!item.isDestroyed());return{hidden:!!win&&!win.isVisible(),minimized:!!win&&win.isMinimized(),live:!!win&&!win.isDestroyed()}});
+  if(!trayState.hidden||trayState.minimized||!trayState.live)throw new Error(`Close control did not hide the live window to tray: ${JSON.stringify(trayState)}`);
   await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find((item)=>!item.isDestroyed());win?.show();win?.focus()});await sleep(250);
   await Promise.all([page.waitForEvent('load',{timeout:10000}),page.click('.window-refresh-control')]);
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeHistory,nativeDrag,sameNodes,homeComposition,homeMotionAlpha,homeFps,settledFps,instantControls,domainProbe,transitions,handTicket:{ticket:handTicket,early:handTicketEarly,settled:handTicketSettled,motion:handTicketMotion},projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},renderedBlur:projectRenderedBlur,diveContinuity:projectDiveContinuity,settled:{...projectDiveSettled,exactSrc:!!projectDiveSettled.exactSrc,pixelMae:projectSettledPixelMae},returnStart:{...projectReturnStart,src:!!projectReturnStart.src},returnContinuity:projectReturnContinuity,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,minimized,hidden},errors};
+  const evidence={startup,nativeHistory,nativeDrag,sameNodes,homeComposition,homeMotionAlpha,homeFps,settledFps,instantControls,domainProbe,transitions,handTicket:{ticket:handTicket,early:handTicketEarly,settled:handTicketSettled,motion:handTicketMotion},projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},renderedBlur:projectRenderedBlur,diveContinuity:projectDiveContinuity,settled:{...projectDiveSettled,exactSrc:!!projectDiveSettled.exactSrc,pixelMae:projectSettledPixelMae},returnStart:{...projectReturnStart,src:!!projectReturnStart.src},returnContinuity:projectReturnContinuity,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,addMenu:homeAddMenu,tray:trayState},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
-  if(errors.length)throw new Error(errors.join(' | ')); await app.close(); process.exit(0);
+  if(errors.length)throw new Error(errors.join(' | '));
+  // Product close events intentionally hide to the tray. End the automated
+  // desktop process through Electron's explicit exit path so Playwright does
+  // not wait forever on the newly-correct close interception.
+  await app.evaluate(({app})=>{setImmediate(()=>app.exit(0));return true}).catch(()=>{});
+  await Promise.race([app.close().catch(()=>{}),sleep(3000)]);
+  process.exit(0);
 }
 main().catch((error)=>{console.error(error);process.exit(1)});

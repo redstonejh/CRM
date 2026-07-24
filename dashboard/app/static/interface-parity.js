@@ -86,7 +86,7 @@
   ].join(",");
 
   const TOP_CIRCULAR_SELECTOR = ".window-glass-control, .auth-profile-button";
-  const PHYSICAL_ACTION_SELECTOR = ".tk-arrow";
+  const PHYSICAL_ACTION_SELECTOR = ".crm-secondary-control, .tk-arrow";
   const ACTION_SELECTOR = "button, [role='button']";
   const INPUT_SELECTOR = [
     "input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='range']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset'])",
@@ -102,6 +102,10 @@
   const classify = (element) => {
     if (!isElement(element)) return;
     const cardFace = inCardFace(element);
+    // Physical viewport controls inherit the exact top-control geometry and
+    // then apply the shared neutral acrylic material. Never let the menu-row
+    // classifier flatten them into a transparent rounded rectangle.
+    if (isPhysicalAction(element)) element.classList.remove("crm-menu-action");
 
     if (!cardFace && element.matches(SURFACE_SELECTOR)) element.classList.add("crm-menu-surface");
 

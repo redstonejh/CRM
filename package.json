@@ -23,6 +23,10 @@
     "test:visual": "node tools/visual/visual-diff.js",
     "test:factory": "node tools/visual/factory-check.js",
     "test:interaction": "node tools/visual/interaction-contract.js",
+    "test:ui-refinement": "node tools/visual/ui-refinement-smoke.js",
+    "test:cdms": "node tools/visual/cdms-integration-smoke.cjs",
+    "test:cdms:electron": "npm run build:electron-runtime && node tools/visual/cdms-electron-smoke.cjs",
+    "test:tray": "npm run build:electron-runtime && node tools/visual/tray-lifecycle-smoke.cjs",
     "test:ws": "node tools/visual/ws-parity-test.js",
     "test": "npm run test:ws && npm run test:factory && npm run test:interaction && npm run test:visual"
   },

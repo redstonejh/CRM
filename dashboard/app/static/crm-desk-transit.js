@@ -525,7 +525,7 @@
     if (window.crmCompanyDive?.isActive?.()) return true;
     if (window.crmSearchDeck?.isOpen?.()) return true;
     if (window.crmRecordWorld?.isOpen?.()) return true;
-    if (document.querySelector(".ticket-detail-overlay:not([hidden]), .tk-menu")) return true;
+    if (document.querySelector(".ticket-detail-overlay:not([hidden]), .tk-menu, #context-add-menu:not([hidden])")) return true;
     if (key === "Escape" && document.querySelector("section[data-crm-theater]:not([hidden]) .tk-stack-btn.is-active")) return true;
     return false;
   };

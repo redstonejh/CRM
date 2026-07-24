@@ -134,11 +134,12 @@ Markup (panels are built by `app.js`/`status-feed.js`; this is the runtime shape
 
 There are two canonical buttons. Pick by surface.
 
-### Circular glass control — the tray-style icon buttons (dashboard top bar)
-`.window-glass-control` (themes.css). Icon is a 15×15 CSS `mask` on `::before`.
+### Circular glass controls — top chrome and physical viewport controls
+`.window-glass-control` (themes.css) is the dashboard top-bar primitive. Its
+icon is a 15×15 CSS `mask` on `::before`.
 ```css
 .window-glass-control {
-  width: 34px; height: 34px; border-radius: 50%;
+  width: 46px; height: 46px; border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--glass-border) 72%, transparent);
   background: transparent;            /* it reads as glass via the shadows, not a fill */
   color: rgba(255,255,255,.96);
@@ -151,6 +152,25 @@ There are two canonical buttons. Pick by surface.
 }
 ```
 
+Physical controls away from the top bar — Home, Back/Forward, year arrows,
+project Back, and card-stack fan controls — must add `.crm-secondary-control`.
+That class inherits the geometry and interactions above exactly, then applies
+only the neutral grey acrylic tokens from `tokens.css`:
+
+```css
+.crm-secondary-control {
+  width: 46px; height: 46px; border-radius: 50%;
+  background: var(--secondary-control-surface);
+  border-color: var(--secondary-control-border);
+  box-shadow: var(--secondary-control-shadow);
+  backdrop-filter: blur(18px) saturate(120%);
+}
+.crm-secondary-control > svg { width: 17px; height: 17px; }
+```
+
+Use a direct, centered SVG child. Never add `.crm-menu-action` or a bespoke
+shape/material to a physical control.
+
 ### ⛔ There is NO blue / oval / glowing button — anywhere
 The old global blue-pill `button {}` style (999px radius + `var(--blue)` background +
 `0 10px 22px rgba(37,99,235,.20)` glow) is **DELETED** from `base.css`. A bare
@@ -161,8 +181,8 @@ Never reintroduce a default button background, border, radius, or box-shadow.
 (see §6): flat, full-width, `border:0`, transparent background, `border-radius:8px`,
 **colour-only hover** (`rgba(255,255,255,.62)` → `#fff`). No fill, no border, no blue.
 
-The only "button" with chrome is the **circular glass control** above
-(`.window-glass-control`) — and that reads as glass via shadows, not a fill.
+The only buttons with chrome are the two circular physical-control variants
+above. All other actions use the flat menu-item recipe.
 
 > Hover model (dashboard chrome): hover is **colour/shadow only**, never a size change; the lift is the CSS `translate` (not `transform`) property and is frozen during drag/resize via `body.panel-interaction-active`.
 

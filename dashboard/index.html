@@ -74,8 +74,8 @@
 
 <div class="app-window-drag-region" aria-hidden="true"></div>
 <!-- Top-left: the account button (injected by auth-ui.js, leftmost) and the
-     dashboard-controls gear beside it. Top-right: minimize, refresh, close —
-     close anchored furthest right. -->
+     dashboard controls beside it. Top-right: context-aware add, refresh, and
+     hide-to-tray — close remains anchored furthest right. -->
 <div class="window-control-cluster window-control-cluster-left" aria-label="Dashboard controls">
   <details class="background-tone-menu bg-picker">
     <summary class="background-tone-trigger window-glass-control control-bar-background" aria-label="Workspace background" title="Background"><span class="background-tone-dot" aria-hidden="true"></span></summary>
@@ -143,9 +143,13 @@
   <div class="dashboard-search-results" role="listbox" aria-label="CRM search results"></div>
 </div>
 <div class="window-control-cluster" aria-label="Window controls">
-  <button class="window-glass-control window-minimize-control" type="button" aria-label="Minimize app" title="Minimize app"></button>
+  <button class="window-glass-control window-add-control" type="button" aria-label="Add to current view" aria-haspopup="menu" aria-expanded="false" aria-controls="context-add-menu" title="Add to current view"></button>
   <button class="window-glass-control window-refresh-control" type="button" aria-label="Reload dashboard" title="Reload dashboard"></button>
-  <button class="window-glass-control window-close-control" type="button" aria-label="Close app" title="Close app"></button>
+  <button class="window-glass-control window-close-control" type="button" aria-label="Minimize to tray" title="Minimize to tray"></button>
+</div>
+<div class="context-add-menu crm-menu-surface" id="context-add-menu" role="menu" aria-label="Add to current view" hidden>
+  <div class="context-add-menu-heading"></div>
+  <div class="context-add-menu-actions"></div>
 </div>
 <header class="app-nav workspace-chrome floating-control-bar" id="dashboard-control-bar" data-floating-control-bar aria-hidden="true">
   <div class="control-bar-drag-handle" aria-hidden="true"></div>

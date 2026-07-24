@@ -1,11 +1,27 @@
-// crm-home.js — four inert screenshot LODs hosted by the original camera.
+import { applyAdaptiveTileGrid, normalizeTileRecord } from "./modules/tile-system.js";
+import { changed as contextAddChanged, register as registerContextAddProvider } from "./modules/context-add-registry.js";
+
+// crm-home.js — adaptive inert screenshot LODs hosted by the original camera.
 (() => {
   if (typeof window.createFractalCamera !== "function") return;
 
+  const HOME_TILE_STORE_KEY = "crm-home-tiles-v1";
   const MODULES = [
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
-  ];
+  ].map((module, rank) => ({
+    ...module,
+    tile:normalizeTileRecord(module, {
+      id:module.key,
+      key:module.key,
+      title:module.label,
+      label:module.label,
+      kind:"home-viewport",
+      targetType:"workspace",
+      targetId:module.key,
+      rank,
+    }),
+  }));
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   const HOME_PREVIEW_VERSION = "filtered-home-v45";
   const DAY_MS = 86400000;
@@ -47,11 +63,88 @@
   const recycledExpanders = new Map();
   const FACTORY_PREWARM_APIS = ["peopleCards", "ticketStacks", "crmPlanner", "crmAssignments"];
   const FACTORY_API_BY_MODULE = { people:"peopleCards", cases:"ticketStacks", planner:"crmPlanner", assignments:"crmAssignments" };
+  const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  const normalizeHomeTile = (source = {}, rank = 0) => {
+    const moduleKey = String(source.moduleKey || source.key || source.tile?.target?.id || "");
+    const module = MODULES.find((candidate) => candidate.key === moduleKey);
+    if (!module) return null;
+    const tileId = String(source.tile?.id || source.id || module.key);
+    const label = [source.label, source.tile?.title, module.label].map((value) => String(value ?? "").trim()).find(Boolean) || module.label;
+    return {
+      moduleKey:module.key,
+      key:module.key,
+      label,
+      tile:normalizeTileRecord({ ...source, id:tileId, key:tileId, title:label, label, tile:{ ...source.tile, id:tileId, key:tileId, title:label, label } }, {
+        id:tileId,
+        key:tileId,
+        title:label,
+        label,
+        kind:"home-viewport",
+        targetType:"workspace",
+        targetId:module.key,
+        rank,
+      }),
+    };
+  };
+  const defaultHomeTiles = () => MODULES.map((module, rank) => normalizeHomeTile({ ...module, id:module.key }, rank));
+  const readHomeTiles = () => {
+    let parsed = null;
+    try { parsed = JSON.parse(localStorage.getItem(HOME_TILE_STORE_KEY) || "null"); } catch {}
+    if (!Array.isArray(parsed)) return defaultHomeTiles();
+    const seen = new Set();
+    return parsed.map(normalizeHomeTile).filter((tile) => {
+      if (!tile || seen.has(tile.tile.id)) return false;
+      seen.add(tile.tile.id);
+      return true;
+    });
+  };
+  let homeTileRecords = readHomeTiles();
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
   }[char]));
+  const cssValue = (value) => window.CSS?.escape?.(String(value ?? "")) || String(value ?? "").replace(/["\\]/g, "\\$&");
   const firstText = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
+  const writeHomeTiles = () => {
+    if (window.crmHomePreviews?.isCaptureWorker) return;
+    try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(homeTileRecords)); } catch {}
+  };
+  const rebuildHomeTiles = () => {
+    const rebuild = () => {
+      camera?.rebuildRoot?.();
+      camera?.layout?.();
+      mountAll();
+      requestAnimationFrame(() => syncMotionSnapshot());
+      requestMotionSnapshot();
+      contextAddChanged("home-tiles");
+    };
+    if (camera?.isTransitioning?.()) camera.whenSettled?.().then(rebuild);
+    else rebuild();
+  };
+  const createHomeTile = (moduleKey, options = {}) => {
+    const module = MODULES.find((candidate) => candidate.key === String(moduleKey || ""));
+    if (!module) return null;
+    const suffix = crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = String(options.id || `home-${module.key}-${suffix}`);
+    if (homeTileRecords.some((tile) => tile.tile.id === id)) return null;
+    const tile = normalizeHomeTile({ id, moduleKey:module.key, label:firstText(options.label, module.label) }, homeTileRecords.length);
+    if (!tile) return null;
+    homeTileRecords = [...homeTileRecords, tile];
+    writeHomeTiles(); rebuildHomeTiles();
+    return clone(tile);
+  };
+  const removeHomeTile = (tileId) => {
+    const next = homeTileRecords.filter((tile) => tile.tile.id !== String(tileId || ""));
+    if (next.length === homeTileRecords.length) return false;
+    homeTileRecords = next.map((tile, rank) => normalizeHomeTile(tile, rank));
+    writeHomeTiles(); rebuildHomeTiles();
+    return true;
+  };
+  const resetHomeTiles = () => {
+    homeTileRecords = defaultHomeTiles();
+    writeHomeTiles(); rebuildHomeTiles();
+    return clone(homeTileRecords);
+  };
   const startOfToday = () => { const date = new Date(); date.setHours(0, 0, 0, 0); return date.getTime(); };
   const dueTime = (item) => { const value = Date.parse(item?.dueAt || ""); return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY; };
   const dayKey = (value) => {
@@ -230,7 +323,7 @@
   const previewStateHTML = () => `<div class="crm-home-preview-state" role="status" aria-live="polite">
     <i class="crm-home-preview-state-mark" aria-hidden="true"></i><span>Preparing view</span></div>`;
   const bucketHTML = (module) => `<div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-label="Loading preview">${previewStateHTML()}</div>`;
-  const titleHTML = (module) => `<div class="crm-home-title-slot" data-module="${esc(module.key)}">
+  const titleHTML = (module) => `<div class="crm-home-title-slot" data-module="${esc(module.key)}" data-tile-id="${esc(module.tile?.id || module.key)}">
     <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div></div>`;
 
   const imageNode = (className, src, decoding = "async") => {
@@ -280,19 +373,19 @@
     return true;
   };
   const mountPreview = (key) => {
-    const host = camera?.layers?.()[0]?.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);
-    return mountHost(host, previews.get(key), false);
+    const hosts = [...(camera?.layers?.()[0]?.querySelectorAll(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`) || [])];
+    return hosts.reduce((mounted, host) => mountHost(host, previews.get(key), false) || mounted, false);
   };
   const mountAll = () => MODULES.forEach(({ key }) => mountPreview(key));
   const revealSharpPreview = (bucket) => {
     if (!bucket) return;
     bucket.classList.add("is-preview-hovered");
-    bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"]`)?.classList.add("is-deemphasized");
+    bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-tile-id="${cssValue(bucket.dataset.tileId)}"]`)?.classList.add("is-deemphasized");
   };
   const restSharpPreview = (bucket) => {
     if (!bucket || bucket.matches(":focus-visible")) return;
     bucket.classList.remove("is-preview-hovered");
-    bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-module="${bucket.dataset.module}"]`)?.classList.remove("is-deemphasized");
+    bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-tile-id="${cssValue(bucket.dataset.tileId)}"]`)?.classList.remove("is-deemphasized");
   };
   const previewCommitBlocked = () => !!camera?.isTransitioning?.()
     || !!camera?.surface?.()?.classList.contains("crm-home-camera-moving")
@@ -364,7 +457,7 @@
     return JSON.stringify({
       viewport: [innerWidth, innerHeight, devicePixelRatio],
       grid: rectOf(grid),
-      buckets: [...(grid?.querySelectorAll(":scope > .crm-home-bucket") || [])].map((bucket) => [bucket.dataset.module, ...rectOf(bucket)]),
+      buckets: [...(grid?.querySelectorAll(":scope > .crm-home-bucket") || [])].map((bucket) => [bucket.dataset.tileId || bucket.dataset.module, bucket.dataset.module, ...rectOf(bucket)]),
       hand: rectOf(hand),
       cards: [...(hand?.querySelectorAll(":scope > .crm-home-hand-card") || [])].map((card) => [
         card.dataset.priorityId || "", ...rectOf(card), getComputedStyle(card).transform,
@@ -375,7 +468,7 @@
     if (!root) return false;
     let selected = false;
     root.querySelectorAll(":scope > .crm-home-motion-variant").forEach((image) => {
-      const active = !!key && image.dataset.motionVariant === key;
+      const active = !!key && (image.dataset.motionTileId || image.dataset.motionVariant) === key;
       image.classList.toggle("is-active-motion-variant", active);
       selected ||= active;
     });
@@ -391,8 +484,11 @@
     }
     const signatureMatches = () => !!motionSnapshot?.layoutSignature
       && motionSnapshot.layoutSignature === motionLayoutSignature(root);
-    const variants = Object.entries(motionSnapshot?.variants || {}).filter(([key, src]) => MODULES.some((module) => module.key === key) && !!src);
-    if (!motionSnapshot?.src || variants.length !== MODULES.length || !signatureMatches()) {
+    const tileKeys = new Set([...(root.querySelectorAll(":scope > .crm-home-grid > .crm-home-bucket") || [])]
+      .map((bucket) => bucket.dataset.tileId || bucket.dataset.module)
+      .filter(Boolean));
+    const variants = Object.entries(motionSnapshot?.variants || {}).filter(([key, src]) => tileKeys.has(key) && !!src);
+    if (!motionSnapshot?.src || variants.length !== tileKeys.size || !signatureMatches()) {
       root.dataset.motionSnapshotReady = "false";
       return;
     }
@@ -403,15 +499,19 @@
     }
     const expectedKeys = new Set(variants.map(([key]) => key));
     root.querySelectorAll(":scope > .crm-home-motion-variant").forEach((node) => {
-      if (!expectedKeys.has(node.dataset.motionVariant || "")) node.remove();
+      if (!expectedKeys.has(node.dataset.motionTileId || node.dataset.motionVariant || "")) node.remove();
     });
     const variantImages = variants.map(([key, src]) => {
-      let variant = root.querySelector(`:scope > .crm-home-motion-variant[data-motion-variant="${key}"]`);
+      let variant = root.querySelector(`:scope > .crm-home-motion-variant[data-motion-tile-id="${cssValue(key)}"]`);
       if (!variant) {
         variant = imageNode("crm-home-motion-variant", "", "sync");
-        variant.dataset.motionVariant = key;
+        variant.dataset.motionTileId = key;
         root.insertBefore(variant, image.nextSibling);
       }
+      // Keep the legacy module label for diagnostics and motion-contract
+      // consumers while selecting duplicate viewport tiles by unique id.
+      const bucket = root.querySelector(`:scope > .crm-home-grid > .crm-home-bucket[data-tile-id="${cssValue(key)}"]`);
+      variant.dataset.motionVariant = bucket?.dataset?.module || key;
       if (variant.dataset.motionCapturedAt !== stamp) {
         variant.dataset.motionCapturedAt = stamp;
         variant.src = src;
@@ -425,7 +525,8 @@
         return;
       }
       root.dataset.motionSnapshotReady = "true";
-      selectMotionVariant(root, root.querySelector(".crm-home-bucket.is-camera-target")?.dataset?.module || "");
+      const target = root.querySelector(".crm-home-bucket.is-camera-target");
+      selectMotionVariant(root, target?.dataset?.tileId || target?.dataset?.module || "");
       const surface = camera?.surface?.();
       if (surface && root.dataset.motionPrimedAt !== stamp && !surface.classList.contains("crm-home-motion-priming")) {
         root.dataset.motionPrimedAt = stamp;
@@ -837,12 +938,16 @@
   const buildRoot = () => {
     const root = document.createElement("div"); root.className = "crm-home-level";
     const snapshot = imageNode("crm-home-motion-snapshot", ""); root.appendChild(snapshot);
-    const grid = document.createElement("div"); grid.className = "crm-home-grid";
+    const grid = document.createElement("div"); grid.className = "crm-home-grid"; grid.dataset.crmAdaptiveTiles = "manual";
     const titleLayer = document.createElement("div"); titleLayer.className = "crm-home-title-layer";
-    titleLayer.innerHTML = MODULES.map(titleHTML).join("");
-    MODULES.forEach((module) => {
+    titleLayer.innerHTML = homeTileRecords.map(titleHTML).join("");
+    homeTileRecords.forEach((module) => {
       const bucket = document.createElement("button"); bucket.type = "button"; bucket.className = "crm-home-bucket";
-      bucket.dataset.module = module.key; bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
+      bucket.dataset.module = module.key;
+      bucket.dataset.tileId = module.tile.id;
+      bucket.dataset.crmTile = module.tile.id;
+      bucket.dataset.tileKind = module.tile.kind;
+      bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
       // Do not activate merely because a tile finishes loading beneath an
       // already-stationary pointer. Actual pointer movement arms the reveal.
       bucket.addEventListener("pointermove", () => {
@@ -875,16 +980,18 @@
     // Every tile is a geometrically faithful viewport of the room it opens.
     // Artificially widening the 2x2 cells made the cached room look stretched
     // and guaranteed a scale change at the camera endpoint.
-    const captured = MODULES.map(({ key }) => previews.get(key)).find((preview) => Number(preview?.width) > 0 && Number(preview?.height) > 0);
+    const captured = homeTileRecords.map(({ key }) => previews.get(key)).find((preview) => Number(preview?.width) > 0 && Number(preview?.height) > 0);
     const aspect = captured ? captured.width / captured.height : innerWidth / innerHeight;
-    const cellW = Math.max(1, Math.min((area.w - GAP) / 2, ((area.h - GAP) / 2) * aspect));
-    const cellH = Math.max(1, cellW / aspect);
-    const gridW = 2 * cellW + GAP, gridH = 2 * cellH + GAP;
-    const gridGeometry = { left:`${area.x + (area.w-gridW)/2}px`, top:`${area.y + (area.h-gridH)/2}px`, width:`${gridW}px`, height:`${gridH}px` };
-    Object.assign(grid.style, gridGeometry);
     const titleLayer = surface?.querySelector(".crm-home-title-layer");
-    if (titleLayer) Object.assign(titleLayer.style, gridGeometry);
-    surface.style.setProperty("--home-r", `${Math.min(64,Math.max(2,16/245*Math.min(cellW,cellH)*2)).toFixed(1)}px`);
+    const geometry = applyAdaptiveTileGrid({
+      grid,
+      mirror:titleLayer,
+      bounds:{ x:area.x, y:area.y, width:area.w, height:area.h },
+      count:homeTileRecords.length,
+      gap:GAP,
+      aspect,
+    });
+    surface.style.setProperty("--home-r", `${Math.min(64,Math.max(2,16/245*Math.min(geometry?.cellWidth || 1,geometry?.cellHeight || 1)*2)).toFixed(1)}px`);
     layoutPriorityHand(hand);
   };
   const targetAtPoint = (x, y, context) => context.level > 0 ? null
@@ -901,11 +1008,13 @@
     lensClass:"crm-home-screen-acrylic",
   });
   const buildExpander = (target) => {
-    const module = MODULES.find(({ key }) => key === target?.dataset?.module) || MODULES[0];
+    const tile = homeTileRecords.find((candidate) => candidate.tile.id === target?.dataset?.tileId);
+    const module = MODULES.find(({ key }) => key === (tile?.key || target?.dataset?.module)) || MODULES[0];
     const bucket = recycledExpanders.get(module.key) || document.createElement("div");
     recycledExpanders.delete(module.key);
     bucket.className = "crm-home-bucket crm-home-expander";
     bucket.dataset.module = module.key;
+    bucket.dataset.tileId = tile?.tile?.id || target?.dataset?.tileId || module.tile.id;
     if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
     if (!bucket.querySelector(":scope > .crm-home-transition-acrylic")) {
       const acrylic = document.createElement("span");
@@ -929,7 +1038,7 @@
     const root = context?.layers?.[0];
     root?.querySelectorAll?.(".crm-home-bucket.is-camera-target")?.forEach?.((bucket) => bucket.classList.remove("is-camera-target"));
     target?.classList?.add?.("is-camera-target");
-    selectMotionVariant(root, target?.dataset?.module || "");
+    selectMotionVariant(root, target?.dataset?.tileId || target?.dataset?.module || "");
   };
   const clearCameraTarget = () => {
     const root = camera?.layers?.()[0];
@@ -972,9 +1081,9 @@
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,configureExpander:homeAcrylicLens.prepare,
-    primeExpander:(_expander,target,context)=>{selectMotionVariant(context.layers?.[0],target?.dataset?.module||"");homeAcrylicLens.prime()},
+    primeExpander:(_expander,target,context)=>{selectMotionVariant(context.layers?.[0],target?.dataset?.tileId||target?.dataset?.module||"");homeAcrylicLens.prime()},
     contractExpanderAbove:true,holdContractEndpointFrame:true,keepExpanderOpaqueDuringTransition:true,
-    keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
+    keyOf:(target)=>target.dataset.tileId||target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-tile-id="${cssValue(target.dataset.tileId || target.dataset.module)}"]`,
     prepareTarget:(target,context)=>markCameraTarget(target,context),
     prepareJump:(_expander,target,context)=>markCameraTarget(target,context),
     onTransitionStart:(direction,context)=>{
@@ -1124,8 +1233,26 @@
     const apiName = FACTORY_API_BY_MODULE[key];
     if (apiName) prewarmedFactories.add(apiName);
   };
+  registerContextAddProvider("home", {
+    contextKey:"home",
+    label:"Home",
+    actions:[{
+      id:"home-tiles",
+      label:"Tiles",
+      kind:"tile",
+      children:MODULES.map((module) => ({
+        id:`home-tile-${module.key}`,
+        label:`${module.label} tile`,
+        description:`Add another ${module.label} viewport tile`,
+        group:"Tiles",
+        kind:"tile",
+        execute:({ label } = {}) => !!createHomeTile(module.key, { label }),
+      })),
+    }],
+  });
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
+    tiles:()=>clone(homeTileRecords),createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||"",materialMode:motionSnapshot?.materialMode||""}),

@@ -14,6 +14,44 @@ npm start
 npm run make
 ```
 
+## CDMS connection
+
+The Electron client connects to CDMS at `http://192.168.203.238:6030` by default.
+Override it with `CRM_CDMS_URL`, or change **Account → Backend → CDMS URL** in the
+app. Supplying a dashboard URL such as `/dashboard` is supported; the client
+normalizes it to the API origin.
+
+CDMS is the source of truth for companies, people, usernames, email/phone,
+workstations, IP addresses, and infrastructure. Those records are cached only
+in main-process memory for the current authenticated session and receive stable
+`cdms-company-*`, `cdms-contact-*`, and `cdms-asset-*` ids. They are not copied
+into the CRM database. Local tickets, deals, tasks, assignments, and projects
+may reference those ids, so demo workflow remains local while its people,
+companies, hosts, and IPs are real CDMS records.
+
+Authentication follows CDMS:
+
+- When CDMS authentication is enabled, the CRM gate calls
+  `POST /api/auth/login`; Electron's persistent session owns the httpOnly
+  cookie, and the renderer never receives it.
+- When CDMS reports `authDisabled: true`, CRM opens as the CDMS guest
+  administrator, matching CDMS itself.
+- If CDMS is unavailable, the original local account system remains available
+  as an offline fallback.
+
+Password, passcode, token, MFA, recovery-code, secret, private-key, and
+credential-note fields are removed in the main process before data reaches the
+renderer. CDMS source fields are read-only in CRM. CRM follow-up metadata such
+as next-touch dates and relationship links is stored as a small sidecar record,
+without modifying the CDMS row.
+
+Integration checks:
+
+```bash
+npm run test:cdms
+npm run test:cdms:electron
+```
+
 ## Source repos
 
 - `ticketing`: base shell, ticket backend seam, card stacks/detail.

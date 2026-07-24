@@ -3,13 +3,14 @@
 // This is the shared Electron shell with monitoring ingestion fully removed.
 // CRM records live behind the Postgres API in server/; the legacy ticket bridge
 // remains as a compatibility adapter while the card system is generalized.
-import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, session as electronSession } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import squirrelStartup from 'electron-squirrel-startup';
 import pngjs from 'pngjs';
 import { icons } from './icons';
 import auth from './auth.js';
+import cdmsModule from './cdms-client.cjs';
 import {
   initTickets, connectTickets, endTickets,
   ticketList, ticketConnectionState,
@@ -22,6 +23,12 @@ import {
   listDomain, getDomain, createDomain, updateDomain, deleteDomain,
 } from './store.js';
 const { PNG } = pngjs;
+const {
+  createCdmsClient,
+  CRM_OVERLAY_FIELDS,
+  DEFAULT_CDMS_URL,
+  normalizeCdmsUrl,
+} = cdmsModule;
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
 if (squirrelStartup) app.quit();
@@ -31,18 +38,27 @@ if (squirrelStartup) app.quit();
 Menu.setApplicationMenu(null);
 
 // ─── Settings persistence ─────────────────────────────────────────────────────
-// The API URL is the only backend coordinate the Electron client owns.
+// The CRM workflow API and CDMS source-of-truth API are separate coordinates.
 
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
 
 const DEFAULT_SETTINGS = {
   apiUrl: process.env.CRM_API_URL || 'http://127.0.0.1:3899',
+  cdmsUrl: process.env.CRM_CDMS_URL || process.env.CDMS_API_URL || DEFAULT_CDMS_URL,
 };
 
 function loadSettings() {
   try {
     const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+    // Explicit process configuration is authoritative for this launch. This
+    // keeps managed deployments and isolated test instances from inheriting a
+    // stale URL that a previous interactive session persisted.
+    if (process.env.CRM_API_URL) merged.apiUrl = process.env.CRM_API_URL;
+    if (process.env.CRM_CDMS_URL || process.env.CDMS_API_URL) {
+      merged.cdmsUrl = process.env.CRM_CDMS_URL || process.env.CDMS_API_URL;
+    }
     merged.apiUrl = normalizeApiUrl(merged.apiUrl) || DEFAULT_SETTINGS.apiUrl;
+    merged.cdmsUrl = normalizeCdmsUrl(merged.cdmsUrl) || DEFAULT_SETTINGS.cdmsUrl;
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -71,8 +87,15 @@ function normalizeApiUrl(value) {
 let tray = null;
 let mainWindow = null;
 let previewWindow = null;
+let exitRequested = false;
+let ticketsEnded = false;
 let settings = loadSettings();
-const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions', 'projects', 'workItems'];
+const CRM_ENTITIES = ['tickets', 'deals', 'jobs', 'cases', 'contacts', 'companies', 'assets', 'tasks', 'calendarItems', 'reports', 'bills', 'invoices', 'interactions', 'projects', 'workItems'];
+const cdms = createCdmsClient({
+  baseUrl: settings.cdmsUrl,
+  disabled: process.env.CRM_CDMS_DISABLED === '1',
+  onChange: ({ reason }) => handleCdmsChanged(reason),
+});
 const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
@@ -180,6 +203,29 @@ function createMainWindow() {
     mainWindow.focus();
   });
 
+  // Every user-facing close path is a move to the tray. Only the explicit
+  // tray-menu Exit command sets exitRequested and lets Electron destroy the
+  // window. This also covers Alt+F4 and taskbar thumbnail Close, not just the
+  // renderer's custom titlebar button.
+  mainWindow.on('close', (event) => {
+    if (exitRequested) return;
+    event.preventDefault();
+    hideMainWindow();
+  });
+
+  // Keep legacy/programmatic minimize calls consistent with the tray lifecycle.
+  // The visible titlebar slot is now available to the renderer's contextual Add
+  // control, but callers using the old API still get a safe background hide.
+  mainWindow.on('minimize', () => {
+    if (exitRequested) return;
+    hideMainWindow();
+  });
+
+  // Windows does not emit before-quit/close during session shutdown. Flush the
+  // backend lifecycle without blocking logout, restart, or shutdown.
+  mainWindow.on('query-session-end', () => endTicketsOnce());
+  mainWindow.on('session-end', () => endTicketsOnce());
+
   mainWindow.webContents.once('did-finish-load', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send('tickets:changed', ticketsPayload());
@@ -212,6 +258,12 @@ function createMainWindow() {
   return mainWindow;
 }
 
+function hideMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.hide();
+}
+
 function showMainWindow() {
   const win = createMainWindow();
   if (win.isMinimized()) win.restore();
@@ -234,7 +286,7 @@ function openWindows() {
 }
 
 function ticketsPayload() {
-  return { tickets: ticketList(), connection: ticketConnectionState() };
+  return { tickets: cdms.overlayRecords('tickets', ticketList()), connection: ticketConnectionState() };
 }
 
 function broadcastTickets() {
@@ -287,12 +339,15 @@ function foregroundFromMattes(blackImage, whiteImage) {
 function transparentImageRegion(image, region, viewport) {
   if (!image || image.isEmpty() || !Array.isArray(region) || region.length < 4 || !Array.isArray(viewport) || viewport.length < 2) return '';
   const png = PNG.sync.read(image.toPNG());
+  const regionValues = region.slice(0, 4).map(Number);
+  if (!regionValues.every(Number.isFinite)) return '';
   const scaleX = png.width / Math.max(1, Number(viewport[0]) || png.width);
   const scaleY = png.height / Math.max(1, Number(viewport[1]) || png.height);
-  const left = Math.max(0, Math.floor(Number(region[0]) * scaleX));
-  const top = Math.max(0, Math.floor(Number(region[1]) * scaleY));
-  const right = Math.min(png.width, Math.ceil((Number(region[0]) + Number(region[2])) * scaleX));
-  const bottom = Math.min(png.height, Math.ceil((Number(region[1]) + Number(region[3])) * scaleY));
+  const [regionX, regionY, regionWidth, regionHeight] = regionValues;
+  const left = Math.min(png.width, Math.max(0, Math.floor(regionX * scaleX)));
+  const top = Math.min(png.height, Math.max(0, Math.floor(regionY * scaleY)));
+  const right = Math.min(png.width, Math.max(left, Math.ceil((regionX + regionWidth) * scaleX)));
+  const bottom = Math.min(png.height, Math.max(top, Math.ceil((regionY + regionHeight) * scaleY)));
   for (let y = top; y < bottom; y += 1) png.data.fill(0, (y * png.width + left) * 4, (y * png.width + right) * 4);
   return nativeImage.createFromBuffer(PNG.sync.write(png)).toDataURL();
 }
@@ -360,7 +415,28 @@ function waitForRenderer(win, expression, timeoutMs = 30000) {
     const poll = async () => {
       if (!win || win.isDestroyed()) { reject(new Error('Preview renderer closed')); return; }
       try { if (await win.webContents.executeJavaScript(expression, true)) { resolve(); return; } } catch {}
-      if (Date.now() - started >= timeoutMs) { reject(new Error('Preview renderer timed out')); return; }
+      if (Date.now() - started >= timeoutMs) {
+        let state = null;
+        try {
+          state = await win.webContents.executeJavaScript(`(() => ({
+            readyState: document.readyState,
+            booting: document.documentElement.hasAttribute('data-dashboard-booting'),
+            module: document.body?.dataset?.crmModule || '',
+            workspaces: !!window.crmWorkspaces,
+            peopleCards: !!window.peopleCards,
+            ticketStacks: !!window.ticketStacks,
+            planner: !!window.crmPlanner,
+            assignments: !!window.crmAssignments,
+            theaters: [...document.querySelectorAll('[data-crm-theater]')].map((node) => ({
+              key: node.dataset.crmTheater || '',
+              hidden: node.hidden,
+              children: node.childElementCount,
+            })),
+          }))()`, true);
+        } catch {}
+        reject(new Error(`Preview renderer timed out (${expression}): ${JSON.stringify(state)}`));
+        return;
+      }
       setTimeout(poll, 50);
     };
     poll();
@@ -516,10 +592,19 @@ async function captureHomeMotionSnapshot(worker) {
   const size = foreground.image.getSize();
   let layout = null;
   try { layout = JSON.parse(layoutSignature); } catch {}
-  const [gridX = 0, gridY = 0] = layout?.grid || [];
-  const variants = Object.fromEntries((layout?.buckets || []).map(([key, x, y, width, height]) => [
-    key, transparentImageRegion(foreground.image, [gridX + x, gridY + y, width, height], layout.viewport),
-  ]).filter(([, src]) => !!src));
+  const [gridX = 0, gridY = 0] = (layout?.grid || []).map((value) => Number(value) || 0);
+  const variants = Object.fromEntries((layout?.buckets || []).map((bucket) => {
+    const [key] = bucket;
+    // Canonical Home tiles carry both their unique tile id and viewport module
+    // before the geometry. Accept the previous five-field signature as well
+    // so an in-flight host/renderer refresh remains compatible.
+    const geometry = bucket.length >= 6 ? bucket.slice(2, 6) : bucket.slice(1, 5);
+    const [x = 0, y = 0, width = 0, height = 0] = geometry.map(Number);
+    return [
+      key,
+      transparentImageRegion(foreground.image, [gridX + x, gridY + y, width, height], layout.viewport),
+    ];
+  }).filter(([key, src]) => !!key && !!src));
   homeMotionSnapshot = {
     version: HOME_PREVIEW_VERSION, width: size.width, height: size.height,
     capturedAt: Date.now(), src: foreground.image.toDataURL(), layoutSignature,
@@ -629,7 +714,13 @@ function scheduleHomePreviewBoundsRefresh() {
 }
 
 function storePayload(entity, options = {}) {
-  return { entity, records: listRecords(entity, options), connection: storeConnectionState() };
+  const localRecords = entity === 'assets' ? [] : listRecords(entity, options);
+  return {
+    entity,
+    records: cdms.overlayRecords(entity, localRecords),
+    connection: storeConnectionState(),
+    source: cdms.status(),
+  };
 }
 
 function broadcastStore(entity = null) {
@@ -643,19 +734,45 @@ function broadcastStore(entity = null) {
   });
 }
 
+function handleCdmsChanged(reason = 'cdms') {
+  broadcastAuth();
+  broadcastTickets();
+  broadcastStore();
+  refreshTray();
+  scheduleHomePreviewRefresh(`CDMS ${reason}`, 300);
+}
+
 // ─── Tray ────────────────────────────────────────────────────────────────────
 
 function buildContextMenu() {
-  const s = auth.session();
+  const s = identitySession();
   const who = s.user ? `Signed in as ${s.user.username}` : 'Not signed in';
   const open = ticketList().filter((t) => t.state !== 'resolved').length;
   return Menu.buildFromTemplate([
     { label: `CRM — ${open} open tickets`, enabled: false },
     { label: who, enabled: false },
     { type: 'separator' },
-    { label: 'Open CRM', click: () => showMainWindow() },
-    { label: 'Quit', click: () => { endTickets(); app.quit(); } },
+    { label: 'Show', click: () => showMainWindow() },
+    { label: 'Exit', click: () => requestAppExit() },
   ]);
+}
+
+function endTicketsOnce() {
+  if (ticketsEnded) return;
+  ticketsEnded = true;
+  try {
+    endTickets();
+  } catch (error) {
+    // Cleanup must never strand the user in a process that cannot exit.
+    console.error('[crm] Ticket shutdown cleanup failed:', error);
+  }
+}
+
+function requestAppExit() {
+  if (exitRequested) return;
+  exitRequested = true;
+  endTicketsOnce();
+  app.quit();
 }
 
 function refreshTray() {
@@ -667,81 +784,123 @@ function refreshTray() {
 
 // ─── Auth helpers ──────────────────────────────────────────────────────────────
 
+function identitySession() {
+  const cdmsSession = cdms.session();
+  if (cdmsSession.connection === 'live') return cdmsSession;
+  const local = auth.session();
+  return {
+    ...local,
+    provider: 'local',
+    authDisabled: false,
+    connection: cdmsSession.connection,
+    cdmsUrl: cdmsSession.cdmsUrl,
+    cdmsError: cdmsSession.error || null,
+  };
+}
+
 function broadcastAuth() {
-  const payload = auth.session();
+  const payload = identitySession();
   BrowserWindow.getAllWindows().forEach((w) => {
     if (w && !w.isDestroyed()) w.webContents.send('auth:changed', payload);
   });
 }
 
 function canManageUsers() {
-  const s = auth.session();
+  const s = identitySession();
   return !!(s.user && (s.user.isAdmin || s.user.permissions.canManageUsers));
 }
 
 // The signed-in user actor for ticket actions, or null when nobody is signed in.
 function actor() {
-  return auth.currentUser() || null;
+  return identitySession().user?.username || null;
 }
 
-// ─── IPC: auth (shared with the monitor) ────────────────────────────────────────
+// ─── IPC: auth ──────────────────────────────────────────────────────────────────
+// CDMS is authoritative whenever it is reachable. The original local account
+// store remains an offline fallback so a CDMS outage cannot strand local work.
 
-ipcMain.handle('auth:session', () => auth.session());
+ipcMain.handle('auth:session', () => identitySession());
 
-ipcMain.handle('auth:login', (_e, { username, password } = {}) => {
-  const result = auth.login(username, password);
+ipcMain.handle('auth:login', async (_e, { username, password } = {}) => {
+  const cdmsSession = cdms.session();
+  const result = cdmsSession.connection === 'live'
+    ? await cdms.login(username, password)
+    : auth.login(username, password);
   if (result.ok) { broadcastAuth(); refreshTray(); }
   return result;
 });
 
-ipcMain.handle('auth:logout', () => {
-  const result = auth.logout();
+ipcMain.handle('auth:logout', async () => {
+  const cdmsSession = cdms.session();
+  const result = cdmsSession.connection === 'live'
+    ? await cdms.logout()
+    : auth.logout();
   broadcastAuth();
   refreshTray();
   return result;
 });
 
 ipcMain.handle('auth:register', (_e, payload) => {
+  if (cdms.session().connection === 'live') return { ok: false, error: 'Create CDMS accounts in CDMS' };
   const result = auth.register(payload || {});
   if (result.ok) { broadcastAuth(); refreshTray(); }
   return result;
 });
 
 ipcMain.handle('auth:set-password', (_e, { password } = {}) => {
+  if (cdms.session().connection === 'live') return { ok: false, error: 'Change your password in CDMS' };
   const result = auth.setOwnPassword(password);
   if (result.ok) broadcastAuth();
   return result;
 });
 
 ipcMain.handle('auth:list-users', () => (
-  canManageUsers() ? { ok: true, users: auth.listUsers() } : { ok: false, error: 'Not allowed' }
+  identitySession().provider === 'local' && canManageUsers()
+    ? { ok: true, users: auth.listUsers() }
+    : { ok: false, error: 'CDMS accounts are managed in CDMS' }
 ));
 ipcMain.handle('auth:create-user', (_e, payload) => (
-  canManageUsers() ? auth.createUser(payload || {}) : { ok: false, error: 'Not allowed' }
+  identitySession().provider === 'local' && canManageUsers()
+    ? auth.createUser(payload || {})
+    : { ok: false, error: 'CDMS accounts are managed in CDMS' }
 ));
 ipcMain.handle('auth:update-user', (_e, { username, ...rest } = {}) => (
-  canManageUsers() ? auth.updateUser(username, rest) : { ok: false, error: 'Not allowed' }
+  identitySession().provider === 'local' && canManageUsers()
+    ? auth.updateUser(username, rest)
+    : { ok: false, error: 'CDMS accounts are managed in CDMS' }
 ));
 ipcMain.handle('auth:delete-user', (_e, { username } = {}) => (
-  canManageUsers() ? auth.deleteUser(username) : { ok: false, error: 'Not allowed' }
+  identitySession().provider === 'local' && canManageUsers()
+    ? auth.deleteUser(username)
+    : { ok: false, error: 'CDMS accounts are managed in CDMS' }
 ));
 
 // Synchronous lookup so dashboard-preload.js can namespace the layout store.
-ipcMain.on('auth:current-username', (e) => { e.returnValue = auth.currentUser() || ''; });
+ipcMain.on('auth:current-username', (e) => { e.returnValue = identitySession().user?.username || ''; });
 
 // ─── IPC: settings (API) ────────────────────────────────────────────────────────
 
 ipcMain.handle('settings:get', () => settings);
-ipcMain.handle('settings:save', (_e, next = {}) => {
+ipcMain.handle('settings:save', async (_e, next = {}) => {
   const apiUrl = normalizeApiUrl(next.apiUrl ?? settings.apiUrl);
   if (!apiUrl) return { ok: false, error: 'API URL must be an http(s) URL' };
-  settings = { ...settings, ...next, apiUrl };
+  const cdmsUrl = normalizeCdmsUrl(next.cdmsUrl ?? settings.cdmsUrl);
+  if (!cdmsUrl) return { ok: false, error: 'CDMS URL must be an http(s) URL' };
+  const cdmsChanged = cdmsUrl !== settings.cdmsUrl;
+  settings = { ...settings, ...next, apiUrl, cdmsUrl };
   saveSettings(settings);
   connectTickets({ url: settings.apiUrl });
+  if (cdmsChanged) {
+    await cdms.initialize({
+      baseUrl: settings.cdmsUrl,
+      fetcher: electronSession.defaultSession.fetch.bind(electronSession.defaultSession),
+      disabled: process.env.CRM_CDMS_DISABLED === '1',
+    });
+  }
   broadcastStore();
-  return { ok: true, settings, connection: storeConnectionInfo() };
+  return { ok: true, settings, connection: storeConnectionInfo(), cdms: cdms.status() };
 });
-ipcMain.handle('backend:connection', () => ({ ok: true, settings, connection: storeConnectionInfo() }));
+ipcMain.handle('backend:connection', () => ({ ok: true, settings, connection: storeConnectionInfo(), cdms: cdms.status() }));
 ipcMain.handle('backend:status', async () => {
   const health = await storeHealth();
   return {
@@ -749,9 +908,19 @@ ipcMain.handle('backend:status', async () => {
     settings,
     connection: storeConnectionInfo(),
     health,
+    cdms: cdms.status(),
     error: health.error || null,
   };
 });
+
+// ─── IPC: CDMS source data ──────────────────────────────────────────────────────
+
+ipcMain.handle('cdms:status', () => cdms.status());
+ipcMain.handle('cdms:refresh', () => cdms.refreshCatalog({ force: true }));
+ipcMain.handle('cdms:catalog', () => cdms.catalog());
+ipcMain.handle('cdms:company-profile', (_event, { companyId, force = false } = {}) => (
+  cdms.companyProfile(String(companyId || ''), { force: !!force })
+));
 
 // ─── IPC: window controls ────────────────────────────────────────────────────────
 
@@ -769,8 +938,8 @@ function isPreviewSender(e) {
   return previewWindow && !previewWindow.isDestroyed() && e.sender === previewWindow.webContents;
 }
 ipcMain.handle('dashboard-window:reload', (e) => { if (isMainSender(e)) mainWindow.webContents.reload(); return { ok: true }; });
-ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });
-ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
+ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
+ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
 ipcMain.on('home-preview:interaction', (event, active) => {
   if (isMainSender(event)) setHomePreviewInteraction(active);
 });
@@ -823,8 +992,8 @@ ipcMain.handle('home-preview:capture', async (event, { key, viewState = null } =
   const preview = await capturePreviewKeys([key], 'room refresh', { [key]: viewState });
   return preview ? { ok: true, preview } : { ok: false, error: 'Preview capture failed' };
 });
-ipcMain.handle('dashboard:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });
-ipcMain.handle('dashboard:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
+ipcMain.handle('dashboard:minimize', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
+ipcMain.handle('dashboard:close', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
 
 // ─── IPC: tickets ────────────────────────────────────────────────────────────────
 // Reads are open; writes require a signed-in user; delegate (assign) still requires
@@ -885,6 +1054,37 @@ function entityName(entity) {
   return CRM_ENTITIES.includes(key) ? key : null;
 }
 
+function cdmsSourceRecord(entity, id) {
+  return cdms.getRecord(entity, id);
+}
+
+async function updateCdmsOverlay(entity, id, fields, actorName) {
+  if (!['contacts', 'companies'].includes(entity)) {
+    return { ok: false, error: 'This CDMS record is read-only; edit it in CDMS' };
+  }
+  const allowed = Object.fromEntries(Object.entries(fields || {}).filter(([field]) => CRM_OVERLAY_FIELDS.has(field)));
+  if (!Object.keys(allowed).length) {
+    return { ok: false, error: 'CDMS source fields are read-only; CRM follow-up fields can still be saved' };
+  }
+  const existing = getRecord(entity, id);
+  const result = existing
+    ? await updateRecord(entity, id, allowed, actorName)
+    : await createRecord(entity, {
+      id,
+      source: 'cdms-overlay',
+      sourceId: id,
+      ...allowed,
+    }, actorName, {
+      action: 'linked',
+      detail: 'Created CRM relationship metadata for a CDMS record',
+    });
+  if (result?.record) {
+    result.record = cdms.overlayRecords(entity, [result.record])
+      .find((record) => String(record.id) === String(id)) || result.record;
+  }
+  return result;
+}
+
 ipcMain.handle('store:list', (_e, { entity, includeDeleted = true } = {}) => {
   const key = entityName(entity);
   if (!key) return { ok: false, error: 'Unknown entity' };
@@ -894,12 +1094,26 @@ ipcMain.handle('store:list', (_e, { entity, includeDeleted = true } = {}) => {
 ipcMain.handle('store:get', (_e, { entity, id } = {}) => {
   const key = entityName(entity);
   if (!key) return { ok: false, error: 'Unknown entity' };
-  return { ok: true, entity: key, record: getRecord(key, id) };
+  const sourceRecord = cdmsSourceRecord(key, id);
+  if (sourceRecord) {
+    const localOverlay = key === 'assets' ? null : getRecord(key, id);
+    const merged = cdms.overlayRecords(key, localOverlay ? [localOverlay] : [])
+      .find((record) => String(record.id) === String(id)) || sourceRecord;
+    return { ok: true, entity: key, record: merged, source: 'cdms' };
+  }
+  if (key === 'assets') return { ok: true, entity: key, record: null, source: 'cdms' };
+  const local = getRecord(key, id);
+  return {
+    ok: true,
+    entity: key,
+    record: local ? cdms.decorateRecord(key, local) : null,
+  };
 });
 
 ipcMain.handle('store:create', (_e, { entity, fields } = {}) => {
   const key = entityName(entity);
   if (!key) return { ok: false, error: 'Unknown entity' };
+  if (key === 'assets') return { ok: false, error: 'CDMS infrastructure is read-only in CRM' };
   const g = requireUser(); if (g.error) return g.error;
   return createRecord(key, fields || {}, g.who);
 });
@@ -908,18 +1122,32 @@ ipcMain.handle('store:update', (_e, { entity, id, fields } = {}) => {
   const key = entityName(entity);
   if (!key) return { ok: false, error: 'Unknown entity' };
   const g = requireUser(); if (g.error) return g.error;
+  if (cdmsSourceRecord(key, id) || String(id || '').startsWith('cdms-')) {
+    return updateCdmsOverlay(key, id, fields, g.who);
+  }
   return updateRecord(key, id, fields || {}, g.who);
 });
 
 ipcMain.handle('store:delete', (_e, { entity, id, hard = false } = {}) => {
   const key = entityName(entity);
   if (!key) return { ok: false, error: 'Unknown entity' };
+  if (cdmsSourceRecord(key, id) || String(id || '').startsWith('cdms-')) {
+    return { ok: false, error: 'This CDMS record is read-only; edit it in CDMS' };
+  }
   const g = requireUser(); if (g.error) return g.error;
   return deleteRecord(key, id, g.who, { hard: !!hard });
 });
 
-ipcMain.handle('domain:list', (_e, { resource, query } = {}) => listDomain(resource, query));
-ipcMain.handle('domain:get', (_e, { resource, id } = {}) => getDomain(resource, id));
+ipcMain.handle('domain:list', async (_e, { resource, query } = {}) => {
+  const result = await listDomain(resource, query);
+  if (resource !== 'commitments' || !Array.isArray(result?.records)) return result;
+  return { ...result, records: cdms.overlayRecords('commitments', result.records) };
+});
+ipcMain.handle('domain:get', async (_e, { resource, id } = {}) => {
+  const result = await getDomain(resource, id);
+  if (resource !== 'commitments' || !result?.record) return result;
+  return { ...result, record: cdms.decorateRecord('commitments', result.record) };
+});
 ipcMain.handle('domain:create', (_e, { resource, fields } = {}) => {
   const g = requireUser(); if (g.error) return g.error;
   return createDomain(resource, { ...(fields || {}), actor: fields?.actor || g.who });
@@ -937,10 +1165,15 @@ ipcMain.handle('reports:summary', () => reportSummary());
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (app.dock) app.dock.hide();
 
   auth.init();
+  await cdms.initialize({
+    baseUrl: settings.cdmsUrl,
+    fetcher: electronSession.defaultSession.fetch.bind(electronSession.defaultSession),
+    disabled: process.env.CRM_CDMS_DISABLED === '1',
+  });
 
   // Tickets are an API-backed compatibility adapter; generic CRM entities share
   // the same Postgres/API store seam.
@@ -957,6 +1190,7 @@ app.whenReady().then(() => {
   tray = new Tray(icons.grey);
   refreshTray();
   tray.on('click', () => toggleMainWindow());
+  tray.on('double-click', () => showMainWindow());
   tray.on('right-click', () => tray.popUpContextMenu(buildContextMenu()));
 
   // The main window is the primary surface — open it on launch.
@@ -965,4 +1199,15 @@ app.whenReady().then(() => {
 
 // Tray app: closing the window does NOT quit (stays alive in the tray).
 app.on('window-all-closed', () => { /* keep running in tray */ });
-app.on('before-quit', () => endTickets());
+app.on('activate', () => showMainWindow());
+app.on('before-quit', (event) => {
+  // Installer/update lifecycle must retain Electron's normal immediate exit.
+  if (squirrelStartup) return;
+  if (!exitRequested) {
+    event.preventDefault();
+    hideMainWindow();
+    return;
+  }
+  endTicketsOnce();
+});
+app.on('will-quit', () => endTicketsOnce());

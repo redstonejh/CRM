@@ -5,10 +5,11 @@
 (() => {
   "use strict";
 
-  const entities = ["contacts", "companies", "deals", "jobs", "cases", "tickets", "bills", "invoices"];
+  const entities = ["contacts", "companies", "assets", "deals", "jobs", "cases", "tickets", "bills", "invoices"];
   const labels = {
     contacts: "Person",
     companies: "Company",
+    assets: "Device",
     deals: "Deal",
     jobs: "Job",
     cases: "Case",
@@ -64,7 +65,7 @@
 
   function matches(item, query) {
     const record = item.record;
-    return `${title(record)} ${record.description || ""} ${record.email || ""} ${record.company || ""} ${record.role || ""} ${record.stage || record.state || ""}`
+    return `${title(record)} ${record.description || ""} ${record.email || ""} ${record.username || record.login || ""} ${record.company || ""} ${record.role || ""} ${record.host || ""} ${record.ipAddress || ""} ${(record.ipAddresses || []).join(" ")} ${record.stage || record.state || ""}`
       .toLowerCase()
       .includes(query);
   }
@@ -141,7 +142,7 @@
     root.setAttribute("role", "search");
     root.setAttribute("aria-label", "Search CRM records");
     root.innerHTML = `
-      <input class="dashboard-search-input" type="search" placeholder="Find a person, company, deal, job, case, bill, or invoice" aria-label="Search CRM records" autocomplete="off" spellcheck="false">
+      <input class="dashboard-search-input" type="search" placeholder="Find a person, company, IP, device, deal, job, case, bill, or invoice" aria-label="Search CRM records" autocomplete="off" spellcheck="false">
       <div class="dashboard-search-results" role="listbox" aria-label="CRM search results"></div>
     `;
     input = root.querySelector(".dashboard-search-input");

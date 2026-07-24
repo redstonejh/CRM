@@ -1,8 +1,12 @@
+import { applyAdaptiveTileGrid, normalizeTileRecord } from "./modules/tile-system.js";
+import { changed as contextAddChanged, register as registerContextAddProvider } from "./modules/context-add-registry.js";
+
 // crm-planner.js — nested Projects world with persistent, user-defined pipelines.
 (() => {
   const SELECTED_KEY = "crm-planner-selected-v2";
   const LEGACY_KEY = "crm-planner-projects-v1";
   const MIGRATED_KEY = "crm-planner-projects-migrated-v2";
+  const TILE_MIGRATED_KEY = "crm-planner-project-tiles-migrated-v1";
   const EXPANDED_KEY = "crm-planner-stack-expansion-v1";
   const PROJECT_PREVIEW_VERSION = "project-tile-v1";
   const listeners = new Set();
@@ -23,6 +27,13 @@
     { id:"simple", label:"Simple", stages:["Backlog", "In progress", "Done"] },
     { id:"review", label:"Review", stages:["Backlog", "In progress", "Review", "Done"] },
     { id:"custom", label:"Custom", stages:[] },
+  ];
+  const CARD_KINDS = [
+    { id:"generic", label:"Card" },
+    { id:"person", label:"Person card" },
+    { id:"money", label:"Money card" },
+    { id:"ticket", label:"Ticket card" },
+    { id:"task", label:"Task card" },
   ];
 
   let root = null;
@@ -49,6 +60,7 @@
   const projectPreviews = new Map();
   const pendingProjectPreviews = new Map();
   const pendingDetailFields = new Map();
+  let pendingProjectTileMigrations = [];
   let model = { projects:[], items:[], flows:[], commitments:[], contacts:[], tasks:[], tickets:[] };
   let expandedStacks = (() => { try { const value = JSON.parse(localStorage.getItem(EXPANDED_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
 
@@ -60,8 +72,39 @@
     const raw = Array.isArray(project?.stages) && project.stages.length ? project.stages : DEFAULT_STAGES;
     return raw.map(normalizeStage).sort((a, b) => a.rank - b.rank).map((stage, index) => ({ ...stage, rank:index }));
   };
-  const normalizeProject = (project = {}) => ({ ...project, id:String(project.id || ""), title:first(project.title, "Untitled project"), note:String(project.note || ""), stages:stagesOf(project) });
-  const normalizeItem = (item = {}) => ({ ...item, id:String(item.id || ""), projectId:String(item.projectId || ""), stageId:String(item.stageId || ""), title:first(item.title, "Untitled card"), note:String(item.note || ""), priority:String(item.priority || "normal"), status:String(item.status || "open"), rank:Number(item.rank) || 0 });
+  const normalizeProject = (project = {}) => {
+    const id = String(project.id || "");
+    const title = first(project.title, project.tile?.title, "Untitled project");
+    return {
+      ...project,
+      id,
+      title,
+      note:String(project.note || ""),
+      stages:stagesOf(project),
+      tile:normalizeTileRecord({ ...project, tile:{ ...project.tile, title, label:title } }, {
+        id,
+        key:id,
+        title,
+        label:title,
+        kind:"project",
+        targetType:"project",
+        targetId:id,
+        rank:Number(project.rank) || 0,
+      }),
+    };
+  };
+  const normalizeItem = (item = {}) => ({
+    ...item,
+    id:String(item.id || ""),
+    projectId:String(item.projectId || ""),
+    stageId:String(item.stageId || ""),
+    title:first(item.title, "Untitled card"),
+    note:String(item.note || ""),
+    cardKind:first(item.cardKind, "generic"),
+    priority:String(item.priority || "normal"),
+    status:String(item.status || "open"),
+    rank:Number(item.rank) || 0,
+  });
   const projectById = (id) => model.projects.find((project) => project.id === String(id));
   const itemById = (id) => model.items.find((item) => item.id === String(id));
   const selectedProject = () => projectById(selectedId) || model.projects[0] || null;
@@ -123,6 +166,7 @@
       .crm-planner-surface.crm-project-acrylic-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-warm>.crm-project-transition-acrylic{opacity:1!important;animation:none!important}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0}
+      .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-home-preview-state{visibility:hidden!important;opacity:0!important}
       .crm-planner-surface.crm-project-camera-expanding .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0;transition:opacity 90ms ease!important}
       .crm-planner-surface.crm-project-camera-contracting .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0;transition:none!important}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-title-grid{opacity:0}
@@ -130,9 +174,9 @@
       .crm-planner-surface.crm-project-camera-contracting .crm-project-title-grid{opacity:1;transition:opacity 110ms ease 350ms}
       .crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-planner-surface.crm-project-camera-moving .crm-project-tile-grid>.crm-project-bucket:not(.is-camera-target){transition:none!important}
-      .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:40px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
-      .crm-planner-projects{min-width:0;height:40px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 1 auto;min-width:0;max-width:min(34vw,430px);font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.4);font-size:var(--crm-type-meta,10px);white-space:nowrap;overflow:hidden}.crm-planner-project-context span{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context i{width:2px;height:2px;border-radius:50%;background:currentColor;opacity:.65}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
-      .crm-planner-project-back.crm-menu-action{flex:0 0 auto;height:30px;padding:0 8px!important;color:rgba(255,255,255,.5)!important;font-size:var(--crm-type-caption,11px)!important}.crm-planner-project-separator{color:rgba(255,255,255,.24);font-size:13px}.crm-planner-world-spacer{flex:1 1 auto;min-width:0}.crm-planner-world-map{flex:0 1 130px;display:flex;height:3px;gap:2px}.crm-planner-world-map i{flex:1 1 0;border-radius:2px;background:rgba(214,229,248,.12)}.crm-planner-world-map i[data-occupied="true"]{background:rgba(160,193,234,.32)}.crm-planner-world-map i[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.38)}
+      .crm-planner-frame{position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;display:grid;grid-template-rows:46px minmax(0,1fr);gap:12px;min-width:0;min-height:0}
+      .crm-planner-projects{min-width:0;height:46px;display:flex;align-items:center;gap:8px;overflow:hidden;-webkit-app-region:no-drag}.crm-planner-heading{flex:0 1 auto;min-width:0;max-width:min(34vw,430px);font-size:var(--crm-type-room,17px);font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.4);font-size:var(--crm-type-meta,10px);white-space:nowrap;overflow:hidden}.crm-planner-project-context span{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-context i{width:2px;height:2px;border-radius:50%;background:currentColor;opacity:.65}.crm-planner-project-list{min-width:0;display:flex;align-items:center;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.crm-planner-project-list::-webkit-scrollbar{display:none}
+      .crm-planner-project-back{flex:0 0 auto}.crm-planner-world-spacer{flex:1 1 auto;min-width:0}.crm-planner-world-map{flex:0 1 130px;display:flex;height:3px;gap:2px}.crm-planner-world-map i{flex:1 1 0;border-radius:2px;background:rgba(214,229,248,.12)}.crm-planner-world-map i[data-occupied="true"]{background:rgba(160,193,234,.32)}.crm-planner-world-map i[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.38)}
       .crm-planner-project.crm-menu-action{position:relative;flex:0 0 auto;width:clamp(88px,12vw,176px);height:34px;padding:5px 10px 4px!important;text-align:left;font-size:var(--crm-type-body,12px)!important;display:grid;grid-template-rows:minmax(0,1fr) 3px;gap:4px;overflow:hidden;color:rgba(255,255,255,.5)!important}.crm-planner-project.is-selected{color:rgba(255,255,255,.96)!important}.crm-planner-project.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:rgba(175,211,255,.78);box-shadow:0 0 10px rgba(115,177,252,.22)}.crm-planner-project-name{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-map{display:flex;align-items:stretch;gap:2px;min-width:0;height:3px}.crm-planner-project-segment{flex:1 1 0;min-width:3px;border-radius:2px;background:rgba(214,229,248,.09);box-shadow:inset 0 0 0 1px rgba(225,237,251,.045)}.crm-planner-project-segment[data-occupied="true"]{background:rgba(160,193,234,.28)}.crm-planner-project-segment[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.34)}.crm-planner-project.is-selected .crm-planner-project-segment{box-shadow:inset 0 0 0 1px rgba(226,238,252,.08)}
       .crm-planner-new-project.crm-menu-action{flex:0 0 auto;width:auto;height:30px;padding:0 9px!important;font-size:var(--crm-type-caption,11px)!important;white-space:nowrap;color:rgba(255,255,255,.7)!important}.crm-planner-head-actions{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding-left:6px;border-left:1px solid rgba(255,255,255,.1)}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
       .crm-planner-stage{--crm-scroll-shadow-left:0;--crm-scroll-shadow-right:0;position:relative;min-width:0;min-height:0;margin-inline:calc(0px - var(--crm-canvas-x,64px));overflow:hidden}.crm-planner-stage:before,.crm-planner-stage:after{content:"";position:absolute;z-index:4;top:0;bottom:14px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-planner-stage:before{left:0;opacity:var(--crm-scroll-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-planner-stage:after{right:0;opacity:var(--crm-scroll-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
@@ -141,9 +185,9 @@
       .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-title{max-width:84px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-bucket .tk-zone-hd-r{right:0;top:1px;gap:1px;pointer-events:auto;opacity:.72}.crm-planner-stage-progress{width:48px;margin-right:3px;justify-content:flex-end;gap:2px}.crm-planner-stage-progress .tk-seg,.crm-planner-card-progress .tk-seg{flex:1 1 0;min-width:2px;max-width:9px;height:4px;border-radius:2px;background:rgba(255,255,255,.2);box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}.crm-planner-stage-progress .tk-seg.g,.crm-planner-card-progress .tk-seg.g{background:#2fd16b}
       .crm-planner-stage-menu.crm-menu-action{width:28px;height:27px;padding:0!important;display:grid;place-items:center;font-size:14px!important}
       .crm-planner-card-list{min-height:0;flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 2px 8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}.crm-planner-card-list.is-expanded{gap:8px}
-      .crm-planner-card{appearance:none;position:relative;flex:0 0 auto;width:188px;height:128px;box-sizing:border-box;padding:14px 15px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.94),rgba(62,74,94,.92));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:grab;overflow:hidden;transition:width .16s ease,height .16s ease,margin .2s cubic-bezier(.22,1,.26,1),box-shadow .14s ease,opacity .14s ease}.crm-planner-card+.crm-planner-card{margin-top:-78px}.crm-planner-card-list.is-expanded .crm-planner-card+.crm-planner-card{margin-top:0}.crm-planner-card:active{cursor:grabbing}.crm-planner-card.is-dragging{opacity:.32}.crm-planner-card-body{display:flex;flex-direction:column;gap:0;height:100%;min-height:0}.crm-planner-card-progress{position:absolute;top:12px;right:13px;z-index:2;width:48px;display:inline-flex;align-items:center;justify-content:flex-end;gap:2px;pointer-events:none}
+      .crm-planner-card{appearance:none;position:relative;isolation:isolate;flex:0 0 auto;width:188px;height:128px;box-sizing:border-box;padding:14px 15px;text-align:left;border:0;border-radius:15px;background:linear-gradient(150deg,rgba(98,112,134,.94),rgba(62,74,94,.92));color:rgba(255,255,255,.9);box-shadow:inset 0 1px rgba(255,255,255,.22),0 14px 18px -14px rgba(0,0,0,.5);cursor:grab;overflow:hidden;transition:width .16s ease,height .16s ease,margin .2s cubic-bezier(.22,1,.26,1),box-shadow .14s ease,opacity .14s ease}.crm-planner-card+.crm-planner-card{margin-top:-78px}.crm-planner-card-list.is-expanded .crm-planner-card+.crm-planner-card{margin-top:0}.crm-planner-card:active{cursor:grabbing}.crm-planner-card.is-dragging{opacity:.32}.crm-planner-card-body{position:relative;z-index:2;display:flex;flex-direction:column;gap:0;height:100%;min-height:0}.crm-planner-card-progress{position:absolute;top:12px;right:13px;z-index:3;width:48px;display:inline-flex;align-items:center;justify-content:flex-end;gap:2px;pointer-events:none}
       .crm-planner-card:hover,.crm-planner-card:focus-visible{outline:0;box-shadow:inset 0 0 0 9999px rgba(255,255,255,.1),inset 0 1px rgba(255,255,255,.3),0 14px 18px -14px rgba(0,0,0,.5)}
-      .crm-planner-card-title{display:block;padding-right:54px;font-size:var(--crm-type-object,14px);font-weight:700;line-height:1.24;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-note{display:-webkit-box;margin-top:8px;color:rgba(255,255,255,.6);font-size:var(--crm-type-body,12px);line-height:1.35;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.crm-planner-card-meta{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;color:rgba(255,255,255,.52);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-planner-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-link{display:block;margin-top:5px;color:rgba(211,227,249,.56);font-size:var(--crm-type-meta,10px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .crm-planner-card-title{display:-webkit-box;padding-right:54px;font-size:var(--crm-type-object,14px);font-weight:700;line-height:1.24;white-space:normal;overflow-wrap:anywhere;overflow:hidden;-webkit-box-orient:vertical}.crm-planner-card-note{display:-webkit-box;margin-top:6px;color:rgba(255,255,255,.6);font-size:var(--crm-type-body,12px);line-height:1.35;-webkit-line-clamp:unset;-webkit-box-orient:vertical;overflow:hidden}.crm-planner-card-meta{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;color:rgba(255,255,255,.52);font-size:var(--crm-type-meta,10px);white-space:nowrap}.crm-planner-card-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis}.crm-planner-card-link{display:-webkit-box;margin-top:4px;color:rgba(211,227,249,.56);font-size:var(--crm-type-meta,10px);white-space:normal;overflow-wrap:anywhere;overflow:hidden;-webkit-box-orient:vertical}
       .crm-planner-bucket.crm-object-small{scale:1!important;flex-basis:176px;width:176px;height:min(420px,calc(100vh - 230px));min-height:308px;padding-inline:11px}.crm-planner-card.crm-object-small{scale:1!important;width:140px;height:90px;padding:11px 12px}.crm-planner-card.crm-object-small+.crm-planner-card{margin-top:-50px}.crm-planner-card-list.is-expanded .crm-planner-card.crm-object-small+.crm-planner-card{margin-top:0}.crm-planner-card.crm-object-small .crm-planner-card-note,.crm-planner-card.crm-object-small .crm-planner-card-link{display:none}.crm-planner-card.crm-object-small .crm-planner-card-title{padding-right:40px;font-size:var(--crm-type-body,12px)}.crm-planner-card.crm-object-small .crm-planner-card-meta{padding-top:7px}.crm-planner-card.crm-object-small .crm-planner-card-progress{top:10px;right:10px;width:36px;gap:1px}.crm-planner-card.crm-object-small .crm-planner-card-progress .tk-seg{height:3px}
       .crm-planner-add-card.crm-menu-action{flex:0 0 31px;width:100%;height:31px;text-align:left;padding-left:4px!important;font-size:var(--crm-type-caption,11px)!important;color:rgba(255,255,255,.48)!important}.crm-planner-add-card:hover{color:#fff!important}.crm-planner-empty{height:100%;display:grid;place-items:center;padding:16px;text-align:center;color:rgba(255,255,255,.3);font-size:var(--crm-type-caption,11px)}
       .crm-planner-popover{position:fixed;z-index:9300;width:min(280px,calc(100vw - 28px));padding:9px;display:grid;gap:8px}.crm-planner-popover-title{padding:2px 3px 5px;font-size:var(--crm-type-control,13px);font-weight:700}.crm-planner-popover-hint{padding:0 3px 3px;color:rgba(255,255,255,.48);font-size:var(--crm-type-meta,10px);line-height:1.4}.crm-planner-popover-actions{display:flex;justify-content:flex-end;gap:2px}.crm-planner-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
@@ -161,8 +205,14 @@
       window.crmDomain.list("workflow-entries", { includeDeleted:false, limit:1000 }), window.crmDomain.list("commitments", { includeDeleted:false, limit:1000 }),
       window.crmStore.list("contacts", { includeDeleted:false }), window.crmStore.list("tasks", { includeDeleted:false }), window.crmStore.list("tickets", { includeDeleted:false }),
     ]);
+    const projectRecords = rows(projects).filter((record) => !record.deletedAt);
+    pendingProjectTileMigrations = projectRecords.filter((record) => {
+      const tile = record?.tile;
+      return !tile || Number(tile.schemaVersion) !== 1 || String(tile.id || "") !== String(record.id || "")
+        || String(tile.title || "") !== first(record.title, "Untitled project");
+    });
     return {
-      projects:rows(projects).filter((record) => !record.deletedAt).map(normalizeProject),
+      projects:projectRecords.map(normalizeProject),
       items:rows(items).filter((record) => !record.deletedAt).map(normalizeItem), flows:rows(flows).filter((record) => !record.deletedAt),
       commitments:rows(commitments).filter((record) => !record.deletedAt), contacts:rows(contacts).filter((record) => !record.deletedAt),
       tasks:rows(tasks).filter((record) => !record.deletedAt), tickets:rows(tickets).filter((record) => !record.deletedAt),
@@ -171,8 +221,10 @@
 
   async function createLinkedItem(project, stage, title, note = "", options = {}) {
     const rank = model.items.filter((item) => item.projectId === project.id && item.stageId === stage.id).length;
+    const cardKind = CARD_KINDS.some((kind) => kind.id === String(options.cardKind || "")) ? String(options.cardKind) : "generic";
     const itemResult = await window.crmStore.create("workItems", {
       projectId:project.id, projectTitle:project.title, stageId:stage.id, stageLabel:stage.title, title, note,
+      cardKind,
       dueAt:options.dueAt || null, priority:options.priority || "normal", assignee:options.assignee || null,
       assignedContactId:options.assignedContactId || null, linkedEntityType:options.linkedEntityType || null,
       linkedRecordId:options.linkedRecordId || null, status:stage.kind === "done" ? "completed" : "open", rank,
@@ -182,6 +234,7 @@
     if (options.linkedEntityType && options.linkedRecordId) links.push({ entityType:options.linkedEntityType, recordId:options.linkedRecordId, relation:"supports" });
     const commitmentResult = await window.crmDomain.create("commitments", {
       title, kind:"pipeline-work", status:stage.kind === "done" ? "completed" : "open", dueAt:options.dueAt || null,
+      cardKind,
       priority:options.priority || "normal", assignee:options.assignee || null, projectId:project.id, projectTitle:project.title,
       stageId:stage.id, stageLabel:stage.title, links,
     });
@@ -219,12 +272,32 @@
     localStorage.setItem(MIGRATED_KEY, "true"); return true;
   }
 
+  async function migrateProjectTiles() {
+    if (window.crmHomePreviews?.isCaptureWorker || !pendingProjectTileMigrations.length) return false;
+    if (localStorage.getItem(TILE_MIGRATED_KEY) === "true") {
+      // New records always write canonical tile metadata. If an older build
+      // inserted a legacy-shaped project later, repair it even after the bulk
+      // migration marker was written.
+      pendingProjectTileMigrations = pendingProjectTileMigrations.filter(Boolean);
+    }
+    let migrated = false;
+    for (const source of pendingProjectTileMigrations) {
+      const project = normalizeProject(source);
+      const result = await window.crmStore.update("projects", project.id, { tile:project.tile });
+      if (result?.record) migrated = true;
+    }
+    if (pendingProjectTileMigrations.length) localStorage.setItem(TILE_MIGRATED_KEY, "true");
+    pendingProjectTileMigrations = [];
+    return migrated;
+  }
+
   async function refresh(force = false, reason = "refreshed") {
     if (!force && refreshPromise) return refreshPromise;
     clearTimeout(refreshTimer); refreshTimer = 0;
     const run = refreshTail.catch(() => null).then(async () => {
       model = await load();
       if (await migrateLegacy()) model = await load();
+      if (await migrateProjectTiles()) model = await load();
       if (!model.projects.some((project) => project.id === selectedId)) selectedId = model.projects[0]?.id || "";
       clearTimeout(refreshTimer); refreshTimer = 0; dirty = false; publish(reason); return model;
     });
@@ -241,14 +314,14 @@
   const projectPreviewSignature = (project) => JSON.stringify([
     document.documentElement.dataset.background || "",
     project?.id, project?.title, project?.note, project?.ownerContactId, project?.owner, project?.dueAt,
-    ...stagesOf(project).map((stage) => [stage.id, stage.title, stage.kind, ...itemsInStage(project, stage).map((item) => [item.id, item.title, item.note, item.priority, item.assignee, item.rank])]),
+    ...stagesOf(project).map((stage) => [stage.id, stage.title, stage.kind, ...itemsInStage(project, stage).map((item) => [item.id, item.title, item.note, item.cardKind, item.priority, item.assignee, item.rank])]),
   ]);
   const projectPreviewStateHTML = () => `<div class="crm-home-preview-state" role="status" aria-live="polite"><i class="crm-home-preview-state-mark" aria-hidden="true"></i><span>Preparing view</span></div>`;
-  const projectBucketHTML = (project) => `<button type="button" class="crm-home-bucket crm-project-bucket" data-planner-project="${esc(project.id)}" data-preview-signature="${esc(projectPreviewSignature(project))}" aria-label="Open ${esc(project.title)}"><div class="crm-home-preview" data-project-preview="${esc(project.id)}" data-preview-state="waiting" aria-label="Loading ${esc(project.title)} preview">${projectPreviewStateHTML()}</div></button>`;
+  const projectBucketHTML = (project) => `<button type="button" class="crm-home-bucket crm-project-bucket" data-crm-tile="${esc(project.tile?.id || project.id)}" data-tile-kind="project" data-planner-project="${esc(project.id)}" data-preview-signature="${esc(projectPreviewSignature(project))}" aria-label="Open ${esc(project.title)}"><div class="crm-home-preview" data-project-preview="${esc(project.id)}" data-preview-state="waiting" aria-label="Loading ${esc(project.title)} preview">${projectPreviewStateHTML()}</div></button>`;
   const projectTitleHTML = (project) => `<div class="crm-home-title-slot" data-project-title="${esc(project.id)}"><div class="crm-home-title-glass"><div class="crm-home-title">${esc(project.title)}</div></div></div>`;
-  const createProjectHTML = () => `<button type="button" class="crm-home-bucket crm-project-bucket crm-project-create" data-planner-action="new-project" aria-label="Create project"><div class="crm-home-preview" data-preview-state="ready"><span class="crm-project-create-glyph" aria-hidden="true">+</span></div></button>`;
+  const createProjectHTML = () => `<button type="button" class="crm-home-bucket crm-project-bucket crm-project-create" data-crm-tile="create-project" data-tile-kind="project-create" data-planner-action="new-project" aria-label="Create project"><div class="crm-home-preview" data-preview-state="ready"><span class="crm-project-create-glyph" aria-hidden="true">+</span></div></button>`;
   const createProjectTitleHTML = () => `<div class="crm-home-title-slot crm-project-create-title" data-project-title="create"><div class="crm-home-title-glass"><div class="crm-home-title">Create project</div></div></div>`;
-  const galleryHTML = () => `<div class="crm-project-gallery-shell"><div class="crm-project-gallery-scroll" tabindex="0" aria-label="Scrollable projects"><div class="crm-project-gallery-canvas"><section class="crm-project-tile-grid" aria-label="Projects"></section><div class="crm-project-title-grid"></div></div></div><div class="crm-project-gallery-hsb" aria-hidden="true"><div class="crm-project-gallery-hth"></div></div></div>`;
+  const galleryHTML = () => `<div class="crm-project-gallery-shell"><div class="crm-project-gallery-scroll" tabindex="0" aria-label="Projects"><div class="crm-project-gallery-canvas"><section class="crm-project-tile-grid" data-crm-adaptive-tiles="manual" aria-label="Projects"></section><div class="crm-project-title-grid"></div></div></div><div class="crm-project-gallery-hsb" aria-hidden="true"><div class="crm-project-gallery-hth"></div></div></div>`;
   const isProjectPreviewCurrent = (preview, project) => !!preview?.foregroundSrc && !!preview?.exactSrc
     && preview.version === PROJECT_PREVIEW_VERSION
     && preview.viewState?.signature === projectPreviewSignature(project)
@@ -326,7 +399,7 @@
     if (!project) return "";
     const stages = stagesOf(project);
     return `<div class="crm-planner-frame">
-      <header class="crm-planner-projects"><button type="button" class="crm-planner-project-back crm-menu-action" data-planner-action="projects-back">Projects</button><span class="crm-planner-project-separator" aria-hidden="true">/</span><span class="crm-planner-heading">${esc(project.title)}</span>${projectContextHTML(project)}<span class="crm-planner-world-spacer"></span>${projectMapHTML(project, "crm-planner-world-map")}<div class="crm-planner-head-actions"><button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button></div></header>
+      <header class="crm-planner-projects"><button type="button" class="crm-planner-project-back crm-secondary-control" data-planner-action="projects-back" aria-label="Back to projects" title="Back to projects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6-6 6 6 6"></path></svg></button><span class="crm-planner-heading">${esc(project.title)}</span>${projectContextHTML(project)}<span class="crm-planner-world-spacer"></span>${projectMapHTML(project, "crm-planner-world-map")}<div class="crm-planner-head-actions"><button type="button" class="crm-planner-text-action crm-planner-project-menu crm-menu-action" data-planner-action="project-menu" aria-label="Project options">···</button><button type="button" class="crm-planner-text-action crm-menu-action" data-planner-action="new-stage">Add stage</button></div></header>
       <section class="crm-planner-stage"><div class="crm-planner-buckets" data-planner-scroll-project="${esc(project.id)}" tabindex="0" aria-label="Scrollable project stages">${stages.map((stage) => {
         const items = itemsInStage(project, stage); const expanded = stageExpanded(project.id, stage.id);
         return `<section class="crm-planner-bucket tk-zone${expanded ? " is-stack-expanded" : ""}" data-planner-bucket="${esc(stage.id)}" data-stage="${esc(stage.id)}" data-card-detail-zone data-crm-size-key="${esc(`bucket:planner:${project.id}:${stage.id}`)}"><header class="tk-zone-hd"><span class="tk-zone-title" title="${esc(stage.title)}">${esc(stage.title)}</span><span class="tk-zone-hd-r">${stageProgressHTML(project, stage.id)}<button type="button" class="crm-planner-stage-menu crm-menu-action" data-planner-action="stage-menu" aria-label="${esc(stage.title)} options">···</button></span></header>
@@ -392,6 +465,8 @@
         grid.insertBefore(tile, createTile);
       }
       const signature = projectPreviewSignature(project);
+      tile.dataset.crmTile = project.tile?.id || project.id;
+      tile.dataset.tileKind = "project";
       tile.dataset.previewSignature = signature;
       tile.setAttribute("aria-label", `Open ${project.title}`);
       mountProjectPreview(tile.querySelector(":scope > .crm-home-preview"), projectPreviews.get(project.id));
@@ -418,7 +493,7 @@
     plannerResizeObserver?.disconnect(); layer.classList.add("crm-planner-project-world"); layer.dataset.projectId = project.id;
     let live = layer.querySelector(":scope > .crm-planner-project-live"); if (!live) { live=document.createElement("div"); live.className="crm-planner-project-live"; layer.prepend(live); }
     live.innerHTML = projectWorldHTML(project); ensureProjectTransitionPreview(layer, project);
-    window.crmObjectSizing?.scan?.(layer); wirePlannerScroller(project.id, layer);
+    window.crmObjectSizing?.scan?.(layer); fitPlannerCards(live); wirePlannerScroller(project.id, layer);
   }
   function buildProjectGallery() {
     const layer = document.createElement("div"); renderGalleryLayer(layer); return layer;
@@ -426,7 +501,7 @@
   function buildProjectWorld(project) {
     const layer = document.createElement("div"); layer.className = "crm-planner-level crm-planner-project-world"; layer.dataset.projectId = project?.id || "";
     const acrylic=document.createElement("span"); acrylic.className="crm-project-transition-acrylic"; acrylic.setAttribute("aria-hidden","true"); layer.appendChild(acrylic);
-    const live=document.createElement("div"); live.className="crm-planner-project-live"; live.innerHTML=projectWorldHTML(project); layer.appendChild(live); ensureProjectTransitionPreview(layer, project); return layer;
+    const live=document.createElement("div"); live.className="crm-planner-project-live"; live.innerHTML=projectWorldHTML(project); layer.appendChild(live); ensureProjectTransitionPreview(layer, project); fitPlannerCards(live); return layer;
   }
   const projectAcrylicLens = window.createFractalAcrylicLens({
     frameSelector:":scope > .crm-project-transition-acrylic",
@@ -457,11 +532,15 @@
   function cardInnerHTML(item) {
     const project = projectById(item.projectId);
     const link = item.linkedEntityType ? `${String(item.linkedEntityType).replace(/s$/, "")} · ${first(item.linkedLabel, item.linkedRecordId)}` : "";
-    return `<span class="crm-planner-card-body ticket-body"><span class="crm-planner-card-title">${esc(item.title)}</span>${item.note ? `<span class="crm-planner-card-note">${esc(item.note)}</span>` : ""}<span class="crm-planner-card-meta"><span>${esc(first(item.assignee, "Unassigned"))}</span></span>${link ? `<span class="crm-planner-card-link">${esc(link)}</span>` : ""}</span><span class="tk-bars tk-bars-card crm-planner-card-progress" aria-hidden="true">${progressSegments(project, item.stageId)}</span>`;
+    const semantic = window.crmCardPresentation?.markup?.({ ...item, semanticType:item.cardKind }, item.cardKind) || "";
+    return `${semantic}<span class="crm-planner-card-body ticket-body" data-card-fit-body><span class="crm-planner-card-title" data-card-fit-entry>${esc(item.title)}</span>${item.note ? `<span class="crm-planner-card-note" data-card-fit-entry>${esc(item.note)}</span>` : ""}<span class="crm-planner-card-meta"><span data-card-fit-entry>${esc(first(item.assignee, "Unassigned"))}</span></span>${link ? `<span class="crm-planner-card-link" data-card-fit-entry>${esc(link)}</span>` : ""}</span><span class="tk-bars tk-bars-card crm-planner-card-progress" aria-hidden="true">${progressSegments(project, item.stageId)}</span>`;
   }
   function cardHTML(item) {
-    return `<button type="button" class="crm-planner-card" draggable="true" data-planner-card="${esc(item.id)}" data-card-detail-card data-record-entity="workItems" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:workItems:${item.id}`)}" aria-label="${esc(item.title)}">${cardInnerHTML(item)}</button>`;
+    return `<button type="button" class="crm-planner-card" draggable="true" data-planner-card="${esc(item.id)}" data-card-kind="${esc(item.cardKind)}" data-card-detail-card data-record-entity="workItems" data-record-id="${esc(item.id)}" data-crm-size-key="${esc(`card:workItems:${item.id}`)}" aria-label="${esc(item.title)}">${cardInnerHTML(item)}</button>`;
   }
+  const fitPlannerCards = (scope = document) => requestAnimationFrame(() => {
+    scope?.querySelectorAll?.(".crm-planner-card").forEach((card) => window.crmCardPresentation?.fit?.(card));
+  });
 
   const plannerDetailSource = {
     list:async () => ({ records:clone(model.items) }),
@@ -475,6 +554,7 @@
   ];
   const plannerDetailFields = () => [
     { key:"title", label:"Card title", q:"What needs to happen?" },
+    { key:"cardKind", label:"Card type", options:CARD_KINDS.map((kind) => [kind.id, kind.label]), req:false },
     { key:"note", label:"Details", q:"Add context", area:true, req:false },
     { key:"dueAt", label:"Due", date:true, req:false },
     { key:"assignedContactId", label:"Owner", options:() => [["", "Unassigned"], ...model.contacts.map((contact) => [contact.id, contactName(contact)])], req:false },
@@ -496,7 +576,9 @@
     if (!item) return;
     document.querySelectorAll(`[data-planner-card="${cssValue(item.id)}"]`).forEach((card) => {
       card.innerHTML = cardInnerHTML(item);
+      card.dataset.cardKind = item.cardKind || "generic";
       card.setAttribute("aria-label", first(item.title, "Untitled card"));
+      fitPlannerCards(card.parentElement);
     });
   }
   function queuePlannerDetailFields(itemId, fields = {}) {
@@ -507,6 +589,10 @@
       if (raw.trim()) persist.title = raw.trim();
     }
     if (Object.prototype.hasOwnProperty.call(fields, "note")) display.note = persist.note = String(fields.note || "");
+    if (Object.prototype.hasOwnProperty.call(fields, "cardKind")) {
+      const value = CARD_KINDS.some((kind) => kind.id === String(fields.cardKind || "")) ? String(fields.cardKind) : "generic";
+      display.cardKind = persist.cardKind = value;
+    }
     if (Object.prototype.hasOwnProperty.call(fields, "dueAt")) {
       const value = String(fields.dueAt || ""); display.dueAt = persist.dueAt = value ? new Date(`${value}T17:00:00`).toISOString() : null;
     }
@@ -657,6 +743,23 @@
     floating.addEventListener("submit", async (event) => { event.preventDefault(); const input = floating.elements.value.value.trim(); if (!input) return; const saved = await onSubmit(input); if (saved === false || saved == null) { floating.querySelector(".crm-planner-creator-status").textContent = "Use a unique name."; floating.elements.value.select(); return; } closeFloating(); });
     floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.value?.focus());
   }
+  function openCardCreator(anchor, project = selectedProject(), stage = null, initialKind = "generic") {
+    if (!project) return false;
+    const projectStages = stagesOf(project);
+    const targetStage = stage || projectStages[0];
+    if (!targetStage) return false;
+    const selectedKind = CARD_KINDS.some((kind) => kind.id === String(initialKind)) ? String(initialKind) : "generic";
+    closeFloating(); floating = document.createElement("form"); floating.className = "crm-planner-popover crm-menu-surface";
+    floating.innerHTML = `<div class="crm-planner-popover-title">New card</div><input class="crm-menu-input" name="title" placeholder="Card title" autocomplete="off" required><select class="crm-menu-input" name="stageId" aria-label="Stage">${projectStages.map((candidate) => `<option value="${esc(candidate.id)}"${candidate.id === targetStage.id ? " selected" : ""}>${esc(candidate.title)}</option>`).join("")}</select><select class="crm-menu-input" name="cardKind" aria-label="Card type">${CARD_KINDS.map((kind) => `<option value="${esc(kind.id)}"${kind.id === selectedKind ? " selected" : ""}>${esc(kind.label)}</option>`).join("")}</select><textarea class="crm-menu-input" name="note" placeholder="Details"></textarea><div class="crm-planner-creator-status" role="status" aria-live="polite"></div><div class="crm-planner-popover-actions"><button type="button" class="crm-menu-action" data-cancel>Cancel</button><button type="submit" class="crm-menu-action">Add card</button></div>`;
+    floating.addEventListener("submit", async (event) => {
+      event.preventDefault(); const data = new FormData(floating); const title = String(data.get("title") || "").trim(); if (!title) return;
+      const created = await createCard(project.id, String(data.get("stageId") || targetStage.id), title, String(data.get("note") || "").trim(), { cardKind:String(data.get("cardKind") || "generic") });
+      if (!created) { floating.querySelector(".crm-planner-creator-status").textContent = "The card could not be created."; return; }
+      closeFloating();
+    });
+    floating.querySelector("[data-cancel]")?.addEventListener("click", closeFloating); place(floating, anchor); armOutside(floating); requestAnimationFrame(() => floating?.elements?.title?.focus());
+    return true;
+  }
   const projectOwnerOptions = (selectedId = "") => [["", "Unassigned"], ...model.contacts.map((contact) => [contact.id, contactName(contact)])]
     .map(([value, label]) => `<option value="${esc(value)}"${String(value) === String(selectedId || "") ? " selected" : ""}>${esc(label)}</option>`).join("");
   const projectDateValue = (value) => {
@@ -723,8 +826,12 @@
     const names = []; const seen = new Set();
     if (Array.isArray(stageTitles)) stageTitles.forEach((value) => { const name = String(value || "").trim(); const key = name.toLocaleLowerCase(); if (name && !seen.has(key)) { seen.add(key); names.push(name); } });
     const stages = names.length ? names.map((name, index) => normalizeStage({ id:uid("stage"), title:name, kind:index === 0 ? "queue" : index === names.length - 1 ? "done" : "active", rank:index }, index)) : clone(DEFAULT_STAGES);
-    const result = await window.crmStore.create("projects", { title:String(title || "").trim(), note:String(note || "").trim(), stages, ownerContactId:options.ownerContactId || null, owner:options.owner || null, dueAt:options.dueAt || null });
-    if (!result?.record) return null; selectedId = result.record.id; await refresh(true, "project-created"); return clone(projectById(selectedId));
+    const projectTitle = String(title || "").trim();
+    const result = await window.crmStore.create("projects", { title:projectTitle, note:String(note || "").trim(), stages, ownerContactId:options.ownerContactId || null, owner:options.owner || null, dueAt:options.dueAt || null });
+    if (!result?.record) return null;
+    const normalized = normalizeProject(result.record);
+    await window.crmStore.update("projects", normalized.id, { tile:normalized.tile });
+    selectedId = result.record.id; await refresh(true, "project-created"); return clone(projectById(selectedId));
   }
   async function createStage(projectId, title) {
     const project = projectById(projectId); if (!project) return null; const stages = stagesOf(project); const name = String(title || "").trim();
@@ -759,7 +866,14 @@
     camera.expand(tile); await camera.whenSettled(); return camera.level() === 1;
   }
   async function updateProject(projectId, fields, reason = "project-updated") {
-    const project = projectById(projectId); if (!project) return false; const result = await window.crmStore.update("projects", project.id, fields); if (!result?.record) return false; await refresh(true, reason); return true;
+    const project = projectById(projectId); if (!project) return false;
+    const normalizedFields = { ...fields };
+    if (Object.prototype.hasOwnProperty.call(fields, "title")) {
+      normalizedFields.tile = normalizeTileRecord({ ...project, ...fields, tile:{ ...project.tile, title:String(fields.title || "").trim(), label:String(fields.title || "").trim() } }, {
+        id:project.id, key:project.id, title:String(fields.title || "").trim(), kind:"project", targetType:"project", targetId:project.id,
+      });
+    }
+    const result = await window.crmStore.update("projects", project.id, normalizedFields); if (!result?.record) return false; await refresh(true, reason); return true;
   }
   async function updateItem(itemId, fields, reason = "item-updated", options = {}) {
     const item = itemById(itemId); if (!item) return false; const project = projectById(item.projectId); if (!project) return false;
@@ -777,7 +891,7 @@
     const result = await window.crmStore.update("workItems", item.id, normalizedFields); if (!result?.record) return false;
     const commitment = commitmentFor(item); if (commitment) {
       const commitmentFields = {};
-      ["title","dueAt","priority","assignee","status"].forEach((key) => { if (Object.prototype.hasOwnProperty.call(normalizedFields, key)) commitmentFields[key] = normalizedFields[key]; });
+      ["title","cardKind","dueAt","priority","assignee","status"].forEach((key) => { if (Object.prototype.hasOwnProperty.call(normalizedFields, key)) commitmentFields[key] = normalizedFields[key]; });
       if (moving) Object.assign(commitmentFields, { stageId:nextStage.id, stageLabel:nextStage.title, completedAt:completed ? nowIso() : null, outcome:completed ? `Completed in ${project.title}` : null });
       if (Object.prototype.hasOwnProperty.call(fields, "linkedEntityType") || Object.prototype.hasOwnProperty.call(fields, "linkedRecordId")) {
         const entityType = Object.prototype.hasOwnProperty.call(fields, "linkedEntityType") ? fields.linkedEntityType : item.linkedEntityType;
@@ -865,7 +979,7 @@
       if (action.dataset.plannerAction === "project-menu") projectMenu(action, project);
       if (action.dataset.plannerAction === "new-stage" && project) openTextEditor({ title:"New stage", placeholder:"Stage name", submit:"Add", anchor:action, onSubmit:(value) => createStage(project.id, value) });
       if (action.dataset.plannerAction === "stage-menu" && stage) stageMenu(stage, action);
-      if (action.dataset.plannerAction === "new-card" && project && stage) openTextEditor({ title:`New card · ${stage.title}`, placeholder:"Card title", submit:"Add card", anchor:action, onSubmit:(value) => createCard(project.id, stage.id, value) });
+      if (action.dataset.plannerAction === "new-card" && project && stage) openCardCreator(action, project, stage);
     });
     root.addEventListener("wheel", (event) => {
       if (event.defaultPrevented || event.target.closest?.("button,a,input,select,textarea,[contenteditable],.crm-menu-surface")) return;
@@ -908,19 +1022,22 @@
     if (shell && scroller && canvas && grid && titles) {
       const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--crm-object-gap")) || 18;
       const railInset = parseFloat(getComputedStyle(shell).getPropertyValue("--crm-project-rail-inset")) || 24;
-      const count = Math.max(1, model.projects.length + 1); const rows = Math.min(2, count); const columns = Math.ceil(count / rows);
+      const count = Math.max(1, model.projects.length + 1);
       const preview = model.projects.map((project) => projectPreviews.get(project.id)).find((item) => Number(item?.width) > 0 && Number(item?.height) > 0);
       const aspect = preview ? preview.width / preview.height : innerWidth / innerHeight;
       const availableWidth = Math.max(1, scroller.clientWidth); const availableHeight = Math.max(1, scroller.clientHeight);
-      const heightBound = Math.max(1, (availableHeight - gap * Math.max(0, rows - 1)) / rows); const widthBound = Math.max(1, availableWidth - railInset * 2);
-      const cellWidth = Math.max(1, Math.min(heightBound * aspect, widthBound)); const cellHeight = Math.max(1, cellWidth / aspect);
-      const gridWidth = cellWidth * columns + gap * Math.max(0, columns - 1); const gridHeight = cellHeight * rows + gap * Math.max(0, rows - 1); const overflowing = gridWidth + railInset * 2 > availableWidth + 1;
-      const left = overflowing ? railInset : Math.max(railInset, (availableWidth - gridWidth) / 2); const right = overflowing ? railInset : left; const top = Math.max(0, (availableHeight - gridHeight) / 2);
-      const geometry = { left:`${left}px`, top:`${top}px`, width:`${gridWidth}px`, height:`${gridHeight}px`, gridTemplateColumns:`repeat(${columns},${cellWidth}px)`, gridTemplateRows:`repeat(${rows},${cellHeight}px)` };
-      grid.dataset.projectRows = String(rows); titles.dataset.projectRows = String(rows); Object.assign(grid.style, geometry); Object.assign(titles.style, geometry);
-      canvas.style.width = `${Math.max(availableWidth, left + gridWidth + right)}px`; canvas.style.height = `${availableHeight}px`;
-      camera?.surface?.()?.style.setProperty("--home-r", `${Math.min(64, Math.max(2, 16 / 245 * Math.min(cellWidth, cellHeight) * 2)).toFixed(1)}px`);
-      if (!camera?.isTransitioning?.()) scroller.scrollLeft = clamp(galleryScrollLeft, 0, Math.max(0, scroller.scrollWidth - scroller.clientWidth));
+      const geometry = applyAdaptiveTileGrid({
+        grid,
+        mirror:titles,
+        bounds:{ x:railInset, y:0, width:Math.max(1, availableWidth - railInset * 2), height:availableHeight },
+        count,
+        gap,
+        aspect,
+      });
+      grid.dataset.projectRows = String(geometry?.rows || 1); titles.dataset.projectRows = String(geometry?.rows || 1);
+      canvas.style.width = `${availableWidth}px`; canvas.style.height = `${availableHeight}px`;
+      camera?.surface?.()?.style.setProperty("--home-r", `${Math.min(64, Math.max(2, 16 / 245 * Math.min(geometry?.cellWidth || 1, geometry?.cellHeight || 1) * 2)).toFixed(1)}px`);
+      if (!camera?.isTransitioning?.()) { galleryScrollLeft = 0; scroller.scrollLeft = 0; }
       requestAnimationFrame(() => updateProjectGalleryScroll(layer));
     }
     if (camera?.level?.() > 0) requestAnimationFrame(updatePlannerScrollEdges);
@@ -972,10 +1089,12 @@
         if (direction === "expand") {
           revealProjectWorld(context.layers[1]);
           const project = selectedProject(); if (project) wirePlannerScroller(project.id, context.layers[1]);
-          window.crmObjectSizing?.scan?.(context.layers[1]);
+          window.crmObjectSizing?.scan?.(context.layers[1]); fitPlannerCards(context.layers[1]);
         }
         if (direction === "contract") { clearProjectCameraTarget(context); closeFloating(); }
+        contextAddChanged(`planner-${direction === "expand" ? "project" : "projects"}`);
       },
+      onLevelChange:() => contextAddChanged("planner-level"),
       onRootBack:() => window.crmDeskTransit?.driveTo?.("home"),
     });
     camera.init(); root = camera.surface(); wire();
@@ -1057,7 +1176,62 @@
     card?.scrollIntoView?.({ block:"nearest", inline:"nearest" }); if (card) openPlannerItem(item, card);
     return !!card;
   }
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), createProject, createPipeline:createProject, updateProject, createStage, createBucket, createCard, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  registerContextAddProvider("planner:projects", () => ({
+    contextKey:"planner:projects",
+    label:"Projects",
+    actions:[{
+      id:"planner-project",
+      label:"Project",
+      description:"Create a project tile and its stage structure",
+      kind:"project",
+      execute:async ({ anchor, title, note, stageTitles, ...options } = {}) => {
+        if (String(title || "").trim()) return !!(await createProject(title, note, stageTitles, options));
+        return openProjectCreator(anchor) !== false;
+      },
+    }],
+  }));
+  registerContextAddProvider("planner:project", () => {
+    const project = selectedProject();
+    return {
+      contextKey:"planner:project",
+      label:project?.title || "Project",
+      actions:[
+        {
+          id:"planner-stage",
+          label:"Stage",
+          description:"Add a stage to this project",
+          kind:"stage",
+          disabled:!project,
+          execute:async ({ anchor, title } = {}) => {
+            if (!project) return false;
+            if (String(title || "").trim()) return !!(await createStage(project.id, title));
+            openTextEditor({ title:"New stage", placeholder:"Stage name", submit:"Add", anchor, onSubmit:(value) => createStage(project.id, value) });
+            return true;
+          },
+        },
+        {
+          id:"planner-card-types",
+          label:"Cards",
+          kind:"card",
+          children:CARD_KINDS.map((cardKind) => ({
+            id:`planner-card-${cardKind.id}`,
+            label:cardKind.label,
+            group:"Cards",
+            kind:cardKind.id,
+            disabled:!project,
+            execute:async ({ anchor, title, note, stageId, ...options } = {}) => {
+              if (!project) return false;
+              const stage = stageById(project, stageId) || stagesOf(project)[0];
+              if (!stage) return false;
+              if (String(title || "").trim()) return !!(await createCard(project.id, stage.id, title, note, { ...options, cardKind:cardKind.id }));
+              return openCardCreator(anchor, project, stage, cardKind.id);
+            },
+          })),
+        },
+      ],
+    };
+  });
+  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), cardKinds:() => clone(CARD_KINDS), createProject, createPipeline:createProject, updateProject, createStage, createBucket, createCard, openProjectCreator, openCardCreator, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
   document.addEventListener("crm:object-size-change", (event) => { if (event.detail?.homeKey === "planner") scheduleProjectPreviews(selectedId); });
   window.addEventListener("resize", () => { camera?.layout?.(); scheduleProjectPreviews(); });

@@ -3865,7 +3865,8 @@ body.workspace-page-swipe-dragging{
   inset: 12px auto auto 67px;
 }
 /* ── DESIGN SYSTEM §5: the circular glass control button (top-bar icon buttons). See DESIGN_SYSTEM.md. ── */
-.window-glass-control{
+.window-glass-control,
+.crm-secondary-control{
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -3894,6 +3895,38 @@ body.workspace-page-swipe-dragging{
     background .18s ease,
     box-shadow .18s ease,
     color .18s ease;
+}
+.crm-secondary-control{
+  --crm-secondary-control-size: 46px;
+  width: var(--crm-secondary-control-size) !important;
+  height: var(--crm-secondary-control-size) !important;
+  min-width: var(--crm-secondary-control-size) !important;
+  min-height: var(--crm-secondary-control-size) !important;
+  max-width: var(--crm-secondary-control-size) !important;
+  max-height: var(--crm-secondary-control-size) !important;
+  padding: 0 !important;
+  border: 1px solid var(--secondary-control-border) !important;
+  border-radius: 50% !important;
+  background: var(--secondary-control-surface) !important;
+  color: rgba(244, 247, 252, .90) !important;
+  box-shadow: var(--secondary-control-shadow) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(120%) !important;
+  backdrop-filter: blur(18px) saturate(120%) !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  line-height: 1 !important;
+}
+.crm-secondary-control > svg,
+.crm-secondary-control > .crm-secondary-control-glyph{
+  position: relative;
+  inset: auto;
+  display: block;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  transform: none;
+  transform-origin: center;
 }
 .window-glass-control::before{
   content: "";
@@ -4157,12 +4190,12 @@ body.workspace-page-swipe-dragging{
   background-clip: padding-box;
 }
 .bg-picker-pop::-webkit-scrollbar-thumb:hover{ background: rgba(255, 255, 255, .42); background-clip: padding-box; }
-.window-minimize-control::before{
+.window-add-control::before{
   width: 15px;
   height: 15px;
   background: currentColor;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E") center / contain no-repeat;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .window-close-control::before{
   width: 15px;
@@ -4180,6 +4213,9 @@ body.workspace-page-swipe-dragging{
 }
 .window-glass-control:hover,
 .window-glass-control:focus-visible,
+.crm-secondary-control:hover:not(:disabled),
+.crm-secondary-control:focus-visible,
+.crm-secondary-control[aria-expanded="true"],
 .control-bar-gear[aria-expanded="true"]{
   color: #ffffff;
   background: transparent;
@@ -4190,16 +4226,93 @@ body.workspace-page-swipe-dragging{
     inset 0 -4px 12px rgba(255, 255, 255, .04);
   transform: translateY(1px) scale(.985);
 }
-.window-glass-control:active{
+.crm-secondary-control:hover:not(:disabled),
+.crm-secondary-control:focus-visible,
+.crm-secondary-control[aria-expanded="true"]{
+  background: var(--secondary-control-surface-hover) !important;
+  color: #ffffff !important;
+  border-color: rgba(230, 236, 244, .42) !important;
+  box-shadow:
+    0 7px 16px rgba(15, 23, 42, .28),
+    inset 0 1px 0 rgba(255, 255, 255, .30),
+    inset 0 7px 16px rgba(15, 23, 42, .10),
+    inset 0 -4px 12px rgba(255, 255, 255, .04) !important;
+}
+.window-glass-control:active,
+.crm-secondary-control:active:not(:disabled){
   transform: translateY(2px) scale(.97);
   box-shadow:
     0 4px 10px rgba(15, 23, 42, .16),
     inset 0 8px 18px rgba(15, 23, 42, .12),
     inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 52%, transparent);
 }
-.window-glass-control:focus-visible{
+.window-glass-control:focus-visible,
+.crm-secondary-control:focus-visible{
   outline: 2px solid rgba(255, 255, 255, .58);
   outline-offset: 3px;
+}
+.crm-secondary-control:disabled{
+  opacity: .34;
+  cursor: default;
+  filter: saturate(.55);
+}
+
+/* Context-aware add menu. Its material comes from .crm-menu-surface, which is
+   the shared account/background menu recipe; these rules only own placement
+   and content flow. */
+.context-add-menu{
+  position: fixed;
+  z-index: calc(var(--z-menu-overlay, 2600) + 30);
+  width: min(274px, calc(100vw - 24px));
+  max-height: calc(100vh - 82px);
+  box-sizing: border-box;
+  padding: 9px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+}
+.context-add-menu[hidden]{ display: none !important; }
+.context-add-menu-heading,
+.context-add-group-label{
+  flex: 0 0 auto;
+  padding: 0 12px;
+  color: rgba(255, 255, 255, .48);
+  font-size: var(--crm-type-meta, 10px);
+  font-weight: 700;
+  letter-spacing: .055em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+.context-add-menu-actions{
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+}
+.context-add-action{
+  min-height: 30px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  gap: 2px;
+  white-space: normal !important;
+}
+.context-add-action:disabled{ opacity: .38; cursor: default !important; }
+.context-add-action-label{ color: inherit; line-height: 1.2; }
+.context-add-action-description{
+  color: rgba(255, 255, 255, .38);
+  font-size: var(--crm-type-meta, 10px);
+  font-weight: 500;
+  line-height: 1.25;
+}
+.context-add-empty{
+  padding: 4px 12px;
+  color: rgba(255, 255, 255, .48);
+  font-size: var(--crm-type-body, 12px);
+  line-height: 1.4;
 }
 .app-nav.workspace-chrome.floating-control-bar:not(.settings-nav){
   position: fixed;

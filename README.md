@@ -53,6 +53,7 @@ Integration checks:
 ```bash
 npm run test:cdms
 npm run test:cdms:electron
+npm run test:cdms:auth
 ```
 
 ## Source repos

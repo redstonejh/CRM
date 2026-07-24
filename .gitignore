@@ -16,3 +16,6 @@ tools/visual/electron-actual/
 
 # live CDMS QA output can contain client names, usernames, and IP addresses
 tools/visual/shots/cdms-integration/
+
+# native authentication smoke screenshots are ephemeral QA evidence
+tools/visual/shots/cdms-auth/

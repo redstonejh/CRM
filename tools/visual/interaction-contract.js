@@ -110,7 +110,7 @@ async function main() {
       return style.fontSize === '15px' && style.fontWeight === '600'
         && style.fontFamily.includes('Segoe UI Variable Text') && !style.textShadow.includes('12px')
         && !title.closest('.crm-home-bucket');
-    }) && getComputedStyle(document.querySelector('.crm-home-level')).willChange === 'auto';
+    }) && getComputedStyle(document.querySelector('.crm-home-level')).willChange.includes('transform');
   });
   await check('Home has a visible progressive state while previews prepare', () => {
     const states = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-state[role="status"]')];
@@ -970,12 +970,13 @@ async function main() {
       && dormant.every((element) => getComputedStyle(element).display === 'none')
       && fans.length === 2 && fans.every((element) => {
         const rect = element.getBoundingClientRect(); const style = getComputedStyle(element);
-        const iconRect = element.querySelector(':scope > svg')?.getBoundingClientRect();
+        const glyph = getComputedStyle(element, '::before');
         return Math.abs(rect.width - 46) <= 1 && Math.abs(rect.height - 46) <= 1
           && (style.borderRadius === '50%' || parseFloat(style.borderRadius) >= 22)
-          && element.classList.contains('crm-secondary-control') && !!iconRect
-          && Math.abs((iconRect.left + iconRect.width / 2) - (rect.left + rect.width / 2)) <= 1
-          && Math.abs((iconRect.top + iconRect.height / 2) - (rect.top + rect.height / 2)) <= 1
+          && element.classList.contains('crm-secondary-control')
+          && style.display === 'flex' && style.alignItems === 'center' && style.justifyContent === 'center'
+          && Math.abs(parseFloat(glyph.width) - 18) <= 1 && Math.abs(parseFloat(glyph.height) - 18) <= 1
+          && glyph.maskImage !== 'none'
           && element.getAttribute('aria-expanded') === 'false' && !!element.querySelector('.tk-fan-motion')
           && !element.closest('.tk-zone') && !element.classList.contains('crm-menu-action');
       })
@@ -1000,23 +1001,27 @@ async function main() {
     const shades = [...deck.querySelectorAll('.tk-edge-shade')].map((shade) => parseFloat(shade.style.width || '0'));
     return { ok:point.y>point.barBottom&&matrix.m41 < -1 && deck.querySelector('.tk-bar')?.classList.contains('is-on') && shades.some((width) => width > 0), detail:`x ${Math.round(matrix.m41)} · shade ${Math.round(Math.max(0,...shades))}px` };
   }, leftFanPoint);
-  await check('The exact open-fan viewport is included in the Home preview handoff', () => {
+  await check('Open fans remain live interactions but are excluded from Home preview state', () => {
     const state = window.ticketStacks?.homePreviewState?.();
-    return !!state?.fan?.left?.open && state.fan.left.scrollX < -1 && state?.fan?.right?.open === false;
+    const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
+    return deck?.classList.contains('is-fanned')
+      && state?.fan?.left?.open === false && state.fan.left.scrollX === 0
+      && state?.fan?.right?.open === false && state.fan.right.scrollX === 0;
   });
   await page.evaluate(async () => {
     const state = window.ticketStacks.homePreviewState();
-    window.ticketStacks.fan('left', false);
+    state.fan.left = { open:true, scrollX:-240 };
     await window.ticketStacks.applyHomePreviewState(state);
   });
   await sleep(240);
-  await check('Applying that Home preview handoff restores the identical fan and scroll position', () => {
+  await check('Applying a legacy open-fan handoff restores canonical collapsed buckets', () => {
     const state = window.ticketStacks?.homePreviewState?.();
-    const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
-    const matrix = new DOMMatrixReadOnly(getComputedStyle(deck?.querySelector('.tk-track')).transform);
-    return !!state?.fan?.left?.open && state.fan.left.scrollX < -1 && Math.abs(matrix.m41 - state.fan.left.scrollX) < 1;
+    const decks = [...document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left, [data-crm-theater="tickets"]:not([hidden]) .tk-deck-right')];
+    return decks.length === 2
+      && decks.every((deck) => !deck.classList.contains('is-fanned')
+        && deck.querySelector(':scope > .tk-arrow')?.getAttribute('aria-expanded') === 'false')
+      && Object.values(state?.fan || {}).every((fan) => fan.open === false && fan.scrollX === 0);
   });
-  await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left > .tk-arrow'); await sleep(520);
   await page.click('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-right > .tk-arrow'); await sleep(520);
   await check('The right corner stack mirrors the same fan choreography', () => {
     const left = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');

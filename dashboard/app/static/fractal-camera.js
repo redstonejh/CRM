@@ -265,6 +265,7 @@
     const whenSettled = () => transitioning ? new Promise((resolve) => transitionWaiters.push(resolve)) : Promise.resolve(ctx());
     const afterTransform = (el, fn) => {
       let done = false;
+      let fallback = 0;
       const finish = () => {
         if (done) return;
         done = true;
@@ -275,8 +276,16 @@
       const onEnd = (event) => {
         if (event.target === el && event.propertyName === "transform") finish();
       };
-      const fallback = setTimeout(finish, morphMs + 35);
       el.addEventListener("transitionend", onEnd);
+      // Precomposed cameras wait two paints before applying their transform.
+      // Starting this watchdog while setup is still pending can make a cold
+      // raster hitch consume part of the morph budget and tear the scene down
+      // before its CSS transition reaches the endpoint. Arm the listener now,
+      // but let the caller start the fallback at the exact transform trigger.
+      return () => {
+        if (done || fallback) return;
+        fallback = setTimeout(finish, morphMs + 35);
+      };
     };
     const transitionFrame = (fn) => requestAnimationFrame(() => {
       if (precomposeTransitions) requestAnimationFrame(fn);
@@ -414,12 +423,14 @@
       // synchronous layout. Cameras without precomposition retain the legacy
       // flush because their transition begins on the next frame.
       if (!precomposeTransitions) void expander.offsetWidth;
+      let armTransformFallback = () => {};
       transitionFrame(() => {
         config.onTransformStart?.("expand", ctx());
         expander.dataset.fractalFrame = "viewport";
         expander.style.transition = keepExpanderOpaque
           ? `transform ${morphMs}ms ${ease}`
           : `transform ${morphMs}ms ${ease}, opacity ${expandFadeMs}ms ease`;
+        armTransformFallback();
         expander.style.transform = "none";
         expander.style.opacity = "1";
         below.style.transition = keepBelowVisible
@@ -440,7 +451,7 @@
         settleWaiters();
       });
       config.onTransitionStart?.("expand", ctx());
-      afterTransform(expander, () => {
+      armTransformFallback = afterTransform(expander, () => {
         if (seq !== transitionSeq) return;
         commit();
         expander.style.transition = "none";
@@ -510,6 +521,7 @@
       });
       config.onTransitionStart?.("contract", ctx());
       if (!precomposeTransitions) void below.offsetWidth;
+      let armTransformFallback = () => {};
       const beginTransition = () => {
         if (seq !== transitionSeq) return;
         config.onTransformStart?.("contract", ctx());
@@ -524,6 +536,7 @@
         expander.style.transition = keepExpanderOpaque
           ? `transform ${morphMs}ms ${ease}`
           : `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`;
+        armTransformFallback();
         expander.style.transform = `translate(${(rx - E.x).toFixed(2)}px, ${(ry - E.y).toFixed(2)}px) scale(${(sourceRect.w / E.w).toFixed(5)}, ${(sourceRect.h / E.h).toFixed(5)})`;
         expander.style.opacity = keepExpanderOpaque ? "1" : "0";
       };
@@ -534,7 +547,7 @@
         requestAnimationFrame(beginTransition);
       });
       else transitionFrame(beginTransition);
-      afterTransform(expander, () => {
+      armTransformFallback = afterTransform(expander, () => {
         if (seq !== transitionSeq) {
           expander.remove();
           return;

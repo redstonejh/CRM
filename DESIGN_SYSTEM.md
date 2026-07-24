@@ -154,22 +154,24 @@ icon is a 15×15 CSS `mask` on `::before`.
 
 Physical controls away from the top bar — Home, Back/Forward, year arrows,
 project Back, and card-stack fan controls — must add `.crm-secondary-control`.
-That class inherits the geometry and interactions above exactly, then applies
-only the neutral grey acrylic tokens from `tokens.css`:
+That class inherits the geometry and interactions above exactly, then consumes
+the canonical bucket acrylic tokens from `tokens.css` byte-for-byte:
 
 ```css
 .crm-secondary-control {
   width: 46px; height: 46px; border-radius: 50%;
-  background: var(--secondary-control-surface);
-  border-color: var(--secondary-control-border);
-  box-shadow: var(--secondary-control-shadow);
-  backdrop-filter: blur(18px) saturate(120%);
+  background: var(--bucket-acrylic-surface);
+  border-color: var(--bucket-acrylic-border);
+  box-shadow: var(--bucket-acrylic-shadow);
+  backdrop-filter: var(--bucket-acrylic-filter);
 }
-.crm-secondary-control > svg { width: 17px; height: 17px; }
+.crm-secondary-control::before { width: 18px; height: 18px; }
 ```
 
-Use a direct, centered SVG child. Never add `.crm-menu-action` or a bespoke
-shape/material to a physical control.
+Symbols come from the shared 24×24 CSS-mask registry in `themes.css`; the
+primitive centers each in one 18×18 optical box. Inline SVG children are legacy
+fallbacks only. Never add `.crm-menu-action`, a bespoke symbol geometry, or a
+look-alike material to a physical control.
 
 ### ⛔ There is NO blue / oval / glowing button — anywhere
 The old global blue-pill `button {}` style (999px radius + `var(--blue)` background +

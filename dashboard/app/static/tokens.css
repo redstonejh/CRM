@@ -57,17 +57,23 @@
   --shadow-soft: 0 2px 6px rgba(15, 23, 42, .04);
   --shadow-glass: 0 18px 42px rgba(15, 23, 42, .10), inset 0 1px 0 var(--glass-highlight);
   --shadow-control: 0 8px 20px rgba(15, 23, 42, .08), inset 0 1px 0 var(--glass-highlight);
-  /* Physical controls outside the top chrome inherit the circular control
-     recipe, then add this one neutral acrylic material override. */
-  --secondary-control-surface:
-    linear-gradient(155deg, rgba(104, 112, 124, .66), rgba(48, 55, 66, .62));
-  --secondary-control-surface-hover:
-    linear-gradient(155deg, rgba(118, 127, 140, .72), rgba(55, 63, 75, .68));
-  --secondary-control-border: rgba(224, 230, 239, .30);
-  --secondary-control-shadow:
-    0 9px 20px rgba(15, 23, 42, .24),
-    inset 0 1px 0 rgba(255, 255, 255, .24),
-    inset 0 -8px 16px rgba(15, 23, 42, .14);
+  /* Canonical bucket acrylic. Pipeline/stage buckets and every physical
+     viewport control consume these same tokens; there is no look-alike
+     secondary tint to drift out of sync. */
+  --bucket-acrylic-surface: var(--crm-menu-background,
+    linear-gradient(180deg, rgba(22, 26, 36, .62), rgba(12, 16, 24, .55)));
+  --bucket-acrylic-filter: var(--crm-menu-filter, blur(26px) saturate(140%));
+  --bucket-acrylic-border: var(--crm-menu-border, rgba(255, 255, 255, .22));
+  --bucket-acrylic-shadow:
+    inset 0 1px 0 var(--crm-menu-highlight, rgba(255, 255, 255, .24)),
+    0 18px 42px var(--crm-menu-shadow, rgba(0, 0, 0, .40));
+  /* Secondary controls inherit the bucket material byte-for-byte. Only their
+     circular geometry and control interactions differ. */
+  --secondary-control-surface: var(--bucket-acrylic-surface);
+  --secondary-control-surface-hover: var(--bucket-acrylic-surface);
+  --secondary-control-filter: var(--bucket-acrylic-filter);
+  --secondary-control-border: var(--bucket-acrylic-border);
+  --secondary-control-shadow: var(--bucket-acrylic-shadow);
   --radius-lg: 24px;
   --radius-md: 16px;
   --radius-sm: 12px;

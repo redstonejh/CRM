@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-07-24T19:41:43.274Z",
+  "generatedAt": "2026-07-24T21:40:33.316Z",
   "viewport": {
     "width": 1600,
     "height": 1000
   },
-  "passed": 22,
+  "passed": 25,
   "failed": 0,
   "pageErrors": [],
   "consoleErrors": [
@@ -83,15 +83,20 @@
       "name": "Visible secondary controls are 46px circular acrylic with centered symbols",
       "ok": true,
       "detail": {
-        "controls": 6,
+        "controls": 3,
         "labels": [
-          "Fan out active tickets",
-          "Fan out resolved tickets",
-          "Create assignment",
           "Back",
           "Return Home",
           "Forward"
-        ]
+        ],
+        "iconSize": "18px",
+        "bucketMaterial": {
+          "background": "rgba(0, 0, 0, 0)",
+          "backgroundImage": "linear-gradient(rgba(22, 26, 36, 0.62), rgba(12, 16, 24, 0.55))",
+          "backdrop": "blur(26px) saturate(1.4)",
+          "borderColor": "rgba(255, 255, 255, 0.22)",
+          "boxShadow": "rgba(255, 255, 255, 0.24) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.4) 0px 18px 42px 0px"
+        }
       }
     },
     {
@@ -218,6 +223,20 @@
       }
     },
     {
+      "name": "Planner controls inherit the complete secondary-control contract",
+      "ok": true,
+      "detail": {
+        "controls": 4,
+        "labels": [
+          "Back to projects",
+          "Back",
+          "Return Home",
+          "Forward"
+        ],
+        "iconSize": "18px"
+      }
+    },
+    {
       "name": "Tickets retains the global top-right three-button scheme",
       "ok": true,
       "detail": {
@@ -243,7 +262,12 @@
       "name": "Ticket stack controls keep the same centered 46px recipe",
       "ok": true,
       "detail": {
-        "controls": 2
+        "controls": 2,
+        "labels": [
+          "Fan out active tickets",
+          "Fan out resolved tickets"
+        ],
+        "iconSize": "18px"
       }
     },
     {
@@ -255,6 +279,35 @@
           "work",
           "task"
         ]
+      }
+    },
+    {
+      "name": "Assignment controls inherit the complete secondary-control contract",
+      "ok": true,
+      "detail": {
+        "controls": 4,
+        "labels": [
+          "Create assignment",
+          "Back",
+          "Return Home",
+          "Forward"
+        ],
+        "iconSize": "18px"
+      }
+    },
+    {
+      "name": "Calendar year controls inherit the complete secondary-control contract",
+      "ok": true,
+      "detail": {
+        "controls": 5,
+        "labels": [
+          "Previous year",
+          "Next year",
+          "Back",
+          "Return Home",
+          "Forward"
+        ],
+        "iconSize": "18px"
       }
     },
     {

@@ -515,10 +515,10 @@
       .tk-zones { display: contents; }
       .tk-zone { position: fixed; z-index: 800; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
-        background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
-        -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
-        border: 1px solid rgba(255,255,255,0.14);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
+        background: var(--bucket-acrylic-surface);
+        -webkit-backdrop-filter: var(--bucket-acrylic-filter); backdrop-filter: var(--bucket-acrylic-filter);
+        border: 1px solid var(--bucket-acrylic-border);
+        box-shadow: var(--bucket-acrylic-shadow);
         transition: left .2s ${EASE}, top .2s ${EASE}, width .2s ${EASE}, height .2s ${EASE}, border-color .18s ease, box-shadow .18s ease, background .18s ease; }
       /* In focus: lift the bucket above the scrim (sharp). Out of focus it simply rests below the scrim
          and the scrim blurs it — the same crisp depth-of-field whether the bin is closed, a stack is

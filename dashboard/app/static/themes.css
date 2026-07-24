@@ -3898,6 +3898,9 @@ body.workspace-page-swipe-dragging{
 }
 .crm-secondary-control{
   --crm-secondary-control-size: 46px;
+  --crm-secondary-control-icon-size: 18px;
+  --crm-secondary-control-icon: none;
+  --crm-secondary-control-icon-transform: none;
   width: var(--crm-secondary-control-size) !important;
   height: var(--crm-secondary-control-size) !important;
   min-width: var(--crm-secondary-control-size) !important;
@@ -3910,23 +3913,65 @@ body.workspace-page-swipe-dragging{
   background: var(--secondary-control-surface) !important;
   color: rgba(244, 247, 252, .90) !important;
   box-shadow: var(--secondary-control-shadow) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(120%) !important;
-  backdrop-filter: blur(18px) saturate(120%) !important;
+  -webkit-backdrop-filter: var(--secondary-control-filter) !important;
+  backdrop-filter: var(--secondary-control-filter) !important;
   -webkit-appearance: none !important;
   appearance: none !important;
   line-height: 1 !important;
+  overflow: visible;
 }
-.crm-secondary-control > svg,
-.crm-secondary-control > .crm-secondary-control-glyph{
-  position: relative;
-  inset: auto;
+.crm-secondary-control::before{
+  content: "";
   display: block;
   flex: 0 0 auto;
-  width: 17px;
-  height: 17px;
+  width: var(--crm-secondary-control-icon-size);
+  height: var(--crm-secondary-control-icon-size);
   margin: 0;
-  transform: none;
+  background: currentColor;
+  -webkit-mask: var(--crm-secondary-control-icon) center / contain no-repeat;
+  mask: var(--crm-secondary-control-icon) center / contain no-repeat;
+  transform: var(--crm-secondary-control-icon-transform);
   transform-origin: center;
+  pointer-events: none;
+}
+/* Legacy inline SVGs remain in the markup as no-script fallbacks. The rendered
+   symbol is the shared mask above, so no consumer can introduce a different
+   stroke weight, optical box, or accidental off-centre viewBox. */
+.crm-secondary-control > svg:not(.tk-ring),
+.crm-secondary-control > .crm-secondary-control-glyph{
+  display: none !important;
+}
+/* One optical icon set for every physical viewport control. All glyphs use the
+   same 24×24 coordinate system and occupy the same 18×18 rendered box. */
+.crm-history-control[data-crm-history-back],
+.crm-planner-project-back,
+.fc-year-btn[data-year-step="-1"]{
+  --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 5-7 7 7 7'/%3E%3C/svg%3E");
+}
+.crm-history-control[data-crm-history-forward],
+.fc-year-btn[data-year-step="1"]{
+  --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 5 7 7-7 7'/%3E%3C/svg%3E");
+}
+.crm-home-control{
+  --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 10.5 8-6.5 8 6.5'/%3E%3Cpath d='M6 9.5V20h12V9.5M10 20v-6h4v6'/%3E%3C/svg%3E");
+}
+.crm-assignment-new,
+.tk-stack-btn.tk-create-action,
+.tk-stack-btn[aria-label*="Create"]{
+  --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 4.5v15M4.5 12h15'/%3E%3C/svg%3E");
+}
+.tk-arrow{
+  --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='7' width='11.5' height='11.5' rx='2'/%3E%3Cpath d='M6.5 4h8.5a2 2 0 0 1 2 2v2.5M16.5 9.5 20 12l-3.5 2.5M20 12h-5'/%3E%3C/svg%3E");
+}
+/* The right-pointing fan glyph is mirrored only when the deck's physical open
+   edge is on the left. aria-expanded reverses that direction for collapse. */
+.tk-deck-left .tk-arrow[aria-expanded="true"],
+.tk-deck-right .tk-arrow:not([aria-expanded="true"]),
+.tk-deck-trash .tk-arrow:not([aria-expanded="true"]){
+  --crm-secondary-control-icon-transform: scaleX(-1);
+}
+.tk-stack-btn:not(.tk-create-action):not([aria-label*="Create"]){
+  --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 7 2.3-3L12 7M9.3 4A8.5 8.5 0 0 1 20 10M17 17l-2.3 3L12 17m2.7 3A8.5 8.5 0 0 1 4 14M4 10a8.6 8.6 0 0 1 1.6-3.4M20 14a8.6 8.6 0 0 1-1.6 3.4'/%3E%3C/svg%3E");
 }
 .window-glass-control::before{
   content: "";
@@ -4231,12 +4276,8 @@ body.workspace-page-swipe-dragging{
 .crm-secondary-control[aria-expanded="true"]{
   background: var(--secondary-control-surface-hover) !important;
   color: #ffffff !important;
-  border-color: rgba(230, 236, 244, .42) !important;
-  box-shadow:
-    0 7px 16px rgba(15, 23, 42, .28),
-    inset 0 1px 0 rgba(255, 255, 255, .30),
-    inset 0 7px 16px rgba(15, 23, 42, .10),
-    inset 0 -4px 12px rgba(255, 255, 255, .04) !important;
+  border-color: var(--secondary-control-border) !important;
+  box-shadow: var(--secondary-control-shadow) !important;
 }
 .window-glass-control:active,
 .crm-secondary-control:active:not(:disabled){
@@ -4246,15 +4287,21 @@ body.workspace-page-swipe-dragging{
     inset 0 8px 18px rgba(15, 23, 42, .12),
     inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 52%, transparent);
 }
+.crm-secondary-control:active:not(:disabled){
+  background: var(--secondary-control-surface) !important;
+  border-color: var(--secondary-control-border) !important;
+  box-shadow: var(--secondary-control-shadow) !important;
+}
 .window-glass-control:focus-visible,
 .crm-secondary-control:focus-visible{
   outline: 2px solid rgba(255, 255, 255, .58);
   outline-offset: 3px;
 }
 .crm-secondary-control:disabled{
-  opacity: .34;
+  opacity: 1;
+  color: rgba(244, 247, 252, .30) !important;
   cursor: default;
-  filter: saturate(.55);
+  filter: none;
 }
 
 /* Context-aware add menu. Its material comes from .crm-menu-surface, which is

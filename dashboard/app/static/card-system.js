@@ -11,13 +11,13 @@
 // truncation rules or look-alike icon set.
 const crmCardFace = global.crmCardFace || (() => {
   const ICON_PATHS = Object.freeze({
-    ticket: '<path d="M6.25 4.5h11.5a1.75 1.75 0 0 1 1.75 1.75v2.1a3.65 3.65 0 0 0 0 7.3v2.1a1.75 1.75 0 0 1-1.75 1.75H6.25a1.75 1.75 0 0 1-1.75-1.75v-2.1a3.65 3.65 0 0 0 0-7.3v-2.1A1.75 1.75 0 0 1 6.25 4.5Z"/><path d="M12 7.25v1.5m0 2.25v2m0 2.25v1.5"/>',
-    person: '<circle cx="12" cy="8.15" r="3.65"/><path d="M5.25 19.5c.42-4.05 2.67-6.1 6.75-6.1s6.33 2.05 6.75 6.1"/>',
-    money: '<rect x="3.75" y="6" width="16.5" height="12" rx="2.25"/><path d="M7 9.25c1.15 0 2.08-.93 2.08-2.08m7.92 2.08c-1.15 0-2.08-.93-2.08-2.08M7 14.75c1.15 0 2.08.93 2.08 2.08m7.92-2.08c-1.15 0-2.08.93-2.08 2.08"/><circle cx="12" cy="12" r="2.3"/>',
-    work: '<path d="M8.2 6.2V4.75c0-.69.56-1.25 1.25-1.25h5.1c.69 0 1.25.56 1.25 1.25V6.2"/><rect x="3.5" y="6.2" width="17" height="13.3" rx="2.25"/><path d="M3.75 11.35c5.5 2.4 11 2.4 16.5 0M10 12.35h4"/>',
-    task: '<rect x="4.25" y="4.25" width="15.5" height="15.5" rx="2.4"/><path d="m7.6 12 2.45 2.45 6.35-6.35"/>',
-    company: '<path d="M5 20V5.25c0-.69.56-1.25 1.25-1.25h7.5c.69 0 1.25.56 1.25 1.25V20m0-10.5h2.75c.69 0 1.25.56 1.25 1.25V20M3.5 20h17"/><path d="M8 7.5h1m2 0h1m-4 3h1m2 0h1m-4 3h1m2 0h1"/>',
-    card: '<rect x="4" y="3.75" width="16" height="16.5" rx="2.5"/><path d="M7.5 8h9M7.5 11.5h6M7.5 15h4"/>',
+    ticket: '<path d="M5 5h14a1 1 0 0 1 1 1v3a3 3 0 0 0 0 6v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a3 3 0 0 0 0-6V6a1 1 0 0 1 1-1Z"/><path d="M12 7.25v1.5m0 2.25v2m0 2.25v1.5"/>',
+    person: '<circle cx="12" cy="8" r="3.25"/><path d="M4.75 20c.5-4.35 2.92-6.5 7.25-6.5s6.75 2.15 7.25 6.5"/>',
+    money: '<rect x="3.5" y="6" width="17" height="12" rx="2"/><path d="M7 9.25h.01M17 14.75h.01"/><circle cx="12" cy="12" r="3.15"/><path d="M13.35 10.3c-.35-.38-.82-.58-1.4-.58-.72 0-1.25.36-1.25.92 0 1.4 2.65.75 2.65 2.18 0 .58-.55.96-1.35.96-.58 0-1.1-.2-1.48-.57M12 9.15v5.7"/>',
+    work: '<path d="M8 6.5V5a1.5 1.5 0 0 1 1.5-1.5h5A1.5 1.5 0 0 1 16 5v1.5"/><rect x="3.5" y="6.5" width="17" height="13.5" rx="2"/><path d="M3.75 11.5c5.5 2.35 11 2.35 16.5 0M10 12.5h4"/>',
+    task: '<rect x="4" y="4" width="16" height="16" rx="2.25"/><path d="m7.5 12 2.7 2.7 6.3-6.3"/>',
+    company: '<path d="M5 20.5V5a1.5 1.5 0 0 1 1.5-1.5h7A1.5 1.5 0 0 1 15 5v15.5m0-11h2.5A1.5 1.5 0 0 1 19 11v9.5M3.5 20.5h17"/><path d="M8 7h1m2 0h1M8 10.5h1m2 0h1M8 14h1m2 0h1"/>',
+    card: '<rect x="4" y="3.5" width="16" height="17" rx="2.25"/><path d="M7.5 8h9M7.5 11.75h6.5M7.5 15.5h4"/>',
   });
   const ALIASES = Object.freeze({
     ticket: ["ticket", "case", "incident", "support"],
@@ -44,7 +44,7 @@ const crmCardFace = global.crmCardFace || (() => {
   };
   const markup = (record, fallback) => {
     const type = semanticTypeOf(record, fallback);
-    return `<div class="crm-card-semantic-mark" data-card-semantic="${type}" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke">${ICON_PATHS[type] || ICON_PATHS.card}</svg></div>`;
+    return `<div class="crm-card-semantic-mark" data-card-semantic="${type}" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[type] || ICON_PATHS.card}</svg></div>`;
   };
   const setAccent = (element, rgb) => {
     if (!element) return;
@@ -971,10 +971,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zones { display: contents; }
       .tk-zone { position: fixed; z-index: 800; display: flex; flex-direction: column; pointer-events: auto;
         border-radius: 16px; padding: 12px 14px 14px; color: #fff;
-        background: linear-gradient(180deg, rgba(22,26,36,0.5), rgba(12,16,24,0.42));
-        -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
-        border: 1px solid rgba(255,255,255,0.14);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
+        background: var(--bucket-acrylic-surface);
+        -webkit-backdrop-filter: var(--bucket-acrylic-filter); backdrop-filter: var(--bucket-acrylic-filter);
+        border: 1px solid var(--bucket-acrylic-border);
+        box-shadow: var(--bucket-acrylic-shadow);
         transition: left .2s ${EASE}, top .2s ${EASE}, width .2s ${EASE}, height .2s ${EASE}, border-color .18s ease, box-shadow .18s ease, background .18s ease; }
       /* In focus: lift the bucket above the scrim (sharp). Out of focus it simply rests below the scrim
          and the scrim blurs it — the same crisp depth-of-field whether the bin is closed, a stack is

@@ -178,15 +178,22 @@ async function main() {
     const visible = (element) => {
       const rect = element.getBoundingClientRect();
       const style = getComputedStyle(element);
-      return !element.hidden && rect.width > 0 && rect.height > 0
-        && style.display !== 'none' && style.visibility !== 'hidden'
-        && Number(style.opacity) > .04;
+      if (element.hidden || rect.width <= 0 || rect.height <= 0
+        || rect.right <= 0 || rect.bottom <= 0
+        || rect.left >= innerWidth || rect.top >= innerHeight
+        || style.display === 'none' || style.visibility === 'hidden'
+        || Number(style.opacity) <= .04) return false;
+      const hit = document.elementFromPoint(
+        Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2)),
+        Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2)),
+      );
+      return hit === element || element.contains(hit);
     };
     return [...document.querySelectorAll('.crm-secondary-control')].filter(visible).map((button) => {
       const rect = button.getBoundingClientRect();
       const style = getComputedStyle(button);
-      const icon = button.querySelector(':scope > svg:not(.tk-ring), :scope > .crm-secondary-control-glyph');
-      const iconRect = icon?.getBoundingClientRect();
+      const pseudo = getComputedStyle(button, '::before');
+      const pseudoMask = pseudo.maskImage || pseudo.webkitMaskImage || '';
       return {
         label: button.getAttribute('aria-label') || button.title || button.className,
         classes: button.className,
@@ -196,15 +203,63 @@ async function main() {
         background: style.backgroundColor,
         backgroundImage: style.backgroundImage,
         backdrop: style.backdropFilter || style.webkitBackdropFilter,
-        icon: iconRect ? {
-          width: iconRect.width,
-          height: iconRect.height,
-          dx: Math.abs((iconRect.left + iconRect.width / 2) - (rect.left + rect.width / 2)),
-          dy: Math.abs((iconRect.top + iconRect.height / 2) - (rect.top + rect.height / 2)),
+        borderColor: style.borderColor,
+        boxShadow: style.boxShadow,
+        icon: pseudoMask && pseudoMask !== 'none' ? {
+          width: parseFloat(pseudo.width) || 0,
+          height: parseFloat(pseudo.height) || 0,
+          mask: pseudoMask,
+          transform: pseudo.transform,
+          centered: style.display.includes('flex')
+            && style.alignItems === 'center'
+            && style.justifyContent === 'center'
+            && (parseFloat(pseudo.marginLeft) || 0) === 0
+            && (parseFloat(pseudo.marginTop) || 0) === 0,
         } : null,
       };
     });
   });
+  const bucketAcrylicAudit = async () => page.evaluate(() => {
+    const bucket = [...document.querySelectorAll('.tk-zone')].find((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+        && style.visibility !== 'hidden' && Number(style.opacity) > .04;
+    });
+    if (!bucket) return null;
+    const style = getComputedStyle(bucket);
+    return {
+      background: style.backgroundColor,
+      backgroundImage: style.backgroundImage,
+      backdrop: style.backdropFilter || style.webkitBackdropFilter,
+      borderColor: style.borderColor,
+      boxShadow: style.boxShadow,
+    };
+  });
+  const assertSecondaryControlContract = (controls, bucketAcrylic, minimum = 1) => {
+    invariant(controls.length >= minimum, `expected at least ${minimum} visible secondary controls, got ${controls.length}`);
+    invariant(bucketAcrylic, 'Could not resolve the canonical bucket acrylic');
+    controls.forEach((control) => {
+      invariant(Math.abs(control.width - 46) <= .6 && Math.abs(control.height - 46) <= .6, `${control.label} is ${control.width.toFixed(2)}×${control.height.toFixed(2)}`);
+      invariant(control.radius >= 22.5, `${control.label} is not circular`);
+      invariant(control.icon, `${control.label} has no measurable symbol`);
+      invariant(Math.abs(control.icon.width - 18) <= .1 && Math.abs(control.icon.height - 18) <= .1, `${control.label} symbol is ${control.icon.width.toFixed(2)}×${control.icon.height.toFixed(2)}`);
+      invariant(control.icon.centered, `${control.label} symbol is not centered by the shared flex contract`);
+      invariant(control.background === bucketAcrylic.background, `${control.label} background color differs from its bucket`);
+      invariant(
+        control.backgroundImage === bucketAcrylic.backgroundImage,
+        `${control.label} acrylic tint differs from its bucket (${control.backgroundImage} !== ${bucketAcrylic.backgroundImage})`,
+      );
+      invariant(control.backdrop === bucketAcrylic.backdrop, `${control.label} acrylic filter differs from its bucket`);
+      invariant(control.borderColor === bucketAcrylic.borderColor, `${control.label} acrylic border differs from its bucket`);
+      invariant(control.boxShadow === bucketAcrylic.boxShadow, `${control.label} acrylic shadow differs from its bucket`);
+    });
+    return {
+      controls: controls.length,
+      labels: controls.map(({ label }) => label),
+      iconSize: '18px',
+    };
+  };
   const semanticCardAudit = async (selector) => page.evaluate((cardSelector) => {
     const scope = cardSelector === '@planner-live'
       ? window.crmProjectsCamera?.layers?.()[1]
@@ -408,17 +463,10 @@ async function main() {
       }
     }, contactsBeforeCreate);
     const peopleControls = await secondaryControlAudit();
+    const bucketAcrylic = await bucketAcrylicAudit();
     await check('Visible secondary controls are 46px circular acrylic with centered symbols', () => {
-      invariant(peopleControls.length >= 2, `expected applicable viewport controls, got ${peopleControls.length}`);
-      peopleControls.forEach((control) => {
-        invariant(Math.abs(control.width - 46) <= .6 && Math.abs(control.height - 46) <= .6, `${control.label} is ${control.width.toFixed(2)}×${control.height.toFixed(2)}`);
-        invariant(control.radius >= 22.5, `${control.label} is not circular`);
-        invariant(control.background !== 'rgba(0, 0, 0, 0)' || control.backgroundImage !== 'none', `${control.label} has no acrylic tint`);
-        invariant(control.backdrop.includes('blur'), `${control.label} has no acrylic blur`);
-        invariant(control.icon, `${control.label} has no measurable symbol`);
-        invariant(control.icon.dx <= .8 && control.icon.dy <= .8, `${control.label} symbol is off-center by ${control.icon.dx.toFixed(2)}, ${control.icon.dy.toFixed(2)}`);
-      });
-      return { controls: peopleControls.length, labels: peopleControls.map(({ label }) => label) };
+      const summary = assertSecondaryControlContract(peopleControls, bucketAcrylic, 2);
+      return { ...summary, bucketMaterial: bucketAcrylic };
     });
 
     await activate('planner');
@@ -654,6 +702,12 @@ async function main() {
       };
     });
     await screenshot('05-planner-semantic-fit.png');
+    const plannerControls = await secondaryControlAudit();
+    await check('Planner controls inherit the complete secondary-control contract', () => {
+      const summary = assertSecondaryControlContract(plannerControls, bucketAcrylic, 2);
+      invariant(plannerControls.some(({ label }) => label === 'Back to projects'), 'Planner project Back control was not found');
+      return summary;
+    });
 
     await activate('cases');
     await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-card, [data-crm-theater="tickets"]:not([hidden]) .tk-zcard').length > 0);
@@ -698,13 +752,7 @@ async function main() {
     const ticketControls = await secondaryControlAudit();
     await check('Ticket stack controls keep the same centered 46px recipe', () => {
       const stackControls = ticketControls.filter(({ classes }) => /\btk-(arrow|stack-btn)\b/.test(classes));
-      invariant(stackControls.length >= 2, 'No visible stack controls were found');
-      stackControls.forEach((control) => {
-        invariant(Math.abs(control.width - 46) <= .6 && Math.abs(control.height - 46) <= .6, `${control.label} is not 46px square`);
-        invariant(control.radius >= 22.5 && control.backdrop.includes('blur'), `${control.label} is not circular acrylic`);
-        invariant(control.icon && control.icon.dx <= .8 && control.icon.dy <= .8, `${control.label} icon is not centered`);
-      });
-      return { controls: stackControls.length };
+      return assertSecondaryControlContract(stackControls, bucketAcrylic, 2);
     });
     await screenshot('06-tickets-controls-and-icons.png');
 
@@ -723,7 +771,25 @@ async function main() {
       });
       return { cards: assignmentCards.length, semanticTypes: [...new Set(assignmentCards.map((card) => card.mark.type))] };
     });
+    const assignmentControls = await secondaryControlAudit();
+    await check('Assignment controls inherit the complete secondary-control contract', () => {
+      const summary = assertSecondaryControlContract(assignmentControls, bucketAcrylic, 2);
+      invariant(assignmentControls.some(({ label }) => label === 'Create assignment'), 'Assignment Add control was not found');
+      return summary;
+    });
     await screenshot('07-assignments-semantic-fit.png');
+
+    await activate('calendar');
+    await page.waitForFunction(() => document.querySelectorAll('.fc-year-btn').length === 2);
+    await sleep(200);
+    const calendarControls = await secondaryControlAudit();
+    await check('Calendar year controls inherit the complete secondary-control contract', () => {
+      const summary = assertSecondaryControlContract(calendarControls, bucketAcrylic, 3);
+      invariant(calendarControls.some(({ label }) => label === 'Previous year'), 'Calendar Previous year control was not found');
+      invariant(calendarControls.some(({ label }) => label === 'Next year'), 'Calendar Next year control was not found');
+      return summary;
+    });
+    await screenshot('08-calendar-controls.png');
 
     await check('Renderer completed without uncaught page errors', () => {
       invariant(pageErrors.length === 0, pageErrors.join(' | '));

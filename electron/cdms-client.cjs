@@ -63,6 +63,35 @@ function stringList(values) {
     .filter(Boolean))];
 }
 
+const IDENTITY_TEXT_FIELDS = [
+  'title', 'description', 'note', 'subject', 'projectTitle', 'decisionMaker',
+  'assignedContactName',
+];
+
+function referenceAliases(value, prefix) {
+  const raw = text(value);
+  if (!raw || !new RegExp(`^${prefix}[_-]`, 'i').test(raw)) return [];
+  return raw.replace(new RegExp(`^${prefix}[_-]`, 'i'), '')
+    .split(/[^a-z0-9]+/i)
+    .map(text)
+    .filter((part) => part.length >= 3);
+}
+
+function replaceIdentityText(record, aliases, replacement) {
+  const next = text(replacement);
+  if (!record || !next) return;
+  const names = stringList(aliases).filter((alias) => alias.length >= 3 && alias.toLowerCase() !== next.toLowerCase());
+  if (!names.length) return;
+  IDENTITY_TEXT_FIELDS.forEach((field) => {
+    if (record[field] == null || record[field] === '') return;
+    let value = String(record[field]);
+    names.sort((a, b) => b.length - a.length).forEach((alias) => {
+      value = value.replace(new RegExp(alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), next);
+    });
+    record[field] = value;
+  });
+}
+
 function stableHash(value) {
   let hash = 2166136261;
   const input = String(value || '');
@@ -683,12 +712,27 @@ function createCdmsClient(options = {}) {
     if (!input || input.source === 'cdms' || !catalog.companies.length) return input;
     const record = { ...input };
     const demo = isDemoRecord(entity, record);
-    const originalCompanyName = firstText(record.companyLabel, record.companyName, record.company, record.client);
+    const originalCompanyName = firstText(
+      record.companyLabel,
+      record.companyName,
+      record.company,
+      ['tickets', 'cases', 'jobs', 'deals'].includes(entity) ? record.client : '',
+    );
+    const originalContactName = firstText(
+      record.contactName,
+      record.contact,
+      record.decisionMaker,
+      entity === 'projects' ? record.owner : '',
+      ['workItems', 'commitments'].includes(entity) ? firstText(record.assignedContactName, record.assignee) : '',
+    );
+    const originalContactId = firstText(record.contactId, record.ownerContactId, record.assignedContactId);
+    const companyAliases = [originalCompanyName, ...referenceAliases(record.companyId, 'co')];
+    const contactAliases = [originalContactName, ...referenceAliases(originalContactId, 'ct')];
     const requestedCompany = getRecord('companies', record.companyId);
     const shouldBindCompany = !requestedCompany && (demo || isLegacyReference(record.companyId, 'company'));
     const companySeed = record.projectId ? `project:${record.projectId}` : `${entity}:${record.id}`;
     const needsAsset = ['tickets', 'cases', 'jobs', 'tasks', 'workItems', 'commitments'].includes(entity);
-    const needsContact = needsAsset || ['projects', 'calendarItems'].includes(entity);
+    const needsContact = needsAsset || ['projects', 'calendarItems', 'deals', 'invoices', 'interactions'].includes(entity);
     const preferredCompanies = catalog.companies.filter((candidate) => (
       (!needsAsset || catalog.assets.some((asset) => asset.companyId === candidate.id))
       && (!needsContact || catalog.contacts.some((contact) => contact.companyId === candidate.id))
@@ -705,8 +749,9 @@ function createCdmsClient(options = {}) {
       record.companyCode = company.companyCode;
       record.cdmsCompanyId = company.id;
       if ('client' in record) record.client = company.name;
-      if (demo && originalCompanyName && record.title) {
-        record.title = String(record.title).replace(new RegExp(originalCompanyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), company.name);
+      replaceIdentityText(record, companyAliases, company.name);
+      if (demo && entity === 'invoices') {
+        record.title = [firstText(record.number, record.reference), company.name].filter(Boolean).join(' — ');
       }
       if (demo && (entity === 'projects' || record.projectId)) {
         const sourceTitle = firstText(entity === 'projects' ? record.title : record.projectTitle);
@@ -728,16 +773,26 @@ function createCdmsClient(options = {}) {
       ? companyContacts[indexFor(`${entity}:${record.id}:contact`, companyContacts.length)]
       : null);
     if (contact) {
-      if ('contactId' in record || entity === 'tickets' || entity === 'tasks' || entity === 'cases' || entity === 'jobs' || entity === 'calendarItems') record.contactId = contact.id;
+      if ('contactId' in record || ['tickets', 'tasks', 'cases', 'jobs', 'calendarItems', 'deals', 'invoices', 'interactions'].includes(entity)) record.contactId = contact.id;
       if ('ownerContactId' in record || entity === 'projects') record.ownerContactId = contact.id;
       if ('assignedContactId' in record || entity === 'workItems' || entity === 'commitments') record.assignedContactId = contact.id;
       if (entity === 'projects') record.owner = contact.name;
       if (entity === 'workItems' || entity === 'commitments') record.assignee = contact.name;
+      if ('decisionMaker' in record || entity === 'deals') record.decisionMaker = contact.name;
       record.contact = contact.name;
       record.contactName = contact.name;
       record.cdmsContactId = contact.id;
-      if (demo && entity === 'calendarItems' && record.title && /[—–-]/.test(record.title)) {
-        record.title = `${contact.name} — ${String(record.title).split(/[—–-]/).slice(1).join(" ").trim() || 'follow-up'}`;
+      replaceIdentityText(record, contactAliases, contact.name);
+      if (demo && entity === 'calendarItems') {
+        let context = firstText(record.title, record.kind, 'event');
+        [contact.name, company?.name].filter(Boolean).forEach((prefix) => {
+          if (context.toLowerCase().startsWith(prefix.toLowerCase())) context = context.slice(prefix.length);
+        });
+        if (/\s+[—–-]\s+/.test(context)) {
+          context = context.split(/\s+[—–-]\s+/).slice(1).join(' — ');
+        }
+        context = context.replace(/^[\s—–:|-]+/, '').trim() || firstText(record.kind, 'event');
+        record.title = `${contact.name} — ${context}`;
       }
       if (String(record.linkedEntityType || '').toLowerCase() === 'contacts'
         && (!getRecord('contacts', record.linkedRecordId) || isLegacyReference(record.linkedRecordId, 'contact'))) {

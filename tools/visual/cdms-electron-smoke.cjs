@@ -75,6 +75,24 @@ async function run() {
       const demoTickets = (tickets.tickets || []).filter((record) => /^tkt_demo_/i.test(record.id || ''));
       const demoProjects = (projects.records || []).filter((record) => /^proj_/i.test(record.id || ''));
       const demoItems = (workItems.records || []).filter((record) => /^wi_/i.test(record.id || ''));
+      const identityEntities = ['deals', 'invoices', 'tasks', 'calendarItems', 'interactions'];
+      const identityGroups = await Promise.all(identityEntities.map(async (entity) => {
+        const result = await window.crmStore.list(entity, { includeDeleted: false });
+        return [entity, result?.records || []];
+      }));
+      const identityRecords = Object.fromEntries(identityGroups);
+      const identityFields = [
+        'title', 'client', 'company', 'companyLabel', 'contact', 'contactName',
+        'decisionMaker', 'assignedContactName', 'assignee', 'owner', 'note',
+        'description', 'subject', 'projectTitle',
+      ];
+      const fixtureIdentity = /\b(?:Marta(?:\s+Reyes)?|Devon\s+Park|Iris\s+Chen|Sam\s+Okafor|Bluepeak(?:\s+Logistics)?|Harbor\s*&\s*Lane|Foxglove(?:\s+Studio)?)\b/i;
+      const legacyIdentityHits = [];
+      [...Object.entries(identityRecords), ['projects', demoProjects], ['workItems', demoItems]].forEach(([entity, records]) => {
+        records.forEach((record) => identityFields.forEach((field) => {
+          if (fixtureIdentity.test(String(record?.[field] || ''))) legacyIdentityHits.push(`${entity}:${record.id}:${field}`);
+        }));
+      });
       const reportDatasets = report?.summary?.datasets || {};
       const reportRows = Object.values(reportDatasets).flatMap((value) => Array.isArray(value) ? value : []);
       const reportContacts = reportRows.filter((row) => String(row?.entity || row?.type || '').toLowerCase() === 'contacts');
@@ -124,6 +142,12 @@ async function run() {
           reportTickets: reportTickets.length,
           reportTicketsWithCompany: reportTickets.filter((record) => /^cdms-company-/.test(record.companyId || '')).length,
           reportTicketsWithIp: reportTickets.filter((record) => !!record.ipAddress).length,
+          linkedWorkflowGroups: identityEntities.length,
+          linkedWorkflowRecords: identityGroups.reduce((total, [, records]) => total + records.length, 0),
+          linkedWorkflowContacts: identityGroups.reduce((total, [, records]) => (
+            total + records.filter((record) => /^cdms-contact-/.test(record.contactId || '')).length
+          ), 0),
+          legacyIdentityHits,
         },
         reportSecrets,
       };
@@ -148,6 +172,9 @@ async function run() {
     assert.ok(evidence.references.reportTickets > 0);
     assert.equal(evidence.references.reportTicketsWithCompany, evidence.references.reportTickets);
     assert.equal(evidence.references.reportTicketsWithIp, evidence.references.reportTickets);
+    assert.ok(evidence.references.linkedWorkflowRecords > 0);
+    assert.equal(evidence.references.linkedWorkflowContacts, evidence.references.linkedWorkflowRecords);
+    assert.deepEqual(evidence.references.legacyIdentityHits, []);
     assert.deepEqual(evidence.reportSecrets, []);
 
     await page.evaluate(() => window.crmWorkspaces.setActive('people'));

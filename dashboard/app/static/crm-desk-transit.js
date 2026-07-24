@@ -8,8 +8,7 @@
 (() => {
   const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
   const TRANSIT_Z = "2500";        // below the untouched native drag strip/chrome
-  const RELEASE_HOLD = .86;
-  const RELEASE_EASE = "cubic-bezier(.37, 0, .63, 1)";
+  const STATIC_CROSSFADE_MS = 64;
 
   let busy = false;
   let queued = null;
@@ -26,16 +25,19 @@
   let lastPhysicalSource = "";
   let diveSequence = 0;
   let activeDive = null;
+  let homeMotionState = { active:false, direction:"", startedAt:0, endedAt:0, sequence:0 };
+  let ownershipFadeState = { active:false, startedAt:0, endedAt:0, duration:0, sequence:0 };
+  const rasterNodeIds = new WeakMap();
+  let rasterNodeSequence = 0;
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
     const style = document.createElement("style");
     style.id = "crm-desk-transit-styles";
     style.textContent = `
-      /* Only the incoming room is held still while it is built. Home remains a
-         live camera above it; no full-viewport veil or endpoint image exists. */
-      html.crm-transit-materializing [data-crm-transit-destination],
-      html.crm-transit-materializing [data-crm-transit-destination] * {
+      /* Only the incoming room is held still while it is built. Camera motion
+         has already ended and the decoded exact room raster remains above it. */
+      html.crm-transit-materializing [data-crm-transit-destination] {
         animation: none !important; transition: none !important; scroll-behavior: auto !important;
       }
       /* Card-system theaters intentionally use display:contents at rest. During
@@ -47,15 +49,17 @@
         display:block!important;position:fixed!important;inset:0!important;
         width:100vw!important;height:100vh!important;pointer-events:none!important}
       /* The destination stays out of the moving GPU pass. At the endpoint it is
-         grouped, painted beneath the full-size foreground, and only then takes
-         ownership through the short material release. */
+         grouped and painted beneath the exact full-size room raster. Raster and
+         live room exchange ownership in a short compositor-only dissolve after
+         both surfaces have completed covered paints. */
       html.crm-transit-materializing [data-crm-transit-layer]{
         opacity:.001!important;will-change:opacity;transition:none!important}
       html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][hidden]{
         display:grid!important}
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
         opacity:var(--crm-transit-rest-opacity,1)!important;
-        transition:opacity var(--crm-transit-reveal-ms,64ms) ${RELEASE_EASE} var(--crm-transit-reveal-delay,0ms)!important}
+        transition:none!important}
+      [data-crm-transit-retained]{transform:translate3d(-110vw,0,0)!important;pointer-events:none!important}
     `;
     document.head.appendChild(style);
   };
@@ -82,18 +86,24 @@
     destinationLayers.forEach((layer) => {
       layer.removeAttribute("data-crm-transit-layer");
       layer.style.removeProperty("--crm-transit-rest-opacity");
-      layer.style.removeProperty("--crm-transit-reveal-ms");
-      layer.style.removeProperty("--crm-transit-reveal-delay");
     });
     destinationRoot?.removeAttribute?.("data-crm-transit-destination");
     destinationRoot?.removeAttribute?.("data-crm-transit-group");
+    destinationRoot?.removeAttribute?.("data-crm-transit-retained");
     destinationRoot?.removeAttribute?.("data-crm-home-precomposed");
     destinationRoot = null;
     destinationLayers = [];
   };
   const addDestinationLayer = (layer) => {
     if (!layer || destinationLayers.includes(layer)) return;
-    layer.style.setProperty("--crm-transit-rest-opacity", getComputedStyle(layer).opacity || "1");
+    // A retained inactive theater is intentionally .001. That is its parked
+    // opacity, not its active-room opacity; the covered release must restore it
+    // to one before the raster lid begins to dissolve.
+    const restingOpacity = layer.hasAttribute?.("data-crm-home-precomposed")
+      || layer.matches?.(".crm-module-switch")
+      ? "1"
+      : (getComputedStyle(layer).opacity || "1");
+    layer.style.setProperty("--crm-transit-rest-opacity", restingOpacity);
     layer.setAttribute("data-crm-transit-layer", "");
     destinationLayers.push(layer);
   };
@@ -207,45 +217,270 @@
     return true;
   };
 
+  const roundGeometry = (value) => Math.round((Number(value) || 0) * 100) / 100;
+  const compactSource = (source = "") => ({
+    length:source.length,
+    head:source.slice(0, 24),
+    tail:source.slice(-24),
+  });
+  const rasterIdentity = (node) => {
+    if (!node) return 0;
+    if (!rasterNodeIds.has(node)) rasterNodeIds.set(node, ++rasterNodeSequence);
+    return rasterNodeIds.get(node);
+  };
+  const inspectRasterCover = (stage) => {
+    const cam = camera();
+    const lid = stage?.lid || (cam?.level?.() >= 1 ? cam.layers()[1] : null);
+    const host = stage?.coverHost || lid?.querySelector?.(":scope > .crm-home-preview");
+    const raster = stage?.coverRaster || host?.querySelector?.(":scope > .crm-home-preview-exact");
+    if (!lid || !host || !raster) {
+      return {
+        ready:false,
+        nodeId:rasterIdentity(raster),
+        frame:lid?.dataset?.fractalFrame || "",
+        viewport:{ width:innerWidth, height:innerHeight },
+      };
+    }
+    const source = raster.currentSrc || raster.src || "";
+    const rect = raster.getBoundingClientRect();
+    const rasterStyle = getComputedStyle(raster);
+    const hostStyle = getComputedStyle(host);
+    const lidStyle = lid.style;
+    const signature = {
+      ready:!!raster.complete && raster.naturalWidth > 0 && raster.naturalHeight > 0
+        && rect.width >= innerWidth - 1 && rect.height >= innerHeight - 1,
+      nodeId:rasterIdentity(raster),
+      source:compactSource(source),
+      complete:!!raster.complete,
+      naturalWidth:raster.naturalWidth || 0,
+      naturalHeight:raster.naturalHeight || 0,
+      rect:{
+        x:roundGeometry(rect.x),
+        y:roundGeometry(rect.y),
+        width:roundGeometry(rect.width),
+        height:roundGeometry(rect.height),
+      },
+      opacity:roundGeometry(rasterStyle.opacity),
+      hostOpacity:roundGeometry(hostStyle.opacity),
+      display:rasterStyle.display,
+      visibility:rasterStyle.visibility,
+      frame:lid.dataset.fractalFrame || "",
+      lidStyle:{
+        left:lidStyle.left || "",
+        top:lidStyle.top || "",
+        width:lidStyle.width || "",
+        height:lidStyle.height || "",
+        transform:lidStyle.transform || "",
+        opacity:lidStyle.opacity || "",
+      },
+      viewport:{ width:innerWidth, height:innerHeight },
+    };
+    if (stage) {
+      stage.lid = lid;
+      stage.coverHost = host;
+      stage.coverRaster = raster;
+      stage.coverSource = source;
+    }
+    return signature;
+  };
+  const sameGeometry = (left, right, tolerance = .25) => ["x", "y", "width", "height"]
+    .every((key) => Math.abs(Number(left?.[key]) - Number(right?.[key])) <= tolerance);
+  const sameRasterCover = (stage, before, after) => !!before?.ready && !!after?.ready
+    && before.nodeId === after.nodeId
+    && stage?.coverRaster === stage?.coverHost?.querySelector?.(":scope > .crm-home-preview-exact")
+    && stage?.coverSource === (stage?.coverRaster?.currentSrc || stage?.coverRaster?.src || "")
+    && before.source.length === after.source.length
+    && before.source.head === after.source.head
+    && before.source.tail === after.source.tail
+    && before.naturalWidth === after.naturalWidth
+    && before.naturalHeight === after.naturalHeight
+    && sameGeometry(before.rect, after.rect)
+    && before.opacity === 1 && after.opacity === 1
+    && before.hostOpacity === 1 && after.hostOpacity === 1
+    && before.display !== "none" && after.display !== "none"
+    && before.visibility === "visible" && after.visibility === "visible"
+    && before.frame === "viewport" && after.frame === "viewport"
+    && before.lidStyle.left === after.lidStyle.left
+    && before.lidStyle.top === after.lidStyle.top
+    && before.lidStyle.width === after.lidStyle.width
+    && before.lidStyle.height === after.lidStyle.height
+    && before.lidStyle.transform === after.lidStyle.transform
+    && before.lidStyle.opacity === after.lidStyle.opacity
+    && before.viewport.width === after.viewport.width
+    && before.viewport.height === after.viewport.height;
+  const liveLayerState = () => destinationLayers.map((layer) => {
+    const style = getComputedStyle(layer);
+    return {
+      tag:layer.tagName,
+      theater:layer.dataset?.crmTheater || "",
+      opacity:Math.round((Number(style.opacity) || 0) * 1000) / 1000,
+      display:style.display,
+      visibility:style.visibility,
+    };
+  });
+  const phaseDetail = (stage, phase) => ({
+    key:stage?.key || "",
+    sequence:stage?.sequence || 0,
+    phase,
+    coverInvariant:stage?.coverInvariant !== false,
+    cover:inspectRasterCover(stage),
+    liveReady:!!stage?.liveReady,
+    liveLayers:liveLayerState(),
+  });
+  const holdProbePhase = async (stage, phase) => {
+    const detail = phaseDetail(stage, phase);
+    document.dispatchEvent(new CustomEvent("crm:desk-transit-phase", { detail }));
+    const hold = window.__crmDeskTransitProbe?.hold;
+    if (typeof hold !== "function") return detail;
+    try { await Promise.resolve(hold(phase, detail)); } catch {}
+    return detail;
+  };
+
+  const seatEndpointRaster = async (stage) => {
+    const cam = camera();
+    const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
+    const host = lid?.querySelector?.(":scope > .crm-home-preview");
+    const raster = host?.querySelector?.(":scope > .crm-home-preview-exact");
+    stage.lid = lid;
+    stage.coverHost = host;
+    stage.coverRaster = raster;
+    if (!lid || !host || !raster) return false;
+    if (!raster.complete || raster.naturalWidth <= 0) {
+      try { await raster.decode?.(); } catch {}
+    }
+    if (stage.sequence !== activeDive?.sequence) return false;
+    host.style.transition = "none";
+    host.style.opacity = "1";
+    lid.classList.add("crm-home-endpoint-cover");
+    stage.phase = "seating-cover";
+    // The exact image was decoded while the expander was built. Give its
+    // compositor surface two complete endpoint paints before any destination
+    // ownership changes occur.
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    stage.coverStart = inspectRasterCover(stage);
+    stage.coverSeatedAt = performance.now();
+    stage.coverInvariant = stage.coverStart.ready;
+    stage.phase = "covered";
+    await holdProbePhase(stage, "covered");
+    // Close one clean raster-owned refresh interval before any live-room style
+    // or compositor ownership work begins. Cadence probes can therefore prove
+    // both sides of every longer maintenance interval have the same owner.
+    await paint(1);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    return stage.coverInvariant;
+  };
+
   const armDestinationReveal = (stage) => {
     if (!stage || stage.revealArmed || !stage.ready || !Number.isFinite(stage.motionStartedAt)) return false;
     stage.revealArmed = true;
-    const duration = Math.max(32, stage.morphMs * (1 - RELEASE_HOLD));
-    const revealAt = stage.motionStartedAt + stage.morphMs * RELEASE_HOLD;
-    const delay = Math.max(0, revealAt - performance.now());
-    stage.releaseAt = revealAt;
-    const beginReveal = () => {
+    stage.revealPromise = (async () => {
       if (stage.sequence !== activeDive?.sequence) return;
-      destinationLayers.forEach((layer) => {
-        layer.style.setProperty("--crm-transit-reveal-ms", `${duration.toFixed(2)}ms`);
-        layer.style.setProperty("--crm-transit-reveal-delay", "0ms");
-      });
-      // The retained destination has already painted at .001 for the entire
-      // camera move. Reading offsetWidth here used to force a viewport-wide
-      // layout exactly at the reveal boundary and could drop a native frame.
-      document.documentElement.classList.add("crm-transit-revealing");
+      stage.coverBeforeSwap = inspectRasterCover(stage);
+      stage.coverInvariant = sameRasterCover(stage, stage.coverStart, stage.coverBeforeSwap);
+      stage.liveLayersBeforeSwap = liveLayerState();
+      stage.preSwapLiveReady = destinationLayers.length > 0
+        && stage.settledState?.stable === true
+        && stage.liveLayersBeforeSwap.every((layer) =>
+          layer.display !== "none" && layer.visibility !== "hidden"
+          && layer.opacity >= .0005 && layer.opacity <= .01);
+      stage.liveReady = stage.preSwapLiveReady;
+      stage.liveReadyAt = performance.now();
+      stage.phase = "live-ready-covered";
+      await holdProbePhase(stage, "before-swap");
+      if (stage.sequence !== activeDive?.sequence) return;
 
-      // The moving foreground and the already-composited live room exchange
-      // ownership on the same timeline. No delayed transition remains active
-      // during the preceding camera frames.
-      const lid = camera()?.layers?.()[1];
-      const foreground = lid?.querySelector?.(".crm-home-preview-foreground");
-      if (foreground) {
-        stage.foregroundAnimation = foreground.animate(
-          [{ opacity:1 }, { opacity:0 }],
-          { duration, easing:RELEASE_EASE, fill:"both" },
-        );
-      }
-      stage.revealTimer = setTimeout(() => {
-        if (stage.sequence !== activeDive?.sequence) return;
-        requestAnimationFrame(() => {
-          stage.revealedAt = performance.now();
-          stage.resolveReveal?.();
-          stage.resolveReveal = null;
+      // Promote the live room to full opacity on a frame boundary while the
+      // exact raster remains fully opaque above it, then give that compositor
+      // surface two unchanged covered paints. The captures are not pixel-equal,
+      // so their final exchange is a very short compositor-only dissolve.
+      await new Promise((resolve) => requestAnimationFrame(() => {
+        if (stage.sequence === activeDive?.sequence) {
+          document.documentElement.classList.add("crm-transit-revealing");
+          stage.phase = "live-opaque-covered";
+          stage.liveOpaqueAt = performance.now();
+        }
+        resolve();
+      }));
+      await paint(2);
+      if (stage.sequence !== activeDive?.sequence) return;
+      stage.liveLayersAfterSwap = liveLayerState();
+      stage.postSwapLiveReady = destinationLayers.length > 0
+        && stage.liveLayersAfterSwap.every((layer) =>
+          layer.display !== "none" && layer.visibility !== "hidden" && layer.opacity === 1);
+      stage.liveReady = stage.preSwapLiveReady && stage.postSwapLiveReady;
+      stage.phase = "crossfade-ready";
+      await holdProbePhase(stage, "crossfade-ready");
+      if (stage.sequence !== activeDive?.sequence) return;
+
+      const host = stage.coverHost;
+      if (!host) throw new Error("Exact endpoint raster host is unavailable");
+      stage.releaseAt = performance.now();
+      stage.phase = "crossfading";
+      ownershipFadeState = {
+        active:true,
+        startedAt:stage.releaseAt,
+        endedAt:0,
+        duration:STATIC_CROSSFADE_MS,
+        sequence:ownershipFadeState.sequence + 1,
+      };
+      document.dispatchEvent(new CustomEvent("crm:desk-ownership-fade", {
+        detail:{ phase:"start", ...ownershipFadeState },
+      }));
+      stage.coverAnimation = host.animate(
+        [{ opacity:1 }, { opacity:0 }],
+        { duration:STATIC_CROSSFADE_MS, easing:"linear", fill:"both" },
+      );
+
+      // The held visual-equivalence pass pauses only this already-static
+      // compositor animation at its midpoint so Playwright can prove the
+      // intermediate pixels are a bounded blend rather than a flash.
+      if (typeof window.__crmDeskTransitProbe?.hold === "function") {
+        await new Promise((resolve) => {
+          const sample = async () => {
+            const current = Number(stage.coverAnimation?.currentTime) || 0;
+            if (current >= STATIC_CROSSFADE_MS / 2 || stage.coverAnimation?.playState === "finished") {
+              stage.coverAnimation?.pause?.();
+              stage.phase = "crossfade-mid";
+              await holdProbePhase(stage, "crossfade-mid");
+              stage.phase = "crossfading";
+              stage.coverAnimation?.play?.();
+              resolve();
+              return;
+            }
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
         });
-      }, duration + 20);
-    };
-    stage.revealTimer = setTimeout(beginReveal, delay);
+      }
+      try { await stage.coverAnimation.finished; } catch {}
+      if (stage.sequence !== activeDive?.sequence) return;
+      host.style.transition = "none";
+      host.style.opacity = "0";
+      stage.coverAnimation?.cancel?.();
+      stage.coverAnimation = null;
+      stage.swappedAt = performance.now();
+      stage.phase = "swapped";
+      ownershipFadeState = {
+        ...ownershipFadeState,
+        active:false,
+        endedAt:stage.swappedAt,
+      };
+      document.dispatchEvent(new CustomEvent("crm:desk-ownership-fade", {
+        detail:{ phase:"end", ...ownershipFadeState },
+      }));
+      await paint(1);
+      if (stage.sequence !== activeDive?.sequence) return;
+      stage.revealedAt = performance.now();
+      stage.coverAfterSwap = inspectRasterCover(stage);
+      stage.phase = "live";
+      await holdProbePhase(stage, "after-swap");
+    })().catch((error) => {
+      stage.revealError = String(error?.message || error || "destination reveal failed");
+    }).finally(() => {
+      stage.resolveReveal?.();
+      stage.resolveReveal = null;
+    });
     return true;
   };
 
@@ -263,11 +498,10 @@
     if (stage.sequence !== activeDive?.sequence) return;
 
     if (retainedPrecompose) {
-      // The room has already completed layout and at least one covered paint.
-      // Return it to [hidden] for the transform itself: keeping its many live
-      // backdrop surfaces in the same GPU pass as the moving screen-space lens
-      // is measurably slower than restoring the retained group at the endpoint.
-      theater.removeAttribute("data-crm-home-precomposed");
+      // Keep the completed room painted, but park its compositor group one
+      // viewport offstage during the camera move. This avoids sharing the
+      // visible GPU pass while preserving the exact texture for the endpoint.
+      theater.setAttribute("data-crm-transit-retained", "");
       stage.settledState = { stable:true, signature:"retained-precompose" };
     } else {
       // baseline() resolves only after the factory has built its complete DOM.
@@ -284,13 +518,16 @@
   const materializeDiveDestination = async (stage) => {
     if (!stage || stage.ready || stage.sequence !== activeDive?.sequence) return;
     ensureStyles();
+    stage.materializeAt = performance.now();
+    stage.phase = "materializing-covered";
+    stage.theater?.removeAttribute?.("data-crm-transit-retained");
     primeDestinationLayers(stage.key, stage.theater || findDestinationTheater(stage.key));
     document.documentElement.classList.remove("crm-transit-revealing");
     document.documentElement.classList.add("crm-transit-materializing");
     stageDestinationLayers(stage.key, destinationRoot);
-    // The full-size foreground remains the visible owner while the retained
-    // room reacquires its compositor surfaces. Two complete paints make the
-    // following opacity exchange a reveal, never first-frame instantiation.
+    // The exact raster remains the sole visible owner while the retained room
+    // reacquires its compositor surface at .001. These are two unchanged
+    // live-ready paints, not part of the camera's exposed motion cadence.
     await paint(2);
     if (stage.sequence !== activeDive?.sequence) return;
     stage.readyAt = performance.now();
@@ -312,7 +549,9 @@
       committed:false,
       resolveReveal,
       revealPromise,
-      foregroundAnimation:null,
+      phase:"preparing",
+      coverInvariant:null,
+      liveReady:false,
     };
     activeDive = stage;
     stage.preparePromise = prepareDiveDestination(stage);
@@ -320,16 +559,42 @@
   };
 
   const noteHomeTransformStart = (direction, startedAt = performance.now(), morphMs = 460) => {
-    if (direction !== "expand" || !activeDive || Number.isFinite(activeDive.motionStartedAt)) return false;
-    activeDive.motionStartedAt = Number(startedAt) || performance.now();
+    const start = Number(startedAt) || performance.now();
+    homeMotionState = {
+      active:true,
+      direction:String(direction || ""),
+      startedAt:start,
+      endedAt:0,
+      sequence:homeMotionState.sequence + 1,
+    };
+    document.dispatchEvent(new CustomEvent("crm:home-transform-phase", {
+      detail:{ phase:"start", ...homeMotionState },
+    }));
+    if (direction !== "expand" || !activeDive || Number.isFinite(activeDive.motionStartedAt)) return true;
+    activeDive.motionStartedAt = start;
     activeDive.morphMs = Math.max(1, Number(morphMs) || 460);
-    armDestinationReveal(activeDive);
+    return true;
+  };
+  const noteHomeTransformEnd = (direction, endedAt = performance.now()) => {
+    const end = Number(endedAt) || performance.now();
+    homeMotionState = {
+      ...homeMotionState,
+      active:false,
+      direction:String(direction || homeMotionState.direction || ""),
+      endedAt:end,
+    };
+    if (direction === "expand" && activeDive && !Number.isFinite(activeDive.motionEndedAt)) {
+      activeDive.motionEndedAt = end;
+    }
+    document.dispatchEvent(new CustomEvent("crm:home-transform-phase", {
+      detail:{ phase:"end", ...homeMotionState },
+    }));
     return true;
   };
 
-  // The transparent room foreground reaches its exact endpoint first. Restore
-  // the live destination beneath those unchanged pixels, let it complete
-  // covered paints, and only then exchange ownership and commit the route.
+  // The camera reaches its exact endpoint first. Seat the decoded exact room
+  // raster, restore the live destination beneath those unchanged pixels, let
+  // it complete covered paints, and only then exchange ownership and commit.
   const finishDiveIn = async (key, done, stage) => {
     const cam = camera();
     const surface = cam?.surface?.();
@@ -337,6 +602,14 @@
     if (!Number.isFinite(stage.motionStartedAt)) {
       stage.motionStartedAt = performance.now() - stage.morphMs;
     }
+    if (!Number.isFinite(stage.motionEndedAt)) stage.motionEndedAt = performance.now();
+    // First close the final moving refresh interval. Endpoint preparation may
+    // be expensive, but from this point forward the viewport is deliberately
+    // static and every task remains under a decoded raster owner.
+    await paint(1);
+    if (stage.sequence !== activeDive?.sequence) return;
+    stage.maintenanceStartedAt = performance.now();
+    try { await seatEndpointRaster(stage); } catch {}
     try { await materializeDiveDestination(stage); } catch {}
     if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
     armDestinationReveal(stage);
@@ -360,7 +633,11 @@
       surface.hidden = true;
       surface.style.zIndex = "";
     }
-    stage.foregroundAnimation?.cancel?.();
+    stage.coverAnimation?.cancel?.();
+    stage.coverAnimation = null;
+    if (ownershipFadeState.active) {
+      ownershipFadeState = { ...ownershipFadeState, active:false, endedAt:performance.now() };
+    }
     document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
     clearDestinationLayers();
     const doneAt = performance.now();
@@ -369,10 +646,27 @@
       destinationState:stage.destinationState,
       homePrewarm:stage.homePrewarm,
       settled:stage.settledState?.stable === true,
+      motionMs:(stage.motionEndedAt || stage.maintenanceStartedAt || doneAt) - stage.motionStartedAt,
+      maintenanceMs:doneAt - (stage.maintenanceStartedAt || stage.motionEndedAt || doneAt),
+      coverSeatMs:(stage.coverSeatedAt || doneAt) - (stage.maintenanceStartedAt || stage.motionEndedAt || doneAt),
+      materializeMs:(stage.readyAt || doneAt) - (stage.materializeAt || stage.readyAt || doneAt),
+      coveredSwapMs:(stage.revealedAt || doneAt) - (stage.liveReadyAt || stage.readyAt || doneAt),
+      crossfadeMs:(stage.swappedAt || doneAt) - (stage.releaseAt || doneAt),
+      crossfadeDuration:STATIC_CROSSFADE_MS,
       commitMs:(stage.committedAt || stage.commitAt || doneAt) - (stage.commitAt || stage.startedAt),
       readyMs:(stage.readyAt || doneAt) - stage.startedAt,
       frameWaitMs:Math.max(0, (stage.releaseAt || doneAt) - (stage.readyAt || doneAt)),
-      releaseMs:doneAt - (stage.releaseAt || doneAt),
+      releaseMs:(stage.revealedAt || doneAt) - (stage.releaseAt || doneAt),
+      coverInvariant:stage.coverInvariant === true,
+      liveReady:stage.liveReady === true,
+      coverStart:stage.coverStart || null,
+      coverBeforeSwap:stage.coverBeforeSwap || null,
+      coverAfterSwap:stage.coverAfterSwap || null,
+      liveLayersBeforeSwap:stage.liveLayersBeforeSwap || [],
+      liveLayersAfterSwap:stage.liveLayersAfterSwap || [],
+      preSwapLiveReady:stage.preSwapLiveReady === true,
+      postSwapLiveReady:stage.postSwapLiveReady === true,
+      revealError:stage.revealError || "",
       totalMs:doneAt - stage.startedAt,
     });
     if (performanceTimings.length > 24) performanceTimings.shift();
@@ -611,6 +905,31 @@
     driveTo,
     adoptDive,
     noteHomeTransformStart,
+    noteHomeTransformEnd,
+    motionState:() => ({ ...homeMotionState }),
+    ownershipFadeState:() => ({ ...ownershipFadeState }),
+    visualState:() => ({
+      active:homeMotionState.active || ownershipFadeState.active,
+      cameraActive:homeMotionState.active,
+      ownershipActive:ownershipFadeState.active,
+      camera:{ ...homeMotionState },
+      ownership:{ ...ownershipFadeState },
+    }),
+    coverState:() => activeDive ? {
+      key:activeDive.key,
+      sequence:activeDive.sequence,
+      phase:activeDive.phase,
+      coverInvariant:activeDive.coverInvariant !== false,
+      rasterReady:activeDive.coverStart?.ready === true,
+      rasterOpaque:activeDive.coverStart?.ready === true
+        && !["crossfading", "crossfade-mid", "swapped", "live"].includes(activeDive.phase),
+      liveReady:activeDive.liveReady === true,
+      motionEndedAt:activeDive.motionEndedAt || 0,
+      maintenanceStartedAt:activeDive.maintenanceStartedAt || 0,
+      coverSeatedAt:activeDive.coverSeatedAt || 0,
+      readyAt:activeDive.readyAt || 0,
+      swappedAt:activeDive.swappedAt || 0,
+    } : null,
     back:() => moveThroughHistory(-1),
     forward:() => moveThroughHistory(1),
     canGoBack:() => navigationStatus().canBack,

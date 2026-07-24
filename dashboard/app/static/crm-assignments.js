@@ -56,6 +56,8 @@
   let boardResizeObserver = null;
   let boardAutoRaf = 0;
   let boardAutoVelocity = 0;
+  let boardGeometryPending = false;
+  let boardGeometryFrame = 0;
 
   const itemById = (id) => model.commitments.find((item) => String(item.id) === String(id));
   const flowFor = (item) => model.flows.find((flow) => flow.workflowKey === "assignments" && flow.entityType === "commitments" && String(flow.recordId) === String(item?.id));
@@ -143,24 +145,47 @@
     bar:root?.querySelector(".crm-assignment-hsb"),
     thumb:root?.querySelector(".crm-assignment-hth"),
   });
+  const boardGeometryBlocked = () => !active || !!window.crmDeskTransit?.isBusy?.();
+  const scheduleBoardGeometry = () => {
+    boardGeometryPending = true;
+    if (boardGeometryFrame) return;
+    boardGeometryFrame = requestAnimationFrame(() => {
+      boardGeometryFrame = 0;
+      if (!boardGeometryPending || boardGeometryBlocked()) return;
+      boardGeometryPending = false;
+      boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0);
+      positionBoard();
+    });
+  };
   const boardMinimum = () => {
     const { clip, track } = boardElements();
     return Math.min(0, (clip?.clientWidth || 0) - (track?.scrollWidth || track?.offsetWidth || 0));
   };
   function positionBoard() {
     const { clip, track, bar, thumb } = boardElements(); if (!clip || !track || !bar || !thumb) return;
-    track.style.transform = `translateX(${Math.round(boardScroll.x)}px)`;
+    if (boardGeometryBlocked()) { scheduleBoardGeometry(); return; }
+    const transform = `translateX(${Math.round(boardScroll.x)}px)`;
+    if (track.style.transform !== transform) track.style.transform = transform;
     const view = clip.clientWidth; const content = track.scrollWidth || track.offsetWidth; const minimum = Math.min(0, view - content); const overflowing = content > view + 1;
     const board = clip.closest(".crm-assignment-board"); const fadeDistance = Math.min(72, Math.max(42, view * .06));
-    board?.style.setProperty("--crm-scroll-shadow-left", String(overflowing ? clamp(-boardScroll.x / fadeDistance, 0, 1) : 0));
-    board?.style.setProperty("--crm-scroll-shadow-right", String(overflowing ? clamp((boardScroll.x - minimum) / fadeDistance, 0, 1) : 0));
-    bar.classList.toggle("is-on", overflowing); bar.setAttribute("aria-hidden", String(!overflowing));
-    if (!overflowing) { boardScroll.x = 0; boardScroll.target = 0; track.style.transform = "translateX(0px)"; return; }
+    const shadowLeft = String(overflowing ? clamp(-boardScroll.x / fadeDistance, 0, 1) : 0);
+    const shadowRight = String(overflowing ? clamp((boardScroll.x - minimum) / fadeDistance, 0, 1) : 0);
+    if (board && board.style.getPropertyValue("--crm-scroll-shadow-left") !== shadowLeft) board.style.setProperty("--crm-scroll-shadow-left", shadowLeft);
+    if (board && board.style.getPropertyValue("--crm-scroll-shadow-right") !== shadowRight) board.style.setProperty("--crm-scroll-shadow-right", shadowRight);
+    if (bar.classList.contains("is-on") !== overflowing) bar.classList.toggle("is-on", overflowing);
+    if (bar.getAttribute("aria-hidden") !== String(!overflowing)) bar.setAttribute("aria-hidden", String(!overflowing));
+    if (!overflowing) {
+      boardScroll.x = 0; boardScroll.target = 0;
+      if (track.style.transform !== "translateX(0px)") track.style.transform = "translateX(0px)";
+      return;
+    }
     const trackWidth = Math.max(1, bar.clientWidth); const base = Math.max(28, trackWidth * (view / content)); let width = base; let left = 0;
     if (boardScroll.x > 0) { width = Math.max(14, base - boardScroll.x); left = 0; }
     else if (boardScroll.x < minimum) { width = Math.max(14, base - (minimum - boardScroll.x)); left = trackWidth - width; }
     else left = (minimum ? boardScroll.x / minimum : 0) * (trackWidth - width);
-    thumb.style.width = `${Math.round(width)}px`; thumb.style.left = `${Math.round(left)}px`;
+    const thumbWidth = `${Math.round(width)}px`, thumbLeft = `${Math.round(left)}px`;
+    if (thumb.style.width !== thumbWidth) thumb.style.width = thumbWidth;
+    if (thumb.style.left !== thumbLeft) thumb.style.left = thumbLeft;
   }
   function runBoardScroll() {
     if (boardScroll.raf) return;
@@ -214,8 +239,8 @@
     const move = (event) => { if (!dragging) return; const minimum = boardMinimum(); const view = clip.clientWidth; const content = view - minimum; const trackWidth = bar.clientWidth; const thumbWidth = Math.max(28, trackWidth * (view / content)); const fraction = (event.clientX - startX) / Math.max(1, trackWidth - thumbWidth); boardScroll.x = damp(startScroll + fraction * minimum, minimum); boardScroll.target = boardScroll.x; positionBoard(); };
     const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && thumb.hasPointerCapture?.(pointerId)) thumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); boardScroll.wheeling = false; boardScroll.target = boardScroll.x; runBoardScroll(); };
     thumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; pointerId = event.pointerId; try { thumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = boardScroll.x; cancelAnimationFrame(boardScroll.raf); boardScroll.raf = 0; clearTimeout(boardScroll.releaseTimer); boardScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
-    boardResizeObserver?.disconnect(); boardResizeObserver = new ResizeObserver(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); }); boardResizeObserver.observe(clip); boardResizeObserver.observe(root.querySelector(".crm-assignment-pipeline"));
-    requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); });
+    boardResizeObserver?.disconnect(); boardResizeObserver = new ResizeObserver(scheduleBoardGeometry); boardResizeObserver.observe(clip); boardResizeObserver.observe(root.querySelector(".crm-assignment-pipeline"));
+    scheduleBoardGeometry();
   }
 
   function render() {
@@ -438,8 +463,13 @@
     root.hidden = !active;
     if (active && (dirty || !model.commitments.length)) refresh();
     else if (active && renderPending) { render(); renderPending = false; }
-    else if (active) requestAnimationFrame(() => { boardScroll.x = boardScroll.target = clamp(boardScroll.x, boardMinimum(), 0); positionBoard(); });
-    if (!active) { closeFloating(); stopBoardAutoScroll(); }
+    else if (active) scheduleBoardGeometry();
+    if (!active) {
+      closeFloating(); stopBoardAutoScroll();
+      if (boardScroll.raf) { cancelAnimationFrame(boardScroll.raf); boardScroll.raf = 0; }
+      clearTimeout(boardScroll.releaseTimer); boardScroll.wheeling = false; boardScroll.target = boardScroll.x;
+    }
+    if (active && boardGeometryPending) scheduleBoardGeometry();
     return api;
   };
   const baseline = async (options = {}) => {
@@ -472,6 +502,9 @@
   async function miniature() { await baseline(); const copy = root.cloneNode(true); copy.hidden = false; copy.removeAttribute("data-crm-theater"); Object.assign(copy.style, { position:"absolute", left:"50%", top:"50%", width:"1320px", height:"860px", transform:"translate(-50%,-50%) scale(.285)", transformOrigin:"center", pointerEvents:"none" }); return copy; }
   const open = async (id, anchor) => { if (dirty || !itemById(id)) await refresh(); const item = itemById(id); if (!item) return false; revealStage(stageOf(item)); requestAnimationFrame(() => openAssignmentDetail(item, anchor || root?.querySelector(`[data-assignment-card="${String(item.id).replace(/["\\\]]/g, "\\$&")}"]`))); return true; };
   const api = { setActive, baseline, miniature, refresh, move, assign, unassign, create:() => openEditor(), open, items:() => clone(model.commitments), stages:() => clone(STAGES), setStageExpanded, expandedStages:() => [...expandedStages], scrollBy:scrollBoardBy, scrollToStage:revealStage, scrollState:() => ({ x:boardScroll.x, target:boardScroll.target, min:boardMinimum() }), homePreviewState, applyHomePreviewState, isActive:() => active };
+  document.addEventListener("crm:desk-transit-settled", () => {
+    if (boardGeometryPending) scheduleBoardGeometry();
+  });
   document.addEventListener("crm:theater-switch", closeFloating);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true }); else mount();
   window.crmAssignments = api;

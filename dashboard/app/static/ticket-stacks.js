@@ -630,8 +630,11 @@
     trashMode = on;
     if (on) trashShowEmpty = showEmpty;   // opened deliberately? let an empty bin stay open to show its placeholder
     else { trashShowEmpty = false; if (decks.trash) { fanned.trash = false; decks.trash.scrollX = 0; } }
-    decks.right?.action?.classList.toggle("is-active", on);
-    decks.right?.action?.setAttribute("aria-expanded", String(on));
+    const trashAction = decks.right?.action;
+    if (trashAction?.classList.contains("is-active") !== !!on) trashAction?.classList.toggle("is-active", !!on);
+    if (trashAction && trashAction.getAttribute("aria-expanded") !== String(!!on)) {
+      trashAction.setAttribute("aria-expanded", String(!!on));
+    }
     render();
   };
 
@@ -840,7 +843,7 @@
     b.classList.add("tk-ringing");
     ringTimer = setTimeout(() => { b.classList.remove("tk-ringing"); ringTimer = 0; setTrashMode(true, true); }, 720);   // showEmpty: an EMPTY bin opens to its placeholder (a big drop target) instead of auto-closing
   };
-  function stopTrashRing() { const b = decks.right?.action; if (b) b.classList.remove("tk-ringing"); if (ringTimer) { clearTimeout(ringTimer); ringTimer = 0; } }
+  function stopTrashRing() { const b = decks.right?.action; if (b?.classList.contains("tk-ringing")) b.classList.remove("tk-ringing"); if (ringTimer) { clearTimeout(ringTimer); ringTimer = 0; } }
   // While dragging: ring the closed bin when hovering it; report whether the bin is the drag target.
   const trashDragMove = (x, y) => { const over = overTrashTarget(x, y); if (over && !trashMode && overTrashBtn(x, y)) startTrashRing(); else stopTrashRing(); return over; };
 
@@ -1260,6 +1263,7 @@
   // edge (clipped to the card's rounded shape) — square through the body, the real corner curve only near
   // a corner, and never over the inter-card gaps (only a straddling card gets one).
   const updateDeckEdges = () => {
+    if (!active || window.crmDeskTransit?.isBusy?.()) return;
     const side = fanned.left ? "left" : fanned.right ? "right" : fanned.trash ? "trash" : null;
     const VW = window.innerWidth, MAXW = 34, SH = "rgba(0,0,0,0.45)";
     const hide = (c) => { const sh = c.querySelector(":scope > .tk-edge-shade"); if (sh) sh.style.cssText = "position:absolute;width:0;height:0;"; };
@@ -1299,8 +1303,13 @@
   let fanEdgeRaf = 0;
   const trackFanEdges = () => {
     cancelAnimationFrame(fanEdgeRaf);
+    if (!active || window.crmDeskTransit?.isBusy?.()) { fanEdgeRaf = 0; return; }
     const end = performance.now() + 480;
-    const tick = () => { updateDeckEdges(); if (performance.now() < end) fanEdgeRaf = requestAnimationFrame(tick); else fanEdgeRaf = 0; };
+    const tick = () => {
+      if (!active || window.crmDeskTransit?.isBusy?.()) { fanEdgeRaf = 0; return; }
+      updateDeckEdges();
+      if (performance.now() < end) fanEdgeRaf = requestAnimationFrame(tick); else fanEdgeRaf = 0;
+    };
     fanEdgeRaf = requestAnimationFrame(tick);
   };
   // Reposition the fanned cards + thumb + arrow from the CURRENT (maybe overscrolled) scrollX — no clamp.
@@ -1877,6 +1886,19 @@
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
+  let zoneGeometryRefreshPending = false;
+  let zoneGeometryRefreshFrame = 0;
+  const zoneGeometryBlocked = () => !active || !!window.crmDeskTransit?.isBusy?.();
+  const scheduleZoneGeometryRefresh = () => {
+    zoneGeometryRefreshPending = true;
+    if (zoneGeometryRefreshFrame) return;
+    zoneGeometryRefreshFrame = requestAnimationFrame(() => {
+      zoneGeometryRefreshFrame = 0;
+      if (!zoneGeometryRefreshPending || zoneGeometryBlocked()) return;
+      zoneGeometryRefreshPending = false;
+      layoutZones();
+    });
+  };
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   let draggingSide = null;    // which deck owns the in-flight card → its deck is NOT rebuilt mid-drag
   let dragPreviewFn = null;   // (x,y) => recompute the current drag's highlight + sandwich gap (re-run while autoscrolling)
@@ -1889,13 +1911,21 @@
   const zViewH = (s) => zoneBody[s]?.clientHeight || 0;
   const zContentH = (s) => zoneTrack[s]?.offsetHeight || 0;
   const zMin = (s) => Math.min(0, zViewH(s) - zContentH(s));
+  const zoneShadeStyles = new WeakMap();
+  const writeZoneShade = (shade, cssText) => {
+    if (!shade || zoneShadeStyles.get(shade) === cssText) return;
+    zoneShadeStyles.set(shade, cssText);
+    shade.style.cssText = cssText;
+  };
   const positionZone = (s) => {
     const tr = zoneTrack[s], st = zoneScroll[s], body = zoneBody[s]; if (!tr || !st || !body) return;
-    tr.style.transform = `translateY(${Math.round(st.sy)}px)`;
+    if (zoneGeometryBlocked()) { scheduleZoneGeometryRefresh(); return; }
+    const trackTransform = `translateY(${Math.round(st.sy)}px)`;
+    if (tr.style.transform !== trackTransform) tr.style.transform = trackTransform;
     const view = zViewH(s), content = zContentH(s), min = zMin(s);
     const sb = body.querySelector(".tk-zsb"), th = body.querySelector(".tk-zth");
     const over = content > view + 1;
-    sb.classList.toggle("is-on", over);
+    if (sb.classList.contains("is-on") !== over) sb.classList.toggle("is-on", over);
     if (over) {
       const trackH = view - 8;                                  // the thumb lives INSIDE the inset bar → no extra +4
       const base = Math.max(28, trackH * (view / content));
@@ -1905,8 +1935,9 @@
       if (st.sy > 0) { thumbH = Math.max(14, base - st.sy); top = 0; }                       // past the top
       else if (st.sy < min) { thumbH = Math.max(14, base - (min - st.sy)); top = trackH - thumbH; }  // past the bottom
       else { top = (min ? st.sy / min : 0) * (trackH - thumbH); }
-      th.style.height = `${Math.round(thumbH)}px`;
-      th.style.top = `${Math.round(top)}px`;
+      const nextHeight = `${Math.round(thumbH)}px`, nextTop = `${Math.round(top)}px`;
+      if (th.style.height !== nextHeight) th.style.height = nextHeight;
+      if (th.style.top !== nextTop) th.style.top = nextTop;
     }
     // Edge shadow lives INSIDE each clipped card (a child clipped by the card's overflow+radius): 90°
     // through the body, the card's real corner curve only where the boundary nears a corner, never in gaps.
@@ -1918,14 +1949,14 @@
       if (shTop) {
         if (over && r.top < VT - 0.5 && r.bottom > VT + 0.5) {                    // straddles the clip top
           const ycut = VT - r.top, h = Math.min(MAXH, ycut);
-          shTop.style.cssText = `position:absolute;left:0;width:${r.width}px;top:${ycut}px;height:${h}px;background:linear-gradient(to bottom, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`;
-        } else shTop.style.cssText = "position:absolute;width:0;height:0;";
+          writeZoneShade(shTop, `position:absolute;left:0;width:${r.width}px;top:${ycut}px;height:${h}px;background:linear-gradient(to bottom, ${SH}, rgba(0,0,0,0));pointer-events:none;z-index:6;`);
+        } else writeZoneShade(shTop, "position:absolute;width:0;height:0;");
       }
       if (shBot) {
         if (over && r.bottom > VB + 0.5 && r.top < VB - 0.5) {                    // straddles the clip bottom
           const ycut = VB - r.top, h = Math.min(MAXH, r.bottom - VB);
-          shBot.style.cssText = `position:absolute;left:0;width:${r.width}px;top:${ycut - h}px;height:${h}px;background:linear-gradient(to bottom, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`;
-        } else shBot.style.cssText = "position:absolute;width:0;height:0;";
+          writeZoneShade(shBot, `position:absolute;left:0;width:${r.width}px;top:${ycut - h}px;height:${h}px;background:linear-gradient(to bottom, rgba(0,0,0,0), ${SH});pointer-events:none;z-index:6;`);
+        } else writeZoneShade(shBot, "position:absolute;width:0;height:0;");
       }
     });
   };
@@ -2113,6 +2144,7 @@
   // proportions instead of stretching to fill the screen.
   const layoutZones = () => {
     if (!zonesRoot) return;
+    if (zoneGeometryBlocked()) { scheduleZoneGeometryRefresh(); return; }
     const rootStyle = getComputedStyle(document.documentElement);
     const zTop = parseFloat(rootStyle.getPropertyValue("--crm-canvas-top")) || 78;
     const zBottom = CARD_H + MARGIN * 2;      // a MARGIN above the stacks' top card
@@ -2236,13 +2268,19 @@
       // Any change to this bucket's viewport size (window resize, grid reflow, bucket resize) re-runs
       // its edge-shadow math AND re-clamps its scroll live — so growing the window past scrollable
       // never strands the viewport pinned at the old bottom.
-      if (window.ResizeObserver) new ResizeObserver(() => clampZoneScroll(s.key)).observe(zoneBody[s.key]);
+      if (window.ResizeObserver) new ResizeObserver(() => {
+        if (zoneGeometryBlocked()) { scheduleZoneGeometryRefresh(); return; }
+        clampZoneScroll(s.key);
+      }).observe(zoneBody[s.key]);
       wireZoneThumb(s.key);
     });
     theater.appendChild(zonesRoot);
     layoutZones();
     requestAnimationFrame(layoutZones);              // re-measure once the grid has laid out
-    window.addEventListener("resize", layoutZones);
+    window.addEventListener("resize", () => {
+      if (zoneGeometryBlocked()) { scheduleZoneGeometryRefresh(); return; }
+      layoutZones();
+    });
   };
 
   // Which stage zone (if any) is under the point — the drop target for a ticket drag.
@@ -2590,8 +2628,11 @@
     // opened it empty on purpose (trashShowEmpty), in which case it stays open to show the placeholder.
     if (trashMode && !deleted.length && !trashShowEmpty) {
       trashMode = false; fanned.trash = false;
-      decks.right?.action?.classList.remove("is-active");
-      decks.right?.action?.setAttribute("aria-expanded", "false");
+      const trashAction = decks.right?.action;
+      if (trashAction?.classList.contains("is-active")) trashAction.classList.remove("is-active");
+      if (trashAction && trashAction.getAttribute("aria-expanded") !== "false") {
+        trashAction.setAttribute("aria-expanded", "false");
+      }
     }
     // Deliberately-opened empty bin: show the "Deleted tickets get added here" placeholder in the lifted
     // open-bin spot (the deck box itself is display:none while empty), matching where the cards would fan up.
@@ -2818,6 +2859,7 @@
       const visible = active = !!on;
       if (theater) theater.hidden = !visible;
       if (!visible) {
+        if (fanEdgeRaf) { cancelAnimationFrame(fanEdgeRaf); fanEdgeRaf = 0; }
         collapseCornerFans();
         hideTicketMenu();
         stopTrashRing();
@@ -2825,6 +2867,7 @@
       } else if (!hasRendered) {
         render();
       }
+      if (visible && zoneGeometryRefreshPending) scheduleZoneGeometryRefresh();
       return window.ticketStacks;
     },
     isDeleted,
@@ -2916,6 +2959,9 @@
       if (pendingRender) { pendingRender = false; render(); }
     },
   };
+  document.addEventListener("crm:desk-transit-settled", () => {
+    if (zoneGeometryRefreshPending) scheduleZoneGeometryRefresh();
+  });
   window.addEventListener("resize", () => {
     hasRendered = false;
     if (active) render();

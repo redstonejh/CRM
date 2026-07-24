@@ -23,12 +23,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     }),
   }));
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v45";
+  const HOME_PREVIEW_VERSION = "filtered-home-v46";
   const DAY_MS = 86400000;
   const HOME_HAND_WINDOW_DAYS = 7;
   const HAND_LIMIT = 7;
   const previews = new Map();
   const pendingPreviews = new Map();
+  const pendingDisplayedPreviewRefreshes = new Map();
   const previewSyncKeys = new Set();
   const previewSyncs = new Set();
   let camera = null;
@@ -58,6 +59,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   let previewCommitTimer = 0;
   let previewDecodeSequence = 0;
   let priorityTicketOpen = null;
+  let transitionMaintenanceTimer = 0;
+  let transitionMaintenanceIdle = 0;
   const prewarmedFactories = new Set();
   const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
@@ -164,7 +167,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     style.id = "crm-home-styles";
     style.textContent = `
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
-      .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0}
+      .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
+        isolation:isolate;contain:paint;will-change:transform;backface-visibility:hidden}
       /* Inactive rooms that finished their idle baseline stay rasterized behind
          Home instead of returning to display:none and paying their first paint
          during a camera move. The attribute is semantic-only: [hidden] remains
@@ -179,8 +183,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-motion-variant.crm-home-preview-image{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
         pointer-events:none;user-select:none;backface-visibility:hidden}
       .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:.001;transform:translateZ(0)}
-      .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint;will-change:transform,opacity;backface-visibility:hidden}
       .crm-home-surface:is(.crm-home-camera-moving,.crm-home-camera-handoff) .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:1}
+      /* During camera motion the decoded cut-out raster is the sole Home
+         owner. Keeping the live grid/hand/title tree beneath that identical
+         image still asks Chromium to composite four backdrop surfaces on its
+         first transformed frame. Hide those live owners until the covered
+         endpoint exchange; their geometry and state remain resident. */
+      .crm-home-surface.crm-home-camera-moving.crm-home-bitmap-motion .crm-home-level>:is(.crm-home-grid,.crm-home-title-layer,.crm-home-priority-hand){
+        visibility:hidden!important}
       /* Home geometry remains resident throughout the return. At the endpoint
          the motion texture and the covered live objects swap in one style
          update; there is no full-screen snapshot crossfade. */
@@ -191,10 +201,6 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket:not(.is-camera-target),
       .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand{
         visibility:visible;opacity:.001!important;transition:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-priority-hand{
-        visibility:visible;opacity:.001;transition:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-priority-hand>.crm-home-hand-card{
-        animation:none!important;transition:none!important}
       /* The expander owns the selected room during travel. One precomposed
          variant carries every other Home object with the selected tile cut
          transparent and remains the covered owner while Home prepares for the
@@ -291,21 +297,29 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:0;transform:translateZ(0);will-change:opacity,transform}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
-      @keyframes crm-home-acrylic-expand{0%{opacity:1}86%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
-      @keyframes crm-home-acrylic-contract{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}14%,100%{opacity:1}}
+      @keyframes crm-home-acrylic-expand{0%{opacity:1}78%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
+      @keyframes crm-home-acrylic-contract{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}22%,100%{opacity:1}}
       .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
-      /* The rasterized motion variant and the screen-space lens own Home's
-         material during travel. Defer all four redundant backdrop filters
-         until the covered endpoint handoff. */
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{transition:none!important;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;will-change:transform}
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3;opacity:.001!important;transition:none!important}
+      /* The neutral tint still expands in screen space, but its blur is baked
+         into the decoded Home pixels. A live backdrop-filter here allocates a
+         viewport surface on the first dive and is visually redundant. */
+      .crm-home-surface.crm-home-bitmap-motion>.crm-home-screen-acrylic{
+        -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .crm-home-expander .crm-home-title-glass{display:none}
       .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transform:none;opacity:1;transition:none}
+      /* The exact room capture is decoded with every expander but does not
+         participate in camera motion. Desk transit seats it only after the
+         transform has completed, giving destination materialization one
+         opaque, pixel-stable raster lid instead of a translucent foreground
+         cutout that could double-paint acrylic objects. */
+      .crm-home-expander .crm-home-preview-exact{display:none;filter:none;transform:none;opacity:1;transition:none}
+      .crm-home-expander.crm-home-endpoint-cover .crm-home-preview-exact{display:block;z-index:3}
+      .crm-home-expander.crm-home-endpoint-cover .crm-home-preview-foreground{visibility:hidden}
       /* The warm expander itself is already at .001 opacity. Keep its one
          transparent room texture composited so the first camera frame never
          performs a wallpaper-sized upload. */
@@ -343,6 +357,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const isCurrentPreview = (preview) => preview?.version === HOME_PREVIEW_VERSION;
   const mountHost = (host, preview, exact = false, exactOnly = false) => {
     if (!host || !isRenderablePreview(preview)) return false;
+    const stamp = String(preview.capturedAt || 0);
+    const mountedForeground = host.querySelector(":scope > .crm-home-preview-foreground");
+    const mountedExact = host.querySelector(":scope > .crm-home-preview-exact");
+    if (host.dataset.capturedAt === stamp
+      && (exactOnly ? !mountedForeground : !!mountedForeground)
+      && (!exact || !!mountedExact)) return true;
     ensurePreviewState(host);
     host.style.removeProperty("--far-shift-y");
     let foreground = host.querySelector(":scope > .crm-home-preview-foreground");
@@ -366,7 +386,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     }
     host.dataset.previewState = isCurrentPreview(preview) ? "ready" : "stale";
     host.dataset.previewVersion = preview.version;
-    host.dataset.capturedAt = String(preview.capturedAt || 0);
+    host.dataset.capturedAt = stamp;
     host.dataset.previewWidth = String(preview.width || 0);
     host.dataset.previewHeight = String(preview.height || 0);
     host.closest(".crm-home-bucket")?.setAttribute("data-preview-ready", "true");
@@ -389,7 +409,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   const previewCommitBlocked = () => !!camera?.isTransitioning?.()
     || !!camera?.surface?.()?.classList.contains("crm-home-camera-moving")
-    || !!camera?.surface?.()?.classList.contains("crm-home-camera-handoff");
+    || !!camera?.surface?.()?.classList.contains("crm-home-camera-handoff")
+    || !!window.crmDeskTransit?.isBusy?.();
   const preloadSource = (src) => new Promise((resolve) => {
     const image = new Image(); let settled = false;
     const finish = () => { if (settled) return; settled = true; resolve(); };
@@ -1006,6 +1027,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const homeAcrylicLens = window.createFractalAcrylicLens({
     frameSelector:":scope > .crm-home-transition-acrylic",
     lensClass:"crm-home-screen-acrylic",
+    entryHold:.78,
+    exitReveal:.22,
   });
   const buildExpander = (target) => {
     const tile = homeTileRecords.find((candidate) => candidate.tile.id === target?.dataset?.tileId);
@@ -1025,11 +1048,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // One transparent, full-resolution room texture carries its objects and
     // shadows above a live acrylic lens. The fixed workspace wallpaper remains
     // the only background paint throughout the camera move.
-    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key));
+    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true);
     return bucket;
   };
   const recycleExpander = (key, expander) => {
     if (!expander || !MODULES.some((module) => module.key === key)) return;
+    const preview = expander.querySelector(":scope > .crm-home-preview");
+    preview?.style.removeProperty("opacity");
+    preview?.style.removeProperty("transition");
     expander.remove();
     expander.className = "crm-home-bucket crm-home-expander";
     recycledExpanders.set(key, expander);
@@ -1045,14 +1071,53 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     root?.querySelectorAll?.(".crm-home-bucket.is-camera-target")?.forEach?.((bucket) => bucket.classList.remove("is-camera-target"));
     selectMotionVariant(root, "");
   };
-  const finishHandoff = (clearTarget = true) => {
+  const flushDisplayedPreviewRefreshes = () => {
+    if (previewCommitBlocked() || !pendingDisplayedPreviewRefreshes.size) return false;
+    const refreshes = [...pendingDisplayedPreviewRefreshes.entries()];
+    pendingDisplayedPreviewRefreshes.clear();
+    refreshes.forEach(([key, viewState]) => { void captureBaseline(key, viewState); });
+    return true;
+  };
+  const cancelTransitionMaintenance = () => {
+    clearTimeout(transitionMaintenanceTimer);
+    transitionMaintenanceTimer = 0;
+    if (!transitionMaintenanceIdle) return;
+    if (typeof cancelIdleCallback === "function") cancelIdleCallback(transitionMaintenanceIdle);
+    else cancelAnimationFrame(transitionMaintenanceIdle);
+    transitionMaintenanceIdle = 0;
+  };
+  const scheduleTransitionMaintenance = (delay = 72) => {
+    cancelTransitionMaintenance();
+    transitionMaintenanceTimer = setTimeout(() => {
+      transitionMaintenanceTimer = 0;
+      const run = () => {
+        transitionMaintenanceIdle = 0;
+        if (previewCommitBlocked()) {
+          scheduleTransitionMaintenance(96);
+          return;
+        }
+        flushPendingPreviews();
+        flushPendingMotionSnapshot();
+        flushDisplayedPreviewRefreshes();
+      };
+      if (typeof requestIdleCallback === "function") {
+        transitionMaintenanceIdle = requestIdleCallback(run, { timeout:420 });
+      } else {
+        transitionMaintenanceIdle = requestAnimationFrame(run);
+      }
+    }, delay);
+  };
+  const finishHandoff = (clearTarget = true, deferMaintenance = true) => {
     camera?.surface?.()?.classList.remove("crm-home-camera-handoff");
     if (clearTarget) clearCameraTarget();
     const resolve = handoffResolve;
     handoffResolve = null;
     resolve?.();
-    flushPendingPreviews();
-    flushPendingMotionSnapshot();
+    // Preview replacement and motion-raster validation can touch every Home
+    // tile. They are maintenance, never part of the camera endpoint. Keep them
+    // out of the ownership exchange and run them only after desk transit has
+    // completely released its retained destination.
+    if (deferMaintenance) scheduleTransitionMaintenance();
   };
   const beginHomeHandoff = (context, sequence) => {
     const surface = context.surface;
@@ -1062,7 +1127,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       handoffPromise = Promise.resolve();
       return;
     }
-    finishHandoff(false);
+    finishHandoff(false, false);
     handoffPromise = new Promise((resolve) => { handoffResolve = resolve; });
     surface.classList.add("crm-home-camera-handoff");
     // The selected live tile is already composited beneath its geometrically
@@ -1087,11 +1152,22 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     prepareTarget:(target,context)=>markCameraTarget(target,context),
     prepareJump:(_expander,target,context)=>markCameraTarget(target,context),
     onTransitionStart:(direction,context)=>{
-      finishHandoff(false);
+      cancelTransitionMaintenance();
+      finishHandoff(false, false);
       handoffSequence += 1;
       factoryPrewarmAfter = Number.POSITIVE_INFINITY;
       context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff");
-      syncMotionSnapshot(context.layers?.[0]);
+      const motionRoot = context.layers?.[0];
+      const motionVariant = motionRoot?.querySelector?.(":scope > .crm-home-motion-variant.is-active-motion-variant");
+      context.surface?.classList.toggle("crm-home-bitmap-motion",
+        motionRoot?.dataset?.motionSnapshotReady === "true"
+        && !!motionRoot?.dataset?.motionVariant
+        && !!motionVariant?.complete
+        && motionVariant.naturalWidth > 0);
+      // Snapshot validity is maintained on data/layout changes. Recomputing its
+      // complete geometry signature here forced style/layout immediately before
+      // the first transform frame and made an otherwise compositor-only move
+      // inherit a main-thread reaction hitch.
       context.surface?.classList.add("crm-home-camera-moving");
       context.surface?.classList.toggle("crm-home-camera-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-camera-contracting",direction==="contract");
@@ -1103,7 +1179,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
     },
     onTransitionEnd:(direction,context)=>{
-      context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting");
+      window.crmDeskTransit?.noteHomeTransformEnd?.(direction, performance.now());
+      context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting","crm-home-bitmap-motion");
       const sequence = ++handoffSequence;
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
         beginHomeHandoff(context, sequence);
@@ -1116,7 +1193,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);
       scheduleFactoryPrewarm();
     },
-    onLevelChange:(context)=>{if(context.active&&context.level===0)mountAll()},
+    onLevelChange:(context)=>{
+      if (context.active && context.level === 0 && !window.crmDeskTransit?.isBusy?.()) mountAll();
+    },
   });
 
   document.addEventListener("click", (event) => {
@@ -1138,15 +1217,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (on) factoryPrewarmAfter = performance.now() + 250;
     }
     if (on) {
-      mountAll();
+      const transitBusy = !!window.crmDeskTransit?.isBusy?.();
+      if (!transitBusy) mountAll();
       // The decoded transition texture survives while Home is inactive, but a
       // layout/camera boundary can leave its readiness flag cleared. Re-seat
       // that existing composition immediately so the next dive never begins
       // with a late material upload.
-      requestAnimationFrame(() => syncMotionSnapshot());
-      requestMotionSnapshot();
-      scheduleFactoryPrewarm();
-      if (window.crmDeskTransit?.isBusy?.()) activeRefreshPending = handDirty;
+      if (!transitBusy) {
+        requestAnimationFrame(() => syncMotionSnapshot());
+        requestMotionSnapshot();
+        scheduleFactoryPrewarm();
+      }
+      if (transitBusy) activeRefreshPending = handDirty;
       else {
         activeRefreshPending = false;
         requestPreviews(false);
@@ -1165,6 +1247,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     return window.crmHome;
   };
   document.addEventListener("crm:desk-transit-settled", (event) => {
+    scheduleTransitionMaintenance();
     if ((!activeRefreshPending && !handDirty) || event.detail?.key !== "home" || !camera?.isActive?.()) return;
     activeRefreshPending = false;
     requestAnimationFrame(() => {
@@ -1223,6 +1306,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     request.finally(() => { previewSyncs.delete(request); previewSyncKeys.delete(key); }).catch(() => {});
     return request;
   };
+  const refreshDisplayedPreview = (key) => {
+    const viewState = captureDisplayedState(key);
+    // Leaving a live room used to launch its offscreen capture immediately
+    // before the reverse camera started. The worker's first capture paint could
+    // then contend with the first 60ms of an otherwise compositor-only return.
+    // Preserve the room state synchronously, but perform the raster refresh in
+    // the post-transit idle slice.
+    if (window.crmDeskTransit?.isBusy?.() || camera?.isTransitioning?.()) {
+      pendingDisplayedPreviewRefreshes.set(key, viewState);
+      scheduleTransitionMaintenance();
+      return Promise.resolve(previews.get(key)||null);
+    }
+    return captureBaseline(key, viewState);
+  };
   const waitForPreviewSync = async () => {
     while (previewSyncs.size) await Promise.allSettled([...previewSyncs]);
     const result = await window.crmHomePreviews?.waitForIdle?.().catch?.(() => null);
@@ -1251,9 +1348,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     }],
   });
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview:captureBaseline,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
+  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
     tiles:()=>clone(homeTileRecords),createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
-    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
+    previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||"",materialMode:motionSnapshot?.materialMode||""}),
     prewarmStatus:()=>({ready:[...prewarmedFactories],running:factoryPrewarmRunning,pending:FACTORY_PREWARM_APIS.filter((name)=>!prewarmedFactories.has(name))})};

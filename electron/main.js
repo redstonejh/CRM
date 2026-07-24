@@ -77,7 +77,7 @@ const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v44';
+const HOME_PREVIEW_VERSION = 'filtered-home-v45';
 const homePreviewCache = new Map();
 const homePreviewViewStates = new Map();
 const homePreviewViewStateGenerations = new Map();
@@ -96,6 +96,29 @@ let projectPreviewCaptureCount = 0;
 let plannerHomeCaptureRequestGeneration = 0;
 let projectPreviewBatchPlannerGeneration = 0;
 let homePreviewActivityGeneration = 0;
+let homePreviewInteractionActive = false;
+let homePreviewInteractionWaiters = [];
+
+function setHomePreviewInteraction(active) {
+  homePreviewInteractionActive = !!active;
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    // The hidden renderer only paints static capture states. Throttle it to one
+    // frame while the visible camera owns the GPU, then restore a deliberately
+    // modest capture cadence after the handoff.
+    try { previewWindow.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
+  }
+  if (!homePreviewInteractionActive) {
+    const waiters = homePreviewInteractionWaiters;
+    homePreviewInteractionWaiters = [];
+    waiters.forEach((resolve) => resolve());
+  }
+}
+
+function waitForHomePreviewInteraction() {
+  return homePreviewInteractionActive
+    ? new Promise((resolve) => homePreviewInteractionWaiters.push(resolve))
+    : Promise.resolve();
+}
 
 // ─── Main window ────────────────────────────────────────────────────────────────
 // Loaded from a STATIC file (dashboard/index.html), shipped as an extraResource —
@@ -275,6 +298,7 @@ function transparentImageRegion(image, region, viewport) {
 }
 
 async function prepareCapture(win, matte = null, options = {}) {
+  await waitForHomePreviewInteraction();
   const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
   const homeMotionObjectsOnly = options.homeMotionObjectsOnly === true;
   const css = `
@@ -311,16 +335,20 @@ async function prepareCapture(win, matte = null, options = {}) {
 }
 
 async function captureForeground(win, options = {}) {
+  await waitForHomePreviewInteraction();
   await prepareCapture(win, '#000000', options);
   const black = await win.webContents.capturePage();
+  await waitForHomePreviewInteraction();
   await prepareCapture(win, '#ffffff', options);
   const white = await win.webContents.capturePage();
   return foregroundFromMattes(black, white);
 }
 
 async function captureRoom(win) {
+  await waitForHomePreviewInteraction();
   await prepareCapture(win, null);
   const exact = await win.webContents.capturePage();
+  await waitForHomePreviewInteraction();
   const foreground = await captureForeground(win);
   if (!foreground || exact.isEmpty()) return null;
   return { exact, foreground: foreground.image, bounds: foreground.bounds };
@@ -351,6 +379,7 @@ async function createPreviewWindow() {
     },
   });
   previewWindow = worker;
+  try { worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
   worker.on('closed', () => { if (previewWindow === worker) previewWindow = null; });
   try {
     await worker.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } });
@@ -429,6 +458,7 @@ function captureProjectPreview(projectId, viewState = {}) {
   homePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
     let worker;
     try {
+      await waitForHomePreviewInteraction();
       worker = await createPreviewWindow();
       await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('planner')`, true);
       await waitForRenderer(worker, `document.body.dataset.crmModule === 'planner' && !!window.crmPlanner`);
@@ -458,6 +488,7 @@ function captureProjectPreview(projectId, viewState = {}) {
 
 async function captureHomeMotionSnapshot(worker) {
   homeMotionSnapshotError = null;
+  await waitForHomePreviewInteraction();
   await worker.webContents.executeJavaScript(`(async () => {
     const captureStyle = document.getElementById('crm-preview-capture-style');
     if (captureStyle) captureStyle.textContent = '';
@@ -517,6 +548,7 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
     try {
       worker = await createPreviewWindow();
       for (const key of requested) {
+        await waitForHomePreviewInteraction();
         activeCaptureKey = key;
         await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive(${JSON.stringify(key)})`, true);
         await waitForRenderer(worker, `document.body.dataset.crmModule === ${JSON.stringify(key)} && !!document.querySelector('[data-crm-theater]:not([hidden])')`);
@@ -739,6 +771,9 @@ function isPreviewSender(e) {
 ipcMain.handle('dashboard-window:reload', (e) => { if (isMainSender(e)) mainWindow.webContents.reload(); return { ok: true }; });
 ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) mainWindow.minimize(); return { ok: true }; });
 ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) mainWindow.hide(); return { ok: true }; });
+ipcMain.on('home-preview:interaction', (event, active) => {
+  if (isMainSender(event)) setHomePreviewInteraction(active);
+});
 ipcMain.handle('home-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
   return { ok: true, version: HOME_PREVIEW_VERSION, previews: [...homePreviewCache.values()] };

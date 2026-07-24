@@ -7,7 +7,7 @@
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v44";
+  const HOME_PREVIEW_VERSION = "filtered-home-v45";
   const DAY_MS = 86400000;
   const HOME_HAND_WINDOW_DAYS = 7;
   const HAND_LIMIT = 7;
@@ -85,11 +85,12 @@
       .crm-home-motion-snapshot.crm-home-preview-image,
       .crm-home-motion-variant.crm-home-preview-image{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
         pointer-events:none;user-select:none;backface-visibility:hidden}
+      .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:.001;transform:translateZ(0)}
       .crm-home-surface.crm-home-camera-moving .crm-home-level{isolation:isolate;contain:paint;will-change:transform,opacity;backface-visibility:hidden}
-      .crm-home-surface:is(.crm-home-camera-moving,.crm-home-camera-handoff) .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block}
-      /* The live Home objects remain resident in the compositor throughout the
-         return. At the endpoint the motion texture and these live objects swap
-         in one style update; there is no full-screen snapshot crossfade. */
+      .crm-home-surface:is(.crm-home-camera-moving,.crm-home-camera-handoff) .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:1}
+      /* Home geometry remains resident throughout the return. At the endpoint
+         the motion texture and the covered live objects swap in one style
+         update; there is no full-screen snapshot crossfade. */
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid{z-index:3;opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket,
       .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand>.crm-home-hand-card{
@@ -103,8 +104,8 @@
         animation:none!important;transition:none!important}
       /* The expander owns the selected room during travel. One precomposed
          variant carries every other Home object with the selected tile cut
-         transparent and remains the covered owner while live Home acrylics
-         prepare for the endpoint exchange. */
+         transparent and remains the covered owner while Home prepares for the
+         endpoint exchange. */
       .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket:not(.is-camera-target)>.crm-home-preview{
         visibility:hidden}
       /* The real selected tile and the full-size lid trade opacity while their
@@ -121,7 +122,7 @@
         grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:var(--crm-object-gap,18px)}
       .crm-home-title-slot{position:relative;min-width:0;min-height:0}
       .crm-home-bucket{position:relative;box-sizing:border-box;display:block;min-height:0;overflow:hidden;color:#fff;
-        cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform,backdrop-filter;
+        cursor:pointer;border:0;container-type:size;border-radius:var(--home-r,16px);padding:0;will-change:transform;
         background:linear-gradient(180deg,rgba(22,26,36,.34),rgba(12,16,24,.28));
         -webkit-backdrop-filter:blur(28px) saturate(140%);backdrop-filter:blur(28px) saturate(140%);
         box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.18),0 14px 26px -16px rgba(0,0,0,.72);
@@ -151,7 +152,7 @@
       .crm-home-preview[data-preview-state="stale"]>.crm-home-preview-state{opacity:0;visibility:hidden;transition:opacity .18s ease,visibility 0s linear .18s}
       @keyframes crm-home-preview-turn{to{transform:rotate(1turn)}}
       .crm-home-preview-image{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;
-        z-index:1;user-select:none;transform:translateY(var(--far-shift-y,0%));transform-origin:center;backface-visibility:hidden}
+        z-index:1;user-select:none;transform:none;transform-origin:center;backface-visibility:hidden}
       /* Each tile is one inert raster. A small GPU filter provides the resting
          depth cue and is the only visual property released on hover. */
       .crm-home-preview-foreground{filter:blur(1.8px) saturate(.9) brightness(.82);transition:filter .18s ease}
@@ -197,20 +198,17 @@
         box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:0;transform:translateZ(0);will-change:opacity,transform}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
-      @keyframes crm-home-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
-      @keyframes crm-home-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
+      @keyframes crm-home-acrylic-expand{0%{opacity:1}86%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
+      @keyframes crm-home-acrylic-contract{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}14%,100%{opacity:1}}
       .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
-      /* The rasterized motion variant owns the non-selected Home objects while
-         the grid travels at .001 opacity. Keep the selected live acrylic ready
-         for its exact expander exchange, but defer the other three expensive
-         backdrop filters until the covered endpoint handoff. */
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket:not(.is-camera-target){transition:none!important;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
-      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket.is-camera-target{transition:none!important}
-      .crm-home-surface.crm-home-camera-expanding .crm-home-grid>.crm-home-bucket.is-camera-target{border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
+      /* The rasterized motion variant and the screen-space lens own Home's
+         material during travel. Defer all four redundant backdrop filters
+         until the covered endpoint handoff. */
+      .crm-home-surface.crm-home-camera-moving .crm-home-grid>.crm-home-bucket{transition:none!important;border-color:transparent!important;background:transparent!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;will-change:transform}
       .crm-home-surface.crm-home-camera-moving .crm-home-grid{z-index:3;opacity:.001!important;transition:none!important}
       .crm-home-expander .crm-home-title-glass{display:none}
       .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
@@ -235,12 +233,6 @@
   const titleHTML = (module) => `<div class="crm-home-title-slot" data-module="${esc(module.key)}">
     <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div></div>`;
 
-  const farShift = (preview) => {
-    const bounds = preview?.foregroundBounds;
-    if (!bounds || !preview.height) return 0;
-    const contentCenter = bounds.y + bounds.height / 2;
-    return Math.max(-6, Math.min(6, (preview.height / 2 - contentCenter) / preview.height * 100));
-  };
   const imageNode = (className, src, decoding = "async") => {
     const image = document.createElement("img");
     image.className = `crm-home-preview-image ${className}`;
@@ -259,7 +251,7 @@
   const mountHost = (host, preview, exact = false, exactOnly = false) => {
     if (!host || !isRenderablePreview(preview)) return false;
     ensurePreviewState(host);
-    host.style.setProperty("--far-shift-y", `${farShift(preview).toFixed(3)}%`);
+    host.style.removeProperty("--far-shift-y");
     let foreground = host.querySelector(":scope > .crm-home-preview-foreground");
     if (exactOnly) {
       foreground?.remove();
@@ -956,6 +948,7 @@
   const beginHomeHandoff = (context, sequence) => {
     const surface = context.surface;
     if (!surface) {
+      homeAcrylicLens.finish();
       finishHandoff();
       handoffPromise = Promise.resolve();
       return;
@@ -968,6 +961,7 @@
     // while their real acrylic layers paint underneath, then exchange all
     // remaining owners atomically.
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      homeAcrylicLens.finish();
       if (sequence === handoffSequence) finishHandoff();
       else handoffResolve?.();
     }));
@@ -978,6 +972,7 @@
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,configureExpander:homeAcrylicLens.prepare,
+    primeExpander:(_expander,target,context)=>{selectMotionVariant(context.layers?.[0],target?.dataset?.module||"");homeAcrylicLens.prime()},
     contractExpanderAbove:true,holdContractEndpointFrame:true,keepExpanderOpaqueDuringTransition:true,
     keyOf:(target)=>target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-module="${target.dataset.module}"]`,
     prepareTarget:(target,context)=>markCameraTarget(target,context),
@@ -999,12 +994,14 @@
       context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
     },
     onTransitionEnd:(direction,context)=>{
-      homeAcrylicLens.finish();
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting");
       const sequence = ++handoffSequence;
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
         beginHomeHandoff(context, sequence);
-      } else finishHandoff();
+      } else {
+        homeAcrylicLens.finish();
+        finishHandoff();
+      }
       // After returning Home, use the next idle slice to prepare the next room.
       // Expanding leaves Home inactive, so its longer guard remains appropriate.
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);

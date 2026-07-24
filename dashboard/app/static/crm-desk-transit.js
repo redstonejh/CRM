@@ -8,6 +8,8 @@
 (() => {
   const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
   const TRANSIT_Z = "2500";        // below the untouched native drag strip/chrome
+  const RELEASE_HOLD = .86;
+  const RELEASE_EASE = "cubic-bezier(.37, 0, .63, 1)";
 
   let busy = false;
   let queued = null;
@@ -44,16 +46,16 @@
       html.crm-transit-materializing [data-crm-transit-group]{
         display:block!important;position:fixed!important;inset:0!important;
         width:100vw!important;height:100vh!important;pointer-events:none!important}
-      /* The destination is already laid out and composited underneath the
-         camera. It takes ownership only during the same final 7% in which the
-         screen-space acrylic and moving foreground release it. */
+      /* The destination stays out of the moving GPU pass. At the endpoint it is
+         grouped, painted beneath the full-size foreground, and only then takes
+         ownership through the short material release. */
       html.crm-transit-materializing [data-crm-transit-layer]{
         opacity:.001!important;will-change:opacity;transition:none!important}
       html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][hidden]{
         display:grid!important}
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
         opacity:var(--crm-transit-rest-opacity,1)!important;
-        transition:opacity var(--crm-transit-reveal-ms,32ms) linear var(--crm-transit-reveal-delay,0ms)!important}
+        transition:opacity var(--crm-transit-reveal-ms,64ms) ${RELEASE_EASE} var(--crm-transit-reveal-delay,0ms)!important}
     `;
     document.head.appendChild(style);
   };
@@ -208,8 +210,8 @@
   const armDestinationReveal = (stage) => {
     if (!stage || stage.revealArmed || !stage.ready || !Number.isFinite(stage.motionStartedAt)) return false;
     stage.revealArmed = true;
-    const duration = Math.max(16, stage.morphMs * .07);
-    const revealAt = stage.motionStartedAt + stage.morphMs * .93;
+    const duration = Math.max(32, stage.morphMs * (1 - RELEASE_HOLD));
+    const revealAt = stage.motionStartedAt + stage.morphMs * RELEASE_HOLD;
     const delay = Math.max(0, revealAt - performance.now());
     stage.releaseAt = revealAt;
     const beginReveal = () => {
@@ -231,7 +233,7 @@
       if (foreground) {
         stage.foregroundAnimation = foreground.animate(
           [{ opacity:1 }, { opacity:0 }],
-          { duration, easing:"linear", fill:"both" },
+          { duration, easing:RELEASE_EASE, fill:"both" },
         );
       }
       stage.revealTimer = setTimeout(() => {
@@ -260,24 +262,37 @@
     }
     if (stage.sequence !== activeDive?.sequence) return;
 
-    ensureStyles();
-    primeDestinationLayers(stage.key, theater);
-    document.documentElement.classList.remove("crm-transit-revealing");
-    document.documentElement.classList.add("crm-transit-materializing");
-    stageDestinationLayers(stage.key, theater);
-
     if (retainedPrecompose) {
-      // This exact DOM already survived multiple idle paints as one .001
-      // viewport group. Re-measuring dozens of descendants during the camera
-      // move would itself create the hitch the cache exists to prevent.
+      // The room has already completed layout and at least one covered paint.
+      // Return it to [hidden] for the transform itself: keeping its many live
+      // backdrop surfaces in the same GPU pass as the moving screen-space lens
+      // is measurably slower than restoring the retained group at the endpoint.
+      theater.removeAttribute("data-crm-home-precomposed");
       stage.settledState = { stable:true, signature:"retained-precompose" };
     } else {
-      try { stage.settledState = await window.crmHome?.waitForModuleSettled?.(stage.key); } catch {}
-      if (stage.settledState?.stable) window.crmHome?.noteModuleReady?.(stage.key);
-      if (stage.sequence !== activeDive?.sequence) return;
-      // A non-retained fallback needs complete covered paints before reveal.
-      await paint(1);
+      // baseline() resolves only after the factory has built its complete DOM.
+      // Measuring that hidden tree would require making it paint during motion,
+      // which is precisely the competing GPU work this endpoint bridge avoids.
+      stage.settledState = { stable:true, signature:"baseline-complete" };
+      window.crmHome?.noteModuleReady?.(stage.key);
     }
+    stage.theater = theater;
+    stage.preparedAt = performance.now();
+    stage.prepared = true;
+  };
+
+  const materializeDiveDestination = async (stage) => {
+    if (!stage || stage.ready || stage.sequence !== activeDive?.sequence) return;
+    ensureStyles();
+    primeDestinationLayers(stage.key, stage.theater || findDestinationTheater(stage.key));
+    document.documentElement.classList.remove("crm-transit-revealing");
+    document.documentElement.classList.add("crm-transit-materializing");
+    stageDestinationLayers(stage.key, destinationRoot);
+    // The full-size foreground remains the visible owner while the retained
+    // room reacquires its compositor surfaces. Two complete paints make the
+    // following opacity exchange a reveal, never first-frame instantiation.
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return;
     stage.readyAt = performance.now();
     stage.ready = true;
     armDestinationReveal(stage);
@@ -312,10 +327,9 @@
     return true;
   };
 
-  // The destination is staged and precomposed during the camera move. By the
-  // time transform completion reaches this function, its live pixels have
-  // already replaced the transparent moving foreground; the semantic route
-  // commit can happen afterward without introducing another visible layer.
+  // The transparent room foreground reaches its exact endpoint first. Restore
+  // the live destination beneath those unchanged pixels, let it complete
+  // covered paints, and only then exchange ownership and commit the route.
   const finishDiveIn = async (key, done, stage) => {
     const cam = camera();
     const surface = cam?.surface?.();
@@ -323,10 +337,8 @@
     if (!Number.isFinite(stage.motionStartedAt)) {
       stage.motionStartedAt = performance.now() - stage.morphMs;
     }
-    if (!stage.ready) {
-      stage.ready = true;
-      stage.readyAt = performance.now();
-    }
+    try { await materializeDiveDestination(stage); } catch {}
+    if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
     armDestinationReveal(stage);
     try { await stage.revealPromise; } catch {}
 

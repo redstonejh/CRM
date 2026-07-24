@@ -268,7 +268,7 @@ async function main() {
   await check('Home-to-room handoff remains inside the original camera', () => document.body.dataset.crmModule === 'home'
     && window.crmHomeCamera?.isTransitioning?.()
     && !window.crmHomeCamera?.surface?.()?.hidden
-    && document.documentElement.classList.contains('crm-transit-materializing')
+    && !document.documentElement.classList.contains('crm-transit-materializing')
     && !!document.querySelector('.crm-home-expander:not(.crm-home-warm)'));
   await check('The moving tile keeps one acrylic coat over the shared wallpaper', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
@@ -1329,9 +1329,9 @@ async function main() {
     requestAnimationFrame(tick);
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
-    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.93)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
+    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.86)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
     return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 8 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
-      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 4 && fadeTail <= 5 && opacitySteps.every((step)=>step<=.04)
+      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 8 && fadeTail <= 10 && opacitySteps.every((step)=>step<=.04)
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,

@@ -8,8 +8,9 @@
     const frameSelector = config.frameSelector || ":scope > [data-fractal-acrylic-frame]";
     const ownerClass = config.ownerClass || "fractal-camera-screen-acrylic";
     const lensClass = config.lensClass || "fractal-camera-acrylic-lens";
-    const entryHold = Number.isFinite(Number(config.entryHold)) ? Number(config.entryHold) : .93;
-    const exitReveal = Number.isFinite(Number(config.exitReveal)) ? Number(config.exitReveal) : .07;
+    const entryHold = Number.isFinite(Number(config.entryHold)) ? Number(config.entryHold) : .86;
+    const exitReveal = Number.isFinite(Number(config.exitReveal)) ? Number(config.exitReveal) : .14;
+    const releaseEase = config.releaseEase || "cubic-bezier(.37, 0, .63, 1)";
     let lens = null;
     let owner = null;
     let state = null;
@@ -74,14 +75,11 @@
       const sourceMaterial = material(target);
       const frame = expander?.querySelector?.(frameSelector);
       copyFrameMaterial(frame, sourceMaterial);
-      if (!context.direction || !expander || !target || !context.surface || !sourceMaterial) {
+      if (!expander || !target || !context.surface || !sourceMaterial) {
         expander?.classList.remove(ownerClass);
         return null;
       }
 
-      finish();
-      owner = expander;
-      owner.classList.add(ownerClass);
       const surfaceRect = context.surface.getBoundingClientRect();
       const sourceRect = target.getBoundingClientRect();
       const destination = context.expRect?.() || { x:surfaceRect.left, y:surfaceRect.top, w:surfaceRect.width, h:surfaceRect.height };
@@ -98,14 +96,22 @@
       const sourceClip = clipFor(sourceRect, surfaceRect, sourceMaterial.radiusX, sourceMaterial.radiusY);
       const destinationClip = clipFor(destinationRect, surfaceRect, sourceMaterial.radiusX / scaleX, sourceMaterial.radiusY / scaleY);
 
-      lens = document.createElement("span");
-      lens.className = lensClass;
-      lens.dataset.fractalAcrylicLens = context.direction;
-      lens.setAttribute("aria-hidden", "true");
+      const direction = context.direction || "prewarm";
+      const canReuse = !!lens && owner === expander && lens.parentElement === context.surface;
+      if (!canReuse) {
+        finish();
+        owner = expander;
+        owner.classList.add(ownerClass);
+        lens = document.createElement("span");
+        lens.className = lensClass;
+        lens.setAttribute("aria-hidden", "true");
+        context.surface.appendChild(lens);
+      } else stop();
+      lens.dataset.fractalAcrylicLens = direction;
       Object.assign(lens.style, {
         position:"absolute",
         inset:"0",
-        zIndex:context.direction === "contract" ? String(config.contractZIndex ?? 5) : String(config.expandZIndex ?? 4),
+        zIndex:direction === "contract" ? String(config.contractZIndex ?? 5) : String(config.expandZIndex ?? 4),
         boxSizing:"border-box",
         pointerEvents:"none",
         backgroundColor:sourceMaterial.backgroundColor,
@@ -115,16 +121,18 @@
         backgroundRepeat:sourceMaterial.backgroundRepeat,
         webkitBackdropFilter:sourceMaterial.backdropFilter,
         backdropFilter:sourceMaterial.backdropFilter,
-        clipPath:context.direction === "expand" ? sourceClip : destinationClip,
-        webkitClipPath:context.direction === "expand" ? sourceClip : destinationClip,
-        opacity:context.direction === "expand" ? "1" : "0",
+        clipPath:direction === "contract" ? destinationClip : sourceClip,
+        webkitClipPath:direction === "contract" ? destinationClip : sourceClip,
+        // Hover prefetch uploads the exact same backdrop layer before motion.
+        // Its .001 coat is visually inert but avoids allocating a full acrylic
+        // surface in the first animated frame.
+        opacity:direction === "prewarm" ? ".001" : (direction === "expand" ? "1" : "0"),
         transform:"translateZ(0)",
         willChange:"clip-path,opacity",
         backfaceVisibility:"hidden",
       });
-      context.surface.appendChild(lens);
       state = {
-        direction:context.direction,
+        direction,
         sourceClip,
         destinationClip,
         duration:Number(context.morphMs) || 460,
@@ -143,13 +151,24 @@
       );
       opacityAnimation = lens.animate(
         direction === "expand"
-          ? [{ opacity:1, offset:0 }, { opacity:1, offset:entryHold }, { opacity:0, offset:1 }]
-          : [{ opacity:0, offset:0 }, { opacity:1, offset:exitReveal }, { opacity:1, offset:1 }],
+          ? [{ opacity:1, offset:0 }, { opacity:1, offset:entryHold, easing:releaseEase }, { opacity:0, offset:1 }]
+          : [{ opacity:0, offset:0, easing:releaseEase }, { opacity:1, offset:exitReveal }, { opacity:1, offset:1 }],
         { duration:state.duration, easing:"linear", fill:"forwards" },
       );
       return lens;
     };
-    return { prepare, start, finish, element:() => lens };
+    const prime = () => {
+      if (!lens || !state || state.direction !== "prewarm") return null;
+      stop();
+      lens.style.clipPath = state.destinationClip;
+      lens.style.webkitClipPath = state.destinationClip;
+      lens.style.opacity = ".001";
+      // Contract is smooth on first use because its full-viewport, transparent
+      // lens receives covered paints before motion. Give expansion the same
+      // preparation while the pointer rests over its source tile.
+      return lens;
+    };
+    return { prepare, start, prime, finish, element:() => lens };
   };
 
   global.createFractalCamera = function createFractalCamera(config = {}) {
@@ -296,6 +315,7 @@
     const navigationDetail = (phase, direction) => ({ apiName, phase, direction, level, state:historyState() });
     const announceNavigation = (phase, direction) => {
       if (!apiName) return;
+      try { global.crmHomePreviews?.setInteraction?.(phase === "start"); } catch {}
       document.dispatchEvent(new CustomEvent("crm:camera-navigation", { detail:navigationDetail(phase, direction) }));
     };
     const targetFromEvent = (event) => {
@@ -308,6 +328,7 @@
     };
     const dropWarm = () => {
       if (!warm) return;
+      warm.animation?.cancel?.();
       warm.el.remove();
       warm = null;
     };
@@ -328,9 +349,24 @@
       dropWarm();
       const expander = buildExpander(target);
       expander.classList.add(config.warmClass || "fractal-camera-warm");
-      Object.assign(expander.style, { opacity: "0.001", zIndex: "1" });
+      const E = expRect();
+      const rect = target.getBoundingClientRect();
+      const sourceTransform = `translate(${(rect.left - E.x).toFixed(2)}px, ${(rect.top - E.y).toFixed(2)}px) scale(${(rect.width / E.w).toFixed(5)}, ${(rect.height / E.h).toFixed(5)})`;
+      Object.assign(expander.style, { opacity: "0.001", zIndex: "1", transform:sourceTransform });
       surface.appendChild(expander);
-      warm = { key, el: expander };
+      config.primeExpander?.(expander, target, ctx());
+      // Exercise the exact transparent room texture through its compositor
+      // scale while the pointer is merely hovering. The first visible camera
+      // frame can then reuse an uploaded, transform-ready surface.
+      const animation = expander.animate(
+        [
+          { transform:sourceTransform, offset:0 },
+          { transform:"none", offset:.5 },
+          { transform:sourceTransform, offset:1 },
+        ],
+        { duration:96, easing:"linear", fill:"both" },
+      );
+      warm = { key, el: expander, animation };
     };
     const expand = (target) => {
       if (!target || !active || transitioning || level >= maxLevel) return;
@@ -344,6 +380,7 @@
       const key = keyOf(target);
       let expander = null;
       if (warm && warm.key === key) {
+        warm.animation?.cancel?.();
         expander = warm.el;
         expander.classList.remove(config.warmClass || "fractal-camera-warm");
         warm = null;
@@ -426,6 +463,7 @@
       if (!expander || !below || !source) {
         level = Math.max(0, level - 1);
         transitioning = false;
+        announceNavigation("settled", "back");
         settleWaiters();
         return;
       }
@@ -628,6 +666,7 @@
     const onMouseMove = (event) => {
       if (!active || !surface || surface.hidden) return;
       const target = targetAtPoint(event.clientX, event.clientY);
+      try { global.crmHomePreviews?.setInteraction?.(!!target); } catch {}
       if (target) prefetch(target);
     };
     const onKeyDown = (event) => {

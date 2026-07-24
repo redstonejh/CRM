@@ -15,6 +15,7 @@
     "visual:serve": "node tools/visual/harness.js",
     "visual:update": "node tools/visual/visual-diff.js --update",
     "visual:motion": "node tools/visual/motion-check.js",
+    "visual:transition": "npm run build:electron-runtime && node tools/visual/transition-profiler.js",
     "visual:scenes": "node tools/visual/scenes.js",
     "visual:census": "node tools/visual/census-gallery.js",
     "build:electron-runtime": "vite build --config vite.main.config.js --ssr electron/main.js --outDir .vite/build --emptyOutDir false && vite build --config vite.preload.config.js --ssr electron/dashboard-preload.js --outDir .vite/build --emptyOutDir false",

@@ -164,6 +164,15 @@ contextBridge.exposeInMainWorld('crmNavigationInput', {
 });
 contextBridge.exposeInMainWorld('crmHomePreviews', {
   isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
+  setInteraction: (() => {
+    let releaseTimer = null;
+    return (active) => {
+      clearTimeout(releaseTimer);
+      releaseTimer = null;
+      if (active) ipcRenderer.send('home-preview:interaction', true);
+      else releaseTimer = setTimeout(() => ipcRenderer.send('home-preview:interaction', false), 140);
+    };
+  })(),
   list: () => ipcRenderer.invoke('home-preview:list'),
   capture: (key, viewState = null) => ipcRenderer.invoke('home-preview:capture', { key, viewState }),
   waitForIdle: () => ipcRenderer.invoke('home-preview:idle'),

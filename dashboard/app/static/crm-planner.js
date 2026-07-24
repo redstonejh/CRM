@@ -106,12 +106,12 @@
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;opacity:1}
       .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);transform:translateZ(0);will-change:opacity,transform}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
-      @keyframes crm-project-acrylic-expand{0%,93%{opacity:1}100%{opacity:0}}
-      @keyframes crm-project-acrylic-contract{0%{opacity:0}7%,100%{opacity:1}}
-      @keyframes crm-project-live-in{0%,93%{opacity:.001}100%{opacity:1}}
-      @keyframes crm-project-texture-out{0%,93%{opacity:1}100%{opacity:0}}
-      @keyframes crm-project-live-out{0%{opacity:1}7%,100%{opacity:.001}}
-      @keyframes crm-project-texture-in{0%{opacity:0}7%,100%{opacity:1}}
+      @keyframes crm-project-acrylic-expand{0%{opacity:1}86%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
+      @keyframes crm-project-acrylic-contract{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}14%,100%{opacity:1}}
+      @keyframes crm-project-live-in{0%{opacity:.001}86%{opacity:.001;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:1}}
+      @keyframes crm-project-texture-out{0%{opacity:1}86%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
+      @keyframes crm-project-live-out{0%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}14%,100%{opacity:.001}}
+      @keyframes crm-project-texture-in{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}14%,100%{opacity:1}}
       .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-in var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-expanding .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{animation:crm-project-texture-out var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{animation:crm-project-live-out var(--fractal-camera-morph-ms,460ms) linear both}
@@ -934,7 +934,7 @@
       morphMs:460, expandFadeMs:90, belowFadeMs:90, contractFadeMs:110,
       keepBelowVisibleDuringTransition:true, precomposeTransitions:true, lockInputDuringTransitions:true,
       contractExpanderAbove:true, holdContractEndpointFrame:true, keepExpanderOpaqueDuringTransition:true,
-      measureTop:() => 0, ensureStyles, buildRoot:buildProjectGallery, layout:layoutProjects, configureExpander:projectAcrylicLens.prepare,
+      measureTop:() => 0, ensureStyles, buildRoot:buildProjectGallery, layout:layoutProjects, configureExpander:projectAcrylicLens.prepare, primeExpander:projectAcrylicLens.prime,
       prepareTarget:(target, context) => {
         const project = projectById(target?.dataset?.plannerProject); if (!project) return;
         markProjectCameraTarget(target, context);

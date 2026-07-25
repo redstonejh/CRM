@@ -1026,9 +1026,450 @@ function isMainSender(e) {
 function isPreviewSender(e) {
   return previewWindow && !previewWindow.isDestroyed() && e.sender === previewWindow.webContents;
 }
+
+// Calendar motion only needs one immutable, tightly bounded compositor sample:
+// the visible year-strip border box. Its outer shadow is transferred from the
+// same computed native style in the renderer, so the capture never flattens
+// or occludes neighboring Calendar content.
+// The renderer cannot supply a rectangle (or any other capture argument);
+// main derives and validates the exact region from the authenticated main
+// window before and after capture so this cannot become a generic screenshot
+// bridge.
+const CALENDAR_STRIP_CAPTURE_PADDING = 0;
+let calendarStripCapturePending = 0;
+let calendarStripCaptureLastError = '';
+let calendarStripCaptureWorkerCreatedCount = 0;
+let calendarStripCaptureWorkerDestroyedCount = 0;
+const calendarStripRectIsValid = (rect, contentWidth, contentHeight) => {
+  if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) return false;
+  const center = rect.x + (rect.width / 2);
+  return rect.width >= 100
+    && rect.width <= 240
+    && rect.height >= 40
+    && rect.height <= 90
+    && rect.y >= 48
+    && rect.y <= 104
+    && rect.x >= 0
+    && rect.x + rect.width <= contentWidth
+    && rect.y + rect.height <= contentHeight
+    && Math.abs(center - (contentWidth / 2)) <= 4;
+};
+const calendarStripState = async (win, { requireVisible = false } = {}) => {
+  if (!win || win.isDestroyed()) return null;
+  const state = await win.webContents.executeJavaScript(`(() => {
+    const calendar = window.fractalCalendar;
+    const camera = window.fractalCalendarCamera;
+    const surface = camera?.surface?.();
+    if (!calendar || !camera || !surface
+      || document.body?.dataset?.crmModule !== 'calendar'
+      || !camera.isActive?.()
+      || camera.isTransitioning?.()
+      || surface.hidden
+      || surface.classList.contains('fc-camera-moving')) return null;
+    const request = calendar.stripCaptureRequestState?.();
+    const root = camera.layers?.()?.[0];
+    const strips = root instanceof HTMLElement
+      ? [...root.children].filter((node) => node.matches?.('.fc-year-strip'))
+      : [];
+    if (!request || strips.length !== 1) return null;
+    const strip = strips[0];
+    const label = strip.querySelector(':scope > .fc-year-label');
+    const rect = strip.getBoundingClientRect();
+    const style = getComputedStyle(strip);
+    const viewport = camera.expRect?.();
+    if (!label || !viewport
+      || strip.classList.contains('fc-year-strip-portal')
+      || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+      || ![viewport.x, viewport.y, viewport.w, viewport.h].every(Number.isFinite)) return null;
+    const geometry = [
+      innerWidth, innerHeight,
+      viewport.x.toFixed(2), viewport.y.toFixed(2),
+      viewport.w.toFixed(2), viewport.h.toFixed(2),
+    ].join('|');
+    const level = Number(camera.level?.());
+    const year = Number(label.textContent?.trim());
+    return {
+      ready:request.ready === true
+        && request.geometry === geometry
+        && rect.width >= 100
+        && rect.height >= 40,
+      visible:level === 0
+        && style.visibility !== 'hidden'
+        && Number(style.opacity) > .99,
+      captureKey:String(request.captureKey || ''),
+      captureRevision:String(request.captureRevision || ''),
+      visualSignature:String(request.visualSignature || ''),
+      geometry,
+      rect:{ x:rect.x, y:rect.y, width:rect.width, height:rect.height },
+      dpr:devicePixelRatio,
+      year,
+      level,
+      backgroundTone:String(document.documentElement.dataset.background || ''),
+      verifiedCalendarYear:Number(calendar.year?.()),
+      verifiedLevel:level,
+      verifiedActive:calendar.isActive?.(),
+      verifiedModule:document.body.dataset.crmModule,
+    };
+  })()`, true);
+  if (!state || state.ready !== true || typeof state.captureKey !== 'string') return null;
+  if (!state.captureKey || state.captureKey.length > 512) return null;
+  if (state.verifiedActive !== true
+    || state.verifiedModule !== 'calendar'
+    || Number(state.year) !== Number(state.verifiedCalendarYear)
+    || Number(state.level) !== Number(state.verifiedLevel)
+    || ![0, 1, 2].includes(Number(state.level))
+    || (requireVisible && (state.visible !== true || Number(state.level) !== 0))) return null;
+  const year = Number(state.year);
+  if (!Number.isInteger(year) || year < 1901 || year > 2200) return null;
+  const captureRevision = String(state.captureRevision || '');
+  if (!/^[a-z0-9]+$/i.test(captureRevision) || captureRevision.length > 64) return null;
+  if (typeof state.visualSignature !== 'string'
+    || !/^[a-z0-9]+$/i.test(state.visualSignature)
+    || state.visualSignature.length > 64
+    || typeof state.geometry !== 'string'
+    || !state.geometry
+    || state.geometry.length > 256) return null;
+  if (!/^(?:tone-(?:light-grey|grey|dark-grey|black)|photo-(?:bark|cloud|jungle|moss|sand|shore|turf|water|water2|denim|marble|leather|texture|paint|paintspill|city|modern|mercury|venus|earth|mars|jupiter|saturn|uranus|neptune|pluto)|solar-system)$/.test(
+    String(state.backgroundTone || ''),
+  )) return null;
+  const rect = {
+    x:Number(state.rect?.x),
+    y:Number(state.rect?.y),
+    width:Number(state.rect?.width),
+    height:Number(state.rect?.height),
+  };
+  const [contentWidth, contentHeight] = win.getContentSize();
+  if (!calendarStripRectIsValid(rect, contentWidth, contentHeight)) return null;
+  const dpr = Number(state.dpr);
+  if (!Number.isFinite(dpr) || dpr < 1 || dpr > 4) return null;
+  return {
+    captureKey:state.captureKey,
+    captureRevision,
+    rect,
+    dpr,
+    contentWidth,
+    contentHeight,
+    visible:state.visible === true,
+    level:Number(state.level),
+    year,
+    backgroundTone:String(state.backgroundTone),
+    geometry:state.geometry,
+    visualSignature:state.visualSignature,
+  };
+};
+const calendarStripRendererAudit = async (win) => {
+  if (!win || win.isDestroyed()) return { destroyed:true };
+  try {
+    const state = await win.webContents.executeJavaScript(`(() => {
+      const calendar = window.fractalCalendar;
+      const camera = window.fractalCalendarCamera;
+      const request = calendar?.stripCaptureRequestState?.() || null;
+      const root = camera?.layers?.()?.[0];
+      const strip = root instanceof HTMLElement
+        ? [...root.children].find((node) => node.matches?.('.fc-year-strip'))
+        : null;
+      const rect = strip?.getBoundingClientRect?.();
+      return {
+        booting:document.documentElement.hasAttribute('data-dashboard-booting'),
+        module:String(document.body?.dataset?.crmModule || ''),
+        calendarPresent:!!calendar,
+        cameraPresent:!!camera,
+        active:calendar?.isActive?.() === true,
+        year:Number(calendar?.year?.()),
+        level:Number(calendar?.level?.()),
+        rect:rect ? { x:rect.x, y:rect.y, width:rect.width, height:rect.height } : null,
+        dpr:Number(devicePixelRatio),
+        geometry:String(request?.geometry || ''),
+        tone:String(document.documentElement.dataset.background || ''),
+        signature:String(request?.visualSignature || ''),
+        revision:String(request?.captureRevision || ''),
+        key:String(request?.captureKey || ''),
+        requestReady:request?.ready === true,
+        requestVisible:request?.visible === true,
+      };
+    })()`, true);
+    return {
+      ...state,
+      contentSize:win.getContentSize(),
+      destroyed:win.isDestroyed(),
+    };
+  } catch (error) {
+    return {
+      error:String(error?.message || error || 'Calendar renderer audit failed'),
+      destroyed:win.isDestroyed(),
+    };
+  }
+};
+const calendarStripStatesMatch = (before, after) => !!before
+  && !!after
+  && after.captureKey === before.captureKey
+  && after.captureRevision === before.captureRevision
+  && after.visualSignature === before.visualSignature
+  && after.geometry === before.geometry
+  && after.backgroundTone === before.backgroundTone
+  && after.year === before.year
+  && after.level === before.level
+  && after.visible === before.visible
+  && after.contentWidth === before.contentWidth
+  && after.contentHeight === before.contentHeight
+  && Math.abs(after.dpr - before.dpr) <= .01
+  && ['x', 'y', 'width', 'height'].every(
+    (property) => Math.abs(after.rect[property] - before.rect[property]) <= .1,
+  );
+const captureCalendarStripRegion = async (win, before) => {
+  const left = Math.max(0, Math.floor(before.rect.x - CALENDAR_STRIP_CAPTURE_PADDING));
+  const top = Math.max(0, Math.floor(before.rect.y - CALENDAR_STRIP_CAPTURE_PADDING));
+  const right = Math.min(
+    before.contentWidth,
+    Math.ceil(before.rect.x + before.rect.width + CALENDAR_STRIP_CAPTURE_PADDING),
+  );
+  const bottom = Math.min(
+    before.contentHeight,
+    Math.ceil(before.rect.y + before.rect.height + CALENDAR_STRIP_CAPTURE_PADDING),
+  );
+  const captureRect = { x:left, y:top, width:right - left, height:bottom - top };
+  if (captureRect.width < before.rect.width || captureRect.height < before.rect.height) {
+    throw new Error('Calendar strip capture bounds are invalid');
+  }
+  const captureOptions = {
+    stayHidden:!win.isVisible(),
+    stayAwake:true,
+  };
+  const image = await win.webContents.capturePage(captureRect, captureOptions);
+  const after = await calendarStripState(win, { requireVisible:true });
+  if (!calendarStripStatesMatch(before, after)) {
+    const error = new Error('Calendar strip changed during capture');
+    error.calendarStripCapture = {
+      kind:'state-mismatch',
+      before,
+      after,
+      imageEmpty:image.isEmpty(),
+      windowVisible:win.isVisible(),
+      captureOptions,
+    };
+    throw error;
+  }
+  if (image.isEmpty()) {
+    const error = new Error('Calendar strip capture returned an empty bitmap');
+    error.calendarStripCapture = {
+      kind:'empty-bitmap',
+      before,
+      after,
+      imageEmpty:true,
+      windowVisible:win.isVisible(),
+      captureOptions,
+    };
+    throw error;
+  }
+  const pixelSize = image.getSize();
+  const expectedWidth = captureRect.width * before.dpr;
+  const expectedHeight = captureRect.height * before.dpr;
+  if (Math.abs(pixelSize.width - expectedWidth) > 2
+    || Math.abs(pixelSize.height - expectedHeight) > 2
+    || pixelSize.width > 2048
+    || pixelSize.height > 1024) {
+    throw new Error('Calendar strip capture pixel size is invalid');
+  }
+  return {
+    image,
+    captureRect,
+    stripRect:before.rect,
+    pixelSize,
+    dpr:before.dpr,
+    stateAfter:after,
+  };
+};
+const captureCalendarStripOffscreen = async (request, audit) => {
+  const worker = new BrowserWindow({
+    width:request.contentWidth,
+    height:request.contentHeight,
+    show:false,
+    frame:false,
+    backgroundColor:'#10141c',
+    paintWhenInitiallyHidden:true,
+    webPreferences:{
+      preload:path.join(__dirname, 'dashboard-preload.js'),
+      nodeIntegration:false,
+      contextIsolation:true,
+      sandbox:false,
+      offscreen:true,
+      backgroundThrottling:false,
+    },
+  });
+  calendarStripCaptureWorkerCreatedCount += 1;
+  audit.worker = {
+    createdIndex:calendarStripCaptureWorkerCreatedCount,
+    boot:null,
+    validatedState:null,
+    final:null,
+    captureResolved:false,
+    destroyedCountAtCaptureResolved:null,
+    destroyedAfterCaptureResolved:false,
+    destroyed:false,
+  };
+  try {
+    try { worker.webContents.setFrameRate(30); } catch {}
+    await worker.loadFile(dashboardIndexPath(), {
+      query:{ crmPreviewWorker:'1', crmCalendarStripWorker:'1' },
+    });
+    await waitForRenderer(
+      worker,
+      `!document.documentElement.hasAttribute('data-dashboard-booting')
+        && !!window.crmWorkspaces && !!window.fractalCalendar`,
+    );
+    audit.worker.boot = await calendarStripRendererAudit(worker);
+    await worker.webContents.executeJavaScript(`(async () => {
+      const backgroundTone = ${JSON.stringify(request.backgroundTone)};
+      const backgroundOptions = [...document.querySelectorAll('[data-background-tone]')]
+        .filter((node) => node.dataset.backgroundTone === backgroundTone);
+      if (backgroundOptions.length !== 1) {
+        throw new Error('Canonical background option unavailable');
+      }
+      backgroundOptions[0].click();
+      await Promise.resolve(window.__dashboardBackgroundPreloadReady).catch(() => null);
+      window.crmWorkspaces.setActive('calendar');
+      await window.fractalCalendar.applyHomePreviewState({
+        year:${JSON.stringify(request.year)},
+        camera:{ level:0, selectors:[] },
+      });
+      await window.fractalCalendar.refresh();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    })()`, true);
+    await waitForRenderer(
+      worker,
+      `document.body.dataset.crmModule === 'calendar'
+        && window.fractalCalendar?.year?.() === ${JSON.stringify(request.year)}
+        && (() => {
+          const state = window.fractalCalendar?.stripCaptureState?.();
+          if (!state?.ready) return false;
+          if (window.__crmCalendarStripStableKey !== state.captureKey) {
+            window.__crmCalendarStripStableKey = state.captureKey;
+            window.__crmCalendarStripStableSince = performance.now();
+            return false;
+          }
+          return performance.now() - window.__crmCalendarStripStableSince >= 220;
+        })()`,
+    );
+    const workerState = await calendarStripState(worker, { requireVisible:true });
+    audit.worker.validatedState = workerState;
+    const sameGeometry = workerState
+      && ['x', 'y', 'width', 'height'].every(
+        (property) => Math.abs(workerState.rect[property] - request.rect[property]) <= .1,
+      );
+    const mismatches = [
+      !workerState && 'state',
+      workerState && !sameGeometry && 'geometry',
+      workerState && workerState.captureKey !== request.captureKey && 'capture-key',
+      workerState && workerState.captureRevision !== request.captureRevision && 'capture-revision',
+      workerState && workerState.visualSignature !== request.visualSignature && 'visual-signature',
+      workerState && workerState.backgroundTone !== request.backgroundTone && 'background-tone',
+      workerState && Math.abs(workerState.dpr - request.dpr) > .01 && 'dpr',
+    ].filter(Boolean);
+    if (mismatches.length) {
+      throw new Error(`Offscreen Calendar strip mismatch: ${mismatches.join(', ')}`);
+    }
+    const capture = await captureCalendarStripRegion(worker, workerState);
+    audit.worker.captureResolved = true;
+    audit.worker.destroyedCountAtCaptureResolved = calendarStripCaptureWorkerDestroyedCount;
+    return capture;
+  } finally {
+    audit.worker.final = await calendarStripRendererAudit(worker);
+    audit.worker.destroyedAfterCaptureResolved = audit.worker.captureResolved === true;
+    if (!worker.isDestroyed()) worker.destroy();
+    calendarStripCaptureWorkerDestroyedCount += 1;
+    audit.worker.destroyed = worker.isDestroyed();
+    audit.worker.destroyedIndex = calendarStripCaptureWorkerDestroyedCount;
+  }
+};
+let calendarStripCaptureQueue = Promise.resolve();
+
 ipcMain.handle('dashboard-window:reload', (e) => { if (isMainSender(e)) mainWindow.webContents.reload(); return { ok: true }; });
 ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
 ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
+ipcMain.handle('calendar-transition:capture-strip', async (event) => {
+  if (!isMainSender(event) || !mainWindow.isVisible()) {
+    return { ok:false, error:'Calendar strip capture is unavailable' };
+  }
+  const run = async () => {
+    const audit = {
+      mainRequest:null,
+      mainFinal:null,
+      captureResult:null,
+      worker:null,
+      renderer:null,
+      workerCountsBefore:{
+        created:calendarStripCaptureWorkerCreatedCount,
+        destroyed:calendarStripCaptureWorkerDestroyedCount,
+      },
+      workerCountsAfter:null,
+      captureFailure:null,
+      error:'',
+    };
+    calendarStripCapturePending += 1;
+    let response = null;
+    try {
+      const request = await calendarStripState(mainWindow);
+      audit.mainRequest = request;
+      if (!request) throw new Error('Calendar strip is not in a stable capture state');
+      const capture = request.visible
+        ? { ...await captureCalendarStripRegion(mainWindow, request), source:'main' }
+        : { ...await captureCalendarStripOffscreen(request, audit), source:'offscreen' };
+      audit.captureResult = {
+        source:capture.source,
+        captureRect:capture.captureRect,
+        stripRect:capture.stripRect,
+        pixelSize:capture.pixelSize,
+        dpr:capture.dpr,
+        stateAfter:capture.stateAfter,
+      };
+      const finalState = await calendarStripState(mainWindow);
+      audit.mainFinal = finalState;
+      if (!calendarStripStatesMatch(request, finalState)) {
+        throw new Error('Calendar strip request changed during capture');
+      }
+      calendarStripCaptureLastError = '';
+      response = {
+        ok:true,
+        src:capture.image.toDataURL(),
+        captureKey:request.captureKey,
+        captureRevision:request.captureRevision,
+        captureRect:capture.captureRect,
+        stripRect:capture.stripRect,
+        pixelSize:capture.pixelSize,
+        dpr:capture.dpr,
+        source:capture.source,
+      };
+    } catch (error) {
+      calendarStripCaptureLastError = String(
+        error?.message || error || 'Calendar strip capture failed',
+      );
+      audit.error = calendarStripCaptureLastError;
+      audit.captureFailure = error?.calendarStripCapture || null;
+      response = { ok:false, error:calendarStripCaptureLastError };
+    } finally {
+      if (!audit.mainFinal) {
+        audit.mainFinal = await calendarStripState(mainWindow).catch(() => null);
+      }
+      calendarStripCapturePending = Math.max(0, calendarStripCapturePending - 1);
+      audit.renderer = {
+        pending:calendarStripCapturePending,
+        lastError:calendarStripCaptureLastError,
+      };
+      audit.workerCountsAfter = {
+        created:calendarStripCaptureWorkerCreatedCount,
+        destroyed:calendarStripCaptureWorkerDestroyedCount,
+        live:calendarStripCaptureWorkerCreatedCount
+          - calendarStripCaptureWorkerDestroyedCount,
+      };
+      response.audit = audit;
+    }
+    return response;
+  };
+  calendarStripCaptureQueue = calendarStripCaptureQueue.catch(() => null).then(run);
+  try { return await calendarStripCaptureQueue; } catch (error) {
+    return { ok:false, error:String(error?.message || 'Calendar strip capture failed') };
+  }
+});
 ipcMain.on('home-preview:interaction', (event, active) => {
   if (isMainSender(event)) setHomePreviewInteraction(active);
 });

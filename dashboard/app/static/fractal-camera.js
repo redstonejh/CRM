@@ -268,6 +268,14 @@
       let fallback = 0;
       const finish = () => {
         if (done) return;
+        // Native visual probes may hold an already-composited transition at
+        // an exact phase. Keep the watchdog armed, but do not let wall-clock
+        // fallback teardown race that explicit compositor hold.
+        if (surface?.dataset?.fractalCameraProbeHold === "true") {
+          clearTimeout(fallback);
+          fallback = setTimeout(finish, 16);
+          return;
+        }
         done = true;
         el.removeEventListener("transitionend", onEnd);
         clearTimeout(fallback);

@@ -183,6 +183,11 @@ contextBridge.exposeInMainWorld('crmNavigationInput', {
     return () => ipcRenderer.off('crm:navigation-command', listener);
   },
 });
+contextBridge.exposeInMainWorld('crmCalendarTransition', {
+  // Intentionally argument-free: main derives and validates the sole allowed
+  // Calendar region, so renderer code cannot turn this into arbitrary capture.
+  captureStrip: () => ipcRenderer.invoke('calendar-transition:capture-strip'),
+});
 contextBridge.exposeInMainWorld('crmHomePreviews', {
   isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
   setInteraction: (() => {

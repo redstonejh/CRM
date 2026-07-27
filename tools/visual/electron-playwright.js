@@ -579,7 +579,7 @@ async function main() {
     env: {
       ...process.env,
       CRM_API_URL: apiUrl,
-      CRM_API_PORT: '3899',
+      CRM_API_PORT: String(process.env.CRM_API_PORT || new URL(apiUrl).port || '3899'),
       CRM_CDMS_DISABLED: process.env.CRM_CDMS_DISABLED || '1',
     },
     timeout: 30000,

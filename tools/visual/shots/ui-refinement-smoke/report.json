@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T19:38:32.160Z",
+  "generatedAt": "2026-07-27T23:07:36.486Z",
   "viewport": {
     "width": 1600,
     "height": 1000
@@ -321,14 +321,16 @@
       "name": "Assignment controls inherit the complete secondary-control contract",
       "ok": true,
       "detail": {
-        "controls": 4,
+        "controls": 3,
         "labels": [
-          "Create assignment",
           "Back",
           "Return Home",
           "Forward"
         ],
-        "iconSize": "18px"
+        "iconSize": "18px",
+        "addActions": [
+          "assignment"
+        ]
       }
     },
     {

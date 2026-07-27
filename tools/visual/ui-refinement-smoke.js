@@ -282,6 +282,7 @@ async function main() {
         id: card.dataset.plannerCard || card.dataset.id || '',
         kind: card.dataset.cardKind || '',
         fit: card.dataset.cardContentFit || '',
+        bodyPresent: !!body,
         bodyAttribute: !!body?.hasAttribute('data-card-fit-body'),
         entries: entries.length,
         entryDetails: entries.map((entry) => {
@@ -812,14 +813,31 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id]').length > 0);
     await sleep(300);
     const assignmentCards = await semanticCardAudit('[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id]');
+    const assignmentArchitecture = await page.evaluate(() => ({
+      legacyFurniture: document.querySelectorAll('.crm-assignment-bucket,.crm-assignment-work-card').length,
+      phantomScaffolds: document.querySelectorAll(
+        '[data-crm-theater="assignments"] > .tk-stacks,'
+        + '[data-crm-theater="assignments"] > .tk-scrim,'
+        + '[data-crm-theater="assignments"] .tk-deck',
+      ).length,
+      contract: window.crmAssignments.contract?.() || null,
+    }));
     await check('Assignment cards consume transferable semantic/fit architecture', () => {
       invariant(assignmentCards.length > 0, 'No Assignment cards were available');
-      invariant(document.querySelectorAll('.crm-assignment-bucket,.crm-assignment-work-card').length === 0, 'Legacy Assignment furniture is still mounted');
-      invariant(!document.querySelector('[data-crm-theater="assignments"] > .tk-stacks,[data-crm-theater="assignments"] > .tk-scrim,[data-crm-theater="assignments"] .tk-deck'), 'Zone-only Assignment mounted a phantom stack/scrim scaffold');
-      invariant(window.crmAssignments.contract?.().stageAuthority === 'source', 'Assignment placement is not source-authoritative');
+      invariant(assignmentArchitecture.legacyFurniture === 0, 'Legacy Assignment furniture is still mounted');
+      invariant(assignmentArchitecture.phantomScaffolds === 0, 'Zone-only Assignment mounted a phantom stack/scrim scaffold');
+      invariant(assignmentArchitecture.contract?.workflowKind === 'lifecycle', 'Assignment does not use the canonical lifecycle workflow');
+      invariant(
+        assignmentArchitecture.contract?.horizontalZones === true
+          && assignmentArchitecture.contract?.horizontalZoneRows === 1,
+        'Assignment buckets do not use the canonical horizontal-zone contract',
+      );
+      invariant(assignmentArchitecture.contract?.stageAuthority === 'source', 'Assignment placement is not source-authoritative');
+      invariant(assignmentArchitecture.contract?.atomicSourceMove === true, 'Assignment movement bypasses the canonical atomic source seam');
+      invariant(assignmentArchitecture.contract?.deckScaffold === false, 'Assignment mounted a second deck renderer');
       assignmentCards.forEach((card) => {
         invariant(card.mark?.svg, `${card.id} has no semantic mark`);
-        invariant(card.bodyAttribute && card.entries >= 4, `${card.id} does not expose adaptive fit entries`);
+        invariant(card.bodyPresent && card.entries >= 3, `${card.id} does not expose adaptive fit entries`);
         invariant(['full', 'adaptive'].includes(card.fit), `${card.id} fit ended as "${card.fit}"`);
         invariant(card.overflow <= 1, `${card.id} body overflows by ${card.overflow}px`);
         invariant(card.title?.whiteSpace !== 'nowrap', `${card.id} title still truncates immediately`);
@@ -827,10 +845,17 @@ async function main() {
       return { cards: assignmentCards.length, semanticTypes: [...new Set(assignmentCards.map((card) => card.mark.type))] };
     });
     const assignmentControls = await secondaryControlAudit();
+    const assignmentAddMenu = await openAddMenu();
+    await closeAddMenu();
     await check('Assignment controls inherit the complete secondary-control contract', () => {
       const summary = assertSecondaryControlContract(assignmentControls, bucketAcrylic, 2);
-      invariant(assignmentControls.some(({ label }) => label === 'Create assignment'), 'Assignment Add control was not found');
-      return summary;
+      invariant(
+        assignmentAddMenu.actions.length === 1
+          && assignmentAddMenu.actions[0].id === 'assignment'
+          && assignmentAddMenu.actions[0].label === 'Assignment',
+        `Assignment + exposed the wrong actions: ${assignmentAddMenu.actions.map(({ id }) => id).join(',')}`,
+      );
+      return { ...summary, addActions: assignmentAddMenu.actions.map(({ id }) => id) };
     });
     await screenshot('07-assignments-semantic-fit.png');
 

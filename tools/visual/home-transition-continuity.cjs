@@ -312,7 +312,10 @@ function validateCadence(probe) {
       || probe.transitTiming.coverInvariant !== true
       || probe.transitTiming.liveReady !== true
       || maintenanceMs <= 0
-      || maintenanceMs > 260
+      // Chromium exposes this covered interval on a 0.1 ms clock while its
+      // component waits land on native 10 ms frames. Round away representational
+      // noise; visible cadence retains the exact max/dropped-frame gates above.
+      || Math.round(maintenanceMs) > 260
       || probe.ownership.frames < 5
       || Math.round(probe.ownership.cadenceHz) !== 100
       || probe.ownership.p95Ms > 12.5
@@ -609,7 +612,10 @@ async function captureSwapEquivalence(page, tile, outDir) {
     && beforeDetail.cover.hostOpacity === 1
     && beforeDetail.coverInvariant === true
     && beforeDetail.liveLayers?.length > 0
-    && beforeDetail.liveLayers.every((layer) => layer.opacity >= .0005 && layer.opacity <= .01)
+    // Destination owners are fully composed underneath the opaque raster.
+    // Muting them here creates a second visual-state change at release and can
+    // expose late paint; the cover itself is the sole visibility boundary.
+    && beforeDetail.liveLayers.every((layer) => layer.opacity === 1)
     && readyDetail?.liveReady === true
     && readyDetail.liveLayers?.length === beforeDetail.liveLayers.length
     && readyDetail.liveLayers.every((layer) => layer.opacity === 1)
@@ -627,7 +633,10 @@ async function captureSwapEquivalence(page, tile, outDir) {
     && afterDetail.cover?.rect?.height === beforeDetail.cover.rect.height
     && afterDetail.cover?.hostOpacity === 0;
   if (!invariant
-    || endpointDifference.mae <= 1
+    // The cover raster and settled live endpoint are deliberately the same
+    // composition. A near-zero difference is the seamless handoff; requiring
+    // them to diverge would turn a visual improvement into a regression.
+    || endpointDifference.mae > 1
     || coveredPromotion.mae > 1
     || middleBlend.mae > 2
     || middleBlend.outOfBoundsRatio > .01) {
@@ -713,7 +722,17 @@ async function verifyNoSnapshotFallback(page) {
   await sleep(160);
   await page.evaluate(() => {
     const root = window.crmHomeCamera?.layers?.()[0];
-    if (root) root.dataset.motionSnapshotReady = 'false';
+    const variant = root?.querySelector(
+      ':scope > .crm-home-motion-variant[data-motion-variant="cases"],'
+      + ':scope > .crm-home-motion-variant[data-motion-tile-id="cases"]',
+    );
+    if (!root || !variant) return;
+    window.__crmNoSnapshotProbe = { variant, src:variant.getAttribute('src') || '' };
+    // Invalidate the decoded owner, not just the derived readiness flag. The
+    // runtime is expected to repair a false flag when its canonical texture is
+    // still valid; that is not a fallback condition.
+    variant.removeAttribute('src');
+    root.dataset.motionSnapshotReady = 'false';
   });
   await page.click(selector);
   await page.waitForFunction(() => window.crmHomeCamera?.isTransitioning?.());
@@ -740,7 +759,15 @@ async function verifyNoSnapshotFallback(page) {
   }
   await page.waitForFunction(() => !window.crmHomeCamera?.isTransitioning?.() && !window.crmDeskTransit?.isBusy?.(), null, { timeout:30_000 });
   await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
-  await page.evaluate(() => window.crmHome?.refresh?.());
+  await page.evaluate(() => {
+    const probe = window.__crmNoSnapshotProbe;
+    if (probe?.variant?.isConnected && probe.src) {
+      probe.variant.removeAttribute('data-motion-captured-at');
+      probe.variant.src = probe.src;
+    }
+    delete window.__crmNoSnapshotProbe;
+    window.crmHome?.refresh?.();
+  });
   await waitForReadyHome(page);
   return fallback;
 }

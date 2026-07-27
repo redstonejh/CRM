@@ -502,7 +502,18 @@
         ],
         { duration:96, easing:"linear", fill:"both" },
       );
-      warm = { key, el: expander, animation };
+      const entry = { key, el: expander, animation };
+      warm = entry;
+      // Once the hover pass has exercised both compositor scales, retire the
+      // Web Animation while preserving its final source transform. Cancelling
+      // a finished fill-mode animation at click time can otherwise rebuild the
+      // promoted layer during the first visible camera frames.
+      animation.finished.then(() => {
+        if (warm !== entry || !expander.isConnected) return;
+        try { animation.commitStyles(); } catch {}
+        animation.cancel();
+        entry.animation = null;
+      }).catch(() => {});
     };
     const expand = (target) => {
       if (!target || !active || transitioning || level >= maxLevel) return;

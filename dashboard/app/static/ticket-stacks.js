@@ -1898,7 +1898,10 @@
   let zonesRoot = null;
   let zoneGeometryRefreshPending = false;
   let zoneGeometryRefreshFrame = 0;
-  const zoneGeometryBlocked = () => !active || !!window.crmDeskTransit?.isBusy?.();
+  const zoneGeometryBlocked = () => (!active && !theater?.hasAttribute?.("data-crm-home-precomposed")) || (
+    !!window.crmDeskTransit?.isBusy?.()
+    && !window.crmDeskTransit?.canSettleGeometry?.("tickets")
+  );
   const scheduleZoneGeometryRefresh = () => {
     zoneGeometryRefreshPending = true;
     if (zoneGeometryRefreshFrame) return;
@@ -1909,6 +1912,22 @@
       layoutZones();
     });
   };
+  const waitForZoneGeometrySettled = (maxFrames = 120) => new Promise((resolve) => {
+    let frame = 0;
+    let stable = 0;
+    const tick = () => {
+      if (zoneGeometryRefreshPending && !zoneGeometryBlocked()) scheduleZoneGeometryRefresh();
+      const quiet = !zoneGeometryRefreshPending && !zoneGeometryRefreshFrame;
+      stable = quiet ? stable + 1 : 0;
+      frame += 1;
+      if (stable >= 3 || frame >= maxFrames) {
+        resolve({ stable:stable >= 3, frames:frame });
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   let draggingSide = null;    // which deck owns the in-flight card → its deck is NOT rebuilt mid-drag
   let dragPreviewFn = null;   // (x,y) => recompute the current drag's highlight + sandwich gap (re-run while autoscrolling)
@@ -2193,11 +2212,16 @@
       // residual box-model drift (the same measured approach as the scrollbar centring below).
       const headerBars = panel.querySelector(".tk-zone-hd-r > .tk-bars");
       if (headerBars) {
-        headerBars.style.translate = "";
         const cardBars = zoneBody[s.key]?.querySelector(".tk-zcard .tk-bars-card");
         if (cardBars) {
           const delta = headerBars.getBoundingClientRect().right - cardBars.getBoundingClientRect().right;
-          if (Math.abs(delta) > 0.5) headerBars.style.translate = `${Math.round(-delta)}px 0`;
+          const current = parseFloat(headerBars.style.translate) || 0;
+          if (Math.abs(delta) > 0.5) {
+            const next = Math.round(current - delta);
+            if (Math.abs(next - current) > 0.5) headerBars.style.translate = `${next}px 0`;
+          }
+        } else if (headerBars.style.translate) {
+          headerBars.style.translate = "";
         }
       }
       // Keep the scrollbar attached to the bucket's right edge. It must not
@@ -2826,6 +2850,7 @@
       if (theater) theater.hidden = !active;
       return theater;
     },
+    waitForGeometrySettled: waitForZoneGeometrySettled,
     open: openTicket,
     contextMenu: openContextMenu,
     create: openCreate,

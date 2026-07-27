@@ -26,6 +26,7 @@
     "test:factory": "node tools/visual/factory-check.js",
     "test:interaction": "node tools/visual/interaction-contract.js",
     "test:ui-refinement": "node tools/visual/ui-refinement-smoke.js",
+    "test:canonical-settlement": "npm run build:electron-runtime && node tools/visual/canonical-preview-settlement.cjs",
     "test:cdms": "node tools/visual/cdms-integration-smoke.cjs",
     "test:cdms:electron": "npm run build:electron-runtime && node tools/visual/cdms-electron-smoke.cjs",
     "test:cdms:auth": "npm run build:electron-runtime && node tools/visual/cdms-auth-electron-smoke.cjs",

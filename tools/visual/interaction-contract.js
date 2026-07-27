@@ -443,92 +443,153 @@ async function main() {
   await page.setViewport({ width:1280, height:860, deviceScaleFactor:1 });
   await activate('assignments');
   const assignmentScope = '[data-crm-theater="assignments"]:not([hidden])';
-  await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-bucket').length === 5
-    && document.querySelectorAll('[data-crm-theater="assignments"] .crm-assignment-work-card').length > 0, { timeout: 10000 });
-  await page.evaluate(() => window.crmAssignments.scrollBy(-100000, true));
-  await check('Assignments is one real commitment pipeline, not a hand of copied people cards', () => {
-    const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
-    const header = theater?.querySelector('.crm-assignment-tabs');
-    const headerControls = [...(header?.querySelectorAll('button') || [])];
-    const buckets = [...(theater?.querySelectorAll('.crm-assignment-bucket') || [])];
-    const cards = [...(theater?.querySelectorAll('.crm-assignment-work-card') || [])];
-    const stageLabels = buckets.map((bucket) => bucket.querySelector('.tk-zone-title')?.textContent.trim());
-    const tabsRect = header?.getBoundingClientRect();
-    const bucketRect = buckets[0]?.getBoundingClientRect();
-    const pipeline = theater?.querySelector('.crm-assignment-pipeline'); const clip = theater?.querySelector('.crm-assignment-board-clip');
-    const scrollbar = theater?.querySelector('.crm-assignment-hsb'); const thumb = theater?.querySelector('.crm-assignment-hth');
-    const board = theater?.querySelector('.crm-assignment-board'); const pipelineRect = pipeline?.getBoundingClientRect(); const clipRect = clip?.getBoundingClientRect(); const scrollbarRect = scrollbar?.getBoundingClientRect();
-    const firstCard = cards[0]; const firstCardRect = firstCard?.getBoundingClientRect(); const firstFaceRect = firstCard?.querySelector('.crm-assignment-card-face')?.getBoundingClientRect();
-    const leftShadow = Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-left') || '0'); const rightShadow = Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-right') || '0');
-    const ids = cards.map((card) => card.dataset.assignmentCard);
-    return { ok: buckets.length === 5 && cards.length === window.crmAssignments.items().length
-      && cards.every((card) => card.dataset.recordEntity === 'commitments' && card.dataset.recordId === card.dataset.assignmentCard)
-      && new Set(ids).size === ids.length && JSON.stringify(stageLabels) === JSON.stringify(['Unassigned','Assigned','In progress','Blocked','Done'])
-      && headerControls.length === 1 && headerControls[0]?.matches('.crm-assignment-new[data-assignment-action="new"]')
-      && !theater.querySelector('.crm-assignment-filters,.crm-assignment-filter,.crm-assignment-tab-status,[role="tablist"]')
-      && !['All work','Assigned to me','Due soon'].some((label) => header?.textContent.includes(label))
-      && !theater.querySelector('.crm-assignment-rail,aside,.crm-assignment-hand,.crm-assignment-hand-card,.crm-assignment-source-pool')
-      && !!tabsRect && !!bucketRect && bucketRect.top >= tabsRect.bottom + 8 && !!clipRect
-      && bucketRect.left - clipRect.left >= 20 && bucketRect.left - clipRect.left <= 32 && tabsRect.left > bucketRect.left + 20
-      && getComputedStyle(theater.querySelector('.crm-assignment-title')).fontSize === '17px'
-      && buckets.every((bucket) => !!bucket.dataset.assignmentStage && getComputedStyle(bucket.querySelector('.tk-zone-title')).fontSize === '14px')
-      && !theater.querySelector('.crm-assignment-stack-toggle,.tk-zone-spread')
-      && !!pipeline && !!clip && pipeline.scrollWidth > clip.clientWidth + 100 && scrollbar?.classList.contains('is-on') && thumb?.getBoundingClientRect().width > 28
-      && !!pipelineRect && Math.abs(pipelineRect.left - clipRect.left) <= 1 && !!scrollbarRect
-      && scrollbarRect.left - clipRect.left >= 20 && scrollbarRect.left - clipRect.left <= 32
-      && clipRect.right - scrollbarRect.right >= 20 && clipRect.right - scrollbarRect.right <= 32
-      && leftShadow <= .01 && rightShadow >= .95
-      && buckets.every((bucket) => Math.abs(bucket.getBoundingClientRect().width - 268) < 1 && Math.abs(bucket.getBoundingClientRect().height - clip.clientHeight) < 1)
-      && !!firstCardRect && !!firstFaceRect && Math.abs(firstCardRect.width - 185) < 1 && Math.abs(firstCardRect.height - 279) < 1
-      && Math.abs(firstFaceRect.width - firstCardRect.width) < 1 && Math.abs(firstFaceRect.height - firstCardRect.height) < 1
-      && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head'),
-      detail: JSON.stringify({ stageLabels, headerControls:headerControls.length, tabsBottom:tabsRect?.bottom, bucketTop:bucketRect?.top, bucketInset:bucketRect&&clipRect?bucketRect.left-clipRect.left:null, scrollbarInset:scrollbarRect&&clipRect?[scrollbarRect.left-clipRect.left,clipRect.right-scrollbarRect.right]:null, shadows:[leftShadow,rightShadow], cards:cards.length, unique:new Set(ids).size, overflow:(pipeline?.scrollWidth || 0) - (clip?.clientWidth || 0), card:firstCardRect && [firstCardRect.width, firstCardRect.height] }) };
+  await page.waitForFunction(() => {
+    const theater = document.querySelector('section.crm-theater[data-crm-theater="assignments"]:not([hidden])');
+    const contract = window.crmAssignments?.contract?.();
+    return !!theater && theater.querySelectorAll('.tk-zone[data-stage]').length === contract?.stages?.length
+      && theater.querySelectorAll('.tk-zcard[data-id]').length > 0;
+  }, { timeout: 10000 });
+  await page.evaluate(() => window.crmAssignments.scrollZonesBy(-100000, true));
+  await check('Assignments is the shared card-system commitment viewport', () => {
+    const theater = document.querySelector('section.crm-theater[data-crm-theater="assignments"]:not([hidden])');
+    const api = window.crmAssignments;
+    const contract = api?.contract?.();
+    const required = ['setActive','reload','baseline','contract','homePreviewState','applyHomePreviewState','performanceState','createCard','setStageExpanded','expandedStages','zoneScrollState','scrollZonesBy'];
+    const missing = required.filter((method) => typeof api?.[method] !== 'function');
+    const zones = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
+    const cards = [...(theater?.querySelectorAll('.tk-zcard[data-id]') || [])];
+    const stages = zones.map((zone) => ({ key:zone.dataset.stage, label:zone.querySelector(':scope > .tk-zone-hd .tk-zone-title')?.textContent.trim() || '' }));
+    const ids = cards.map((card) => card.dataset.id);
+    const stageIds = new Set(stages.map((stage) => stage.key));
+    const expectedStage = (record) => {
+      if (['completed','cancelled','canceled'].includes(String(record?.status || '').toLowerCase())) return 'done';
+      const explicit = String(record?.assignmentStage || '').toLowerCase();
+      if (stageIds.has(explicit)) return explicit;
+      return record?.assignedContactId || String(record?.assignee || '').trim() ? 'assigned' : 'unassigned';
+    };
+    const actualStage = Object.fromEntries(cards.map((card) => [card.dataset.id, card.closest('.tk-zone[data-stage]')?.dataset.stage || '']));
+    const placements = api.items().map((record) => ({ id:record.id, expected:expectedStage(record), actual:actualStage[record.id] || '', status:record.status || '' }));
+    const furniture = theater?.querySelector(':scope > .tk-zones.is-horizontal .tk-zone-hrail > .tk-zone-hclip > .tk-zone-htrack');
+    return {
+      ok: !!theater && missing.length === 0 && contract?.workflowKind === 'lifecycle'
+        && contract.horizontalZones === true && contract.horizontalZoneRows === 1 && contract.scrollZoneRows === false
+        && contract.lazyZoneCards === false && contract.restoreZoneExpansion === false && contract.stageMovement === 'free'
+        && contract.stageAuthority === 'source' && contract.deletionAuthority === 'source'
+        && contract.deckScaffold === false && contract.leftDeckEnabled === false
+        && contract.rightDeckEnabled === false && contract.trashEnabled === false
+        && contract.showProgressBars === true && JSON.stringify(stages) === JSON.stringify(contract.stages)
+        && zones.length === 5 && cards.length === api.items().length && new Set(ids).size === ids.length
+        && placements.every((placement) => placement.actual === placement.expected)
+        && placements.some((placement) => placement.expected === 'done')
+        && zones.every((zone) => zone.dataset.crmSizeKey === `bucket:assignments:${zone.dataset.stage}`)
+        && cards.every((card) => card.dataset.recordEntity === 'commitments'
+          && card.dataset.crmSizeKey === `card:commitments:${card.dataset.id}`
+          && card.getAttribute('role') === 'button' && card.tabIndex === 0
+          && !!card.querySelector('.ticket-body .ticket-fields'))
+        && !!furniture && !!furniture.querySelector(':scope > .tk-zone-hacrylic-lens')
+        && !theater.querySelector('svg.tk-flow,.tk-flow-shaft,.tk-flow-head,.tk-zone-spread')
+        && !theater.querySelector(':scope > .tk-stacks,:scope > .tk-scrim,.tk-deck')
+        && document.querySelectorAll('.crm-assignment-bucket,.crm-assignment-work-card').length === 0
+        && document.querySelectorAll('.crm-factory-mini-scene').length === 0,
+      detail:JSON.stringify({ missing, contract, stages, cards:cards.length, unique:new Set(ids).size, placements }),
+    };
   });
-  const assignmentScrollBefore = await page.evaluate(() => window.crmAssignments.scrollState());
-  const assignmentGutterPoint = await page.evaluate(() => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect();
-    return { x:Math.round((clip.left+clip.right)/2), y:Math.min(innerHeight-8,Math.ceil(bar.bottom+12)), barBottom:bar.bottom, clipBottom:clip.bottom };
+  const assignmentShadowProbe = await page.evaluate(async () => {
+    const api = window.crmAssignments;
+    const item = api.items().find((record) => !['completed','cancelled','canceled'].includes(String(record.status || '').toLowerCase()));
+    if (!item) return { ok:false, reason:'no open commitment' };
+    const expected = String(item.assignmentStage || '').toLowerCase()
+      || (item.assignedContactId || String(item.assignee || '').trim() ? 'assigned' : 'unassigned');
+    const staleStage = expected === 'blocked' ? 'active' : 'blocked';
+    localStorage.setItem('crm-assignment-stage', JSON.stringify({ [item.id]:staleStage }));
+    localStorage.setItem('crm-assignment-stage-order', JSON.stringify({ [staleStage]:[item.id] }));
+    localStorage.setItem('crm-assignment-deleted', JSON.stringify([item.id]));
+    await api.reload();
+    await api.waitForGeometrySettled();
+    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(item.id)}"]`)];
+    const actual = cards[0]?.closest('.tk-zone[data-stage]')?.dataset.stage || '';
+    ['crm-assignment-stage','crm-assignment-stage-order','crm-assignment-deleted'].forEach((key) => localStorage.removeItem(key));
+    return { ok:cards.length === 1 && actual === expected, id:item.id, expected, actual, cards:cards.length };
   });
-  await page.mouse.move(assignmentGutterPoint.x, assignmentGutterPoint.y); await page.mouse.wheel({ deltaY:320 });
-  await sleep(240);
-  await check('Assignment buckets use the bucket scrollbar language horizontally, including lower-gutter wheel motion and thumb travel', ({ before, point }) => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const state = window.crmAssignments.scrollState(); const track = theater?.querySelector('.crm-assignment-pipeline'); const bar = theater?.querySelector('.crm-assignment-hsb'); const thumb = theater?.querySelector('.crm-assignment-hth');
-    const referenceBar = document.querySelector('[data-crm-theater="tickets"] .tk-zsb'); const referenceThumb = document.querySelector('[data-crm-theater="tickets"] .tk-zth');
-    const barStyle = getComputedStyle(bar); const thumbStyle = getComputedStyle(thumb); const referenceBarStyle = referenceBar && getComputedStyle(referenceBar); const referenceThumbStyle = referenceThumb && getComputedStyle(referenceThumb);
-    return { ok:point.y > point.barBottom && point.y > point.clipBottom && state.min < -100 && state.x < before.x - 30 && /matrix\(1, 0, 0, 1, -/.test(getComputedStyle(track).transform)
-      && thumb.getBoundingClientRect().left > bar.getBoundingClientRect().left + 5
-      && !!referenceBarStyle && !!referenceThumbStyle && barStyle.backgroundColor === referenceBarStyle.backgroundColor && barStyle.borderRadius === referenceBarStyle.borderRadius
-      && barStyle.boxShadow === referenceBarStyle.boxShadow && thumbStyle.backgroundColor === referenceThumbStyle.backgroundColor && thumbStyle.borderRadius === referenceThumbStyle.borderRadius && thumbStyle.boxShadow === referenceThumbStyle.boxShadow,
-      detail:JSON.stringify({ before, state, point, thumbLeft:thumb.getBoundingClientRect().left - bar.getBoundingClientRect().left }) };
-  }, { before:assignmentScrollBefore, point:assignmentGutterPoint });
-  await page.evaluate(() => window.crmAssignments.scrollBy(100000, true));
-  await check('Assignment scrolling reaches the exact far edge and transfers its shadow to the left boundary', () => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const board=theater?.querySelector('.crm-assignment-board'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect(); const last=theater?.querySelector('.crm-assignment-bucket:last-child')?.getBoundingClientRect(); const state=window.crmAssignments.scrollState(); const inset=bar&&clip?bar.left-clip.left:0;
-    const left=Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-left')||'0'); const right=Number.parseFloat(board?.style.getPropertyValue('--crm-scroll-shadow-right')||'0');
-    return { ok:state.min < -100 && Math.abs(state.x-state.min) <= 1 && !!clip && !!last && Math.abs((clip.right-last.right)-inset) <= 1 && left >= .95 && right <= .01, detail:JSON.stringify({ state, inset, edge:last&&clip?clip.right-last.right:null, shadows:[left,right] }) };
+  await check('Assignment placement ignores every legacy local shadow map', (state) => ({
+    ok:state.ok,
+    detail:JSON.stringify(state),
+  }), assignmentShadowProbe);
+  const assignmentRail = await page.evaluate(() => {
+    const theater = document.querySelector('section.crm-theater[data-crm-theater="assignments"]:not([hidden])');
+    const api = window.crmAssignments;
+    const clip = theater?.querySelector('.tk-zone-hclip');
+    const track = theater?.querySelector('.tk-zone-htrack');
+    const bar = theater?.querySelector('.tk-zone-hsb');
+    const thumb = theater?.querySelector('.tk-zone-hth');
+    api.scrollZonesBy(-100000, true);
+    const start = api.zoneScrollState();
+    const moved = api.scrollZonesBy(100000, true);
+    const end = api.zoneScrollState();
+    const barStyle = bar && getComputedStyle(bar); const thumbStyle = thumb && getComputedStyle(thumb);
+    const result = {
+      start, moved, end,
+      overflow:track && clip ? Math.max(0, track.scrollWidth - clip.clientWidth) : -1,
+      transform:track ? getComputedStyle(track).transform : '',
+      barOn:bar?.classList.contains('is-on') || false,
+      thumbWidth:thumb?.getBoundingClientRect().width || 0,
+      trackWidth:bar?.getBoundingClientRect().width || 0,
+      sharedStyle:!!document.getElementById('crm-horizontal-zone-styles') && bar?.matches('.tk-zone-hsb') && thumb?.matches('.tk-zone-hth')
+        && !!barStyle?.backgroundColor && barStyle.borderRadius === '999px' && !!barStyle.boxShadow
+        && !!thumbStyle?.backgroundColor && thumbStyle.borderRadius === '999px' && !!thumbStyle.boxShadow,
+    };
+    api.scrollZonesBy(-100000, true);
+    return result;
   });
-  await page.evaluate(() => window.crmAssignments.scrollBy(-100000, true));
-  await page.waitForFunction(() => document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-hth')?.getBoundingClientRect().width > 28);
-  await page.$eval('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-hth', (thumb) => { const rect=thumb.getBoundingClientRect(),travel=thumb.parentElement.getBoundingClientRect().width-rect.width,start=rect.left+rect.width/2,end=start+Math.min(90,travel*.65),init={bubbles:true,cancelable:true,pointerId:73,pointerType:'mouse',isPrimary:true,clientY:rect.top+rect.height/2}; thumb.dispatchEvent(new PointerEvent('pointerdown',{...init,button:0,buttons:1,clientX:start})); window.dispatchEvent(new PointerEvent('pointermove',{...init,button:-1,buttons:1,clientX:end})); window.dispatchEvent(new PointerEvent('pointerup',{...init,button:0,buttons:0,clientX:end})); });
-  await sleep(180);
-  await check('The horizontal bucket thumb can be dragged and recoils inside the viewport bounds', () => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const state=window.crmAssignments.scrollState(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect(); const thumb=theater?.querySelector('.crm-assignment-hth')?.getBoundingClientRect();
-    return { ok:state.x < -30 && state.x >= state.min - 1 && !!bar && !!thumb && thumb.left > bar.left + 20 && thumb.right <= bar.right + 1, detail:JSON.stringify({ state, thumbLeft:thumb && bar ? thumb.left-bar.left : null }) };
+  await check('Assignment zone travel uses the shared factory rail and remains clamped', (state) => ({
+    ok:state.overflow >= 0 && state.start.x === 0 && state.start.target === 0
+      && state.end.x >= state.end.min - 1 && state.end.x <= 1 && Math.abs(state.end.x - state.end.min) <= 1
+      && state.sharedStyle
+      && (state.overflow <= 1
+        ? state.moved === false && Math.abs(state.end.min) <= 1
+        : state.moved === true && state.barOn && state.thumbWidth >= 28 && state.thumbWidth < state.trackWidth && state.transform !== 'none'),
+    detail:JSON.stringify(state),
+  }), assignmentRail);
+  const assignmentExpansion = await page.evaluate(async () => {
+    const theater = document.querySelector('section.crm-theater[data-crm-theater="assignments"]:not([hidden])');
+    const api = window.crmAssignments;
+    const zone = [...theater.querySelectorAll('.tk-zone[data-stage]')].find((candidate) => candidate.querySelector('.tk-zcard[data-id]'))
+      || theater.querySelector('.tk-zone[data-stage]');
+    const stage = zone?.dataset.stage || '';
+    const signature = () => ({
+      zones:[...theater.querySelectorAll('.tk-zone[data-stage]')].map((candidate) => candidate.dataset.stage),
+      cards:[...theater.querySelectorAll('.tk-zone[data-stage] .tk-zcard[data-id]')].map((card) => `${card.closest('.tk-zone[data-stage]')?.dataset.stage}:${card.dataset.id}`),
+    });
+    const before = signature();
+    const opened = api.setStageExpanded(stage, true);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const expanded = signature();
+    const expandedClass = zone?.classList.contains('is-stack-expanded') || false;
+    const closed = api.setStageExpanded(stage, false);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return { stage, opened, closed, expandedClass, collapsedClass:zone?.classList.contains('is-stack-expanded') || false, before, expanded, after:signature() };
   });
-  await page.evaluate(() => window.crmAssignments.scrollBy(-100000, true));
+  await check('Assignment expansion preserves the canonical zone/card identity signature and returns to rest', (state) => ({
+    ok:!!state.stage && state.opened === true && state.closed === false && state.expandedClass && !state.collapsedClass
+      && JSON.stringify(state.before) === JSON.stringify(state.expanded) && JSON.stringify(state.before) === JSON.stringify(state.after)
+      && window.crmAssignments.expandedStages().length === 0,
+    detail:JSON.stringify(state),
+  }), assignmentExpansion);
 
   const assignmentMove = await page.evaluate(async () => {
     const item = window.crmAssignments.items().find((candidate) => !['completed','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
-    const original = item.assignmentStage || (item.assignee ? 'assigned' : 'unassigned'); const target = original === 'blocked' ? 'active' : 'blocked';
+    const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(item.id)}"]`);
+    const original = card?.closest('.tk-zone[data-stage]')?.dataset.stage || (item.assignee ? 'assigned' : 'unassigned');
+    const target = original === 'blocked' ? 'active' : 'blocked';
     const ok = await window.crmAssignments.move(item.id, target);
     const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === item.id);
     const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
     return { id:item.id, original, target, ok, recordStage:record?.assignmentStage, flowStage:flow?.stage };
   });
   await check('Dragging logic moves one commitment through a persisted assignment workflow', (state) => {
-    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(state.id)}"]`)];
+    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(state.id)}"]`)];
     return { ok:state.ok && state.recordStage === state.target && state.flowStage === state.target && cards.length === 1
-      && cards[0].closest('[data-assignment-stage]')?.dataset.assignmentStage === state.target, detail:JSON.stringify(state) };
+      && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === state.target, detail:JSON.stringify(state) };
   }, assignmentMove);
   await page.evaluate((state) => window.crmAssignments.move(state.id, state.original), assignmentMove);
 
@@ -540,31 +601,31 @@ async function main() {
     return { id:item.id, contactId:contact.id, ok, assignedContactId:record?.assignedContactId, stage:record?.assignmentStage, flowStage:flow?.stage };
   });
   await check('Assigning a person updates that commitment and its workflow membership', (state) => {
-    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(state.id)}"]`)];
+    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(state.id)}"]`)];
     return { ok:state.ok && state.assignedContactId === state.contactId && state.stage === 'assigned' && state.flowStage === 'assigned'
-      && cards.length === 1 && cards[0].closest('[data-assignment-stage]')?.dataset.assignmentStage === 'assigned', detail:JSON.stringify(state) };
+      && cards.length === 1 && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === 'assigned', detail:JSON.stringify(state) };
   }, assignment);
   await page.evaluate((id) => window.crmAssignments.unassign(id), assignment.id);
 
-  await check('Assignment bucket headers keep the internal stack compact and expose no unstack control', () => {
+  await check('Assignment zones keep the shared card stack compact and collapsed at rest', () => {
     const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
-    const bucket = theater?.querySelector('.crm-assignment-bucket:has(.crm-assignment-work-card + .crm-assignment-work-card)');
-    const cards = [...(bucket?.querySelectorAll('.crm-assignment-work-card') || [])];
+    const bucket = theater?.querySelector('.tk-zone[data-stage]:has(.tk-zcard + .tk-zcard)');
+    const cards = [...(bucket?.querySelectorAll('.tk-zcard[data-id]') || [])];
     const step = cards.length > 1 ? cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top : 0;
-    return { ok:!!bucket && !theater.querySelector('.crm-assignment-stack-toggle,.tk-zone-spread') && step > 0 && step < 60,
+    return { ok:!!bucket && !bucket.classList.contains('is-stack-expanded') && !theater.querySelector('.tk-zone-spread') && step > 0 && step < 60,
       detail:`${Math.round(step)}px compact step · ${cards.length} cards` };
   });
 
-  const assignmentCardSelector = `${assignmentScope} .crm-assignment-bucket:has(.crm-assignment-work-card) .crm-assignment-work-card:last-child`;
+  const assignmentCardSelector = `${assignmentScope} .tk-zone[data-stage]:has(.tk-zcard) .tk-zcard[data-id]:last-child`;
   await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
-  await page.waitForSelector('.crm-assignment-menu');
-  await check('Assignment actions use the canonical compact menu, never a full-screen console', () => {
-    const menu = document.querySelector('.crm-assignment-menu'); const reference = document.querySelector('.auth-profile-menu'); if (!menu || !reference) return false;
+  await page.waitForSelector(`${assignmentScope} .tk-menu.crm-menu-surface`);
+  await check('Assignment actions use the shared card-system menu surface', () => {
+    const menu = document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .tk-menu.crm-menu-surface'); const reference = document.querySelector('.auth-profile-menu'); if (!menu || !reference) return false;
     const actual = getComputedStyle(menu); const expected = getComputedStyle(reference); const rect = menu.getBoundingClientRect();
-    return rect.width < 200 && rect.height < 260 && menu.classList.contains('crm-menu-surface')
+    return rect.width < 220 && rect.height < 300 && !!menu.querySelector('[data-act="edit"]') && !!menu.querySelector('[data-act="size"]')
       && ['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow'].every((property) => actual[property] === expected[property]);
   });
-  await page.click('.crm-assignment-menu .crm-menu-action');
+  await page.click(`${assignmentScope} .tk-menu [data-act="edit"]`);
   await page.waitForSelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]:not([hidden]) .ticket-detail');
   await sleep(760);
   await check('Assignment editing unfolds from its real card and fits every linked field without scrolling', () => {
@@ -593,42 +654,87 @@ async function main() {
   });
   await activate('assignments');
 
-  const assignmentCardTier = await page.$eval(assignmentCardSelector, (card) => { const rect=card.getBoundingClientRect(),face=card.querySelector('.crm-assignment-card-face')?.getBoundingClientRect(); return { id:card.dataset.assignmentCard, width:rect.width, height:rect.height, faceWidth:face?.width, faceHeight:face?.height, stage:card.closest('[data-assignment-stage]')?.dataset.assignmentStage, details:card.querySelectorAll('.crm-assignment-card-meta').length, note:card.querySelector('.crm-assignment-card-note')?.textContent || '' }; });
+  await page.waitForSelector(assignmentCardSelector);
+  await page.evaluate((selector) => {
+    const card = document.querySelector(selector);
+    if (card) window.crmObjectSizing.setSize(card, 'card', 'large');
+  }, assignmentCardSelector);
+  await sleep(240);
+  const assignmentCardTier = await page.$eval(assignmentCardSelector, (card) => {
+    const rect = card.getBoundingClientRect();
+    window.__assignmentSizingCard = card;
+    return {
+      id:card.dataset.id,
+      sizeKey:card.dataset.crmSizeKey,
+      width:rect.width,
+      height:rect.height,
+      stage:card.closest('.tk-zone[data-stage]')?.dataset.stage,
+      text:card.querySelector('.ticket-body')?.textContent.replace(/\s+/g, ' ').trim() || '',
+      entries:card.querySelectorAll('.ticket-fields .ticket-field').length,
+      mark:card.querySelector('.crm-card-semantic-mark')?.dataset.cardSemantic || '',
+    };
+  });
   await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
-  await page.waitForSelector('.crm-assignment-menu');
-  await page.evaluate(() => [...document.querySelectorAll('.crm-assignment-menu .crm-menu-action')].find((button) => button.textContent.trim().toLowerCase() === 'make small')?.click());
-  await page.waitForFunction((before) => { const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(before.id)}"]`); const rect=card?.getBoundingClientRect(),face=card?.querySelector('.crm-assignment-card-face')?.getBoundingClientRect(); return card?.classList.contains('crm-object-small') && Math.abs(rect.width / before.width - .8) < .02 && Math.abs(rect.height / before.height - .8) < .02 && Math.abs(face.width / before.faceWidth - .8) < .02 && Math.abs(face.height / before.faceHeight - .8) < .02; }, {}, assignmentCardTier);
+  await page.waitForSelector(`${assignmentScope} .tk-menu [data-act="size"]`);
+  await page.click(`${assignmentScope} .tk-menu [data-act="size"]`);
+  await page.waitForFunction((before) => {
+    const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(before.id)}"]`);
+    const rect = card?.getBoundingClientRect();
+    return card?.classList.contains('crm-object-small') && Math.abs(rect.width / before.width - .8) < .02 && Math.abs(rect.height / before.height - .8) < .02;
+  }, {}, assignmentCardTier);
   await sleep(220);
-  await check('Assignment cards have a literal proportional Small tier with the complete face intact', (before) => {
-    const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(before.id)}"]`); const rect = card?.getBoundingClientRect(); const face=card?.querySelector('.crm-assignment-card-face')?.getBoundingClientRect();
-    const ok = !!card && card.dataset.recordId === before.id && card.closest('[data-assignment-stage]')?.dataset.assignmentStage === before.stage
-      && Number.parseFloat(getComputedStyle(card).scale) === 1 && card.offsetWidth === Math.round(rect.width)
+  await check('Assignment cards use the shared proportional sizing contract without replacing their face', (before) => {
+    const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(before.id)}"]`);
+    const rect = card?.getBoundingClientRect();
+    const ok = !!card && card === window.__assignmentSizingCard && card.dataset.crmSizeKey === before.sizeKey
+      && card.closest('.tk-zone[data-stage]')?.dataset.stage === before.stage
+      && window.crmObjectSizing.sizeOf(card, 'card') === 'small' && Number.parseFloat(getComputedStyle(card).scale) === 1
       && Math.abs(rect.width / before.width - .8) < .015 && Math.abs(rect.height / before.height - .8) < .015
-      && !!face && Math.abs(face.width / before.faceWidth - .8) < .015 && Math.abs(face.height / before.faceHeight - .8) < .015
-      && card.querySelectorAll('.crm-assignment-card-meta').length === before.details && (card.querySelector('.crm-assignment-card-note')?.textContent || '') === before.note;
-    return { ok, detail:JSON.stringify({ stage:card?.closest('[data-assignment-stage]')?.dataset.assignmentStage, expectedStage:before.stage, scale:card && getComputedStyle(card).scale, offset:card?.offsetWidth, rect:rect&&[rect.width,rect.height], ratio:rect&&[rect.width/before.width,rect.height/before.height], face:face&&[face.width/before.faceWidth,face.height/before.faceHeight], details:card?.querySelectorAll('.crm-assignment-card-meta').length, expectedDetails:before.details }) };
+      && (card.querySelector('.ticket-body')?.textContent.replace(/\s+/g, ' ').trim() || '') === before.text
+      && card.querySelectorAll('.ticket-fields .ticket-field').length === before.entries && !!before.mark
+      && (card.querySelector('.crm-card-semantic-mark')?.dataset.cardSemantic || '') === before.mark;
+    return { ok, detail:JSON.stringify({ sameNode:card === window.__assignmentSizingCard, stage:card?.closest('.tk-zone[data-stage]')?.dataset.stage, expectedStage:before.stage, size:card&&window.crmObjectSizing.sizeOf(card,'card'), rect:rect&&[rect.width,rect.height], ratio:rect&&[rect.width/before.width,rect.height/before.height] }) };
   }, assignmentCardTier);
-  await page.evaluate((id) => { const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(id)}"]`); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 6, clientY:rect.top + 10 })); }, assignmentCardTier.id);
-  await page.waitForSelector('.crm-assignment-menu');
-  await page.evaluate(() => [...document.querySelectorAll('.crm-assignment-menu .crm-menu-action')].find((button) => button.textContent.trim().toLowerCase() === 'make large')?.click());
-  await page.waitForFunction((id) => !document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(id)}"]`)?.classList.contains('crm-object-small'), {}, assignmentCardTier.id);
+  await page.evaluate((id) => {
+    const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(id)}"]`);
+    if (card) window.crmObjectSizing.setSize(card, 'card', 'large');
+  }, assignmentCardTier.id);
+  await page.waitForFunction((id) => !document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(id)}"]`)?.classList.contains('crm-object-small'), {}, assignmentCardTier.id);
 
-  const assignmentBucketTier = await page.$eval(`${assignmentScope} .crm-assignment-bucket:first-child`, (bucket) => { const rect=bucket.getBoundingClientRect(),shell=bucket.querySelector('.crm-assignment-bucket-shell')?.getBoundingClientRect(),card=bucket.querySelector('.crm-assignment-work-card')?.getBoundingClientRect(); return { width:rect.width, height:rect.height, shellWidth:shell?.width, shellHeight:shell?.height, cardWidth:card?.width, cardHeight:card?.height, ids:[...bucket.querySelectorAll('.crm-assignment-work-card')].map((item) => item.dataset.assignmentCard) }; });
-  await page.evaluate(() => { const header = document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-bucket:first-child .tk-zone-hd'); const rect = header?.getBoundingClientRect(); if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 30, clientY:rect.top + 12 })); });
+  const assignmentZoneSelector = `${assignmentScope} .tk-zone[data-stage]`;
+  await page.evaluate((selector) => {
+    const zone = document.querySelector(selector);
+    if (zone) window.crmObjectSizing.setSize(zone, 'bucket', 'large');
+  }, assignmentZoneSelector);
+  await sleep(240);
+  const assignmentBucketTier = await page.$eval(assignmentZoneSelector, (bucket) => {
+    const rect = bucket.getBoundingClientRect();
+    window.__assignmentSizingZone = bucket;
+    return { stage:bucket.dataset.stage, sizeKey:bucket.dataset.crmSizeKey, width:rect.width, height:rect.height, ids:[...bucket.querySelectorAll('.tk-zcard[data-id]')].map((item) => item.dataset.id) };
+  });
+  await page.evaluate((selector) => { const header = document.querySelector(`${selector} > .tk-zone-hd`); const rect = header?.getBoundingClientRect(); if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 30, clientY:rect.top + 12 })); }, assignmentZoneSelector);
   await page.waitForSelector('.crm-size-menu'); await page.click('.crm-size-menu .crm-menu-action');
-  await page.waitForFunction((before) => { const bucket = document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-bucket:first-child'); const rect=bucket?.getBoundingClientRect(),shell=bucket?.querySelector('.crm-assignment-bucket-shell')?.getBoundingClientRect(),card=bucket?.querySelector('.crm-assignment-work-card')?.getBoundingClientRect(); return bucket?.classList.contains('crm-object-small') && Math.abs(rect.width / before.width - .76) < .012 && Math.abs(rect.height / before.height - .76) < .012 && Math.abs(shell.width / before.shellWidth - .76) < .012 && Math.abs(shell.height / before.shellHeight - .76) < .012 && (!before.cardWidth || (Math.abs(card.width / before.cardWidth - .76) < .012 && Math.abs(card.height / before.cardHeight - .76) < .012)); }, {}, assignmentBucketTier);
-  await check('Assignment buckets have the matching proportional Small cell without replacing commitments', (before) => {
-    const bucket = document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-bucket:first-child'); const ids = [...bucket.querySelectorAll('.crm-assignment-work-card')].map((card) => card.dataset.assignmentCard); const rect=bucket?.getBoundingClientRect(),shell=bucket?.querySelector('.crm-assignment-bucket-shell')?.getBoundingClientRect(),card=bucket?.querySelector('.crm-assignment-work-card')?.getBoundingClientRect();
-    return !!bucket && Number.parseFloat(getComputedStyle(bucket).scale) === 1 && JSON.stringify(ids) === JSON.stringify(before.ids)
-      && Math.abs(rect.width / before.width - .76) < .015 && Math.abs(rect.height / before.height - .76) < .015
-      && !!shell && Math.abs(shell.width / before.shellWidth - .76) < .015 && Math.abs(shell.height / before.shellHeight - .76) < .015
-      && (!before.cardWidth || (!!card && Math.abs(card.width / before.cardWidth - .76) < .015 && Math.abs(card.height / before.cardHeight - .76) < .015));
+  await page.waitForFunction((before) => {
+    const bucket = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zone[data-stage="${CSS.escape(before.stage)}"]`);
+    const rect = bucket?.getBoundingClientRect();
+    return bucket?.classList.contains('crm-object-small') && rect.width < before.width * .9 && rect.height < before.height * .9;
+  }, {}, assignmentBucketTier);
+  await check('Assignment zones use the shared bucket sizing contract without replacing commitments', (before) => {
+    const bucket = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zone[data-stage="${CSS.escape(before.stage)}"]`);
+    const ids = [...(bucket?.querySelectorAll('.tk-zcard[data-id]') || [])].map((card) => card.dataset.id);
+    const rect = bucket?.getBoundingClientRect();
+    return !!bucket && bucket === window.__assignmentSizingZone && bucket.dataset.crmSizeKey === before.sizeKey
+      && window.crmObjectSizing.sizeOf(bucket, 'bucket') === 'small' && Number.parseFloat(getComputedStyle(bucket).scale) === 1
+      && rect.width < before.width * .9 && rect.height < before.height * .9 && JSON.stringify(ids) === JSON.stringify(before.ids);
   }, assignmentBucketTier);
-  await page.evaluate(() => { const header = document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .crm-assignment-bucket:first-child .tk-zone-hd'); const rect = header?.getBoundingClientRect(); if (header && rect) header.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.left + 30, clientY:rect.top + 12 })); });
-  await page.waitForSelector('.crm-size-menu'); await page.click('.crm-size-menu .crm-menu-action');
+  await page.evaluate((selector) => {
+    const zone = document.querySelector(selector);
+    if (zone) window.crmObjectSizing.setSize(zone, 'bucket', 'large');
+  }, assignmentZoneSelector);
 
   const createdAssignmentTitle = `Interaction assignment ${Date.now()}`;
-  await page.click(`${assignmentScope} .crm-assignment-new`);
+  await page.evaluate(() => window.crmAssignments.openCreate());
+  await page.waitForSelector('.crm-assignment-editor');
   await page.type('.crm-assignment-editor [name="title"]', createdAssignmentTitle);
   await page.select('.crm-assignment-editor [name="stage"]', 'active');
   await page.click('.crm-assignment-editor button[type="submit"]');
@@ -636,17 +742,20 @@ async function main() {
   await check('Creating an assignment produces one commitment plus one workflow entry', async (title) => {
     const item = window.crmAssignments.items().find((candidate) => candidate.title === title); if (!item) return false;
     const flows = await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 });
-    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card="${CSS.escape(item.id)}"]`)]; const flow = flows.records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
-    return { ok:cards.length === 1 && flow?.stage === 'active' && cards[0].closest('[data-assignment-stage]')?.dataset.assignmentStage === 'active', detail:`${item.id} / ${flow?.id}` };
+    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(item.id)}"]`)]; const flow = flows.records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
+    return { ok:cards.length === 1 && cards[0].dataset.recordEntity === 'commitments' && cards[0].dataset.crmSizeKey === `card:commitments:${item.id}`
+      && flow?.stage === 'active' && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === 'active', detail:`${item.id} / ${flow?.id}` };
   }, createdAssignmentTitle);
 
   await page.setViewport({ width:1600, height:1000, deviceScaleFactor:1 });
   await sleep(220);
-  await check('Assignments balances its fitted rail against equal viewport edge insets', () => {
-    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const clip=theater?.querySelector('.crm-assignment-board-clip')?.getBoundingClientRect(); const bar=theater?.querySelector('.crm-assignment-hsb')?.getBoundingClientRect(); const first=theater?.querySelector('.crm-assignment-bucket:first-child')?.getBoundingClientRect(); const last=theater?.querySelector('.crm-assignment-bucket:last-child')?.getBoundingClientRect(); const state=window.crmAssignments.scrollState();
-    const inset=bar&&clip?bar.left-clip.left:0;
-    return { ok:state.min===0&&!!clip&&!!first&&!!last&&inset>=20&&inset<=32&&Math.abs((first.left-clip.left)-inset)<=1&&Math.abs((clip.right-last.right)-inset)<=1,
-      detail:JSON.stringify({state,inset,edges:first&&last&&clip?[first.left-clip.left,clip.right-last.right]:null}) };
+  await check('Assignment zones settle inside the shared factory rail when the viewport fits', () => {
+    const theater=document.querySelector('[data-crm-theater="assignments"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const track=theater?.querySelector('.tk-zone-htrack'); const zones=[...(theater?.querySelectorAll('.tk-zone[data-stage]')||[])]; const state=window.crmAssignments.zoneScrollState(); const bounds=clip?.getBoundingClientRect();
+    const overflow=track&&clip?Math.max(0,track.scrollWidth-clip.clientWidth):-1;
+    return { ok:overflow<=1&&state.min===0&&state.x===0&&!!bounds&&zones.length===window.crmAssignments.contract().stages.length
+      && zones.every((zone)=>{const rect=zone.getBoundingClientRect();return rect.left>=bounds.left-1&&rect.right<=bounds.right+1;})
+      && track.classList.contains('has-shared-zone-acrylic')&&!!track.querySelector(':scope > .tk-zone-hacrylic-lens'),
+      detail:JSON.stringify({state,overflow,zones:zones.length}) };
   });
   await activate('people');
   await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="people"] .tk-zone[data-stage]').length === 17

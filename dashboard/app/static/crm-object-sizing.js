@@ -1,8 +1,8 @@
 // crm-object-sizing.js — one persistent Large/Small contract for cards and buckets.
 (() => {
   const STORE_KEY = "crm-object-sizing-v1";
-  const CARD_SELECTOR = ".tk-card:not(.td-card):not(.td-flyer),.tk-zcard,.crm-planner-card,.crm-assignment-work-card";
-  const BUCKET_SELECTOR = ".tk-zone,.crm-planner-bucket,.crm-company-bucket,.crm-assignment-bucket";
+  const CARD_SELECTOR = ".tk-card:not(.td-card):not(.td-flyer),.tk-zcard,.crm-planner-card";
+  const BUCKET_SELECTOR = ".tk-zone,.crm-planner-bucket,.crm-company-bucket";
   let state = { cards: {}, buckets: {} };
   let menu = null;
   let previewTimer = 0;
@@ -22,8 +22,8 @@
     bills: "bills", invoices: "invoices", planner: "planner",
   }[theater] || theater);
   const idFor = (element, kind) => {
-    if (kind === "card") return element?.dataset?.id || element?.dataset?.recordId || element?.dataset?.plannerCard || element?.dataset?.assignmentContactId || "";
-    return element?.dataset?.stage || element?.dataset?.assignmentCommitment || element?.dataset?.plannerBucket || element?.dataset?.companyKey || "";
+    if (kind === "card") return element?.dataset?.id || element?.dataset?.recordId || element?.dataset?.plannerCard || "";
+    return element?.dataset?.stage || element?.dataset?.plannerBucket || element?.dataset?.companyKey || "";
   };
   const keyOf = (element, kind = "card") => {
     if (!element) return "";
@@ -95,8 +95,8 @@
     if (document.getElementById("crm-object-sizing-styles")) return;
     const style = document.createElement("style"); style.id = "crm-object-sizing-styles"; style.textContent = `
       .crm-object-small{transition:width .18s cubic-bezier(.22,1,.26,1),height .18s cubic-bezier(.22,1,.26,1),flex-basis .18s cubic-bezier(.22,1,.26,1),scale .18s cubic-bezier(.22,1,.26,1)!important}
-      .tk-card.crm-object-small:not(.crm-assignment-bucket-card){scale:.8;transform-origin:bottom center}
-      .tk-zcard.crm-object-small,.tk-zone.crm-object-small,.crm-assignment-work-card.crm-object-small,.crm-planner-card.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:1!important}
+      .tk-card.crm-object-small{scale:.8;transform-origin:bottom center}
+      .tk-zcard.crm-object-small,.tk-zone.crm-object-small,.crm-planner-card.crm-object-small,.crm-planner-bucket.crm-object-small,.crm-company-bucket.crm-object-small{scale:1!important}
       .crm-size-menu{position:fixed;z-index:9320;width:154px;padding:6px;display:grid}.crm-size-menu .crm-menu-action{height:34px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       @media(prefers-reduced-motion:reduce){.crm-object-small{transition-duration:.01ms!important}}
     `; document.head.appendChild(style);

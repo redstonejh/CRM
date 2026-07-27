@@ -54,6 +54,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   let handoffSequence = 0;
   let handoffPromise = Promise.resolve();
   let handoffResolve = null;
+  let homeEndpointSettling = false;
   let todoPopover = null;
   let todoOutsideClose = null;
   let previewCommitTimer = 0;
@@ -480,10 +481,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-tile-id="${cssValue(bucket.dataset.tileId)}"]`)?.classList.remove("is-deemphasized");
   };
   const previewCommitBlocked = () => !camera?.isActive?.()
-    || !!camera?.isTransitioning?.()
-    || !!camera?.surface?.()?.classList.contains("crm-home-camera-moving")
-    || !!camera?.surface?.()?.classList.contains("crm-home-camera-handoff")
-    || !!window.crmDeskTransit?.isBusy?.();
+    || (!homeEndpointSettling && (
+      !!camera?.isTransitioning?.()
+      || !!camera?.surface?.()?.classList.contains("crm-home-camera-moving")
+      || !!camera?.surface?.()?.classList.contains("crm-home-camera-handoff")
+      || !!window.crmDeskTransit?.isBusy?.()
+    ));
   const preloadSource = (src) => new Promise((resolve) => {
     const image = new Image(); let settled = false;
     const finish = () => { if (settled) return; settled = true; resolve(); };
@@ -998,15 +1001,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (node) node.setAttribute("data-crm-home-precomposed", key);
     return node;
   };
-  const primeInactiveTheater = (node, api) => new Promise((resolve) => {
-    if (!node || api?.isActive?.() || !canPrewarmFactory()) { resolve(); return; }
+  const primeInactiveTheater = async (node, api) => {
+    if (!node || api?.isActive?.() || !canPrewarmFactory()) return;
     node.hidden = true;
     node.setAttribute("data-crm-home-precomposed", moduleKeyForTheater(node));
-    requestAnimationFrame(() => {
-      if (!canPrewarmFactory()) { node.removeAttribute("data-crm-home-precomposed"); resolve(); return; }
-      requestAnimationFrame(resolve);
-    });
-  });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (!canPrewarmFactory()) {
+      node.removeAttribute("data-crm-home-precomposed");
+      return;
+    }
+    // Finish the factory's retained native-size geometry during idle prewarm.
+    // Activation can then reuse those exact values rather than writing the
+    // first bucket positions under (or after) the endpoint handoff.
+    try { await api?.waitForGeometrySettled?.(); } catch {}
+  };
   const scheduleFactoryPrewarm = () => {
     if (window.crmHomePreviews?.isCaptureWorker || factoryPrewarmRunning || factoryPrewarmHandle || factoryPrewarmTimer
       || prewarmedFactories.size >= FACTORY_PREWARM_APIS.length || factoryPrewarmAttempts >= 30) return;
@@ -1273,13 +1281,71 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // completely released its retained destination.
     if (deferMaintenance) scheduleTransitionMaintenance();
   };
-  const beginHomeHandoff = (context, sequence) => {
+  const waitForHomeRestingScene = (context, maxFrames = 72) => new Promise((resolve) => {
+    let frame = 0; let stable = 0; let previous = "";
+    const tick = () => {
+      const root = context.layers?.[0];
+      const samples = root
+        ? [root, ...root.querySelectorAll(".crm-home-bucket,.crm-home-title-slot,.crm-home-hand-card")].slice(0, 64)
+        : [];
+      const geometry = samples.map((node) => {
+        const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+        return [
+          node.dataset?.tileId || node.dataset?.priorityId || node.className,
+          rect.x.toFixed(2), rect.y.toFixed(2), rect.width.toFixed(2), rect.height.toFixed(2),
+          style.display, style.visibility, style.opacity, style.transform,
+        ].join(":");
+      }).join("|");
+      const next = root
+        ? `${root.childElementCount}:${root.querySelectorAll("*").length}:${root.scrollWidth}:${root.scrollHeight}:${geometry}`
+        : "";
+      stable = next && next === previous ? stable + 1 : 0;
+      previous = next;
+      frame += 1;
+      if (stable >= 3 || frame >= maxFrames) {
+        resolve({ stable:stable >= 3, frames:frame, signature:next });
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const settleHomeEndpoint = async (context) => {
+    homeEndpointSettling = true;
+    try {
+      // The retained motion cut-out and selected expander cover these writes.
+      // Mount every already-decoded viewport and finish the priority hand's
+      // pending data refresh before Home becomes the visible owner.
+      mountAll();
+      flushPendingPreviews();
+      if (activeRefreshPending || handDirty) await refreshPriorityHand();
+      activeRefreshPending = false;
+      // A decoded preview that was already queued before the return must not
+      // auto-commit one frame after the handoff. Give those finite image
+      // decodes a covered window, then mount every ready result now.
+      for (let frame = 0; frame < 48
+        && [...pendingPreviews.values()].some((entry) => !entry.ready); frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      flushPendingPreviews();
+      const settled = await waitForHomeRestingScene(context);
+      if (context.surface) {
+        context.surface.dataset.endpointSettled = String(settled.stable);
+        context.surface.dataset.endpointSettleFrames = String(settled.frames);
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return settled;
+    } finally {
+      homeEndpointSettling = false;
+    }
+  };
+  const beginHomeHandoff = (context, sequence, settle = null) => {
     const surface = context.surface;
     if (!surface) {
       homeAcrylicLens.finish();
       finishHandoff();
       handoffPromise = Promise.resolve();
-      return;
+      return handoffPromise;
     }
     finishHandoff(false, false);
     handoffPromise = new Promise((resolve) => { handoffResolve = resolve; });
@@ -1289,10 +1355,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // while their real acrylic layers paint underneath, then exchange all
     // remaining owners atomically.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      homeAcrylicLens.finish();
-      if (sequence === handoffSequence) finishHandoff();
-      else handoffResolve?.();
+      void (async () => {
+        try { await settle?.(); } catch {}
+        homeAcrylicLens.finish();
+        // The selected full-screen expander is itself the final covered owner.
+        // Retire it while the cut-out motion texture still owns every other Home
+        // pixel, then release that companion texture in the same task.
+        context.retireOutgoingLayer?.();
+        if (sequence === handoffSequence) finishHandoff();
+        else handoffResolve?.();
+      })();
     }));
+    return handoffPromise;
   };
   const syncBitmapMotion = (context) => {
     const motionRoot = context?.layers?.[0];
@@ -1354,16 +1428,19 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       window.crmDeskTransit?.noteHomeTransformEnd?.(direction, performance.now());
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting","crm-home-bitmap-motion");
       const sequence = ++handoffSequence;
+      let endpointPromise = null;
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
-        beginHomeHandoff(context, sequence);
+        endpointPromise = beginHomeHandoff(context, sequence, () => settleHomeEndpoint(context));
       } else {
         homeAcrylicLens.finish();
+        if (direction === "contract") context.retireOutgoingLayer?.();
         finishHandoff();
       }
       // After returning Home, use the next idle slice to prepare the next room.
       // Expanding leaves Home inactive, so its longer guard remains appropriate.
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);
       scheduleFactoryPrewarm();
+      return endpointPromise;
     },
     onLevelChange:(context)=>{
       if (context.active && context.level === 0 && !window.crmDeskTransit?.isBusy?.()) mountAll();
@@ -1425,7 +1502,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   document.addEventListener("crm:desk-transit-settled", (event) => {
     scheduleTransitionMaintenance();
-    if ((!activeRefreshPending && !handDirty) || event.detail?.key !== "home" || !camera?.isActive?.()) return;
+    if (!activeRefreshPending || event.detail?.key !== "home" || !camera?.isActive?.()) return;
     activeRefreshPending = false;
     requestAnimationFrame(() => {
       if (!camera?.isActive?.() || window.crmDeskTransit?.isBusy?.()) { activeRefreshPending = true; return; }
@@ -1435,22 +1512,29 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key;
-    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
+    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".tk-zone,.tk-zcard"}[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden||node.hasAttribute("data-crm-transit-destination"));
+      // This runs beneath the retained endpoint cover, not during camera
+      // motion. Sample the complete leading viewport population so a lower
+      // card, font, decoded image, or delayed text refresh cannot arrive after
+      // visual ownership has already changed.
       const samples=source?[source,...source.querySelectorAll(selector)].slice(0,64):[];
       const geometry=samples.map((node)=>{const rect=node.getBoundingClientRect();const style=getComputedStyle(node);return[
-        node.dataset?.id||node.dataset?.recordId||node.dataset?.stage||node.dataset?.assignmentCommitment||node.className,
+        node.dataset?.id||node.dataset?.recordId||node.dataset?.stage||node.className,
         rect.x.toFixed(2),rect.y.toFixed(2),rect.width.toFixed(2),rect.height.toFixed(2),style.transform,style.opacity,
+        String(node.textContent||"").trim().slice(0,160),
       ].join(":")}).join("|");
+      const assetsReady=!source||[...source.querySelectorAll("img")].every((image)=>image.complete&&image.naturalWidth>0);
+      const fontsReady=!document.fonts||document.fonts.status!=="loading";
       // A room can be intentionally empty (notably a new Projects world). Its own
       // stable geometry is still a valid destination; requiring a child object
       // held the reveal open until the timeout and made the handoff hitch.
       const next=source?`${source.childElementCount}:${source.querySelectorAll("*").length}:${source.scrollWidth}:${source.scrollHeight}:${geometry}`:"";
-      stable=next&&next===last?stable+1:0;last=next;if(stable>=3||performance.now()-started>=timeoutMs)resolve({stable:stable>=3,signature:next});else requestAnimationFrame(tick)};requestAnimationFrame(tick);
+      stable=assetsReady&&fontsReady&&next&&next===last?stable+1:0;last=next;if(stable>=3||performance.now()-started>=timeoutMs)resolve({stable:stable>=3,signature:next,assetsReady,fontsReady});else requestAnimationFrame(tick)};requestAnimationFrame(tick);
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
     const theater = key === "cases" ? "tickets" : key;
-    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".crm-assignment-bucket,.crm-assignment-work-card"}[key]||"*";
+    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".tk-zone,.tk-zcard"}[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });

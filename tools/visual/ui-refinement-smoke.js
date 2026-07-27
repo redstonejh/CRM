@@ -279,7 +279,7 @@ async function main() {
       const title = card.querySelector('[data-card-fit-entry], .ticket-company');
       const titleStyle = title ? getComputedStyle(title) : null;
       return {
-        id: card.dataset.plannerCard || card.dataset.assignmentCard || card.dataset.id || '',
+        id: card.dataset.plannerCard || card.dataset.id || '',
         kind: card.dataset.cardKind || '',
         fit: card.dataset.cardContentFit || '',
         bodyAttribute: !!body?.hasAttribute('data-card-fit-body'),
@@ -809,11 +809,14 @@ async function main() {
     });
 
     await activate('assignments');
-    await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card]').length > 0);
+    await page.waitForFunction(() => document.querySelectorAll('[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id]').length > 0);
     await sleep(300);
-    const assignmentCards = await semanticCardAudit('[data-crm-theater="assignments"]:not([hidden]) [data-assignment-card]');
+    const assignmentCards = await semanticCardAudit('[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id]');
     await check('Assignment cards consume transferable semantic/fit architecture', () => {
       invariant(assignmentCards.length > 0, 'No Assignment cards were available');
+      invariant(document.querySelectorAll('.crm-assignment-bucket,.crm-assignment-work-card').length === 0, 'Legacy Assignment furniture is still mounted');
+      invariant(!document.querySelector('[data-crm-theater="assignments"] > .tk-stacks,[data-crm-theater="assignments"] > .tk-scrim,[data-crm-theater="assignments"] .tk-deck'), 'Zone-only Assignment mounted a phantom stack/scrim scaffold');
+      invariant(window.crmAssignments.contract?.().stageAuthority === 'source', 'Assignment placement is not source-authoritative');
       assignmentCards.forEach((card) => {
         invariant(card.mark?.svg, `${card.id} has no semantic mark`);
         invariant(card.bodyAttribute && card.entries >= 4, `${card.id} does not expose adaptive fit entries`);

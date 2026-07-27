@@ -67,7 +67,12 @@
   const camera = () => window.crmHomeCamera;
   const commit = (key) => window.crmWorkspaces?.setActive?.(key);
   const paint = (frames = 1) => new Promise((resolve) => {
-    const next = () => frames-- > 0 ? requestAnimationFrame(next) : resolve();
+    let remaining = Math.max(1, Number(frames) || 1);
+    const next = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(next);
+    };
     requestAnimationFrame(next);
   });
   const bucketFor = (key) => {
@@ -308,7 +313,7 @@
     && before.lidStyle.opacity === after.lidStyle.opacity
     && before.viewport.width === after.viewport.width
     && before.viewport.height === after.viewport.height;
-  const liveLayerState = () => destinationLayers.map((layer) => {
+  const liveLayerState = (layers = destinationLayers) => layers.filter((layer) => layer?.isConnected).map((layer) => {
     const style = getComputedStyle(layer);
     return {
       tag:layer.tagName,
@@ -325,7 +330,9 @@
     coverInvariant:stage?.coverInvariant !== false,
     cover:inspectRasterCover(stage),
     liveReady:!!stage?.liveReady,
-    liveLayers:liveLayerState(),
+    liveLayers:liveLayerState(stage?.finalDestinationLayers?.length
+      ? stage.finalDestinationLayers
+      : destinationLayers),
   });
   const holdProbePhase = async (stage, phase) => {
     const detail = phaseDetail(stage, phase);
@@ -363,10 +370,8 @@
     stage.coverInvariant = stage.coverStart.ready;
     stage.phase = "covered";
     await holdProbePhase(stage, "covered");
-    // Close one clean raster-owned refresh interval before any live-room style
-    // or compositor ownership work begins. Cadence probes can therefore prove
-    // both sides of every longer maintenance interval have the same owner.
-    await paint(1);
+    // The two seating paints above already close a clean raster-owned refresh
+    // interval before live-room ownership work begins.
     if (stage.sequence !== activeDive?.sequence) return false;
     return stage.coverInvariant;
   };
@@ -378,40 +383,40 @@
       if (stage.sequence !== activeDive?.sequence) return;
       stage.coverBeforeSwap = inspectRasterCover(stage);
       stage.coverInvariant = sameRasterCover(stage, stage.coverStart, stage.coverBeforeSwap);
-      stage.liveLayersBeforeSwap = liveLayerState();
-      stage.preSwapLiveReady = destinationLayers.length > 0
+      const liveLayers = stage.finalDestinationLayers || [];
+      stage.liveLayersBeforeSwap = liveLayerState(liveLayers);
+      stage.preSwapLiveReady = liveLayers.length > 0
         && stage.settledState?.stable === true
         && stage.liveLayersBeforeSwap.every((layer) =>
           layer.display !== "none" && layer.visibility !== "hidden"
-          && layer.opacity >= .0005 && layer.opacity <= .01);
+          && layer.opacity === 1);
       stage.liveReady = stage.preSwapLiveReady;
       stage.liveReadyAt = performance.now();
       stage.phase = "live-ready-covered";
       await holdProbePhase(stage, "before-swap");
       if (stage.sequence !== activeDive?.sequence) return;
+      if (!stage.coverInvariant) {
+        throw new Error("Endpoint raster changed while the destination was settling");
+      }
+      if (!stage.preSwapLiveReady) {
+        throw new Error("Destination did not reach stable natural geometry under its endpoint cover");
+      }
 
-      // Promote the live room to full opacity on a frame boundary while the
-      // exact raster remains fully opaque above it, then give that compositor
-      // surface two unchanged covered paints. The captures are not pixel-equal,
-      // so their final exchange is a very short compositor-only dissolve.
-      await new Promise((resolve) => requestAnimationFrame(() => {
-        if (stage.sequence === activeDive?.sequence) {
-          document.documentElement.classList.add("crm-transit-revealing");
-          stage.phase = "live-opaque-covered";
-          stage.liveOpaqueAt = performance.now();
-        }
-        resolve();
-      }));
-      await paint(2);
-      if (stage.sequence !== activeDive?.sequence) return;
-      stage.liveLayersAfterSwap = liveLayerState();
-      stage.postSwapLiveReady = destinationLayers.length > 0
+      // The active room, its natural display ownership, and all temporary
+      // transit attributes were finalized before this function was armed.
+      // Re-read that already-resting tree without changing it. From here to
+      // arrival the exact endpoint raster's opacity is the sole moving value.
+      stage.liveLayersAfterSwap = liveLayerState(liveLayers);
+      stage.postSwapLiveReady = liveLayers.length > 0
         && stage.liveLayersAfterSwap.every((layer) =>
           layer.display !== "none" && layer.visibility !== "hidden" && layer.opacity === 1);
       stage.liveReady = stage.preSwapLiveReady && stage.postSwapLiveReady;
       stage.phase = "crossfade-ready";
       await holdProbePhase(stage, "crossfade-ready");
       if (stage.sequence !== activeDive?.sequence) return;
+      if (!stage.postSwapLiveReady) {
+        throw new Error("Destination compositor was not opaque before endpoint release");
+      }
 
       const host = stage.coverHost;
       if (!host) throw new Error("Exact endpoint raster host is unavailable");
@@ -532,7 +537,81 @@
     if (stage.sequence !== activeDive?.sequence) return;
     stage.readyAt = performance.now();
     stage.ready = true;
-    armDestinationReveal(stage);
+  };
+
+  const settleDiveDestination = async (stage) => {
+    if (!stage || stage.sequence !== activeDive?.sequence) return false;
+
+    // Activation can start a destination's dirty-data refresh. Commit and run
+    // its awaited baseline while the decoded Home raster is still the only
+    // visible owner, so neither a first mount nor an async rebuild can land
+    // after arrival.
+    if (!stage.committed) {
+      stage.commitAt = performance.now();
+      commit(stage.key);
+      stage.committedAt = performance.now();
+      stage.committed = true;
+    }
+    try {
+      await destinationFor(stage.key)?.baseline?.({
+        canRender:() => stage.sequence === activeDive?.sequence,
+      });
+    } catch {}
+    if (stage.sequence !== activeDive?.sequence) return false;
+
+    const theater = findDestinationTheater(stage.key) || stage.theater;
+    if (theater && theater !== destinationRoot) {
+      primeDestinationLayers(stage.key, theater);
+      document.documentElement.classList.add("crm-transit-materializing");
+    }
+    stage.theater = theater;
+    stageDestinationLayers(stage.key, theater);
+
+    // First promote the complete destination under the opaque raster. Then
+    // remove every transit-owned display/grouping/class attribute and measure
+    // the natural resting tree. The cover remains unchanged for all of it.
+    document.documentElement.classList.add("crm-transit-revealing");
+    stage.phase = "live-opaque-covered";
+    stage.liveOpaqueAt = performance.now();
+    // One committed paint seats the promoted compositor; the natural resting
+    // tree is then independently required to remain unchanged for three more.
+    await paint(1);
+    if (stage.sequence !== activeDive?.sequence) return false;
+
+    stage.finalDestinationLayers = [...destinationLayers];
+    document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
+    clearDestinationLayers();
+    stage.phase = "settling-covered";
+    let geometryState = null;
+    let moduleState = null;
+    const destinationApi = destinationFor(stage.key);
+    const geometryWaiter = typeof destinationApi?.waitForGeometrySettled === "function"
+      ? () => destinationApi.waitForGeometrySettled()
+      : () => Promise.resolve({ stable:true, applicable:false });
+    for (let attempt = 0; attempt < 3 && stage.sequence === activeDive?.sequence; attempt += 1) {
+      try {
+        [geometryState, moduleState] = await Promise.all([
+          geometryWaiter(),
+          window.crmHome?.waitForModuleSettled?.(stage.key),
+        ]);
+      } catch {}
+      if (geometryState?.stable === true && moduleState?.stable === true) break;
+    }
+    stage.geometryState = geometryState;
+    stage.settledState = {
+      ...(moduleState || {}),
+      stable:geometryState?.stable === true && moduleState?.stable === true,
+      geometryStable:geometryState?.stable === true,
+      moduleStable:moduleState?.stable === true,
+    };
+    if (stage.sequence !== activeDive?.sequence) return false;
+    // Both samplers above resolve only after repeated unchanged refreshes, so the
+    // final compositor paint is already closed when they return.
+    if (stage.sequence !== activeDive?.sequence) return false;
+    stage.coverAfterSettlement = inspectRasterCover(stage);
+    stage.coverInvariant = stage.coverInvariant !== false
+      && sameRasterCover(stage, stage.coverStart, stage.coverAfterSettlement);
+    return stage.settledState?.stable === true;
   };
 
   const beginDiveDestination = (key) => {
@@ -593,8 +672,8 @@
   };
 
   // The camera reaches its exact endpoint first. Seat the decoded exact room
-  // raster, restore the live destination beneath those unchanged pixels, let
-  // it complete covered paints, and only then exchange ownership and commit.
+  // raster, commit and fully settle the live destination beneath those
+  // unchanged pixels, and only then exchange visual ownership.
   const finishDiveIn = async (key, done, stage) => {
     const cam = camera();
     const surface = cam?.surface?.();
@@ -612,19 +691,48 @@
     try { await seatEndpointRaster(stage); } catch {}
     try { await materializeDiveDestination(stage); } catch {}
     if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
+    try { await settleDiveDestination(stage); } catch {}
     armDestinationReveal(stage);
     try { await stage.revealPromise; } catch {}
-
-    // The destination is already the visible full-strength owner. Commit only
-    // now, after camera motion and material exchange, so router/API activation
-    // cannot steal frames from the zoom. Hidden/display ownership changes, but
-    // the rendered destination pixels do not.
-    if (!stage.committed) {
-      stage.commitAt = performance.now();
-      commit(key);
-      stage.committedAt = performance.now();
-      stage.committed = true;
+    if (stage.revealError || !stage.liveReady) {
+      // Fail closed, then recover through the same canonical camera instead of
+      // freezing the viewport or dropping the cover. The opaque room raster
+      // contracts back into its Home tile while Home is restored beneath it.
+      document.dispatchEvent(new CustomEvent("crm:desk-transit-error", {
+        detail:{ key, phase:stage.phase, error:stage.revealError || "destination not ready" },
+      }));
+      stage.phase = "recovering-home";
+      stage.coverAnimation?.cancel?.();
+      stage.coverAnimation = null;
+      if (stage.coverHost) {
+        stage.coverHost.style.transition = "none";
+        stage.coverHost.style.opacity = "1";
+      }
+      commit("home");
+      if (surface) {
+        surface.hidden = false;
+        surface.style.zIndex = TRANSIT_Z;
+      }
+      try {
+        if (cam?.level?.() >= 1 && !cam?.isTransitioning?.()) {
+          cam.back();
+          await cam.whenSettled?.();
+          await window.crmHome?.waitForHandoff?.();
+        } else if (cam?.restoreRoot) cam.restoreRoot();
+        else cam?.rebuildRoot?.();
+      } catch {
+        if (cam?.restoreRoot) cam.restoreRoot();
+        else cam?.rebuildRoot?.();
+      }
+      if (surface) surface.style.zIndex = "";
+      if (activeDive?.sequence === stage.sequence) activeDive = null;
+      done(false);
+      return;
     }
+
+    // The fade above was the only visible endpoint action. Everything below
+    // is retirement of the now-transparent Home cover; the destination tree
+    // and its final styling are deliberately left untouched.
     const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
     if (cam?.restoreRoot) cam.restoreRoot();
     else cam?.rebuildRoot?.();
@@ -638,8 +746,6 @@
     if (ownershipFadeState.active) {
       ownershipFadeState = { ...ownershipFadeState, active:false, endedAt:performance.now() };
     }
-    document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
-    clearDestinationLayers();
     const doneAt = performance.now();
     performanceTimings.push({
       key,
@@ -770,11 +876,11 @@
     busy = true;
     try { window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
     announceNavigationHistory();
-    const done = () => {
+    const done = (success = true) => {
       busy = false;
       try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
       if (recordHistory) commitCurrentViewport(); else announceNavigationHistory();
-      resolve(true);
+      resolve(success);
       document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
       const next = queued;
       queued = null;
@@ -802,11 +908,11 @@
     const surface = camera()?.surface?.();
     if (surface) surface.style.zIndex = TRANSIT_Z;
     const stage = beginDiveDestination(key);
-    const done = () => {
+    const done = (success = true) => {
       busy = false;
       try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
       commitCurrentViewport();
-      resolve(true);
+      resolve(success);
       document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
       const next = queued;
       queued = null;
@@ -943,6 +1049,13 @@
     noteViewportArrival,
     zoomOutToCalendar,
     temporalModules: () => [...TEMPORAL_MODULES],
+    canSettleGeometry: (key = "") => {
+      const target = String(key) === "tickets" ? "cases" : String(key);
+      return !!activeDive
+        && activeDive.key === target
+        && activeDive.coverStart?.ready === true
+        && !["crossfading", "crossfade-mid", "swapped", "live"].includes(activeDive.phase);
+    },
     isBusy: () => busy || navigationRestoring,
     performanceTimings: () => performanceTimings.map((item) => ({ ...item })),
   };

@@ -115,7 +115,7 @@ const crmCardFace = global.crmCardFace || (() => {
   const refitSizedCard = (event) => {
     if (!["width", "height", "scale"].includes(event.propertyName)) return;
     const card = event.target?.closest?.(
-      ".tk-card,.tk-zcard,.tk-zfly,.td-flyer,.crm-planner-card,.crm-assignment-work-card",
+      ".tk-card,.tk-zcard,.tk-zfly,.td-flyer,.crm-planner-card",
     );
     if (!card || card !== event.target) return;
     requestAnimationFrame(() => { if (card.isConnected) fit(card); });
@@ -168,6 +168,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const workflowKind = config.workflowKind || (deckOnly ? "collection" : "progressive");
   const horizontalZones = config.horizontalZones != null ? config.horizontalZones === true : workflowKind === "grouped";
   const scrollZoneRows = config.scrollZoneRows === true && !horizontalZones;
+  const leftDeckEnabled = config.leftDeckEnabled !== false;
   const rightDeckEnabled = !deckOnly && config.rightDeckEnabled !== false;
   const trashEnabled = !deckOnly && config.trashEnabled !== false;
   const createEnabled = config.createEnabled !== false;
@@ -178,7 +179,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // the bucket layout and the card movement itself, not extra directional UI.
   const showFlow = false;
   const stageMovement = config.stageMovement || "gated";
+  // The factory supports two stage authorities without changing its DOM or
+  // interaction species. Most legacy card surfaces keep their local placement
+  // map. Domain-backed boards opt into "source", making the records returned by
+  // source.list() the only stage/order authority.
+  const stageAuthority = config.stageAuthority === "source" ? "source" : "local";
+  const deletionAuthority = config.deletionAuthority === "source" || stageAuthority === "source"
+    ? "source"
+    : "local";
   const stageUpdateFields = typeof config.stageUpdateFields === "function" ? config.stageUpdateFields : null;
+  const stageRankUpdateFields = typeof config.stageRankUpdateFields === "function" ? config.stageRankUpdateFields : null;
   const configuredStaleness = typeof config.stalenessOf === "function" ? config.stalenessOf : null;
   const attentionDeckFilter = typeof config.attentionDeckFilter === "function" ? config.attentionDeckFilter : null;
   const faceBadges = typeof config.faceBadges === "function" ? config.faceBadges : null;
@@ -335,17 +345,50 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // keeps the original's top-hung stack (factory parity with _src_ticketing).
   const zoneGravity = config.zoneGravity === true;
   const STAGE_STORE = storageKeys.stage;
-  let stageMap = (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })();
+  let stageMap = stageAuthority === "local"
+    ? (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })()
+    : null;
+  const pendingSourceWrites = new Set();
+  let sourceReconcilePromise = null;
+  const reconcileSource = () => {
+    if (sourceReconcilePromise) return sourceReconcilePromise;
+    sourceReconcilePromise = Promise.resolve().then(() => load()).finally(() => {
+      sourceReconcilePromise = null;
+    });
+    return sourceReconcilePromise;
+  };
   const ticketById = (id) => tickets.find((x) => x && x.id === id) || null;
   const patchTicketDoc = (id, fields) => {
     if (!id || !fields || !Object.keys(fields).length) return;
-    try { source?.update?.(id, fields); } catch {}
+    try {
+      const result = source?.update?.(id, fields);
+      if (stageAuthority !== "source" || !result || typeof result.then !== "function") return result;
+      const pending = Promise.resolve(result).then((value) => {
+        if (value === false || value?.ok === false) {
+          throw new Error(`Canonical ${widgetTitle.toLowerCase()} placement update failed`);
+        }
+        return value;
+      }).catch(async (error) => {
+        document.dispatchEvent(new CustomEvent("crm:card-source-write-error", {
+          detail:{ theater:theaterKey, id, error:String(error?.message || error || "source update failed") },
+        }));
+        await reconcileSource();
+        return { ok:false, error };
+      }).finally(() => pendingSourceWrites.delete(pending));
+      pendingSourceWrites.add(pending);
+      return pending;
+    } catch (error) {
+      if (stageAuthority === "source") void reconcileSource();
+      return Promise.resolve({ ok:false, error });
+    }
   };
   // FIX_PASS_2 F5: a record whose state IMPLIES a stage lands in that bucket
   // without a manual drag. config.stageOf(record) derives it (e.g. an invoice
   // sent past its due date reads as Overdue even while its stored stage says
   // "sent"); the stored doc stage and the local stage map are the fallbacks.
   const configuredStageOf = typeof config.stageOf === "function" ? config.stageOf : null;
+  const configuredStageRankOf = typeof config.stageRankOf === "function" ? config.stageRankOf : null;
+  const configuredStageOrderCompare = typeof config.stageOrderCompare === "function" ? config.stageOrderCompare : null;
   const stageForRecord = (record) => {
     if (!record) return null;
     if (configuredStageOf) {
@@ -354,7 +397,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (derived === false) return null;
     }
     if (STAGE_KEYS.includes(record.stage)) return record.stage;
-    return record.id && STAGE_KEYS.includes(stageMap[record.id]) ? stageMap[record.id] : null;
+    return stageAuthority === "local" && record.id && STAGE_KEYS.includes(stageMap?.[record.id])
+      ? stageMap[record.id]
+      : null;
+  };
+  const stageRankForRecord = (record) => {
+    const value = configuredStageRankOf ? configuredStageRankOf(record) : record?.stageRank;
+    if (value == null || value === "") return null;
+    return Number.isFinite(Number(value)) ? Number(value) : null;
   };
   const stageOf = (id) => {
     if (!zonesEnabled) return null;
@@ -364,12 +414,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (!zonesEnabled) return;
     if (!id) return;
     const nextStage = stage && STAGE_KEYS.includes(stage) ? stage : null;
-    if (nextStage) stageMap[id] = nextStage; else delete stageMap[id];
-    try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
+    if (stageAuthority === "local") {
+      if (nextStage) stageMap[id] = nextStage; else delete stageMap[id];
+      try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
+    }
     const t = ticketById(id);
     const extra = stageUpdateFields ? (stageUpdateFields(id, nextStage, t) || {}) : {};
     if (t) {
-      t.stage = nextStage;
+      if (stageAuthority === "local" || !stageUpdateFields) t.stage = nextStage;
       Object.assign(t, extra);
     }
     patchTicketDoc(id, { stage: nextStage, ...extra });
@@ -380,11 +432,51 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // z-TOPMOST, fully-visible one. Only a reorder within the same bucket inserts at the layer the
   // cursor is over. Persisted like the stage map.
   const STAGE_ORDER_STORE = storageKeys.stageOrder;
-  let stageOrder = (() => { try { return JSON.parse(localStorage.getItem(STAGE_ORDER_STORE) || "{}") || {}; } catch { return {}; } })();
+  let stageOrder = stageAuthority === "local"
+    ? (() => { try { return JSON.parse(localStorage.getItem(STAGE_ORDER_STORE) || "{}") || {}; } catch { return {}; } })()
+    : null;
   // Place id into stage's order at index (clamped); a null stage just removes it from every order.
   const setStageAt = (id, stage, index) => {
     if (!zonesEnabled) return;
     if (!id) return;
+    if (stageAuthority === "source") {
+      const rankFields = (record, rank, stageKey) => {
+        try { return stageRankUpdateFields?.(record.id, rank, stageKey, record) || {}; }
+        catch { return {}; }
+      };
+      if (stage && STAGE_KEYS.includes(stage)) {
+        const ordered = tickets
+          .filter((record) => record?.id && record.id !== id && stageForRecord(record) === stage)
+          .sort((a, b) => {
+            const ar = stageRankForRecord(a);
+            const br = stageRankForRecord(b);
+            return (ar ?? Number.MAX_SAFE_INTEGER) - (br ?? Number.MAX_SAFE_INTEGER)
+              || (configuredStageOrderCompare ? configuredStageOrderCompare(a, b, stage) : 0)
+              || (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0)
+              || String(a.id).localeCompare(String(b.id));
+          })
+          .map((record) => record.id);
+        ordered.splice(clamp(index | 0, 0, ordered.length), 0, id);
+        ordered.forEach((rankedId, rank) => {
+          const record = ticketById(rankedId);
+          if (!record) return;
+          const extra = rankFields(record, rank, stage);
+          if (!stageUpdateFields) record.stage = stage;
+          if (!stageRankUpdateFields) record.stageRank = rank;
+          Object.assign(record, extra);
+          patchTicketDoc(rankedId, { stage, stageRank:rank, ...extra });
+        });
+      } else {
+        const record = ticketById(id);
+        if (record) {
+          const extra = rankFields(record, null, null);
+          if (!stageRankUpdateFields) record.stageRank = null;
+          Object.assign(record, extra);
+          patchTicketDoc(id, { stageRank:null, ...extra });
+        }
+      }
+      return;
+    }
     for (const k of Object.keys(stageOrder)) stageOrder[k] = (stageOrder[k] || []).filter((x) => x !== id);
     if (stage && STAGE_KEYS.includes(stage)) {
       const arr = stageOrder[stage] || (stageOrder[stage] = []);
@@ -408,15 +500,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // trash). The right stack shows resolved tickets normally; its trash button flips it to show
   // these instead. Persisted like the stage map.
   const DELETED_STORE = storageKeys.deleted;
-  let deletedSet = (() => { try { return new Set(JSON.parse(localStorage.getItem(DELETED_STORE) || "[]")); } catch { return new Set(); } })();
+  let deletedSet = deletionAuthority === "local"
+    ? (() => { try { return new Set(JSON.parse(localStorage.getItem(DELETED_STORE) || "[]")); } catch { return new Set(); } })()
+    : null;
   const isDeleted = (id) => {
     const t = ticketById(id);
-    return !!(id && (deletedSet.has(id) || t?.deletedAt));
+    return !!(id && ((deletionAuthority === "local" && deletedSet?.has(id)) || t?.deletedAt));
   };
   const setDeleted = (id, on) => {
     if (!id) return;
-    if (on) deletedSet.add(id); else deletedSet.delete(id);
-    try { localStorage.setItem(DELETED_STORE, JSON.stringify([...deletedSet])); } catch {}
+    if (deletionAuthority === "local") {
+      if (on) deletedSet.add(id); else deletedSet.delete(id);
+      try { localStorage.setItem(DELETED_STORE, JSON.stringify([...deletedSet])); } catch {}
+    }
     const t = ticketById(id);
     const deletedAt = on ? new Date().toISOString() : null;
     if (t) t.deletedAt = deletedAt;
@@ -517,11 +613,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let pendingRender = false;  // a render arrived while the detail config was open → run it once it closes
 
   let root = null, stackScrim = null, theater = null;
+  let deckScaffoldReady = false, commonEventsBound = false;
   const decks = { left: null, right: null, trash: null };   // each: { box, arrow, bar, thumb, cards:[], scrollX, contentW, viewW }
   const fanned = { left: false, right: false, trash: false };
-  const CONTROL_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : [])];
-  const DECK_SIDES = ["left", ...(rightDeckEnabled || trashEnabled ? ["right"] : []), ...(trashEnabled ? ["trash"] : [])];   // trash = the recycle bin, a right-hand stack lifted above the icon
-  const CORNER_SIDES = rightDeckEnabled ? ["left", "right"] : ["left"];
+  const CONTROL_SIDES = [...(leftDeckEnabled ? ["left"] : []), ...(rightDeckEnabled || trashEnabled ? ["right"] : [])];
+  const DECK_SIDES = [...(leftDeckEnabled ? ["left"] : []), ...(rightDeckEnabled || trashEnabled ? ["right"] : []), ...(trashEnabled ? ["trash"] : [])];   // trash = the recycle bin, a right-hand stack lifted above the icon
+  const CORNER_SIDES = [...(leftDeckEnabled ? ["left"] : []), ...(rightDeckEnabled ? ["right"] : [])];
   let tickets = [], subscribed = false, renderDirty = true, renderedDataFingerprint = "";
   const dataFingerprint = () => JSON.stringify(tickets);
   let linkHighlightEl = null;
@@ -1407,9 +1504,31 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const trashDragMove = (x, y) => { const over = overTrashTarget(x, y); if (over && !trashMode && overTrashBtn(x, y)) startTrashRing(); else stopTrashRing(); return over; };
 
   const ensureRoot = () => {
-    if (root) return;
+    if (deckScaffoldReady) return;
+    deckScaffoldReady = true;
     ensureStyles();
     ensureTheater();
+    // Menus belong to the canonical card system, not to the optional corner
+    // piles. Bind their dismissal contract once even for a zone-only board.
+    if (!commonEventsBound) {
+      commonEventsBound = true;
+      document.addEventListener("pointerdown", (e) => {
+        if (ticketMenu && !ticketMenu.contains(e.target)) hideTicketMenu();
+      }, true);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          hideTicketMenu();
+          if (trashMode) setTrashMode(false);
+        }
+      });
+      window.addEventListener("wheel", (e) => {
+        if (!ticketMenu || !ticketMenu.contains(e.target)) hideTicketMenu();
+      }, true);
+    }
+    // A zone-only instance is the same factory with its deck capability
+    // disabled. It must not mount an empty full-screen stack/scrim imitation or
+    // install fan/native-grid drag listeners that can never be exercised.
+    if (!DECK_SIDES.length) return;
     root = document.createElement("div");
     root.className = "tk-stacks";
     // Depth-of-field scrim — a theater-level layer (z 3900), NOT a child of .tk-stacks, so it sits below
@@ -1490,10 +1609,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     document.addEventListener("pointermove", onDragWatchMove, true);
     document.addEventListener("pointerup", onDragWatchUp, true);
     document.addEventListener("pointercancel", resetDragWatch, true);
-    // Dismiss the right-click menu on an outside press, Escape, or scroll.
-    document.addEventListener("pointerdown", (e) => { if (ticketMenu && !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { hideTicketMenu(); if (trashMode) setTrashMode(false); } });
-    window.addEventListener("wheel", (e) => { if (!ticketMenu || !ticketMenu.contains(e.target)) hideTicketMenu(); }, true);   // wheel INSIDE a menu (activity list) scrolls it instead
     // Scroll a fanned deck whenever the cursor is anywhere over its card band — INCLUDING the gaps
     // between fanned cards. The deck box is pointer-events:none, so a wheel in a gap never reaches it;
     // routing by cursor position here catches those gaps (and replaces the old per-box wheel handlers).
@@ -2125,13 +2240,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // flush above the stacks. stackTopY keeps a MARGIN of slack above the cards (they sit
   // at bottom:MARGIN), and reserving down to it left one extra empty row — the lock a
   // cell too high. The cards' real top is stackTopY + MARGIN.
-  const syncDropFloor = () => { const l = gridLayout(); if (l) l.dataset.dropFloorY = String(Math.round(stackTopY() + MARGIN)); };
+  const syncDropFloor = () => {
+    // A zone-only renderer owns no corner pile, so it must not reserve a
+    // phantom stack band in an unrelated dashboard grid.
+    if (!CORNER_SIDES.length) return;
+    const l = gridLayout();
+    if (l) l.dataset.dropFloorY = String(Math.round(stackTopY() + MARGIN));
+  };
 
   let dragPinW = null, dragPinT = null;
   // Which deck the cursor is over (by viewport half) while in the stack band, else null.
   const hotSideAt = (e) => {
-    if (!overStack(e)) return null;
-    if (!rightDeckEnabled) return "left";
+    if (!CORNER_SIDES.length || !overStack(e)) return null;
+    if (!rightDeckEnabled) return leftDeckEnabled ? "left" : null;
+    if (!leftDeckEnabled) return "right";
     return e.clientX < window.innerWidth / 2 ? "left" : "right";
   };
   // Landing pads live on the ROOT (not the deck boxes): an empty deck box is display:none,
@@ -2621,7 +2743,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   let zoneGeometryRefreshFrame = 0;
   let settledZoneViewport = "";
   const zoneViewportSignature = () => `${innerWidth}x${innerHeight}@${devicePixelRatio}`;
-  const zoneGeometryBlocked = () => !active || !!window.crmDeskTransit?.isBusy?.();
+  const zoneGeometryBlocked = () => (!active && !theater?.hasAttribute?.("data-crm-home-precomposed")) || (
+    !!window.crmDeskTransit?.isBusy?.()
+    && !window.crmDeskTransit?.canSettleGeometry?.(theaterKey)
+  );
   const scheduleZoneGeometryRefresh = () => {
     zoneGeometryRefreshPending = true;
     if (zoneGeometryRefreshFrame) return;
@@ -2640,6 +2765,43 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (settledZoneViewport === zoneViewportSignature()) return;
       layoutZones();
     });
+  };
+  const waitForZoneGeometrySettled = (maxFrames = 120) => new Promise((resolve) => {
+    let frame = 0;
+    let stable = 0;
+    const tick = () => {
+      if (zoneGeometryRefreshPending && !zoneGeometryBlocked()) scheduleZoneGeometryRefresh();
+      const quiet = !zoneGeometryRefreshPending
+        && !zoneGeometryRefreshFrame
+        && !zoneObjectReflowPending;
+      stable = quiet ? stable + 1 : 0;
+      frame += 1;
+      if (stable >= 3 || frame >= maxFrames) {
+        resolve({ stable:stable >= 3, frames:frame });
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const waitForCanonicalGeometrySettled = async (maxFrames = 120) => {
+    if (pendingSourceWrites.size) await Promise.allSettled([...pendingSourceWrites]);
+    if (sourceReconcilePromise) await sourceReconcilePromise;
+    let sourceState = { stable:true, applicable:false };
+    if (typeof source?.waitForSettled === "function") {
+      try {
+        sourceState = await source.waitForSettled(maxFrames) || { stable:false };
+      } catch (error) {
+        sourceState = { stable:false, error:String(error?.message || error || "source settlement failed") };
+      }
+    }
+    const geometryState = await waitForZoneGeometrySettled(maxFrames);
+    return {
+      ...geometryState,
+      stable:sourceState?.stable !== false && geometryState.stable === true,
+      sourceStable:sourceState?.stable !== false,
+      sourceState,
+    };
   };
   let dragActive = false;     // true while a ticket is mid-drag → route wheel to the bucket under the cursor
   let draggingSide = null;    // which deck owns the in-flight card → its deck is NOT rebuilt mid-drag
@@ -3330,8 +3492,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
           const headerBars = panel.querySelector(".tk-zone-hd-r > .tk-bars");
           const cardBars = zoneBody[stage.key]?.querySelector(".tk-zcard .tk-bars-card");
           if (headerBars) {
-            headerBars.style.translate = "";
-            if (cardBars) { const delta = headerBars.getBoundingClientRect().right - cardBars.getBoundingClientRect().right; if (Math.abs(delta) > .5) headerBars.style.translate = `${Math.round(-delta)}px 0`; }
+            if (cardBars) {
+              const delta = headerBars.getBoundingClientRect().right - cardBars.getBoundingClientRect().right;
+              const current = parseFloat(headerBars.style.translate) || 0;
+              if (Math.abs(delta) > .5) {
+                const next = Math.round(current - delta);
+                if (Math.abs(next - current) > .5) headerBars.style.translate = `${next}px 0`;
+              }
+            } else if (headerBars.style.translate) headerBars.style.translate = "";
           }
           const sb = zoneBody[stage.key]?.querySelector(".tk-zsb"); if (sb) sb.style.right = "4px";
           left += width + gap;
@@ -3387,12 +3555,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // residual box-model drift (the same measured approach as the scrollbar centring below).
         const headerBars = panel.querySelector(".tk-zone-hd-r > .tk-bars");
         if (headerBars) {
-          headerBars.style.translate = "";
-        const cardBars = zoneBody[s.key]?.querySelector(".tk-zcard .tk-bars-card");
-        if (cardBars) {
+          const cardBars = zoneBody[s.key]?.querySelector(".tk-zcard .tk-bars-card");
+          if (cardBars) {
             const delta = headerBars.getBoundingClientRect().right - cardBars.getBoundingClientRect().right;
-            if (Math.abs(delta) > 0.5) headerBars.style.translate = `${Math.round(-delta)}px 0`;
-          }
+            const current = parseFloat(headerBars.style.translate) || 0;
+            if (Math.abs(delta) > 0.5) {
+              const next = Math.round(current - delta);
+              if (Math.abs(next - current) > 0.5) headerBars.style.translate = `${next}px 0`;
+            }
+          } else if (headerBars.style.translate) headerBars.style.translate = "";
         }
         // The scrollbar belongs to the bucket edge, not the card column. An
         // earlier centring pass shifted it left whenever card width changed.
@@ -3842,7 +4013,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (dt.stage !== stage) logActivity(t.id, `Moved to ${STAGES.find((s) => s.key === dt.stage)?.label || dt.stage}`);
         setStage(t.id, dt.stage); setStageAt(t.id, dt.stage, dt.index); render(); settleClone(t.id); return;
       }
-      if (e.clientY >= stackTopY()) {
+      if (leftDeckEnabled && e.clientY >= stackTopY()) {
         // Dropped on the RIGHT (resolved) pile with EVERY stage complete (3 green bars) → RESOLVE it:
         // flip the state (locally for the instant render + in the store) so the render routes it into
         // the resolved pile — without this, the state-gated left/right split sent it to the inbox.
@@ -3974,14 +4145,18 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const byCreated = (a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0);
     STAGES.forEach((s) => {
       const body = zoneBody[s.key], track = zoneTrack[s.key];
-      const ord = stageOrder[s.key] || [];
+      const ord = stageAuthority === "local" ? (stageOrder?.[s.key] || []) : [];
       const oidx = (t) => {
-        const i = ord.indexOf(t.id);
-        if (i !== -1) return i;
-        return Number.isFinite(t.stageRank) ? t.stageRank : 1e9;
+        if (stageAuthority === "local") {
+          const i = ord.indexOf(t.id);
+          if (i !== -1) return i;
+        }
+        return stageRankForRecord(t) ?? 1e9;
       };   // unordered → bottom
       const list = tickets.filter((t) => stageOf(t.id) === s.key && !isDeleted(t.id) && !inAttentionDeck(t))
-        .sort((a, b) => oidx(a) - oidx(b) || byCreated(a, b));
+        .sort((a, b) => oidx(a) - oidx(b)
+          || (configuredStageOrderCompare ? configuredStageOrderCompare(a, b, s.key) : 0)
+          || byCreated(a, b));
       const expanded = expandedStages.has(s.key);
       body.parentElement?.classList.toggle("is-stack-expanded", expanded);
       track.innerHTML = list.length ? "" : `<div class="tk-zone-empty">${deckCopy.zoneEmpty}</div>`;
@@ -4253,6 +4428,38 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       });
     }
   };
+  const refreshRecordFaces = (record) => {
+    if (!record?.id) return null;
+    ensureTheater().querySelectorAll(`.tk-card[data-id="${cssEsc(record.id)}"], .tk-zcard[data-id="${cssEsc(record.id)}"]`).forEach((card) => {
+      const title = card.querySelector(".ticket-company");
+      if (title) title.textContent = titleOf(record);
+      card.setAttribute("aria-label", `${titleOf(record)} — open ${widgetTitle.toLowerCase()}`);
+      if (card.classList.contains("is-lazy-shell")) { applyCardPaint(card, record); return; }
+      const body = card.querySelector(".ticket-body"); let subtitle = card.querySelector(".ticket-host");
+      const subtitleText = subOf(record);
+      if (subtitleText) {
+        if (!subtitle && body) {
+          subtitle = document.createElement("div");
+          subtitle.className = "ticket-host";
+          body.insertBefore(subtitle, body.querySelector(".ticket-fields"));
+        }
+        if (subtitle) subtitle.textContent = subtitleText;
+      } else if (subtitle) subtitle.remove();
+      let fields = card.querySelector(".ticket-fields"); const fieldsHTML = faceRowsHTML(record);
+      if (fields) fields.innerHTML = fieldsHTML;
+      else if (body) body.insertAdjacentHTML("beforeend", `<div class="ticket-fields">${fieldsHTML}</div>`);
+      const oldBadges = card.querySelector(".ticket-face-badges");
+      const newBadges = faceBadgesHTML(record);
+      if (oldBadges) oldBadges.outerHTML = newBadges;
+      else if (newBadges && body) body.insertAdjacentHTML("beforeend", newBadges);
+      const bars = card.querySelector(".tk-bars-card"), barsMarkup = barsHTML(ticketBarClasses(record), true);
+      if (bars) bars.outerHTML = barsMarkup;
+      else card.insertAdjacentHTML("beforeend", barsMarkup);
+      applyCardPaint(card, record);
+      fitCardFields(card);
+    });
+    return record;
+  };
 
   // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
   publicApi = {
@@ -4316,6 +4523,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       scrollZoneRows,
       lazyZoneCards,
       restoreZoneExpansion,
+      stageAuthority,
+      deletionAuthority,
+      leftDeckEnabled,
+      rightDeckEnabled,
+      trashEnabled,
+      deckScaffold:DECK_SIDES.length > 0,
       showFlow,
       showProgressBars,
       stageMovement,
@@ -4329,6 +4542,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       fingerprintMatch: dataFingerprint() === renderedDataFingerprint, theaterElements: theater?.querySelectorAll?.("*").length || 0,
       deferredFaces: theater?.querySelectorAll?.(".tk-zcard.is-lazy-shell").length || 0,
       parkedBuckets: theater?.querySelectorAll?.('.tk-zone[data-zone-lod="parked"]').length || 0 }),
+    waitForGeometrySettled: waitForCanonicalGeometrySettled,
     // Return the established card object for a surface that owns its own
     // layout. It deliberately omits deck dragging/reordering; every visual
     // and face-detail concern still comes from this factory.
@@ -4351,6 +4565,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       wireContextMenu(card, record);
       requestAnimationFrame(() => { if (card.isConnected) fitCardFields(card); });
       return card;
+    },
+    // Update the canonical record already owned by this factory and repaint its
+    // existing card instances without creating a second face/meta data model.
+    patchRecord: (id, fields = {}) => {
+      const record = ticketById(id);
+      if (!record || !fields || typeof fields !== "object") return null;
+      Object.assign(record, fields);
+      return refreshRecordFaces(record);
     },
     // Home captures the real full-viewport theater at lifecycle boundaries.
     // An inactive factory normally skips render() entirely, so lay it out once
@@ -4427,12 +4649,19 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       return scene;
     },
     isDeleted,
-    delete: (id) => { setMeta(id, { delStage: stageOf(id) || "" }); setDeleted(id, true); render(); },   // remember which bucket it died in (red bar)
+    delete: (id) => {
+      if (!trashEnabled) return false;
+      setMeta(id, { delStage: stageOf(id) || "" });
+      setDeleted(id, true);
+      render();
+      return true;
+    },   // remember which bucket it died in (red bar)
     // Send the ticket back to exactly where it was deleted from: its bucket (as the visual-TOP card, i.e.
     // bottom-most z / index 0), or the corner stack it lived in (left inbox / right resolved, by state).
     // It SLIDES there from the bin, and the depth-of-field opens up to keep the bin AND the destination
     // in focus during the flight, then settles back onto just the bin.
     restore: (id) => {
+      if (!trashEnabled) return false;
       const t = tickets.find((x) => x.id === id);
       const ds = (metaOf(id) || {}).delStage || "";
       const fromCard = decks.trash?.box?.querySelector(`.tk-card[data-id="${cssEsc(id)}"]`);
@@ -4482,24 +4711,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     setMeta: (id, m) => {
       setMeta(id, m);
       const t = tickets.find((x) => x.id === id); if (!t) return;
-      document.querySelectorAll(`.tk-card[data-id="${cssEsc(id)}"], .tk-zcard[data-id="${cssEsc(id)}"]`).forEach((c) => {
-        const co = c.querySelector(".ticket-company");
-        if (co) co.textContent = titleOf(t);   // client only; the date lives in its own pinned element
-        if (c.classList.contains("is-lazy-shell")) { applyCardPaint(c, t); return; }
-        const body = c.querySelector(".ticket-body"); let ho = c.querySelector(".ticket-host");
-        const sub = subOf(t);
-        if (sub) { if (!ho && body) { ho = document.createElement("div"); ho.className = "ticket-host"; body.insertBefore(ho, body.querySelector(".ticket-fields")); } if (ho) ho.textContent = sub; }
-        else if (ho) ho.remove();   // n/a / empty → drop the line entirely (no placeholder)
-        let ff = c.querySelector(".ticket-fields"); const fh = faceRowsHTML(t);   // entity field rows from the face contract
-        if (ff) ff.innerHTML = fh; else if (body) body.insertAdjacentHTML("beforeend", `<div class="ticket-fields">${fh}</div>`);
-        const oldBadges = c.querySelector(".ticket-face-badges");
-        const newBadges = faceBadgesHTML(t);
-        if (oldBadges) oldBadges.outerHTML = newBadges;
-        else if (newBadges && body) body.insertAdjacentHTML("beforeend", newBadges);
-        const bars = c.querySelector(".tk-bars-card"), html = barsHTML(ticketBarClasses(t), true);
-        if (bars) bars.outerHTML = html; else c.insertAdjacentHTML("beforeend", html);
-        fitCardFields(c);   // re-fit: the text just changed (expand what fits, clamp the longest if not)
-      });
+      refreshRecordFaces(t);
     },
     // Severity → recolour + refresh the card(s) IN PLACE (like setMeta) and persist the priority,
     // WITHOUT a rebuild — so the open config's source card stays put (no snap-back copy). The persist

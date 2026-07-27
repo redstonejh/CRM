@@ -297,6 +297,21 @@
         fn();
       };
     };
+    const finishTransitionHook = (direction, context, finalize) => {
+      let pending = null;
+      try { pending = config.onTransitionEnd?.(direction, context); }
+      catch (error) {
+        console.error(error);
+        finalize();
+        return;
+      }
+      if (pending && typeof pending.then === "function") {
+        Promise.resolve(pending).then(finalize, (error) => {
+          console.error(error);
+          finalize();
+        });
+      } else finalize();
+    };
     const settleWaiters = () => {
       const waiters = transitionWaiters;
       transitionWaiters = [];
@@ -557,22 +572,27 @@
         level = oldLevel + 1;
         layers[level] = expander;
         surface.dataset.level = String(level);
-        transitioning = false;
         config.onLevelChange?.(ctx());
-        config.onTransitionEnd?.("expand", ctx());
-        announceNavigation("settled", "forward");
-        settleWaiters();
+        finishTransitionHook("expand", ctx(), () => {
+          if (seq !== transitionSeq) return;
+          transitioning = false;
+          announceNavigation("settled", "forward");
+          settleWaiters();
+        });
       });
       config.onTransitionStart?.("expand", ctx());
       armTransformFallback = afterTransform(expander, () => {
         if (seq !== transitionSeq) return;
-        commit();
         expander.style.transition = "none";
         below.style.transition = "none";
         below.style.visibility = "hidden";
         below.style.transform = "none";
         below.style.opacity = "1";
         below.style.pointerEvents = "";
+        // Level ownership changes only after the exact transform endpoint is
+        // seated. A camera may return a Promise from onTransitionEnd to retain
+        // its endpoint cover while the resting tree completes covered paints.
+        commit();
       });
     };
     const contract = () => {
@@ -622,15 +642,32 @@
       expander.classList.add(config.contractingClass || "fractal-camera-contracting");
       const oldLevel = level;
       const commit = once(() => {
-        layers[oldLevel] = null;
         level = oldLevel - 1;
         surface.dataset.level = String(level);
         dropWarm();
-        transitioning = false;
         config.onLevelChange?.(ctx());
-        config.onTransitionEnd?.("contract", ctx());
-        announceNavigation("settled", "back");
-        settleWaiters();
+        // Async endpoint hooks may retain a raster/cut-out while they settle the
+        // lower live tree. Give that hook an idempotent way to retire the
+        // outgoing full-screen layer *beneath its retained cover*. The generic
+        // finalizer remains a safe fallback for cameras without such a bridge.
+        const retireOutgoingLayer = once(() => {
+          if (layers[oldLevel] === expander) layers[oldLevel] = null;
+          expander.remove();
+        });
+        const transitionContext = {
+          ...ctx(),
+          outgoingLayer:expander,
+          retireOutgoingLayer,
+        };
+        finishTransitionHook("contract", transitionContext, () => {
+          retireOutgoingLayer();
+          if (seq !== transitionSeq) return;
+          below.style.zIndex = "";
+          below.style.pointerEvents = "";
+          transitioning = false;
+          announceNavigation("settled", "back");
+          settleWaiters();
+        });
       });
       config.onTransitionStart?.("contract", ctx());
       if (!precomposeTransitions) void below.offsetWidth;
@@ -669,9 +706,6 @@
         const finish = () => {
           if (seq !== transitionSeq) { expander.remove(); return; }
           commit();
-          below.style.zIndex = "";
-          below.style.pointerEvents = "";
-          expander.remove();
         };
         // A same-task teardown can replace the last animated composition
         // before Chromium paints its exact endpoint. Preserve one complete

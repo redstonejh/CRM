@@ -497,7 +497,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   function renderGalleryLayer(layer) {
     if (!layer) return;
     const previous = layer.querySelector(".crm-project-gallery-scroll"); if (previous) galleryScrollLeft = previous.scrollLeft;
-    layer.classList.add("crm-project-gallery-level");
+    if (!layer.classList.contains("crm-project-gallery-level")) {
+      layer.classList.add("crm-project-gallery-level");
+    }
     if (!previous) layer.innerHTML = galleryHTML();
     const scroller = layer.querySelector(".crm-project-gallery-scroll"); const grid = layer.querySelector(".crm-project-tile-grid"); const titles = layer.querySelector(".crm-project-title-grid"); if (!scroller || !grid || !titles) return;
     const wanted = new Set(model.projects.map((project) => project.id));

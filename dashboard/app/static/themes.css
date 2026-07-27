@@ -3955,7 +3955,6 @@ body.workspace-page-swipe-dragging{
 .crm-home-control{
   --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 10.5 8-6.5 8 6.5'/%3E%3Cpath d='M6 9.5V20h12V9.5M10 20v-6h4v6'/%3E%3C/svg%3E");
 }
-.crm-assignment-new,
 .tk-stack-btn.tk-create-action,
 .tk-stack-btn[aria-label*="Create"]{
   --crm-secondary-control-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 4.5v15M4.5 12h15'/%3E%3C/svg%3E");

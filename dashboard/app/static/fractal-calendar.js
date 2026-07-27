@@ -8,6 +8,7 @@
   const YEAR_STORE = "crm-calendar-year";
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
   const MORPH_MS = 460;
+  const ENDPOINT_RELEASE_MS = 64;
   const EXP_M = 48;
   const EXP_TOP = 132;
   const YEAR_STRIP_TOP = 66;
@@ -62,6 +63,15 @@
     '"': "&quot;",
   }[char]));
   const clampN = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
+  const paint = (frames = 1) => new Promise((resolve) => {
+    let remaining = Math.max(1, Number(frames) || 1);
+    const next = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(next);
+    };
+    requestAnimationFrame(next);
+  });
   // Test seam (BLUEPRINT A4): the today-glow and any "now" derivation honor a
   // pinned clock so the harness can freeze the wall. Product behavior when
   // unset is the real clock.
@@ -1621,22 +1631,24 @@
       else node.style.removeProperty(property);
     });
   };
-  const finishYearStripPortal = () => {
+  const finishYearStripPortal = ({ retainTexture = false } = {}) => {
     const texture = activeYearStripTexture;
     activeYearStripTexture = null;
     if (texture) {
       texture.getAnimations?.().forEach((animation) => animation.cancel());
-      texture.classList.remove("is-active");
       texture.style.animation = "none";
-      texture.style.opacity = "0";
-      delete texture.dataset.portalDirection;
-      delete texture.dataset.stripSourceIdentity;
+      texture.style.opacity = retainTexture ? "1" : "0";
+      if (!retainTexture) {
+        texture.classList.remove("is-active");
+        delete texture.dataset.portalDirection;
+        delete texture.dataset.stripSourceIdentity;
+      }
     }
     const state = activeYearStripPortalState;
     const strip = activeYearStripPortal;
     activeYearStripPortal = null;
     activeYearStripPortalState = null;
-    if (!strip || !state) return;
+    if (!strip || !state) return texture;
     strip.getAnimations?.().forEach((animation) => animation.cancel());
     strip.classList.remove("fc-year-strip-portal");
     delete strip.dataset.portalDirection;
@@ -1651,6 +1663,16 @@
       strip.remove();
     }
     state.anchor?.remove?.();
+    return texture;
+  };
+  const releaseYearStripTexture = (texture) => {
+    if (!texture) return;
+    texture.getAnimations?.().forEach((animation) => animation.cancel());
+    texture.classList.remove("is-active");
+    texture.style.animation = "none";
+    texture.style.opacity = "0";
+    delete texture.dataset.portalDirection;
+    delete texture.dataset.stripSourceIdentity;
   };
   const stageYearStripPortal = (direction, context) => {
     finishYearStripPortal();
@@ -1889,9 +1911,6 @@
       return;
     }
     discardTransitionPortal();
-    if (direction === "contract" && context.level > 0) {
-      prepareTransitionPortal(context.layers?.[context.level], context);
-    }
   };
   const belowSnapshotSource = (direction, context, selectedTarget = null) => {
     const below = direction === "contract"
@@ -1974,6 +1993,77 @@
       snapshot.style.opacity = "0";
     });
     activeBelowSnapshot = null;
+  };
+  const freezeEndpointOpacity = (node, opacity) => {
+    if (!node?.isConnected) return null;
+    node.getAnimations?.().forEach((animation) => {
+      const duration = Number(animation.effect?.getComputedTiming?.().duration);
+      if (!Number.isFinite(duration) || Math.abs(duration - MORPH_MS) > 1) return;
+      try {
+        animation.currentTime = duration;
+        animation.pause();
+      } catch {}
+    });
+    node.style.opacity = String(opacity);
+    return node;
+  };
+  const freezeTransitionEndpoint = (direction) => {
+    const expanding = direction === "expand";
+    const owner = transitionPortalOwner;
+    const preview = owner?.querySelector?.(":scope > .fc-transition-preview");
+    return {
+      owner,
+      live:owner?.querySelector?.(":scope > .fc-expander-live") || null,
+      portal:freezeEndpointOpacity(transitionPortal, expanding ? 1 : 0),
+      preview:freezeEndpointOpacity(preview, expanding ? 0 : 1),
+      snapshot:freezeEndpointOpacity(activeBelowSnapshot, expanding ? 0 : 1),
+      stripTexture:freezeEndpointOpacity(activeYearStripTexture, expanding ? 0 : 1),
+    };
+  };
+  const waitForRestingScene = (context, maxFrames = 48) => new Promise((resolve) => {
+    let frame = 0;
+    let stable = 0;
+    let previous = "";
+    const tick = () => {
+      const source = context.layers?.[context.level];
+      const samples = source ? [source, ...source.querySelectorAll("*")].slice(0, 20) : [];
+      const geometry = samples.map((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return [
+          node.dataset?.date || node.dataset?.month || node.className || node.tagName,
+          rect.x.toFixed(2), rect.y.toFixed(2), rect.width.toFixed(2), rect.height.toFixed(2),
+          style.display, style.visibility, style.opacity, style.transform,
+        ].join(":");
+      }).join("|");
+      const next = source
+        ? `${source.childElementCount}:${source.querySelectorAll("*").length}:${source.scrollWidth}:${source.scrollHeight}:${geometry}`
+        : "";
+      stable = next && next === previous ? stable + 1 : 0;
+      previous = next;
+      frame += 1;
+      if (stable >= 2 || frame >= maxFrames) {
+        resolve({ stable:stable >= 2, signature:next, frames:frame });
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const fadeEndpointCovers = async (nodes) => {
+    const covers = [...new Set(nodes.filter((node) => node?.isConnected))];
+    const animations = covers.map((node) => node.animate(
+      [{ opacity:1 }, { opacity:0 }],
+      { duration:ENDPOINT_RELEASE_MS, easing:"linear", fill:"both" },
+    ));
+    await Promise.all(animations.map(async (animation) => {
+      try { await animation.finished; } catch {}
+    }));
+    covers.forEach((node, index) => {
+      node.style.animation = "none";
+      node.style.opacity = "0";
+      animations[index]?.cancel?.();
+    });
   };
   const discardBelowSnapshots = () => {
     finishYearStripPortal();
@@ -2582,22 +2672,78 @@
       if (context.surface?.dataset?.fractalCameraProbeHold === "true") return;
       sourceAcrylicLens?.sync?.(context.transformAnimation, context.transformStartTime);
     },
-    onTransitionEnd: (direction, context) => {
+    onTransitionEnd: async (direction, context) => {
+      // Freeze every animated capture at its literal transform endpoint before
+      // removing the motion classes which own those animations. These retained
+      // compositor surfaces remain the only visible object owners while the
+      // destination returns to its natural resting DOM and acrylic material.
+      const endpoint = freezeTransitionEndpoint(direction);
+      context.surface?.querySelectorAll?.(":scope > .fc-camera-below")?.forEach?.((node) => {
+        node.classList.remove("fc-camera-below");
+      });
+
+      let retainedStripTexture = null;
+      if (direction === "expand") {
+        // These lower-level captures reached transparent endpoints; retire
+        // them now while the full destination portal remains opaque.
+        finishBelowSnapshot();
+        finishYearStripPortal();
+      } else {
+        // The full destination snapshot excludes the year controls, so retain
+        // their exact companion texture while restoring the original strip to
+        // its lower-level DOM beneath it.
+        retainedStripTexture = finishYearStripPortal({ retainTexture:true });
+        endpoint.live?.style?.removeProperty?.("visibility");
+        discardTransitionPortal();
+        clearCameraTarget(context);
+      }
+      finishTransitionMaterials(direction);
+      if (direction === "contract") {
+        // The lower-level snapshot and year-strip texture are still fully
+        // opaque. Remove the outgoing full-screen level now, so its teardown is
+        // included in the covered stability window rather than occurring after
+        // the endpoint dissolve.
+        context.retireOutgoingLayer?.();
+      }
+      const resting = context.layers?.[context.level];
+      if (resting?.matches?.(".fc-expander")) resting.dataset.fractalFrame = "viewport";
+
+      if (direction === "expand" && endpoint.live) {
+        // Acquire and then normalize the live destination compositor entirely
+        // beneath the opaque portal. Removing the temporary inline opacity
+        // before release ensures arrival has no latent style ownership change.
+        endpoint.live.style.removeProperty("visibility");
+        endpoint.live.style.opacity = ".001";
+        await paint(2);
+        endpoint.live.style.opacity = "1";
+        await paint(2);
+        endpoint.live.style.removeProperty("opacity");
+      }
+
+      const settled = await waitForRestingScene(context);
+      if (context.surface) {
+        context.surface.dataset.endpointSettled = String(settled.stable);
+        context.surface.dataset.endpointSettleFrames = String(settled.frames);
+      }
+      // Close two unchanged native-refresh paints after final tree/material
+      // ownership. The following dissolve is compositor-only.
+      await paint(2);
+      if (direction === "expand") {
+        await fadeEndpointCovers([endpoint.portal]);
+        finishTransitionPortal(direction, context);
+      } else {
+        await fadeEndpointCovers([endpoint.snapshot, retainedStripTexture]);
+        finishBelowSnapshot();
+        releaseYearStripTexture(retainedStripTexture);
+      }
+      // Keep the source/destination exchange animations frozen at progress 1
+      // until the cover release is complete. Removing their ownership now is
+      // atomic with camera settlement, so neither product nor cadence probes
+      // can observe a reset to the animation's source endpoint.
       context.surface?.classList.remove(
         "fc-camera-moving", "fc-camera-expanding", "fc-camera-contracting",
       );
       cancelHistoricalTransitionFills(context.surface);
-      context.surface?.querySelectorAll?.(":scope > .fc-camera-below")?.forEach?.((node) => {
-        node.classList.remove("fc-camera-below");
-      });
-      finishBelowSnapshot();
-      finishYearStripPortal();
-      finishTransitionPortal(direction, context);
-      finishTransitionMaterials(direction);
-      const resting = context.layers?.[context.level];
-      if (resting?.matches?.(".fc-expander")) resting.dataset.fractalFrame = "viewport";
-      if (direction === "contract" && context.level > 0) prepareBelowSnapshot("contract", context);
-      if (direction === "contract") clearCameraTarget(context);
     },
     onLevelChange: (context) => {
       const moving = context.surface?.classList.contains("fc-camera-moving");

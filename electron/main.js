@@ -658,9 +658,9 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
         await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
         const layoutSignature = await worker.webContents.executeJavaScript(`(() => {
           const theater = document.querySelector('[data-crm-theater]:not([hidden])');
-          const selector = '.tk-zone[data-stage],.tk-card[data-id],.tk-zcard[data-id],.crm-planner-bucket[data-planner-bucket],.crm-planner-card[data-planner-card],.crm-assignment-bucket[data-assignment-stage],.crm-assignment-work-card[data-assignment-card]';
+          const selector = '.tk-zone[data-stage],.tk-card[data-id],.tk-zcard[data-id],.crm-planner-bucket[data-planner-bucket],.crm-planner-card[data-planner-card]';
           const objects = [...(theater?.querySelectorAll(selector) || [])].map((node) => [
-            node.dataset.id || node.dataset.plannerBucket || node.dataset.plannerCard || node.dataset.assignmentStage || node.dataset.assignmentCard || node.dataset.stage || '',
+            node.dataset.id || node.dataset.plannerBucket || node.dataset.plannerCard || node.dataset.stage || '',
             node.getAttribute('aria-label') || node.querySelector(':scope > .tk-zone-hd .tk-zone-title')?.textContent?.trim() || '',
             node.classList.contains('crm-object-small') ? 'small' : 'large',
             node.classList.contains('is-stack-expanded') ? 'expanded' : 'stacked',

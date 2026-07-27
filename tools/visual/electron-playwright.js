@@ -187,7 +187,7 @@ async function startEndpointProbe(page, label, room, direction) {
       const theaterName = config.theater;
       const objectSelector = [
         '.crm-overview-project', '.crm-overview-ticket', '.crm-overview-update',
-        '.crm-planner-bucket', '.crm-planner-card', '.crm-assignment-bucket',
+        '.crm-planner-bucket', '.crm-planner-card',
         '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck',
       ].join(',');
       const rect = (node) => {
@@ -403,7 +403,7 @@ async function sampleLayoutStability(page, rootSelector, frames = 12) {
     const layoutChanges = [];
     const nodeSelector = [
       '.crm-overview-project', '.crm-overview-ticket', '.crm-overview-update', '.crm-planner-bucket', '.crm-planner-card',
-      '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck', '.crm-assignment-bucket', '.crm-home-grid', '.crm-home-bucket',
+      '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck', '.crm-home-grid', '.crm-home-bucket',
       '.crm-home-priority-hand', '.crm-home-hand-card',
     ].join(',');
     const capture = () => {
@@ -901,7 +901,7 @@ async function main() {
 
   const allRooms = [
     {key:'people',theater:'people',content:'.tk-zone',expected:17}, {key:'cases',theater:'tickets',content:'.tk-zone',expected:3},
-    {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:0}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:5},
+    {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:0}, {key:'assignments',theater:'assignments',content:'.tk-zone[data-stage]',expected:5},
   ];
   const requestedRoomKeys = new Set(String(process.env.CRM_VISUAL_ROOMS || '').split(',').map((key)=>key.trim()).filter(Boolean));
   const knownRoomKeys = new Set(allRooms.map((room)=>room.key));
@@ -1134,12 +1134,16 @@ async function main() {
     const state=await page.evaluate(async(config)=>{
       const theater=document.querySelector(`[data-crm-theater="${config.theater}"]`);
       const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===config.key);
-      const signatureSelector='.tk-zone[data-stage],.tk-card[data-id],.tk-zcard[data-id],.crm-planner-bucket[data-planner-bucket],.crm-planner-card[data-planner-card],.crm-assignment-bucket[data-assignment-stage],.crm-assignment-work-card[data-assignment-card]';
-      const signature={module:document.body.dataset.crmModule||'',objects:[...(theater?.querySelectorAll(signatureSelector)||[])].map((node)=>[node.dataset.id||node.dataset.plannerBucket||node.dataset.plannerCard||node.dataset.assignmentStage||node.dataset.assignmentCard||node.dataset.stage||'',node.getAttribute('aria-label')||node.querySelector(':scope > .tk-zone-hd .tk-zone-title')?.textContent?.trim()||'',node.classList.contains('crm-object-small')?'small':'large',node.classList.contains('is-stack-expanded')?'expanded':'stacked']),calendarYear:window.fractalCalendar?.year?.()||null};
+      const signatureSelector='.tk-zone[data-stage],.tk-card[data-id],.tk-zcard[data-id],.crm-planner-bucket[data-planner-bucket],.crm-planner-card[data-planner-card]';
+      const signature={module:document.body.dataset.crmModule||'',objects:[...(theater?.querySelectorAll(signatureSelector)||[])].map((node)=>[node.dataset.id||node.dataset.plannerBucket||node.dataset.plannerCard||node.dataset.stage||'',node.getAttribute('aria-label')||node.querySelector(':scope > .tk-zone-hd .tk-zone-title')?.textContent?.trim()||'',node.classList.contains('crm-object-small')?'small':'large',node.classList.contains('is-stack-expanded')?'expanded':'stacked']),calendarYear:window.fractalCalendar?.year?.()||null};
       const bucketGeometry=[...(theater?.querySelectorAll('.tk-zone')||[])].map((bucket)=>{const rect=bucket.getBoundingClientRect();return{width:rect.width,height:rect.height,ratio:rect.height?rect.width/rect.height:0}}).filter((bucket)=>bucket.width>0&&bucket.height>0);
       const bucketHeaders=[...(theater?.querySelectorAll('.tk-zone')||[])].filter((bucket)=>bucket.getBoundingClientRect().width>0).map((bucket)=>{const title=bucket.querySelector('.tk-zone-title');const bars=bucket.querySelector('.tk-zone-hd-r');const bucketRect=bucket.getBoundingClientRect();const barsRect=bars?.getBoundingClientRect();return{title:title?.textContent.trim()||'',whiteSpace:title?getComputedStyle(title).whiteSpace:'',singleLine:!!title&&title.scrollHeight<=title.clientHeight+1,count:bucket.querySelectorAll('.tk-zone-count').length,barsPosition:bars?getComputedStyle(bars).position:'',barsRight:barsRect?Math.round(bucketRect.right-barsRect.right):null}});
-      const assignmentPipeline=theater?.querySelector('.crm-assignment-pipeline');const assignmentClip=theater?.querySelector('.crm-assignment-board-clip');const assignmentBar=theater?.querySelector('.crm-assignment-hsb');const assignmentThumb=theater?.querySelector('.crm-assignment-hth');
-      return{visible:!!theater&&!theater.hidden,count:theater?.querySelectorAll(config.content).length||0,arrows:theater?.querySelectorAll('svg.tk-flow,.tk-flow-shaft,.tk-flow-head').length||0,unstackControls:theater?.querySelectorAll('.tk-zone-spread,.crm-assignment-stack-toggle,.crm-planner-stack-toggle').length||0,bucketGeometry,bucketHeaders,assignmentOverflow:assignmentPipeline&&assignmentClip?Math.max(0,assignmentPipeline.scrollWidth-assignmentClip.clientWidth):0,assignmentScroller:assignmentBar?{on:assignmentBar.classList.contains('is-on'),track:assignmentBar.getBoundingClientRect().width,thumb:assignmentThumb?.getBoundingClientRect().width||0}:null,signature,previewSignature:preview?.layoutSignature||null,exactSrc:preview?.exactSrc||'',veil:document.querySelectorAll('.crm-transit-veil').length,invalid:[...(theater?.querySelectorAll('*')||[])].filter((n)=>/NaN|Infinity/.test(getComputedStyle(n).transform)).length};
+      const assignmentApi=config.key==='assignments'?window.crmAssignments:null;const assignmentContract=assignmentApi?.contract?.()||null;const assignmentZones=[...(theater?.querySelectorAll('.tk-zone[data-stage]')||[])];const assignmentCards=[...(theater?.querySelectorAll('.tk-zcard[data-id]')||[])];const assignmentClip=theater?.querySelector('.tk-zone-hclip');const assignmentTrack=theater?.querySelector('.tk-zone-htrack');const assignmentBar=theater?.querySelector('.tk-zone-hsb');const assignmentThumb=theater?.querySelector('.tk-zone-hth');const assignmentRequiredMethods=['setActive','reload','baseline','contract','homePreviewState','applyHomePreviewState','performanceState','createCard','setStageExpanded','expandedStages','zoneScrollState','scrollZonesBy'];const assignmentMissingMethods=assignmentApi?assignmentRequiredMethods.filter((method)=>typeof assignmentApi[method]!=='function'):[];
+      const assignmentStageIdentity=assignmentZones.map((zone)=>({key:zone.dataset.stage||'',label:zone.querySelector(':scope > .tk-zone-hd .tk-zone-title')?.textContent?.trim()||'',sizeKey:zone.dataset.crmSizeKey||''}));const assignmentCardIdentity=assignmentCards.map((card)=>({id:card.dataset.id||'',entity:card.dataset.recordEntity||'',sizeKey:card.dataset.crmSizeKey||'',stage:card.closest('.tk-zone[data-stage]')?.dataset.stage||''}));
+      const assignmentStageKeys=new Set(assignmentStageIdentity.map(({key})=>key));const assignmentRecords=assignmentApi?.items?.()||[];const expectedAssignmentStage=(record)=>['completed','cancelled','canceled'].includes(String(record?.status||'').toLowerCase())?'done':assignmentStageKeys.has(String(record?.assignmentStage||'').toLowerCase())?String(record.assignmentStage).toLowerCase():(record?.assignedContactId||String(record?.assignee||'').trim()?'assigned':'unassigned');const assignmentActual=Object.fromEntries(assignmentCardIdentity.map(({id,stage})=>[id,stage]));const assignmentPlacements=assignmentRecords.map((record)=>({id:record.id,expected:expectedAssignmentStage(record),actual:assignmentActual[record.id]||''}));
+      const assignmentCanonical=config.key!=='assignments'||(theater?.matches('section.crm-theater[data-crm-theater="assignments"]')&&assignmentZones.length===assignmentContract?.stages?.length&&assignmentCards.length>0&&JSON.stringify(assignmentStageIdentity.map(({key,label})=>({key,label})))===JSON.stringify(assignmentContract.stages)&&assignmentStageIdentity.every(({key,sizeKey})=>sizeKey===`bucket:assignments:${key}`)&&assignmentCardIdentity.every(({id,entity,sizeKey})=>id&&entity==='commitments'&&sizeKey===`card:commitments:${id}`)&&new Set(assignmentCardIdentity.map(({id})=>id)).size===assignmentCardIdentity.length&&assignmentPlacements.every(({expected,actual})=>expected===actual)&&assignmentPlacements.some(({expected})=>expected==='done')&&!theater.querySelector(':scope > .tk-stacks,:scope > .tk-scrim,.tk-deck'));
+      const assignmentOverflow=assignmentTrack&&assignmentClip?Math.max(0,assignmentTrack.scrollWidth-assignmentClip.clientWidth):0;const assignmentScrollState=assignmentApi?.zoneScrollState?.()||null;
+      return{visible:!!theater&&!theater.hidden,count:theater?.querySelectorAll(config.content).length||0,arrows:theater?.querySelectorAll('svg.tk-flow,.tk-flow-shaft,.tk-flow-head').length||0,unstackControls:theater?.querySelectorAll('.tk-zone-spread,.crm-planner-stack-toggle').length||0,bucketGeometry,bucketHeaders,assignmentCanonical,assignmentContract,assignmentStageIdentity,assignmentCardIdentity,assignmentPlacements,assignmentMissingMethods,assignmentLegacy:document.querySelectorAll('.crm-assignment-bucket,.crm-assignment-work-card').length,assignmentMiniatures:document.querySelectorAll('.crm-factory-mini-scene').length,assignmentOverflow,assignmentScrollState,assignmentScroller:assignmentBar?{on:assignmentBar.classList.contains('is-on'),track:assignmentBar.getBoundingClientRect().width,thumb:assignmentThumb?.getBoundingClientRect().width||0,trackTransform:assignmentTrack?getComputedStyle(assignmentTrack).transform:''}:null,signature,previewSignature:preview?.layoutSignature||null,exactSrc:preview?.exactSrc||'',veil:document.querySelectorAll('.crm-transit-veil').length,invalid:[...(theater?.querySelectorAll('*')||[])].filter((n)=>/NaN|Infinity/.test(getComputedStyle(n).transform)).length};
     },room);
     const liveBuffer=await page.screenshot({path:path.join(out,`room-${room.key}.png`)});
     const exactBuffer=Buffer.from(state.exactSrc.split(',')[1]||'','base64');
@@ -1149,12 +1153,11 @@ async function main() {
       if(!inboundHeldState.noEndpointImage||pixelMae>1)throw new Error(`Home camera did not land directly on the live settled room: ${JSON.stringify(inboundHeldState)}`);
     }
     const settledProbe=await page.evaluate(()=>window.__fps);
-    const badBucket=room.key==='assignments'
-      ? state.bucketGeometry.some((bucket)=>bucket.width<200||bucket.width>275||bucket.height<500||bucket.height>710||bucket.ratio<.35||bucket.ratio>.45)
-      : room.key!=='planner'&&state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
-    const badHeader=state.bucketHeaders.some((header)=>!header.title||header.whiteSpace!=='nowrap'||!header.singleLine||header.count||(room.key!=='assignments'&&(header.barsPosition!=='absolute'||header.barsRight<8||header.barsRight>60)));
-    const badAssignmentScroller=room.key==='assignments'&&(!state.assignmentScroller?.on||state.assignmentOverflow<100||state.assignmentScroller.thumb<28||state.assignmentScroller.thumb>=state.assignmentScroller.track-10);
-    if(!state.visible||state.count!==room.expected||state.arrows||state.unstackControls||badBucket||badHeader||badAssignmentScroller||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||settledProbe.fps<40)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,settledProbe})}`);
+    const badBucket=room.key!=='planner'&&state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
+    const badHeader=state.bucketHeaders.some((header)=>!header.title||header.whiteSpace!=='nowrap'||!header.singleLine||header.count||header.barsPosition!=='absolute'||header.barsRight<8||header.barsRight>60);
+    const badAssignmentContract=room.key==='assignments'&&(!state.assignmentCanonical||state.assignmentMissingMethods.length||state.assignmentLegacy||state.assignmentMiniatures||state.assignmentContract?.workflowKind!=='lifecycle'||state.assignmentContract?.horizontalZones!==true||state.assignmentContract?.horizontalZoneRows!==1||state.assignmentContract?.lazyZoneCards!==false||state.assignmentContract?.restoreZoneExpansion!==false||state.assignmentContract?.stageAuthority!=='source'||state.assignmentContract?.deletionAuthority!=='source'||state.assignmentContract?.deckScaffold!==false||state.assignmentContract?.leftDeckEnabled!==false||state.assignmentContract?.rightDeckEnabled!==false||state.assignmentContract?.trashEnabled!==false||state.assignmentContract?.stageMovement!=='free'||state.assignmentContract?.showProgressBars!==true);
+    const badAssignmentScroller=room.key==='assignments'&&(!state.assignmentScroller||!state.assignmentScrollState||state.assignmentScrollState.x>1||state.assignmentScrollState.x<state.assignmentScrollState.min-1||(state.assignmentOverflow>1&&(!state.assignmentScroller.on||state.assignmentScroller.thumb<28||state.assignmentScroller.thumb>=state.assignmentScroller.track))||(state.assignmentOverflow<=1&&(Math.abs(state.assignmentScrollState.x)>1||Math.abs(state.assignmentScrollState.min)>1)));
+    if(!state.visible||state.count!==room.expected||state.arrows||state.unstackControls||badBucket||badHeader||badAssignmentContract||badAssignmentScroller||state.veil||state.invalid||JSON.stringify(state.signature)!==JSON.stringify(state.previewSignature)||pixelMae>12||settledProbe.fps<40)throw new Error(`${room.key} capture/live mismatch: ${JSON.stringify({state:{...state,exactSrc:undefined},pixelMae,settledProbe})}`);
     const synchronization = await page.evaluate((key) => {
       let changed = false;
       if (key === 'people') {
@@ -1172,9 +1175,9 @@ async function main() {
           if (selected && stage) { api.setStageExpanded(selected, stage, !api.expandedStages().includes(`${selected}:${stage}`)); changed = true; }
         }
       } else if (key === 'assignments') {
-        const api = window.crmAssignments; const stage = document.querySelector('[data-crm-theater="assignments"] .crm-assignment-bucket')?.dataset.assignmentStage;
+        const api = window.crmAssignments; const stage = document.querySelector('[data-crm-theater="assignments"] .tk-zone[data-stage]')?.dataset.stage;
         if (stage) api.setStageExpanded(stage, !api.expandedStages().includes(stage));
-        api.scrollBy(190, true); changed = true;
+        api.scrollZonesBy(190, true); changed = true;
       }
       return { changed };
     }, room.key);

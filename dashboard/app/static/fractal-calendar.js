@@ -2674,9 +2674,9 @@
     },
     onTransitionEnd: async (direction, context) => {
       // Freeze every animated capture at its literal transform endpoint before
-      // removing the motion classes which own those animations. These retained
-      // compositor surfaces remain the only visible object owners while the
-      // destination returns to its natural resting DOM and acrylic material.
+      // ending visible-motion ownership. These retained compositor surfaces
+      // remain the only visible object owners while the destination returns to
+      // its natural resting DOM and acrylic material beneath the opaque cover.
       const endpoint = freezeTransitionEndpoint(direction);
       context.surface?.querySelectorAll?.(":scope > .fc-camera-below")?.forEach?.((node) => {
         node.classList.remove("fc-camera-below");
@@ -2707,6 +2707,13 @@
       }
       const resting = context.layers?.[context.level];
       if (resting?.matches?.(".fc-expander")) resting.dataset.fractalFrame = "viewport";
+      // The synchronous source-to-resting ownership swap above cannot paint.
+      // End motion in that same task, before any covered stabilization frame,
+      // so only the natural destination is composited beneath the endpoint.
+      context.surface?.classList.remove(
+        "fc-camera-moving", "fc-camera-expanding", "fc-camera-contracting",
+      );
+      cancelHistoricalTransitionFills(context.surface);
 
       if (direction === "expand" && endpoint.live) {
         // Acquire and then normalize the live destination compositor entirely
@@ -2736,14 +2743,8 @@
         finishBelowSnapshot();
         releaseYearStripTexture(retainedStripTexture);
       }
-      // Keep the source/destination exchange animations frozen at progress 1
-      // until the cover release is complete. Removing their ownership now is
-      // atomic with camera settlement, so neither product nor cadence probes
-      // can observe a reset to the animation's source endpoint.
-      context.surface?.classList.remove(
-        "fc-camera-moving", "fc-camera-expanding", "fc-camera-contracting",
-      );
-      cancelHistoricalTransitionFills(context.surface);
+      // Camera settlement remains pending through the covered maintenance and
+      // dissolve, so input cannot enter until the natural scene is stable.
     },
     onLevelChange: (context) => {
       const moving = context.surface?.classList.contains("fc-camera-moving");

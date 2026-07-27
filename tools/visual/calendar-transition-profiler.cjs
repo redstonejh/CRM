@@ -141,7 +141,10 @@ async function beginProbe(page, label) {
     const tick = (now) => {
       const delta = now - probe.previous;
       probe.previous = now;
-      if (camera.isTransitioning()) {
+      const visibleMotion = camera.isTransitioning()
+        && (surface.classList.contains('fc-camera-expanding')
+          || surface.classList.contains('fc-camera-contracting'));
+      if (visibleMotion) {
         if (probe.movingStartedAt == null) probe.movingStartedAt = now;
         if (!probe.motionFilterAudit) {
           const effectiveOpacity = (node) => {
@@ -222,7 +225,7 @@ async function beginProbe(page, label) {
         if (live && preview) {
           probe.contentCoverage.push(exchangeOpacity(live, 'destination') + exchangeOpacity(preview, 'source'));
         }
-      } else if (probe.movingStartedAt != null) {
+      } else if (!camera.isTransitioning() && probe.movingStartedAt != null) {
         const visibleLevelMaterials = [...surface.querySelectorAll(':scope > .fc-level-material')]
           .filter((node) => {
             const style = getComputedStyle(node);

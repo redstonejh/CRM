@@ -238,8 +238,8 @@ async function main() {
     const title = document.querySelector('.crm-home-title-layer > .crm-home-title-slot[data-module="people"] .crm-home-title-glass');
     const filter = foreground && getComputedStyle(foreground).filter;
     const titleStyle = title && getComputedStyle(title);
-    const blur = Number(filter?.match(/blur\(([\d.]+)px\)/)?.[1]);
-    const saturation = Number(filter?.match(/saturate\(([\d.]+)\)/)?.[1]);
+    const blur = Number(filter?.match(/blur\(([-+\deE.]+)px\)/)?.[1]);
+    const saturation = Number(filter?.match(/saturate\(([-+\deE.]+)\)/)?.[1]);
     const stateArmed = tile?.classList.contains('is-preview-hovered')
       && title?.closest('.crm-home-title-slot')?.classList.contains('is-deemphasized');
     const filterIsValid = (blur <= .12 && saturation >= .956) || (blur === 1.8 && saturation === .9);
@@ -711,18 +711,18 @@ async function main() {
     const card=document.querySelector(`[data-crm-theater="people"] .tk-zcard[data-id="${CSS.escape(id)}"]`);
     return !!card&&!card.classList.contains('is-lazy-shell')&&card.dataset.hydrationProbe==='same-node'&&!!card.querySelector('.ticket-fields');
   }, peopleShell);
-  const peopleStage = await page.$eval('[data-crm-theater="people"] .tk-zone:first-child', (bucket) => bucket.dataset.stage);
+  const peopleStage = await page.$eval('[data-crm-theater="people"] .tk-zone[data-stage]', (bucket) => bucket.dataset.stage);
   await page.evaluate((stage) => window.peopleCards.setStageExpanded(stage, true), peopleStage);
   await check('Spreading a company stack hydrates every newly visible face', (stage) => {
     const bucket=document.querySelector(`[data-crm-theater="people"] .tk-zone[data-stage="${CSS.escape(stage)}"]`); const cards=[...(bucket?.querySelectorAll('.tk-zcard')||[])];
     return cards.length===10&&cards.every((card)=>!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields'));
   }, peopleStage);
   await page.evaluate((stage) => window.peopleCards.setStageExpanded(stage, false), peopleStage);
-  const peopleScrollBefore = await page.$eval('[data-crm-theater="people"] .tk-zone:first-child', (bucket) => ({transform:getComputedStyle(bucket.querySelector('.tk-zone-track')).transform,thumbTop:bucket.querySelector('.tk-zth').getBoundingClientRect().top}));
-  await page.$eval('[data-crm-theater="people"] .tk-zone:first-child .tk-zone-body', (body) => body.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:320 })));
+  const peopleScrollBefore = await page.$eval('[data-crm-theater="people"] .tk-zone[data-stage]', (bucket) => ({transform:getComputedStyle(bucket.querySelector('.tk-zone-track')).transform,thumbTop:bucket.querySelector('.tk-zth').getBoundingClientRect().top}));
+  await page.$eval('[data-crm-theater="people"] .tk-zone[data-stage] .tk-zone-body', (body) => body.dispatchEvent(new WheelEvent('wheel', { bubbles:true, cancelable:true, deltaY:320 })));
   await sleep(240);
   await check('Company bucket wheel motion moves its vertical thumb and adaptive card-edge shadow', (before) => {
-    const bucket=document.querySelector('[data-crm-theater="people"] .tk-zone:first-child'); const track=bucket?.querySelector('.tk-zone-track'); const thumb=bucket?.querySelector('.tk-zth'); const activeShadow=[...(bucket?.querySelectorAll('.tk-edge-shade')||[])].some((shade)=>shade.getBoundingClientRect().width>0);
+    const bucket=document.querySelector('[data-crm-theater="people"] .tk-zone[data-stage]'); const track=bucket?.querySelector('.tk-zone-track'); const thumb=bucket?.querySelector('.tk-zth'); const activeShadow=[...(bucket?.querySelectorAll('.tk-edge-shade')||[])].some((shade)=>shade.getBoundingClientRect().width>0);
     const state={transform:getComputedStyle(track).transform,thumbTop:thumb.getBoundingClientRect().top};
     return { ok:state.transform!==before.transform&&state.thumbTop>before.thumbTop+2&&activeShadow, detail:JSON.stringify({before,state,activeShadow}) };
   }, peopleScrollBefore);
@@ -1330,6 +1330,18 @@ async function main() {
   await page.focus('.crm-project-bucket[data-planner-project]'); await page.keyboard.press('ArrowRight');
   await page.waitForFunction((start) => document.activeElement?.classList.contains('crm-project-bucket') && document.activeElement.dataset.plannerProject !== start, {}, plannerTileStart);
   await check('Project tiles support spatial keyboard navigation without moving an already-visible rail', () => document.activeElement?.tagName === 'BUTTON' && document.activeElement?.hasAttribute('data-planner-project') && document.querySelector('.crm-project-gallery-scroll')?.scrollLeft === 0);
+  // The browser shim has no Electron project-preview capture API, so this
+  // branch deliberately validates the live fallback after its normal pointer
+  // prewarm. The native suite separately requires the decoded raster path.
+  const plannerWarmPoint = await page.evaluate((projectId) => {
+    const rect = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`)?.getBoundingClientRect();
+    return rect ? { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 } : null;
+  }, plannerTileStart);
+  if (plannerWarmPoint) await page.mouse.move(plannerWarmPoint.x, plannerWarmPoint.y);
+  await page.waitForFunction((projectId) => !![...document.querySelectorAll('.crm-planner-warm')].find((layer) => layer.dataset.projectId === projectId)
+    && !!document.querySelector('.crm-planner-surface > .crm-project-screen-acrylic'), { timeout:5000 }, plannerTileStart);
+  await sleep(120);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
     const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = []; const acrylicOpacities = []; let acrylicFrames = 0; let objectFrames = 0; let acrylicKeyframes = []; let screenSpaceFrames = 0;
     if (!tile || !source) { resolve(null); return; }
@@ -1363,9 +1375,9 @@ async function main() {
     requestAnimationFrame(tick);
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
-    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.86)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
+    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.78)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
     return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 7 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
-      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 8 && fadeTail <= 10 && opacitySteps.every((step)=>step<=.04)
+      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 8 && fadeTail <= 12 && opacitySteps.every((step)=>step<=.04)
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,
@@ -1646,6 +1658,32 @@ async function main() {
     return card?.classList.contains('crm-object-small') && card.getBoundingClientRect().width <= 145
       && Number.parseFloat(getComputedStyle(card).scale) === 1;
   }, {}, plannerReviewStageId);
+  await page.waitForFunction((stageId) => {
+    const card = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-card`);
+    const body = card?.querySelector('[data-card-fit-body]');
+    return !!body && !!card.dataset.cardContentFit && card.dataset.cardContentFit !== 'clipped'
+      && body.scrollHeight <= body.clientHeight + 1;
+  }, { timeout:2000 }, plannerReviewStageId);
+  await check('A Small Planner card keeps every configured entry in the shared adaptive fit', (stageId) => {
+    const card = document.querySelector(`.crm-planner-bucket[data-planner-bucket="${CSS.escape(stageId)}"] .crm-planner-card`);
+    const body = card?.querySelector('[data-card-fit-body]');
+    const entries = [...(body?.querySelectorAll('[data-card-fit-entry]') || [])]
+      .filter((entry) => entry.textContent.trim());
+    return {
+      ok:!!card && entries.length >= 2 && card.dataset.cardContentFit !== 'clipped'
+        && entries.every((entry) => getComputedStyle(entry).display !== 'none' && entry.getClientRects().length > 0)
+        && body.scrollHeight <= body.clientHeight + 1,
+      detail:JSON.stringify({
+        fit:card?.dataset.cardContentFit || '',
+        entries:entries.map((entry) => ({
+          text:entry.textContent.trim(),
+          display:getComputedStyle(entry).display,
+          clamp:getComputedStyle(entry).webkitLineClamp,
+        })),
+        overflow:body ? body.scrollHeight - body.clientHeight : null,
+      }),
+    };
+  }, plannerReviewStageId);
   await page.evaluate(() => {
     const current = window.crmPlanner.selected();
     const other = window.crmPlanner.projects().find((project) => project.id !== current)?.id;

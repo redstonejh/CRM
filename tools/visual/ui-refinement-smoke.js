@@ -302,6 +302,7 @@ async function main() {
           type: mark.dataset.cardSemantic || '',
           width: markRect?.width || 0,
           opacity: Number(markStyle.opacity),
+          color: markStyle.color,
           filter: markStyle.filter,
           blend: markStyle.mixBlendMode,
           svg: !!mark.querySelector('svg'),
@@ -641,9 +642,26 @@ async function main() {
       stageId,
       'Person onboarding plan',
       'Coordinate the owner, timeline, account access, review checkpoints, documentation, and handoff details. '.repeat(7),
-      { cardKind: 'person', priority: 'high', assignee: 'Rosa' },
+      {
+        cardKind: 'person',
+        priority: 'high',
+        assignee: 'Rosa',
+        linkedEntityType: 'contacts',
+        linkedRecordId: 'ct_marta',
+        linkedLabel: 'Marta Ortiz',
+      },
     ), { projectId: projectContext.id, stageId: projectContext.stageId });
     invariant(longPersonCard?.id, 'Could not create the semantic fit probe card');
+    const linkedSignatureAudit = await page.evaluate(async ({ projectId, itemId }) => {
+      const before = window.crmPlanner.projectPreviewSignature(projectId);
+      const updated = await window.crmPlanner.updateItem(itemId, { linkedLabel:'Marta Ortiz · verified link' }, 'linked-signature-probe');
+      const after = window.crmPlanner.projectPreviewSignature(projectId);
+      return { updated, changed:before !== after };
+    }, { projectId:projectContext.id, itemId:longPersonCard.id });
+    await check('Planner linked-record edits invalidate the project preview texture', () => {
+      invariant(linkedSignatureAudit.updated && linkedSignatureAudit.changed, 'Linked-record fields were omitted from the preview signature');
+      return linkedSignatureAudit;
+    });
     await page.waitForFunction(
       (id) => {
         const card = document.querySelector(`[data-planner-card="${CSS.escape(id)}"]`);
@@ -667,6 +685,7 @@ async function main() {
       plannerCards.forEach((card) => {
         invariant(card.mark?.svg, `${card.id} has no semantic SVG`);
         invariant(card.mark.width >= 60 && card.mark.opacity > .1 && card.mark.opacity <= .35, `${card.id} semantic mark is not visibly embossed`);
+        invariant(card.mark.color === 'rgb(98, 112, 134)', `${card.id} semantic mark does not inherit the Planner card accent`);
         invariant(card.mark.filter !== 'none' && card.mark.blend === 'multiply', `${card.id} semantic mark lacks embossed shading`);
         invariant(card.bodyAttribute && card.entries >= 2, `${card.id} does not use the shared fit attributes`);
         invariant(['full', 'adaptive'].includes(card.fit), `${card.id} fit ended as "${card.fit}"`);
@@ -763,21 +782,27 @@ async function main() {
       const opened = arrow?.getAttribute('aria-expanded') === 'true'
         && !!arrow?.closest('.tk-deck')?.classList.contains('is-fanned');
       const staleState = window.ticketStacks.homePreviewState();
+      const stage = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-zone')?.dataset.stage || '';
+      staleState.expandedStages = stage ? [stage] : ['legacy-expanded-stage'];
       staleState.fan ||= {};
       staleState.fan.left = { open:true, scrollX:-240 };
+      staleState.fan.trash = { open:true, scrollX:-120 };
       await window.ticketStacks.applyHomePreviewState(staleState);
       await paint();
       return {
         opened,
         serialized:window.ticketStacks.homePreviewState().fan,
+        serializedExpanded:window.ticketStacks.homePreviewState().expandedStages,
+        expandedBuckets:document.querySelectorAll('[data-crm-theater="tickets"] .tk-zone.is-stack-expanded').length,
         expanded:[...document.querySelectorAll('[data-crm-theater="tickets"] .tk-deck-left .tk-arrow, [data-crm-theater="tickets"] .tk-deck-right .tk-arrow')]
           .map((control) => control.getAttribute('aria-expanded')),
-        fanned:document.querySelectorAll('[data-crm-theater="tickets"] .tk-deck-left.is-fanned, [data-crm-theater="tickets"] .tk-deck-right.is-fanned').length,
+        fanned:document.querySelectorAll('[data-crm-theater="tickets"] .tk-deck.is-fanned').length,
       };
     });
     await check('Ticket previews ignore stale fan state and restore collapsed buckets', () => {
       invariant(staleFanReset.opened, 'Fan control no longer opens intentionally');
       invariant(Object.values(staleFanReset.serialized || {}).every((state) => state.open === false && state.scrollX === 0), 'Preview state still serializes an open fan');
+      invariant(staleFanReset.serializedExpanded.length === 0 && staleFanReset.expandedBuckets === 0, 'Preview state restored a stale expanded bucket');
       invariant(staleFanReset.expanded.every((value) => value === 'false'), `A fan control remained expanded: ${staleFanReset.expanded.join(',')}`);
       invariant(staleFanReset.fanned === 0, `${staleFanReset.fanned} ticket deck(s) remained fanned`);
       return staleFanReset;

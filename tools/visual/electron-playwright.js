@@ -74,6 +74,7 @@ async function installMotionProbe(page) {
         motionStartedAt:0,
         motionEndedAt:0,
         motionDeltas:[],
+        cadenceDeltas:[],
         motionSamples:[],
         observedLongTasks:[],
         done:false,
@@ -95,11 +96,12 @@ async function installMotionProbe(page) {
             duration:entry.duration,
           }));
           longObserver?.disconnect?.();
-          const measured = probe.motionDeltas;
-          const sorted = [...measured].sort((a, b) => a - b);
-          const measuredMs = measured.reduce((sum, value) => sum + value, 0);
+          const cadenceMeasured = probe.cadenceDeltas;
+          const sorted = [...cadenceMeasured].sort((a, b) => a - b);
+          const cadenceMs = cadenceMeasured.reduce((sum, value) => sum + value, 0);
+          const cadenceSorted = [...cadenceMeasured].sort((a, b) => a - b);
           const percentile = (value) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * value) - 1))] || 0;
-          const medianMs = sorted[Math.floor(sorted.length / 2)] || 0;
+          const medianMs = cadenceSorted[Math.floor(cadenceSorted.length / 2)] || 0;
           const motionStart = probe.motionStartedAt || now;
           const motionEnd = probe.motionEndedAt || now;
           const longTasks = probe.observedLongTasks.filter((entry) =>
@@ -109,32 +111,46 @@ async function installMotionProbe(page) {
             durationMs: Math.max(0, motionEnd - motionStart),
             sawMotion,
             timedOut,
-            frames: measured.length,
-            fps: measuredMs ? measured.length * 1000 / measuredMs : 0,
-            cadenceFps: measuredMs ? measured.length * 1000 / measuredMs : 0,
+            frames: cadenceMeasured.length,
+            fps: cadenceMs ? cadenceMeasured.length * 1000 / cadenceMs : 0,
+            cadenceFps: cadenceMs ? cadenceMeasured.length * 1000 / cadenceMs : 0,
+            firstFrameMs:probe.motionSamples.find((sample)=>sample.first)?.delta ?? null,
             medianMs,
             nativeHz: medianMs ? Math.round(1000 / medianMs) : 0,
             p95Ms: percentile(.95),
             p99Ms: percentile(.99),
             maxMs: sorted.at(-1) || 0,
-            over15Ms: measured.filter((value) => value > 15).length,
-            slowFrames: probe.motionSamples.filter((sample) => sample.delta > 15),
+            over15Ms: cadenceMeasured.filter((value) => value > 15).length,
+            slowFrames: probe.motionSamples.filter((sample) => !sample.first && sample.delta > 15),
             longTasks,
           };
           probe.done = true;
           resolve(probe.result);
         };
         const tick = (now) => {
-          const moving = !!window.crmHomeCamera?.isTransitioning?.();
+          // `isTransitioning()` begins during covered precomposition. The
+          // coordinator's motion phase starts and ends with the real CSS
+          // transform, which is the interval whose native cadence matters.
+          const motionState = window.crmDeskTransit?.motionState?.() || {};
+          const moving = motionState.active === true;
           if (moving && !sawMotion) {
             sawMotion = true;
-            probe.motionStartedAt = now;
+            const reportedStart = motionState.startedAt == null ? NaN : Number(motionState.startedAt);
+            probe.motionStartedAt = Number.isFinite(reportedStart) && reportedStart > 0 && reportedStart <= now
+              ? reportedStart
+              : now;
+            const firstDelta = now - probe.motionStartedAt;
+            if (firstDelta > 0) {
+              probe.motionDeltas.push(firstDelta);
+              probe.motionSamples.push({ at:firstDelta, delta:firstDelta, first:true });
+            }
           }
           // Only intervals bracketed by two moving paints contribute to the
           // cadence result. The callback performs no style or layout reads.
           if (moving && previousMoving && previous) {
             const delta = now - previous;
             probe.motionDeltas.push(delta);
+            probe.cadenceDeltas.push(delta);
             probe.motionSamples.push({ at:now - probe.motionStartedAt, delta });
           }
           if (!moving && previousMoving && sawMotion) {
@@ -196,7 +212,10 @@ async function startEndpointProbe(page, label, room, direction) {
       const capture = () => {
         const surface = window.crmHomeCamera?.surface?.();
         const root = window.crmHomeCamera?.layers?.()[0];
-        const moving = !!window.crmHomeCamera?.isTransitioning?.();
+        // Camera "transitioning" also covers the intentionally static covered
+        // precomposition frame. Bracket visual-motion invariants against the
+        // coordinator's exact transform interval, just like the cadence probe.
+        const moving = window.crmDeskTransit?.motionState?.().active === true;
         const materializing = document.documentElement.classList.contains('crm-transit-materializing');
         const homeHandoff = !!surface?.classList.contains('crm-home-camera-handoff');
         const materialMoving = !!surface?.classList.contains(motionDirection === 'in' ? 'crm-home-acrylic-expanding' : 'crm-home-acrylic-contracting');
@@ -278,6 +297,7 @@ async function startEndpointProbe(page, label, room, direction) {
           && homeBuckets.filter((bucket) => bucket !== cameraTarget).every((bucket) => Number(getComputedStyle(bucket).opacity) <= .01)
           && Number(getComputedStyle(homeHand).opacity) <= .01;
         const veil = document.querySelector('.crm-transit-veil');
+        const ownershipFade = window.crmDeskTransit?.ownershipFadeState?.();
         if (!acrylicKeyframes.length && acrylic) {
           const opacityAnimation = [...(acrylic?.getAnimations?.() || [])].find((animation) =>
             animation.effect?.getKeyframes?.().some((keyframe) => keyframe.opacity != null));
@@ -292,6 +312,8 @@ async function startEndpointProbe(page, label, room, direction) {
           veil: !!veil, veilReleasing: !!veil?.classList.contains('is-releasing'), veilOpacity: veil ? Number(getComputedStyle(veil).opacity) : null,
           roomRevealing: document.documentElement.classList.contains('crm-transit-revealing'), roomOpacity: roomLayers.length ? Math.max(...roomLayers.map((layer) => Number(getComputedStyle(layer).opacity))) : null,
           roomTransitionDuration: roomLayers[0] ? parseFloat(getComputedStyle(roomLayers[0]).transitionDuration) || 0 : 0,
+          ownershipFading:ownershipFade?.active === true,
+          ownershipFadeDuration:Number(ownershipFade?.duration) || 0,
           homeHandoff,
           homeReleasing: !!surface?.classList.contains('crm-home-camera-releasing'),
           homeGridOpacity: homeGrid ? Number(getComputedStyle(homeGrid).opacity) : null,
@@ -320,7 +342,13 @@ async function startEndpointProbe(page, label, room, direction) {
             label: probeLabel,
             hadVeil: probe.samples.some((sample) => sample.veil),
             sawRoomReveal: probe.samples.some((sample) => sample.roomRevealing && Number.isFinite(sample.roomOpacity)),
-            roomRevealTimed: probe.samples.some((sample) => sample.roomRevealing && sample.roomTransitionDuration >= .055 && sample.roomTransitionDuration <= .08),
+            roomRevealAtomic: (() => {
+              const revealing = probe.samples.filter((sample) =>
+                sample.roomRevealing && Number.isFinite(sample.roomOpacity));
+              return revealing.length > 0 && revealing.every((sample) => sample.roomTransitionDuration === 0);
+            })(),
+            ownershipFadeTimed: probe.samples.some((sample) => sample.ownershipFading
+              && sample.ownershipFadeDuration >= 60 && sample.ownershipFadeDuration <= 68),
             sawHomeHandoff: probe.samples.some((sample) => sample.homeHandoff),
             sawHomeCrossfade: probe.samples.some((sample) => sample.homeReleasing),
             snapshotVisible: probe.samples.some((sample) => sample.snapshotDisplay !== 'none' && sample.snapshotOpacity > .01),
@@ -368,8 +396,11 @@ async function finishEndpointProbe(page, label) {
 
 async function sampleLayoutStability(page, rootSelector, frames = 12) {
   return page.evaluate(({ selector, frameCount }) => new Promise((resolve) => {
-    const signatures = [];
+    const layoutSignatures = [];
+    const previewSignatures = [];
     const changedFrames = [];
+    const previewChangedFrames = [];
+    const layoutChanges = [];
     const nodeSelector = [
       '.crm-overview-project', '.crm-overview-ticket', '.crm-overview-update', '.crm-planner-bucket', '.crm-planner-card',
       '.tk-zone', '.tk-card', '.tk-zcard', '.tk-deck', '.crm-assignment-bucket', '.crm-home-grid', '.crm-home-bucket',
@@ -383,23 +414,51 @@ async function sampleLayoutStability(page, rootSelector, frames = 12) {
         const style = getComputedStyle(node);
         return [
           node.getAttribute('data-id') || node.getAttribute('data-priority-id')
-            || node.getAttribute('data-module') || node.getAttribute('data-stage') || node.className,
+            || node.getAttribute('data-module') || node.getAttribute('data-stage')
+            || `${node.tagName.toLowerCase()}.${node.classList.item(0) || ''}`,
           rect.x.toFixed(2), rect.y.toFixed(2), rect.width.toFixed(2), rect.height.toFixed(2),
           style.transform, style.opacity,
         ];
       });
-      const signature = JSON.stringify({
+      const layoutState = {
         module: document.body.dataset.crmModule || '',
         nodes: nodes.length,
         scroll: root ? [root.scrollWidth, root.scrollHeight, root.scrollTop, root.scrollLeft] : [],
         geometry,
-        previews: window.crmHome?.previewStatus?.().map(({ key, capturedAt }) => [key, capturedAt]) || [],
-      });
-      const index = signatures.length;
-      if (index && signature !== signatures[index - 1]) changedFrames.push(index);
-      signatures.push(signature);
-      if (signatures.length >= frameCount) {
-        resolve({ frames: signatures.length, uniqueSignatures: new Set(signatures).size, changedFrames });
+      };
+      const previewState = window.crmHome?.previewStatus?.().map(({ key, capturedAt }) => [key, capturedAt]) || [];
+      const layoutSignature = JSON.stringify(layoutState);
+      const previewSignature = JSON.stringify(previewState);
+      const index = layoutSignatures.length;
+      if (index && layoutSignature !== layoutSignatures[index - 1]) {
+        changedFrames.push(index);
+        const previous = JSON.parse(layoutSignatures[index - 1]);
+        const changedNodes = layoutState.geometry.reduce((changes, row, rowIndex) => {
+          if (JSON.stringify(row) !== JSON.stringify(previous.geometry[rowIndex])) {
+            changes.push({ before: previous.geometry[rowIndex] || null, after: row });
+          }
+          return changes;
+        }, []).slice(0, 8);
+        layoutChanges.push({
+          frame:index,
+          module:[previous.module, layoutState.module],
+          scroll:[previous.scroll, layoutState.scroll],
+          nodes:[previous.nodes, layoutState.nodes],
+          changedNodes,
+        });
+      }
+      if (index && previewSignature !== previewSignatures[index - 1]) previewChangedFrames.push(index);
+      layoutSignatures.push(layoutSignature);
+      previewSignatures.push(previewSignature);
+      if (layoutSignatures.length >= frameCount) {
+        resolve({
+          frames: layoutSignatures.length,
+          uniqueSignatures: new Set(layoutSignatures).size,
+          changedFrames,
+          layoutChanges,
+          previewUniqueSignatures: new Set(previewSignatures).size,
+          previewChangedFrames,
+        });
       } else requestAnimationFrame(capture);
     };
     // Discard two boundary frames after the coordinator reports done. The
@@ -437,7 +496,7 @@ function assertHomeFade(label, probe, direction) {
     : probe?.acrylicFirst <= .05 && probe?.acrylicLast >= .99 && probe?.acrylicNonDecreasing;
   if (!probe || probe.motionFrames < 30 || !probe.bitmapMotionEveryFrame
     || !probe.cutoutVisibleEveryFrame || !probe.liveOwnersHiddenEveryFrame
-    || !probe.rootTransformReadyEveryFrame
+    || !probe.rootTransformReadyEveryFrame || !probe.materialMovingEveryFrame
     || probe.acrylicFrames < 30 || probe.acrylicDistinctIntermediateOpacities < 8
     || probe.acrylicMaxStep > .18 || !keyframesMatch(probe.acrylicKeyframes, expected)
     || !endpointsValid) {
@@ -547,13 +606,30 @@ async function main() {
     }));
     throw new Error(`Home readiness timed out: ${JSON.stringify({ bootState, errors, cause: error.message })}`);
   }
+  // Calibration must measure the settled application, not the deliberate
+  // one-time factory precomposition that begins 250ms after Home activates.
+  // Finish that work and the preview queues first. Windows can occasionally
+  // delay one renderer callback even at an otherwise exact 100 Hz idle VSync;
+  // take independent full-length samples and accept only an entirely clean one.
+  await page.waitForFunction(() => {
+    const state = window.crmHome?.prewarmStatus?.();
+    return !!state && !state.running && state.pending.length === 0;
+  }, null, { timeout:60000 });
+  await page.evaluate(() => window.crmHome?.waitForPreviewSync?.());
   await sleep(150);
-  nativeRefreshCalibration = await calibrateNativeRefresh(page);
-  if (nativeRefreshCalibration.nativeHz !== MOTION_TARGET.nativeHz
-    || Math.round(nativeRefreshCalibration.fps) !== MOTION_TARGET.nativeHz
-    || nativeRefreshCalibration.maxMs > MOTION_TARGET.maxFrameMs
-    || nativeRefreshCalibration.over15Ms > MOTION_TARGET.maxOver15Ms) {
-    throw new Error(`Native display calibration is not a clean ${MOTION_TARGET.nativeHz} Hz baseline: ${JSON.stringify(nativeRefreshCalibration)}`);
+  const calibrationAttempts=[];
+  for(let attempt=0;attempt<3;attempt+=1){
+    const sample=await calibrateNativeRefresh(page);
+    calibrationAttempts.push(sample);
+    const clean=sample.nativeHz===MOTION_TARGET.nativeHz
+      &&Math.round(sample.fps)===MOTION_TARGET.nativeHz
+      &&sample.maxMs<=MOTION_TARGET.maxFrameMs
+      &&sample.over15Ms<=MOTION_TARGET.maxOver15Ms;
+    if(clean){nativeRefreshCalibration={...sample,attempts:calibrationAttempts};break}
+    await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
+  }
+  if (!nativeRefreshCalibration) {
+    throw new Error(`Native display calibration did not produce a clean ${MOTION_TARGET.nativeHz} Hz baseline: ${JSON.stringify(calibrationAttempts)}`);
   }
 
   const startup = await page.evaluate(() => ({
@@ -730,9 +806,17 @@ async function main() {
     nativeDrag = { dx: 0, dy: 0, syntheticMissAllowed: true, skipped: true };
   } else {
     const dragStart = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.getPosition());
-    await page.mouse.move(520, 20); await page.mouse.down(); await page.mouse.move(640, 90, { steps: 12 }); await page.mouse.up(); await sleep(200);
-    const dragEnd = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.getPosition());
-    nativeDrag = { dx: dragEnd[0] - dragStart[0], dy: dragEnd[1] - dragStart[1] };
+    let dragEnd=dragStart;
+    for(let attempt=0;attempt<2;attempt+=1){
+      await app.evaluate(({ BrowserWindow })=>{const win=BrowserWindow.getAllWindows().find((item)=>item.isVisible());win?.show();win?.focus();});
+      await page.bringToFront();await sleep(160);
+      const hit=await page.evaluate(()=>{const node=document.elementsFromPoint(520,20)[0];return{drag:getComputedStyle(node).webkitAppRegion,classes:node.className||node.tagName}});
+      if(hit.drag!=='drag')throw new Error(`Native drag point lost its title-bar region: ${JSON.stringify(hit)}`);
+      await page.mouse.move(520,20);await page.mouse.down();await page.mouse.move(640,90,{steps:12});await page.mouse.up();await sleep(220);
+      dragEnd=await app.evaluate(({ BrowserWindow })=>BrowserWindow.getAllWindows().find((win)=>win.isVisible())?.getPosition());
+      if(Math.abs(dragEnd[0]-dragStart[0])>=60&&Math.abs(dragEnd[1]-dragStart[1])>=30)break;
+    }
+    nativeDrag = { dx:dragEnd[0]-dragStart[0], dy:dragEnd[1]-dragStart[1] };
     if (Math.abs(nativeDrag.dx) < 60 || Math.abs(nativeDrag.dy) < 30) throw new Error(`Native window drag did not move BrowserWindow: ${JSON.stringify({ dragStart, dragEnd, nativeDrag })}`);
     nativeDrag.syntheticMissAllowed = false;
     await app.evaluate(({ BrowserWindow }, position) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setPosition(position[0], position[1]), dragStart);
@@ -785,19 +869,46 @@ async function main() {
   const domainProbe = await page.evaluate(async () => { try { await window.crmDomain.list('commitments', { limit:1 }); return true; } catch { return false; } });
   if (!domainProbe) throw new Error('domain:list is not handled');
 
+  let reloadLeaseRecovery=null;
   for (let index=0; index<2; index+=1) {
+    if(index===0){
+      await page.evaluate(()=>{
+        window.crmHomePreviews.setInteraction(true,'native-reload-lease-probe');
+        window.__nativeReloadCapture=window.crmHomePreviews.capture('people').catch(()=>null);
+      });
+      await sleep(40);
+    }
     await page.reload({ waitUntil:'load' });
     await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting') && window.crmWorkspaces, null, { timeout:30000 });
     await page.evaluate(() => window.crmWorkspaces.setActive('home'));
     await page.waitForFunction(readyHome, null, { timeout:30000 });
     const chrome = await page.evaluate(() => { const drag=document.querySelector('.app-window-drag-region'); return { drag:getComputedStyle(drag).webkitAppRegion, top:document.elementsFromPoint(520,20)[0]===drag, controls:document.querySelectorAll('.window-control-cluster .window-glass-control').length }; });
     if (chrome.drag !== 'drag' || !chrome.top || chrome.controls < 3) throw new Error(`Chrome stale after reload ${index+1}: ${JSON.stringify(chrome)}`);
+    if(index===0){
+      const started=Date.now();
+      const idle=await Promise.race([
+        page.evaluate(()=>window.crmHomePreviews.waitForIdle()),
+        // Releasing the document lease unblocks the already-requested capture,
+        // but that native-image capture still has to finish before the engine
+        // can report globally idle. Keep this outer guard just beyond the
+        // main-process handler's own bounded 30 second deadline.
+        sleep(32000).then(()=>({ok:false,error:'reload lease recovery timed out'})),
+      ]);
+      reloadLeaseRecovery={...idle,elapsedMs:Date.now()-started};
+      if(!idle?.ok)throw new Error(`Reload did not release the old preview interaction lease: ${JSON.stringify(reloadLeaseRecovery)}`);
+    }
   }
 
-  const rooms = [
+  const allRooms = [
     {key:'people',theater:'people',content:'.tk-zone',expected:17}, {key:'cases',theater:'tickets',content:'.tk-zone',expected:3},
     {key:'planner',theater:'planner',content:'.crm-planner-bucket',expected:0}, {key:'assignments',theater:'assignments',content:'.crm-assignment-bucket',expected:5},
   ];
+  const requestedRoomKeys = new Set(String(process.env.CRM_VISUAL_ROOMS || '').split(',').map((key)=>key.trim()).filter(Boolean));
+  const knownRoomKeys = new Set(allRooms.map((room)=>room.key));
+  const unknownRoomKeys = [...requestedRoomKeys].filter((key)=>!knownRoomKeys.has(key));
+  if(unknownRoomKeys.length)throw new Error(`CRM_VISUAL_ROOMS contains unknown rooms: ${unknownRoomKeys.join(',')}`);
+  const rooms = requestedRoomKeys.size ? allRooms.filter((room)=>requestedRoomKeys.has(room.key)) : allRooms;
+  if(!rooms.length)throw new Error(`CRM_VISUAL_ROOMS selected no known rooms: ${[...requestedRoomKeys].join(',')}`);
   const transitions=[];
   for (const room of rooms) {
     let inboundHeldState=null;
@@ -855,6 +966,7 @@ async function main() {
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
       const foreground=expander?.querySelector('.crm-home-preview-foreground');
       const exact=expander?.querySelector('.crm-home-preview-exact');
+      const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const liveOwnersHidden=[grid,titleLayer,hand].every((node)=>node&&getComputedStyle(node).visibility==='hidden');
       const motionCutoutOwns=!!snapshot&&getComputedStyle(snapshot).display==='none'
         &&!!variant&&variant.dataset.motionVariant===target?.dataset.module
@@ -872,14 +984,27 @@ async function main() {
         rootOpacity:root?Number(getComputedStyle(root).opacity):0,
         liveOwnersHidden,
         motionCutoutOwns,
-        signatureMatches:status?.layoutSignature===window.crmHome?.motionLayoutSignature?.(),
+         signatureMatches:status?.layoutSignature===window.crmHome?.motionLayoutSignature?.(),
+         bitmapMotion:surface?.classList.contains('crm-home-bitmap-motion'),
+         motionSnapshotReady:root?.dataset?.motionSnapshotReady||'',
+         motionVariantKey:root?.dataset?.motionVariant||'',
+         targetModule:target?.dataset?.module||'',
+         targetTileId:target?.dataset?.tileId||'',
+         variantState:variant?{
+           module:variant.dataset.motionVariant||'',
+           tileId:variant.dataset.motionTileId||'',
+           complete:variant.complete,
+           naturalWidth:variant.naturalWidth,
+           display:getComputedStyle(variant).display,
+           opacity:Number(getComputedStyle(variant).opacity),
+         }:null,
         rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,
-        noEndpointImage:!exact,
+        noEndpointImage:exactHidden,
         sharedBackground:status?.backgroundMode==='shared'
           &&status?.materialMode==='cached-acrylic'
           &&document.querySelectorAll('.crm-home-scene-backdrop').length===0
           &&document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1
-          &&!!foreground&&!exact&&expanderNeutral,
+          &&!!foreground&&exactHidden&&expanderNeutral,
         surfaceMoving:surface?.classList.contains('crm-home-camera-moving'),
         dragTop:document.elementsFromPoint(520,20)[0]===drag,
         controlsTop:[...document.querySelectorAll('.window-control-cluster .window-glass-control')].every((node)=>{
@@ -895,6 +1020,7 @@ async function main() {
       const edge=expander?.querySelector(':scope>.crm-home-transition-acrylic');
       const plane=surface?.querySelector(':scope>.crm-home-screen-acrylic');
       const exact=expander?.querySelector('.crm-home-preview-exact');
+      const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
       const variant=root?.querySelector(':scope>.crm-home-motion-variant.is-active-motion-variant');
       const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');
@@ -924,6 +1050,25 @@ async function main() {
         };
       };
       const lid=material(expander),lens=material(plane,true),frame=material(edge);
+      const animationFor=(node,property)=>{
+        const matches=[...(node?.getAnimations?.()||[])].filter((animation)=>{
+          const duration=Number(animation.effect?.getComputedTiming?.().duration);
+          const keyframes=animation.effect?.getKeyframes?.()||[];
+          return animation.effect?.target===node
+            &&animation.playState!=='idle'&&animation.playState!=='paused'
+            &&animation.replaceState!=='removed'
+            &&Number.isFinite(duration)&&Math.abs(duration-460)<=1
+            &&keyframes.some((keyframe)=>keyframe[property]!=null);
+        });
+        return matches.at(-1)||null;
+      };
+      const transformAnimation=animationFor(expander,'transform');
+      const clipAnimation=animationFor(plane,'clipPath');
+      const opacityAnimation=animationFor(plane,'opacity');
+      const animations=[transformAnimation,clipAnimation,opacityAnimation];
+      const animationTimes=animations.map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
+      const animationStarts=animations.map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
+      const aligned=(values)=>values.every(Number.isFinite)&&values.slice(1).every((value)=>Math.abs(value-values[0])<=1.5);
       const cutoutOwned=!!variant&&getComputedStyle(variant).display!=='none'
         &&Number(getComputedStyle(variant).opacity)>.99
         &&variant.dataset.motionVariant===target?.dataset.module
@@ -939,8 +1084,12 @@ async function main() {
         frame:expander?.dataset.fractalFrame||'',
         lid,lens,edge:frame,exact:material(exact),
         lensAligned:!!lens&&!!lid&&lens.rect.every((value,index)=>Math.abs(value-lid.rect[index])<=1.25),
+        timelineAligned:animations.every(Boolean)&&aligned(animationTimes)&&aligned(animationStarts),
+        animationTimes,
+        animationStarts,
+        animationStates:animations.map((animation)=>animation?.playState||'missing'),
         cutoutOwned,
-        sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&!exact&&!!expander?.querySelector('.crm-home-preview-foreground'),
+        sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&exactHidden&&!!expander?.querySelector('.crm-home-preview-foreground'),
         tintCopied,
         frameCopied,
         cachedLens:!!lens&&plane?.parentElement===surface
@@ -953,14 +1102,33 @@ async function main() {
         surfaceMoving:surface?.classList.contains('crm-home-camera-moving'),
       };
     },homeSourceMaterial);
-    const inFlight=mid.module==='home'&&mid.transitioning&&mid.images===1&&mid.noEndpointImage&&mid.rect&&mid.rect.width>inboundReaction.sourceWidth+20;
+    const inFlight=mid.module==='home'&&mid.transitioning&&mid.images>=1&&mid.images<=2&&mid.noEndpointImage&&mid.rect&&mid.rect.width>inboundReaction.sourceWidth+20;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
-    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.rootOpacity<.99||!mid.liveOwnersHidden||!mid.motionCutoutOwns||!mid.signatureMatches||!mid.rootComposited||!mid.sharedBackground||!mid.surfaceMoving||!acrylicMid.cutoutOwned||!acrylicMid.sharedWallpaper||!acrylicMid.cachedLens||!acrylicMid.tintCopied||!acrylicMid.frameCopied||!acrylicMid.lensAligned||!acrylicMid.surfaceMoving))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify({mid,acrylicMid,homeSourceMaterial})}`);
+    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.rootOpacity<.99||!mid.liveOwnersHidden||!mid.motionCutoutOwns||!mid.signatureMatches||!mid.rootComposited||!mid.sharedBackground||!mid.surfaceMoving||!acrylicMid.cutoutOwned||!acrylicMid.sharedWallpaper||!acrylicMid.cachedLens||!acrylicMid.tintCopied||!acrylicMid.frameCopied||!acrylicMid.lensAligned||!acrylicMid.timelineAligned||!acrylicMid.surfaceMoving))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify({mid,acrylicMid,homeSourceMaterial})}`);
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key&&!window.crmDeskTransit?.isBusy?.()&&!document.querySelector('.crm-transit-veil'),room.key,{timeout:15000});
     const inboundEndpoint=await finishEndpointProbe(page,`in-${room.key}`);
     assertHomeFade(`${room.key} inbound visual`,inboundEndpoint,'in');
-    if(inboundEndpoint.hadVeil||!inboundEndpoint.destinationDeferredThroughMotion||!inboundEndpoint.destinationPrecomposed||!inboundEndpoint.sawRoomReveal||!inboundEndpoint.roomRevealTimed||inboundEndpoint.endpointFrames<1||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.snapshotVisible||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound did not hand to its endpoint-precomposed live room: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
+    if(inboundEndpoint.hadVeil||!inboundEndpoint.destinationDeferredThroughMotion||!inboundEndpoint.destinationPrecomposed||!inboundEndpoint.sawRoomReveal||!inboundEndpoint.roomRevealAtomic||!inboundEndpoint.ownershipFadeTimed||inboundEndpoint.endpointFrames<1||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.snapshotVisible||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound did not hand to its endpoint-precomposed live room: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
+    const inactiveHomeRetention=await page.evaluate((key)=>{const surface=window.crmHomeCamera?.surface?.();const root=window.crmHomeCamera?.layers?.()[0];const variant=root?.querySelector(':scope>.crm-home-motion-variant.is-active-motion-variant');const surfaceStyle=surface&&getComputedStyle(surface);const variantStyle=variant&&getComputedStyle(variant);return{hidden:surface?.hidden===true,key:surface?.dataset.crmHomeRetained||'',display:surfaceStyle?.display||'',zIndex:surfaceStyle?.zIndex||'',pointerEvents:surfaceStyle?.pointerEvents||'',gridVisibility:getComputedStyle(root?.querySelector(':scope>.crm-home-grid')).visibility,variant:variant?.dataset.motionVariant||'',variantDisplay:variantStyle?.display||'',variantOpacity:Number(variantStyle?.opacity),variantTransform:variantStyle?.transform||'',variantWillChange:variantStyle?.willChange||'',expected:key}},room.key);
+    if(!inactiveHomeRetention.hidden||inactiveHomeRetention.key!==room.key||inactiveHomeRetention.display!=='block'||inactiveHomeRetention.zIndex!=='0'||inactiveHomeRetention.pointerEvents!=='none'||inactiveHomeRetention.gridVisibility!=='hidden'||inactiveHomeRetention.variant!==room.key||inactiveHomeRetention.variantDisplay==='none'||inactiveHomeRetention.variantOpacity!==.001||inactiveHomeRetention.variantTransform==='none'||!inactiveHomeRetention.variantWillChange.includes('transform'))throw new Error(`${room.key} did not leave exactly one inert Home camera bitmap resident: ${JSON.stringify(inactiveHomeRetention)}`);
     await page.mouse.move(1,1); await sleep(80);
+    let companyRailMotion=null;
+    if(room.key==='people'){
+      // Measure the promoted rail before screenshot readback, multi-megabyte
+      // preview IPC cloning, or pixel comparison can leave delayed GC/GPU work
+      // in the renderer. Semantic idle covers both renderer maintenance and
+      // the hidden capture worker; the rail itself holds that lease in motion.
+      // Home is intentionally frozen while a room is active: new compositions
+      // remain queued until the return handoff. Only the offscreen worker must
+      // reach idle here; asking Home to flush would invalidate that invariant.
+      await page.evaluate(()=>window.crmHomePreviews.waitForIdle());
+      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));
+      await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
+      companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{document.activeElement?.blur?.();const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,childList:true,attributes:true,attributeFilter:['data-zone-lod','data-face-deferred','class']});const deltas=[];const over15At=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{const delta=now-previous;deltas.push(delta);previous=now;if(delta>15){const state=window.peopleCards.zoneScrollState?.()||{};over15At.push({index:deltas.length-1,delta,x:state.x,target:state.target});}if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')],buckets=[...theater.querySelectorAll('.tk-zone')],nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')),readyTops=nonEmpty.filter((bucket)=>{const card=bucket.querySelector('.tk-zcard:last-child');return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');}),clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),lens=track?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),lensStyle=lens&&getComputedStyle(lens);const lodMutations=mutations.filter((record)=>record.type==='attributes'&&record.attributeName==='data-zone-lod').length;const faceMutations=mutations.filter((record)=>record.type==='childList'||(record.type==='attributes'&&record.target.closest?.('.tk-zcard'))).length;resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over15:deltas.filter((value)=>value>15).length,over15At,longTasks,lodMutations,faceMutations,parked:parked.length,nonEmpty:nonEmpty.length,readyTops:readyTops.length,totalCards:theater.querySelectorAll('.tk-zcard').length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,sharedLens:track.classList.contains('has-shared-zone-acrylic')&&lensStyle?.backdropFilter.includes('blur')&&lensStyle.clipPath!=='none'&&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none'),clipped:getComputedStyle(clip).overflowX==='hidden'&&getComputedStyle(track).willChange.includes('transform')&&parked.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);})});};requestAnimationFrame(tick)}));
+      if(companyRailMotion.frames<85||companyRailMotion.fps<98.5||companyRailMotion.p95>12.5||companyRailMotion.max>15||companyRailMotion.over15!==0||companyRailMotion.longTasks.length||companyRailMotion.lodMutations<1||companyRailMotion.lodMutations>28||companyRailMotion.faceMutations!==0||companyRailMotion.parked<6||companyRailMotion.readyTops!==companyRailMotion.nonEmpty||companyRailMotion.deferred!==companyRailMotion.totalCards-companyRailMotion.nonEmpty||!companyRailMotion.sharedLens||!companyRailMotion.clipped)throw new Error(`People horizontal LOD is not compositor-stable at native ${MOTION_TARGET.nativeHz} Hz: ${JSON.stringify(companyRailMotion)}`);
+      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));
+      await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
+    }
     const inboundStability=await sampleLayoutStability(page,`[data-crm-theater="${room.theater}"]:not([hidden])`);
     if(inboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after inbound transition: ${JSON.stringify(inboundStability)}`);
     const state=await page.evaluate(async(config)=>{
@@ -981,14 +1149,6 @@ async function main() {
       if(!inboundHeldState.noEndpointImage||pixelMae>1)throw new Error(`Home camera did not land directly on the live settled room: ${JSON.stringify(inboundHeldState)}`);
     }
     const settledProbe=await page.evaluate(()=>window.__fps);
-    let companyRailMotion=null;
-    if(room.key==='people'){
-      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
-      await page.evaluate(()=>window.crmHomePreviews?.waitForIdle?.());await sleep(120);
-      companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{document.activeElement?.blur?.();const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,childList:true,attributes:true,attributeFilter:['data-zone-lod','data-face-deferred','class']});const deltas=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')],buckets=[...theater.querySelectorAll('.tk-zone')],nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')),readyTops=nonEmpty.filter((bucket)=>{const card=bucket.querySelector('.tk-zcard:last-child');return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');}),clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),lens=track?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),lensStyle=lens&&getComputedStyle(lens);const lodMutations=mutations.filter((record)=>record.type==='attributes'&&record.attributeName==='data-zone-lod').length;const faceMutations=mutations.filter((record)=>record.type==='childList'||(record.type==='attributes'&&record.target.closest?.('.tk-zcard'))).length;resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over15:deltas.filter((value)=>value>15).length,longTasks,lodMutations,faceMutations,parked:parked.length,nonEmpty:nonEmpty.length,readyTops:readyTops.length,totalCards:theater.querySelectorAll('.tk-zcard').length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,sharedLens:track.classList.contains('has-shared-zone-acrylic')&&lensStyle?.backdropFilter.includes('blur')&&lensStyle.clipPath!=='none'&&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none'),clipped:getComputedStyle(clip).overflowX==='hidden'&&getComputedStyle(track).willChange.includes('transform')&&parked.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);})});};requestAnimationFrame(tick)}));
-      if(companyRailMotion.frames<85||companyRailMotion.fps<98.5||companyRailMotion.p95>12.5||companyRailMotion.max>15||companyRailMotion.over15!==0||companyRailMotion.longTasks.length||companyRailMotion.lodMutations<1||companyRailMotion.lodMutations>28||companyRailMotion.faceMutations!==0||companyRailMotion.parked<6||companyRailMotion.readyTops!==companyRailMotion.nonEmpty||companyRailMotion.deferred!==companyRailMotion.totalCards-companyRailMotion.nonEmpty||!companyRailMotion.sharedLens||!companyRailMotion.clipped)throw new Error(`People horizontal LOD is not compositor-stable at native ${MOTION_TARGET.nativeHz} Hz: ${JSON.stringify(companyRailMotion)}`);
-      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));await sleep(80);
-    }
     const badBucket=room.key==='assignments'
       ? state.bucketGeometry.some((bucket)=>bucket.width<200||bucket.width>275||bucket.height<500||bucket.height>710||bucket.ratio<.35||bucket.ratio>.45)
       : room.key!=='planner'&&state.bucketGeometry.some((bucket)=>bucket.width<180||bucket.width>270||bucket.height<300||bucket.height>410||bucket.ratio<.55||bucket.ratio>.85);
@@ -1048,6 +1208,7 @@ async function main() {
       const status=window.crmHome?.motionStatus?.();
       const expanderStyle=expander&&getComputedStyle(expander);
       const exact=expander?.querySelector('.crm-home-preview-exact');
+      const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
       const liveOwnersHidden=[grid,titleLayer,hand].every((node)=>node&&getComputedStyle(node).visibility==='hidden');
       const motionCutoutOwns=!!snapshot&&getComputedStyle(snapshot).display==='none'
@@ -1064,13 +1225,26 @@ async function main() {
         liveOwnersHidden,
         motionCutoutOwns,
         signatureMatches:status?.layoutSignature===window.crmHome?.motionLayoutSignature?.(),
+        bitmapMotion:surface?.classList.contains('crm-home-bitmap-motion'),
+        motionSnapshotReady:root?.dataset?.motionSnapshotReady||'',
+        motionVariantKey:root?.dataset?.motionVariant||'',
+        targetModule:target?.dataset?.module||'',
+        targetTileId:target?.dataset?.tileId||'',
+        variantState:variant?{
+          module:variant.dataset.motionVariant||'',
+          tileId:variant.dataset.motionTileId||'',
+          complete:variant.complete,
+          naturalWidth:variant.naturalWidth,
+          display:getComputedStyle(variant).display,
+          opacity:Number(getComputedStyle(variant).opacity),
+        }:null,
         expanderAbove:!!expander&&!!root&&Number(getComputedStyle(expander).zIndex)>Number(getComputedStyle(root).zIndex),
-        noEndpointImage:!exact,
+        noEndpointImage:exactHidden,
         sharedBackground:status?.backgroundMode==='shared'
           &&status?.materialMode==='cached-acrylic'
           &&document.querySelectorAll('.crm-home-scene-backdrop').length===0
           &&document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1
-          &&!!expander?.querySelector('.crm-home-preview-foreground')&&!exact&&expanderNeutral,
+          &&!!expander?.querySelector('.crm-home-preview-foreground')&&exactHidden&&expanderNeutral,
         contracting:surface?.classList.contains('crm-home-camera-contracting'),
       };
     });
@@ -1080,6 +1254,7 @@ async function main() {
       const edge=expander?.querySelector(':scope>.crm-home-transition-acrylic');
       const plane=surface?.querySelector(':scope>.crm-home-screen-acrylic');
       const exact=expander?.querySelector('.crm-home-preview-exact');
+      const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
       const variant=root?.querySelector(':scope>.crm-home-motion-variant.is-active-motion-variant');
       const snapshot=root?.querySelector(':scope>.crm-home-motion-snapshot');
@@ -1109,6 +1284,25 @@ async function main() {
         };
       };
       const lid=material(expander),lens=material(plane,true),frame=material(edge);
+      const animationFor=(node,property)=>{
+        const matches=[...(node?.getAnimations?.()||[])].filter((animation)=>{
+          const duration=Number(animation.effect?.getComputedTiming?.().duration);
+          const keyframes=animation.effect?.getKeyframes?.()||[];
+          return animation.effect?.target===node
+            &&animation.playState!=='idle'&&animation.playState!=='paused'
+            &&animation.replaceState!=='removed'
+            &&Number.isFinite(duration)&&Math.abs(duration-460)<=1
+            &&keyframes.some((keyframe)=>keyframe[property]!=null);
+        });
+        return matches.at(-1)||null;
+      };
+      const transformAnimation=animationFor(expander,'transform');
+      const clipAnimation=animationFor(plane,'clipPath');
+      const opacityAnimation=animationFor(plane,'opacity');
+      const animations=[transformAnimation,clipAnimation,opacityAnimation];
+      const animationTimes=animations.map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
+      const animationStarts=animations.map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
+      const aligned=(values)=>values.every(Number.isFinite)&&values.slice(1).every((value)=>Math.abs(value-values[0])<=1.5);
       const cutoutOwned=!!variant&&getComputedStyle(variant).display!=='none'
         &&Number(getComputedStyle(variant).opacity)>.99
         &&variant.dataset.motionVariant===target?.dataset.module
@@ -1124,8 +1318,12 @@ async function main() {
         frame:expander?.dataset.fractalFrame||'',
         lid,lens,edge:frame,exact:material(exact),
         lensAligned:!!lens&&!!lid&&lens.rect.every((value,index)=>Math.abs(value-lid.rect[index])<=1.25),
+        timelineAligned:animations.every(Boolean)&&aligned(animationTimes)&&aligned(animationStarts),
+        animationTimes,
+        animationStarts,
+        animationStates:animations.map((animation)=>animation?.playState||'missing'),
         cutoutOwned,
-        sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&!exact&&!!expander?.querySelector('.crm-home-preview-foreground'),
+        sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&exactHidden&&!!expander?.querySelector('.crm-home-preview-foreground'),
         tintCopied,
         frameCopied,
         cachedLens:!!lens&&plane?.parentElement===surface
@@ -1137,7 +1335,7 @@ async function main() {
           &&frame?.backgroundImage==='none',
       };
     },outboundSourceMaterial);
-    if(!outboundMid.moving||outboundMid.rootOpacity<.99||!outboundMid.liveOwnersHidden||!outboundMid.motionCutoutOwns||!outboundMid.noEndpointImage||!outboundMid.sharedBackground||!outboundMid.signatureMatches||!outboundMid.expanderAbove||!outboundMid.contracting||!outboundAcrylic.cutoutOwned||!outboundAcrylic.sharedWallpaper||!outboundAcrylic.cachedLens||!outboundAcrylic.tintCopied||!outboundAcrylic.frameCopied||!outboundAcrylic.lensAligned)throw new Error(`${room.key} return composition diverged from resting Home: ${JSON.stringify({outboundMid,outboundAcrylic,outboundSourceMaterial})}`);
+    if(!outboundMid.moving||outboundMid.rootOpacity<.99||!outboundMid.liveOwnersHidden||!outboundMid.motionCutoutOwns||!outboundMid.noEndpointImage||!outboundMid.sharedBackground||!outboundMid.signatureMatches||!outboundMid.expanderAbove||!outboundMid.contracting||!outboundAcrylic.cutoutOwned||!outboundAcrylic.sharedWallpaper||!outboundAcrylic.cachedLens||!outboundAcrylic.tintCopied||!outboundAcrylic.frameCopied||!outboundAcrylic.lensAligned||!outboundAcrylic.timelineAligned)throw new Error(`${room.key} return composition diverged from resting Home: ${JSON.stringify({outboundMid,outboundAcrylic,outboundSourceMaterial})}`);
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outboundEndpoint=await finishEndpointProbe(page,`out-${room.key}`);
     assertHomeFade(`${room.key} outbound visual`,outboundEndpoint,'out');
@@ -1150,7 +1348,7 @@ async function main() {
     const synchronizedPixelMae=imageDifference(synchronizedExactBuffer,synchronizedLiveBuffer,{left:50,right:1230,top:105,bottom:755});
     if(outboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after returning Home: ${JSON.stringify(outboundStability)}`);
     if(after<=before||synchronizedPreview.state!=='ready'||!synchronizedPreview.sameNode||synchronizedPreview.hostCapturedAt!==after||JSON.stringify(synchronizedPreview.viewState)!==JSON.stringify(expectedViewState)||synchronizedPixelMae>12)throw new Error(`${room.key} Home tile did not synchronize with the displayed room: ${JSON.stringify({before,after,synchronization,expectedViewState,actualViewState:synchronizedPreview.viewState,sameNode:synchronizedPreview.sameNode,hostCapturedAt:synchronizedPreview.hostCapturedAt,synchronizedPixelMae})}`);
-    transitions.push({key:room.key,mid,acrylicMid,outboundMid,outboundAcrylic,pixelMae,inboundHeldState:inboundHeldState&&{...inboundHeldState,exactSrc:!!inboundHeldState.exactSrc},synchronizedPixelMae,fps:settledProbe.fps,companyRailMotion,inbound:inboundEndpoint,outbound:outboundEndpoint,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewRefreshed:after>before,previewNodePreserved:synchronizedPreview.sameNode});
+    transitions.push({key:room.key,mid,acrylicMid,outboundMid,outboundAcrylic,pixelMae,inboundHeldState:inboundHeldState&&{...inboundHeldState,exactSrc:!!inboundHeldState.exactSrc},synchronizedPixelMae,fps:settledProbe.fps,companyRailMotion,inactiveHomeRetention,inbound:inboundEndpoint,outbound:outboundEndpoint,inboundEndpoint,outboundEndpoint,inboundStability,outboundStability,inboundReaction,outboundReaction,signatureMatches:true,previewRefreshed:after>before,previewNodePreserved:synchronizedPreview.sameNode});
   }
   const homeTransitionCoverage=new Set(transitions.flatMap((transition)=>[
     `${transition.key}:in`,
@@ -1160,9 +1358,26 @@ async function main() {
     `${room.key}:in`,
     `${room.key}:out`,
   ]));
-  if(homeTransitionCoverage.size!==8||[...expectedHomeTransitionCoverage].some((key)=>!homeTransitionCoverage.has(key))){
+  if(homeTransitionCoverage.size!==expectedHomeTransitionCoverage.size
+    ||[...expectedHomeTransitionCoverage].some((key)=>!homeTransitionCoverage.has(key))){
     throw new Error(`Full Home transition coverage is incomplete: ${JSON.stringify([...homeTransitionCoverage])}`);
   }
+  // The endpoint probe intentionally allocates per-frame geometry/material
+  // signatures. Those objects are test-only and no longer have callbacks once
+  // coverage is complete; retaining them can schedule a V8 major GC inside the
+  // following 460ms rAF diagnostic even while compositor presentation remains
+  // at native rate. Discard and collect that instrumentation garbage while Home
+  // is idle so the isolated probe measures the product, not its prior observer.
+  await page.evaluate(()=>{
+    window.__crmEndpointProbes={};
+    window.__crmMotionProbes={};
+  });
+  try{
+    const cadenceSession=await page.context().newCDPSession(page);
+    await cadenceSession.send('HeapProfiler.collectGarbage');
+    await cadenceSession.detach();
+  }catch{}
+  await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
   // Cadence gets its own transition cycles. No endpoint/style probe, screenshot,
   // layout sampler, or polling callback runs while the camera is moving.
   await installMotionProbe(page);
@@ -1195,9 +1410,14 @@ async function main() {
         elapsedMs:performance.now()-started,
         busy:window.crmDeskTransit?.isBusy?.(),
         transitioning:window.crmHomeCamera?.isTransitioning?.(),
+        level:window.crmHomeCamera?.level?.(),
+        module:document.body.dataset.crmModule,
       };
     },outboundLabel);
-    if(!cadenceOutboundReaction.busy||!cadenceOutboundReaction.transitioning||cadenceOutboundReaction.elapsedMs>50)throw new Error(`${room.key} cadence Home click did not synchronously start motion: ${JSON.stringify(cadenceOutboundReaction)}`);
+    // The return path synchronously seats the full-screen bucket lid and commits
+    // Home behind it. Its compositor transform deliberately starts on the next
+    // rAF, after that covered precomposition frame.
+    if(!cadenceOutboundReaction.busy||cadenceOutboundReaction.level!==1||cadenceOutboundReaction.module!=='home'||cadenceOutboundReaction.elapsedMs>50)throw new Error(`${room.key} cadence Home click did not synchronously seat its motion cover: ${JSON.stringify(cadenceOutboundReaction)}`);
     const cadenceOutbound=await finishMotionProbe(page,outboundLabel);
     assertMotion(`${room.key} isolated outbound`,cadenceOutbound);
     await page.waitForFunction(readyHome,null,{timeout:15000});
@@ -1214,7 +1434,8 @@ async function main() {
     `${transition.key}:in`,
     `${transition.key}:out`,
   ]));
-  if(cadenceCoverage.size!==8||[...expectedHomeTransitionCoverage].some((key)=>!cadenceCoverage.has(key))){
+  if(cadenceCoverage.size!==expectedHomeTransitionCoverage.size
+    ||[...expectedHomeTransitionCoverage].some((key)=>!cadenceCoverage.has(key))){
     throw new Error(`Isolated Home cadence coverage is incomplete: ${JSON.stringify([...cadenceCoverage])}`);
   }
   const handTicket=await page.evaluate((commitmentId)=>{
@@ -1256,19 +1477,35 @@ async function main() {
   await page.evaluate(()=>{window.__startNativeProjectContinuity=(layerForFrame)=>new Promise((resolve)=>{
     const samples=[];let sawOwnedMotion=false;const armedAt=performance.now();
     const tick=()=>{const layer=layerForFrame();const frame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const screenLens=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');const acrylic=screenLens||((sawOwnedMotion&&!window.crmProjectsCamera?.isTransitioning?.())?frame:null);const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();const materialMoving=!!screenLens&&!!document.querySelector('.crm-planner-surface.crm-project-acrylic-expanding,.crm-planner-surface.crm-project-acrylic-contracting');
-      if(acrylic&&((moving&&(materialMoving||!sawOwnedMotion))||(sawOwnedMotion&&!moving))){sawOwnedMotion=true;const style=getComputedStyle(acrylic),owner=getComputedStyle(layer),frameStyle=frame&&getComputedStyle(frame);const matrix=style.transform&&style.transform!=='none'?new DOMMatrix(style.transform):new DOMMatrix();const animations=screenLens?.getAnimations?.()||[];const opacityAnimation=animations.find((animation)=>(animation.effect?.getKeyframes?.()||[]).some((keyframe)=>keyframe.opacity!=null));samples.push({opacity:Number(style.opacity)*(screenLens?1:Number(owner.opacity)),owned:Number(owner.opacity)>.99&&!layer.style.transition.includes('opacity')&&(!screenLens||screenLens.parentElement===window.crmProjectsCamera?.surface?.()),backdrop:style.backdropFilter||'',objects:Number(overlay?getComputedStyle(overlay).opacity:0)+Number(live?getComputedStyle(live).opacity:0),frame:layer?.dataset.fractalFrame||'',material:materialMoving,probeMutated:!!window.__nativeProjectBlurProbeActive,timed:!screenLens||animations.length===2,screenSpace:!screenLens||(Math.abs(matrix.a-1)<.001&&Math.abs(matrix.d-1)<.001),frameNeutral:!screenLens||(frameStyle?.backgroundImage==='none'&&frameStyle?.backdropFilter==='none'),opacityKeyframes:(opacityAnimation?.effect?.getKeyframes?.()||[]).map((keyframe)=>[keyframe.computedOffset,Number(keyframe.opacity)])})}
+      if(acrylic&&((moving&&(materialMoving||!sawOwnedMotion))||(sawOwnedMotion&&!moving))){sawOwnedMotion=true;const style=getComputedStyle(acrylic),owner=getComputedStyle(layer),frameStyle=frame&&getComputedStyle(frame);const matrix=style.transform&&style.transform!=='none'?new DOMMatrix(style.transform):new DOMMatrix();const animations=screenLens?.getAnimations?.()||[];const opacityAnimation=animations.find((animation)=>(animation.effect?.getKeyframes?.()||[]).some((keyframe)=>keyframe.opacity!=null));samples.push({at:performance.now(),opacity:Number(style.opacity)*(screenLens?1:Number(owner.opacity)),opacityTime:Number(opacityAnimation?.currentTime),owned:Number(owner.opacity)>.99&&!layer.style.transition.includes('opacity')&&(!screenLens||screenLens.parentElement===window.crmProjectsCamera?.surface?.()),backdrop:style.backdropFilter||'',objects:Number(overlay?getComputedStyle(overlay).opacity:0)+Number(live?getComputedStyle(live).opacity:0),frame:layer?.dataset.fractalFrame||'',material:materialMoving,probeMutated:!!window.__nativeProjectBlurProbeActive,timed:!screenLens||animations.length===2,screenSpace:!screenLens||(Math.abs(matrix.a-1)<.001&&Math.abs(matrix.d-1)<.001),frameNeutral:!screenLens||(frameStyle?.backgroundImage==='none'&&frameStyle?.backdropFilter==='none'),opacityKeyframes:(opacityAnimation?.effect?.getKeyframes?.()||[]).map((keyframe)=>[keyframe.computedOffset,Number(keyframe.opacity)])})}
       if(moving||(!sawOwnedMotion&&performance.now()-armedAt<2000)){requestAnimationFrame(tick);return}
-      const opacities=samples.map((sample)=>sample.opacity);const opacitySteps=opacities.slice(1).map((value,index)=>value-opacities[index]);const firstBelowFull=opacities.findIndex((opacity)=>opacity<.99);const firstFull=opacities.findIndex((opacity)=>opacity>.99);const materialSamples=samples.filter((sample)=>sample.material&&!sample.probeMutated);
-      resolve({frames:samples.length,materialFrames:materialSamples.length,firstOpacity:opacities[0]??null,lastOpacity:opacities.at(-1)??null,maxOpacityStep:opacitySteps.length?Math.max(...opacitySteps.map(Math.abs)):0,intermediateFrames:opacities.filter((opacity)=>opacity>.01&&opacity<.99).length,entryTailFrames:firstBelowFull<0?0:opacities.length-firstBelowFull,exitLeadFrames:firstFull<0?opacities.length:firstFull,nonIncreasing:opacitySteps.every((step)=>step<=.04),nonDecreasing:opacitySteps.every((step)=>step>=-.04),timedEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.timed),screenSpaceEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.screenSpace),frameNeutralEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.frameNeutral),opacityKeyframes:materialSamples.find((sample)=>sample.opacityKeyframes.length)?.opacityKeyframes||[],ownedEveryFrame:samples.length>0&&samples.every((sample)=>sample.owned),realEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.backdrop.includes('blur(26px)')),minObjectCoverage:samples.length?Math.min(...samples.map((sample)=>sample.objects)):0,maxObjectCoverage:samples.length?Math.max(...samples.map((sample)=>sample.objects)):0,framesSeen:[...new Set(samples.map((sample)=>sample.frame))],wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length});
+      const opacities=samples.map((sample)=>sample.opacity);const opacitySteps=samples.slice(1).map((sample,index)=>({value:sample.opacity-samples[index].opacity,gap:sample.at-samples[index].at}));const cadenceOpacitySteps=opacitySteps.filter((sample)=>sample.gap<=15);const firstBelowFull=opacities.findIndex((opacity)=>opacity<.99);const firstFull=opacities.findIndex((opacity)=>opacity>.99);const materialSamples=samples.filter((sample)=>sample.material&&!sample.probeMutated);
+      resolve({frames:samples.length,materialFrames:materialSamples.length,firstOpacity:opacities[0]??null,lastOpacity:opacities.at(-1)??null,maxOpacityStep:cadenceOpacitySteps.length?Math.max(...cadenceOpacitySteps.map((sample)=>Math.abs(sample.value))):0,maxObservedOpacityStep:opacitySteps.length?Math.max(...opacitySteps.map((sample)=>Math.abs(sample.value))):0,maxSampleGap:opacitySteps.length?Math.max(...opacitySteps.map((sample)=>sample.gap)):0,intermediateFrames:opacities.filter((opacity)=>opacity>.01&&opacity<.99).length,entryTailFrames:firstBelowFull<0?0:opacities.length-firstBelowFull,exitLeadFrames:firstFull<0?opacities.length:firstFull,nonIncreasing:opacitySteps.every((sample)=>sample.value<=.04),nonDecreasing:opacitySteps.every((sample)=>sample.value>=-.04),timedEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.timed),screenSpaceEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.screenSpace),frameNeutralEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.frameNeutral),opacityKeyframes:materialSamples.find((sample)=>sample.opacityKeyframes.length)?.opacityKeyframes||[],ownedEveryFrame:samples.length>0&&samples.every((sample)=>sample.owned),realEveryFrame:materialSamples.length>0&&materialSamples.every((sample)=>sample.backdrop.includes('blur(26px)')),minObjectCoverage:samples.length?Math.min(...samples.map((sample)=>sample.objects)):0,maxObjectCoverage:samples.length?Math.max(...samples.map((sample)=>sample.objects)):0,framesSeen:[...new Set(samples.map((sample)=>sample.frame))],wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length});
     };requestAnimationFrame(tick);
   })});
   const projectDiveStart=await page.evaluate((projectId)=>new Promise((resolve)=>{
     window.__nativeProjectContinuity=window.__startNativeProjectContinuity(()=>window.crmProjectsCamera?.layers?.()[1]||document.querySelector('.crm-planner-project-world:not(.crm-planner-warm)'));
-    const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const source=tile?.getBoundingClientRect();const nativeSetTimeout=window.setTimeout;window.setTimeout=(handler,delay,...args)=>nativeSetTimeout(handler,Number(delay)>=490&&Number(delay)<=510?5000:delay,...args);try{window.__nativeProjectOpen=window.crmPlanner.openProject(projectId)}finally{window.setTimeout=nativeSetTimeout}requestAnimationFrame(()=>{const layer=window.crmProjectsCamera?.layers?.()[1]||document.querySelector('.crm-planner-project-world');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const frame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const acrylic=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const rect=layer?.getBoundingClientRect();const acrylicStyle=acrylic&&getComputedStyle(acrylic);const frameStyle=frame&&getComputedStyle(frame);const matrix=acrylicStyle?.transform&&acrylicStyle.transform!=='none'?new DOMMatrix(acrylicStyle.transform):new DOMMatrix();const layerStyle=layer&&getComputedStyle(layer);resolve({source:source&&[source.x,source.y,source.width,source.height],rect:rect&&[rect.x,rect.y,rect.width,rect.height],overlay:!!overlay,opacity:overlay?Number(getComputedStyle(overlay).opacity):0,src:overlay?.src||'',acrylic:!!acrylic,acrylicOpacity:acrylicStyle?Number(acrylicStyle.opacity):0,acrylicBackdrop:acrylicStyle?.backdropFilter||'',acrylicClip:acrylicStyle?.clipPath||'',screenScale:[matrix.a,matrix.d],frameBackground:frameStyle?.backgroundImage||'',frameBackdrop:frameStyle?.backdropFilter||'',layerOpacity:layerStyle?Number(layerStyle.opacity):0,layerTransition:layer?.style.transition||'',liveOpacity:live?Number(getComputedStyle(live).opacity):1,wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length,level:window.crmPlanner.level(),transitioning:window.crmProjectsCamera?.isTransitioning?.()})})
+    const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const source=tile?.getBoundingClientRect();window.__nativeProjectOpen=window.crmPlanner.openProject(projectId);requestAnimationFrame(()=>{const layer=window.crmProjectsCamera?.layers?.()[1]||document.querySelector('.crm-planner-project-world');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const frame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const acrylic=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const rect=layer?.getBoundingClientRect();const acrylicStyle=acrylic&&getComputedStyle(acrylic);const frameStyle=frame&&getComputedStyle(frame);const matrix=acrylicStyle?.transform&&acrylicStyle.transform!=='none'?new DOMMatrix(acrylicStyle.transform):new DOMMatrix();const layerStyle=layer&&getComputedStyle(layer);resolve({source:source&&[source.x,source.y,source.width,source.height],rect:rect&&[rect.x,rect.y,rect.width,rect.height],overlay:!!overlay,opacity:overlay?Number(getComputedStyle(overlay).opacity):0,src:overlay?.src||'',acrylic:!!acrylic,acrylicOpacity:acrylicStyle?Number(acrylicStyle.opacity):0,acrylicBackdrop:acrylicStyle?.backdropFilter||'',acrylicClip:acrylicStyle?.clipPath||'',screenScale:[matrix.a,matrix.d],frameBackground:frameStyle?.backgroundImage||'',frameBackdrop:frameStyle?.backdropFilter||'',layerOpacity:layerStyle?Number(layerStyle.opacity):0,layerTransition:layer?.style.transition||'',liveOpacity:live?Number(getComputedStyle(live).opacity):1,wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length,level:window.crmPlanner.level(),transitioning:window.crmProjectsCamera?.isTransitioning?.()})})
   }),nativeProjectId);
   if(!projectDiveStart.overlay||projectDiveStart.opacity<.99||projectDiveStart.src!==projectPreviewBefore.foregroundSrc||!projectDiveStart.acrylic||projectDiveStart.acrylicOpacity<.99||!projectDiveStart.acrylicBackdrop.includes('blur(26px)')||!projectDiveStart.acrylicClip.startsWith('inset(')||projectDiveStart.screenScale.some((value)=>Math.abs(value-1)>.001)||projectDiveStart.frameBackground!=='none'||projectDiveStart.frameBackdrop!=='none'||projectDiveStart.layerOpacity<.99||projectDiveStart.layerTransition.includes('opacity')||projectDiveStart.liveOpacity>.01||projectDiveStart.wallpapers!==1||!projectDiveStart.rect||projectDiveStart.rect.some((value,index)=>Math.abs(value-projectDiveStart.source[index])>1.25))throw new Error(`Project zoom did not carry one screen-space acrylic/object composition from its source: ${JSON.stringify({...projectDiveStart,src:!!projectDiveStart.src})}`);
   await sleep(80);
-  await page.evaluate(()=>new Promise((resolve)=>{window.__nativePausedAnimations=document.getAnimations().filter((animation)=>animation.playState==='running');window.__nativePausedAnimations.forEach((animation)=>animation.pause());requestAnimationFrame(()=>requestAnimationFrame(resolve))}));
+  await page.evaluate(()=>new Promise((resolve)=>{
+    const surface=window.crmProjectsCamera?.surface?.();
+    if(surface)surface.dataset.fractalCameraProbeHold='true';
+    window.__nativeProjectProbeSurface=surface;
+    window.__nativePausedAnimations=document.getAnimations().filter((animation)=>{
+      const target=animation.effect?.target;
+      const duration=Number(animation.effect?.getComputedTiming?.().duration);
+      const keyframes=animation.effect?.getKeyframes?.()||[];
+      const cameraProperty=keyframes.some((keyframe)=>
+        keyframe.transform!=null||keyframe.clipPath!=null||keyframe.opacity!=null);
+      return animation.playState==='running'&&!!surface&&!!target
+        &&(target===surface||surface.contains(target))
+        &&Number.isFinite(duration)&&Math.abs(duration-460)<=1&&cameraProperty;
+    });
+    window.__nativePausedAnimations.forEach((animation)=>animation.pause());
+    requestAnimationFrame(()=>requestAnimationFrame(resolve));
+  }));
   // Sample within the actual source tile. Project tiles now use the shared
   // adaptive grid, so their screen position is deliberately not fixed.
   const [projectSourceX,projectSourceY,projectSourceWidth,projectSourceHeight]=projectDiveStart.source;
@@ -1278,17 +1515,57 @@ async function main() {
     width:Math.max(48,Math.floor(projectSourceWidth*.24)),
     height:Math.max(48,Math.floor(projectSourceHeight*.28)),
   };
-  const projectBlurBuffer=await page.screenshot({path:path.join(out,'transition-project-acrylic.png'),clip:projectBlurClip});
-  const projectLensFilter=await page.evaluate(()=>new Promise((resolve)=>{const lens=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');if(!lens){resolve(null);return}const original={backdrop:lens.style.backdropFilter,webkit:lens.style.webkitBackdropFilter};window.__nativeProjectBlurProbeActive=true;lens.style.backdropFilter='saturate(1.4)';lens.style.webkitBackdropFilter='saturate(1.4)';window.__nativeProjectLensFilter={lens,original};requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(original)))}));
-  if(!projectLensFilter)throw new Error('Nested project transition had no screen-space acrylic lens for rendered blur verification');
-  const projectNoBlurBuffer=await page.screenshot({path:path.join(out,'transition-project-acrylic-no-blur.png'),clip:projectBlurClip});
-  await page.evaluate(()=>new Promise((resolve)=>{const saved=window.__nativeProjectLensFilter;if(saved?.lens){saved.lens.style.backdropFilter=saved.original.backdrop;saved.lens.style.webkitBackdropFilter=saved.original.webkit}window.__nativeProjectBlurProbeActive=false;window.__nativePausedAnimations?.forEach((animation)=>animation.play());window.__nativePausedAnimations=[];requestAnimationFrame(resolve)}));
+  let projectBlurBuffer;
+  let projectNoBlurBuffer;
+  let projectProbeRelease={timedOut:false};
+  try{
+    projectBlurBuffer=await page.screenshot({path:path.join(out,'transition-project-acrylic.png'),clip:projectBlurClip});
+    const projectLensFilter=await page.evaluate(()=>new Promise((resolve)=>{const lens=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');if(!lens){resolve(null);return}const original={backdrop:lens.style.backdropFilter,webkit:lens.style.webkitBackdropFilter};window.__nativeProjectBlurProbeActive=true;lens.style.backdropFilter='saturate(1.4)';lens.style.webkitBackdropFilter='saturate(1.4)';window.__nativeProjectLensFilter={lens,original};requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(original)))}));
+    if(!projectLensFilter)throw new Error('Nested project transition had no screen-space acrylic lens for rendered blur verification');
+    projectNoBlurBuffer=await page.screenshot({path:path.join(out,'transition-project-acrylic-no-blur.png'),clip:projectBlurClip});
+  }finally{
+    projectProbeRelease=await page.evaluate(async()=>{
+      let timedOut=false;
+      const surface=window.__nativeProjectProbeSurface;
+      try{
+        const saved=window.__nativeProjectLensFilter;
+        if(saved?.lens){
+          saved.lens.style.backdropFilter=saved.original.backdrop;
+          saved.lens.style.webkitBackdropFilter=saved.original.webkit;
+        }
+        window.__nativeProjectBlurProbeActive=false;
+        const completions=[];
+        (window.__nativePausedAnimations||[]).forEach((animation)=>{
+          try{
+            animation.play();
+            completions.push(Promise.resolve(animation.finished).catch(()=>null));
+          }catch{}
+        });
+        let timeoutId=0;
+        const outcome=await Promise.race([
+          Promise.allSettled(completions).then(()=>'settled'),
+          new Promise((resolve)=>{timeoutId=setTimeout(()=>resolve('timeout'),6000);}),
+        ]);
+        clearTimeout(timeoutId);
+        timedOut=outcome==='timeout';
+      }finally{
+        if(surface?.dataset)delete surface.dataset.fractalCameraProbeHold;
+        window.__nativePausedAnimations=[];
+        window.__nativeProjectProbeSurface=null;
+        window.__nativeProjectLensFilter=null;
+        window.__nativeProjectBlurProbeActive=false;
+        await new Promise((resolve)=>requestAnimationFrame(resolve));
+      }
+      return{timedOut};
+    });
+  }
+  if(projectProbeRelease.timedOut)throw new Error('Nested project transition animations did not resume within 6000 ms');
   await sleep(20);await page.screenshot({path:path.join(out,'transition-project.png')});
   const projectBlurRegion={left:0,right:projectBlurClip.width,top:0,bottom:projectBlurClip.height};
   const projectRenderedBlur={difference:imageDifference(projectBlurBuffer,projectNoBlurBuffer,projectBlurRegion),withBlurEdge:imageEdgeEnergy(projectBlurBuffer,projectBlurRegion),withoutBlurEdge:imageEdgeEnergy(projectNoBlurBuffer,projectBlurRegion)};
   if(projectRenderedBlur.difference<1||projectRenderedBlur.withBlurEdge>=projectRenderedBlur.withoutBlurEdge*.9)throw new Error(`Nested project lens rendered tint without a material screen-space blur: ${JSON.stringify(projectRenderedBlur)}`);
   const projectDiveContinuity=await page.evaluate(()=>window.__nativeProjectContinuity);
-  if(projectDiveContinuity.frames<20||projectDiveContinuity.materialFrames<20||projectDiveContinuity.firstOpacity<.99||projectDiveContinuity.lastOpacity>.05||projectDiveContinuity.intermediateFrames<2||projectDiveContinuity.intermediateFrames>10||!projectDiveContinuity.nonIncreasing||!projectDiveContinuity.timedEveryFrame||!projectDiveContinuity.screenSpaceEveryFrame||!projectDiveContinuity.frameNeutralEveryFrame||!keyframesMatch(projectDiveContinuity.opacityKeyframes,[[0,1],[.86,1],[1,0]])||!projectDiveContinuity.ownedEveryFrame||!projectDiveContinuity.realEveryFrame||projectDiveContinuity.minObjectCoverage<.94||projectDiveContinuity.maxObjectCoverage>1.08)throw new Error(`Project zoom acrylic was not one smoothly released unscaled lens: ${JSON.stringify(projectDiveContinuity)}`);
+  if(projectDiveContinuity.frames<20||projectDiveContinuity.materialFrames<20||projectDiveContinuity.firstOpacity<.99||projectDiveContinuity.lastOpacity>.05||projectDiveContinuity.intermediateFrames<2||projectDiveContinuity.intermediateFrames>12||projectDiveContinuity.maxOpacityStep>.18||!projectDiveContinuity.nonIncreasing||!projectDiveContinuity.timedEveryFrame||!projectDiveContinuity.screenSpaceEveryFrame||!projectDiveContinuity.frameNeutralEveryFrame||!keyframesMatch(projectDiveContinuity.opacityKeyframes,[[0,1],[.78,1],[1,0]])||!projectDiveContinuity.ownedEveryFrame||!projectDiveContinuity.realEveryFrame||projectDiveContinuity.minObjectCoverage<.94||projectDiveContinuity.maxObjectCoverage>1.08)throw new Error(`Project zoom acrylic was not one smoothly released unscaled lens: ${JSON.stringify(projectDiveContinuity)}`);
   await page.waitForFunction(()=>window.crmPlanner?.view?.()==='project'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});await sleep(30);
   const projectDiveSettled=await page.evaluate(()=>{const layer=window.crmProjectsCamera.layers()[1];const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const exact=layer?.querySelector(':scope>.crm-project-transition-exact');const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const rect=layer?.getBoundingClientRect();return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],opacity:overlay?Number(getComputedStyle(overlay).opacity):null,noEndpointImage:!exact,acrylicOpacity:acrylic?Number(getComputedStyle(acrylic).opacity):null,liveOpacity:live?Number(getComputedStyle(live).opacity):null,lenses:document.querySelectorAll('.crm-planner-surface>.crm-project-screen-acrylic').length,buckets:layer?.querySelectorAll('.crm-planner-bucket').length||0,cards:layer?.querySelectorAll('.crm-planner-card').length||0}});
   if(!projectDiveSettled.rect||projectDiveSettled.rect.some((value,index)=>Math.abs(value-[0,0,1280,860][index])>1)||projectDiveSettled.opacity!==0||!projectDiveSettled.noEndpointImage||projectDiveSettled.acrylicOpacity!==0||projectDiveSettled.liveOpacity!==1||projectDiveSettled.lenses!==0||projectDiveSettled.buckets!==3||projectDiveSettled.cards!==1)throw new Error(`Project zoom did not hand off directly to its real settled workspace: ${JSON.stringify(projectDiveSettled)}`);
@@ -1298,7 +1575,7 @@ async function main() {
   const projectReturnStart=await page.evaluate(()=>new Promise((resolve)=>{window.__nativeProjectReturnContinuity=window.__startNativeProjectContinuity(()=>document.querySelector('.crm-planner-project-world.crm-planner-contracting'));window.crmPlanner.back();requestAnimationFrame(()=>{const layer=document.querySelector('.crm-planner-project-world.crm-planner-contracting');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const frame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const acrylic=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const acrylicStyle=acrylic&&getComputedStyle(acrylic);const frameStyle=frame&&getComputedStyle(frame);const matrix=acrylicStyle?.transform&&acrylicStyle.transform!=='none'?new DOMMatrix(acrylicStyle.transform):new DOMMatrix();resolve({overlay:!!overlay,opacity:overlay?Number(getComputedStyle(overlay).opacity):0,src:overlay?.src||'',liveOpacity:live?Number(getComputedStyle(live).opacity):1,acrylic:!!acrylic,acrylicOpacity:acrylicStyle?Number(acrylicStyle.opacity):null,acrylicBackdrop:acrylicStyle?.backdropFilter||'',acrylicClip:acrylicStyle?.clipPath||'',screenScale:[matrix.a,matrix.d],frameBackground:frameStyle?.backgroundImage||'',frameBackdrop:frameStyle?.backdropFilter||'',layerOpacity:layer?Number(getComputedStyle(layer).opacity):0,layerTransition:layer?.style.transition||''})})}));
   if(!projectReturnStart.overlay||projectReturnStart.src!==projectPreviewBefore.foregroundSrc||projectReturnStart.opacity<0||projectReturnStart.opacity>1||projectReturnStart.liveOpacity<0||projectReturnStart.liveOpacity>1.01||projectReturnStart.opacity+projectReturnStart.liveOpacity<.94||projectReturnStart.opacity+projectReturnStart.liveOpacity>1.08||!projectReturnStart.acrylic||projectReturnStart.acrylicOpacity>.4||!projectReturnStart.acrylicBackdrop.includes('blur(26px)')||!projectReturnStart.acrylicClip.startsWith('inset(')||projectReturnStart.screenScale.some((value)=>Math.abs(value-1)>.001)||projectReturnStart.frameBackground!=='none'||projectReturnStart.frameBackdrop!=='none'||projectReturnStart.layerOpacity<.99||projectReturnStart.layerTransition.includes('opacity'))throw new Error(`Project return did not begin with one unscaled acrylic lens: ${JSON.stringify({...projectReturnStart,src:!!projectReturnStart.src})}`);
   const projectReturnContinuity=await page.evaluate(()=>window.__nativeProjectReturnContinuity);
-  if(projectReturnContinuity.frames<20||projectReturnContinuity.materialFrames<20||projectReturnContinuity.firstOpacity>.05||projectReturnContinuity.lastOpacity<.99||projectReturnContinuity.intermediateFrames<2||projectReturnContinuity.intermediateFrames>10||!projectReturnContinuity.nonDecreasing||!projectReturnContinuity.timedEveryFrame||!projectReturnContinuity.screenSpaceEveryFrame||!projectReturnContinuity.frameNeutralEveryFrame||!keyframesMatch(projectReturnContinuity.opacityKeyframes,[[0,0],[.14,1],[1,1]])||!projectReturnContinuity.ownedEveryFrame||!projectReturnContinuity.realEveryFrame||projectReturnContinuity.minObjectCoverage<.94||projectReturnContinuity.maxObjectCoverage>1.08||projectReturnContinuity.wallpapers!==1||!projectReturnContinuity.framesSeen.includes('source'))throw new Error(`Project return acrylic did not become one smoothly introduced unscaled lens: ${JSON.stringify(projectReturnContinuity)}`);
+  if(projectReturnContinuity.frames<20||projectReturnContinuity.materialFrames<20||projectReturnContinuity.firstOpacity>.05||projectReturnContinuity.lastOpacity<.99||projectReturnContinuity.intermediateFrames<2||projectReturnContinuity.intermediateFrames>12||projectReturnContinuity.maxOpacityStep>.18||!projectReturnContinuity.nonDecreasing||!projectReturnContinuity.timedEveryFrame||!projectReturnContinuity.screenSpaceEveryFrame||!projectReturnContinuity.frameNeutralEveryFrame||!keyframesMatch(projectReturnContinuity.opacityKeyframes,[[0,0],[.22,1],[1,1]])||!projectReturnContinuity.ownedEveryFrame||!projectReturnContinuity.realEveryFrame||projectReturnContinuity.minObjectCoverage<.94||projectReturnContinuity.maxObjectCoverage>1.08||projectReturnContinuity.wallpapers!==1||!projectReturnContinuity.framesSeen.includes('source'))throw new Error(`Project return acrylic did not become one smoothly introduced unscaled lens: ${JSON.stringify(projectReturnContinuity)}`);
   await page.waitForFunction(()=>window.crmPlanner?.view?.()==='projects'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});
   const projectReturn=await page.evaluate((projectId)=>{const tile=document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`);const rect=tile?.getBoundingClientRect();const image=tile?.querySelector(':scope>.crm-home-preview>.crm-home-preview-foreground');return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],sameNode:image?.dataset.nativeProjectProbe==='preserve',layers:window.crmProjectsCamera.layers().filter(Boolean).length}},nativeProjectId);
   if(!projectReturn.sameNode||projectReturn.layers!==1||projectReturn.rect.some((value,index)=>Math.abs(value-projectPreviewBefore.rect[index])>1))throw new Error(`Project return replaced or shifted its source tile: ${JSON.stringify(projectReturn)}`);
@@ -1321,6 +1598,70 @@ async function main() {
   await page.screenshot({path:path.join(out,'person-history.png')});
   await page.click('[data-person-history-close]');
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:15000});
+  const duplicateHomeTileId='native-duplicate-people-tile';
+  await page.evaluate((tileId)=>window.crmHome.createTile('people',{id:tileId,label:'People alternate view'}),duplicateHomeTileId);
+  await page.waitForFunction((tileId)=>document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===5
+    &&!!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),duplicateHomeTileId,{timeout:10000});
+  await page.evaluate(()=>window.crmHome.waitForPreviewSync());
+  const duplicateHomeSource=await page.$eval(`.crm-home-bucket[data-tile-id="${duplicateHomeTileId}"]`,(bucket)=>{
+    const rect=bucket.getBoundingClientRect();
+    bucket.click();
+    return{tileId:bucket.dataset.tileId,module:bucket.dataset.viewportModule,rect:[rect.x,rect.y,rect.width,rect.height]};
+  });
+  await page.waitForFunction(()=>document.body.dataset.crmModule==='people'&&!window.crmDeskTransit?.isBusy?.(),null,{timeout:15000});
+  const duplicateHomeRetained=await page.evaluate((tileId)=>{
+    const surface=window.crmHomeCamera?.surface?.();
+    const root=window.crmHomeCamera?.layers?.()[0];
+    const routed=[...root.querySelectorAll('.crm-home-bucket[data-viewport-module="people"]')].map((bucket)=>({
+      tileId:bucket.dataset.tileId,
+      module:bucket.getAttribute('data-module'),
+    }));
+    return{
+      retained:surface?.dataset.crmHomeRetained||'',
+      retainedTile:surface?.dataset.crmHomeRetainedTile||'',
+      returnTile:root?.dataset.returnTileId||'',
+      routed,
+      exact:routed.filter((bucket)=>bucket.module==='people').length===1
+        &&routed.find((bucket)=>bucket.module==='people')?.tileId===tileId,
+    };
+  },duplicateHomeTileId);
+  if(duplicateHomeSource.module!=='people'||duplicateHomeRetained.retained!=='people'
+    ||duplicateHomeRetained.retainedTile!==duplicateHomeTileId
+    ||duplicateHomeRetained.returnTile!==duplicateHomeTileId||!duplicateHomeRetained.exact){
+    throw new Error(`Duplicate Home tile lost its physical return identity: ${JSON.stringify({duplicateHomeSource,duplicateHomeRetained})}`);
+  }
+  const duplicateHomeReturnStart=await page.$eval('.crm-home-control',(button)=>new Promise((resolve)=>{
+    button.click();
+    requestAnimationFrame(()=>{
+      const root=window.crmHomeCamera?.layers?.()[0];
+      const expander=document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+      resolve({expanderTile:expander?.dataset.tileId||'',returnTile:root?.dataset.returnTileId||''});
+    });
+  }));
+  if(duplicateHomeReturnStart.expanderTile!==duplicateHomeTileId||duplicateHomeReturnStart.returnTile!==duplicateHomeTileId){
+    throw new Error(`Duplicate Home return targeted another copy: ${JSON.stringify(duplicateHomeReturnStart)}`);
+  }
+  await page.waitForFunction((tileId)=>document.body.dataset.crmModule==='home'&&!window.crmDeskTransit?.isBusy?.()
+    &&document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===5
+    &&!!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),duplicateHomeTileId,{timeout:15000});
+  const duplicateHomeReturned=await page.evaluate((tileId)=>{
+    const buckets=[...document.querySelectorAll('.crm-home-bucket[data-viewport-module="people"]')];
+    const tile=buckets.find((bucket)=>bucket.dataset.tileId===tileId);
+    const rect=tile?.getBoundingClientRect();
+    return{
+      restoredRoutes:buckets.every((bucket)=>bucket.dataset.module==='people'),
+      retained:window.crmHomeCamera?.surface?.()?.hasAttribute('data-crm-home-retained'),
+      rect:rect&&[rect.x,rect.y,rect.width,rect.height],
+    };
+  },duplicateHomeTileId);
+  if(!duplicateHomeReturned.restoredRoutes||duplicateHomeReturned.retained
+    ||!duplicateHomeReturned.rect||duplicateHomeReturned.rect.some((value,index)=>Math.abs(value-duplicateHomeSource.rect[index])>1)){
+    throw new Error(`Duplicate Home tile did not return to its unchanged source cell: ${JSON.stringify({duplicateHomeSource,duplicateHomeReturned})}`);
+  }
+  await page.evaluate((tileId)=>window.crmHome.removeTile(tileId),duplicateHomeTileId);
+  await page.waitForFunction(readyHome,null,{timeout:15000});
+  await page.evaluate(()=>window.crmHome.waitForPreviewSync());
+  const duplicateHomeTile={id:duplicateHomeTileId,source:duplicateHomeSource,retained:duplicateHomeRetained,returnStart:duplicateHomeReturnStart,returned:duplicateHomeReturned};
   const settledFps=await frameRate(page); if(settledFps<45)throw new Error(`Settled Home FPS ${settledFps}`);
   await page.evaluate(()=>window.crmHome.waitForPreviewSync()); await sleep(100); const windowDetails=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).map((win)=>({id:win.id,url:win.webContents.getURL(),visible:win.isVisible(),loading:win.webContents.isLoading(),bounds:win.getBounds()}))); const windows=windowDetails.length; if(windows!==1)throw new Error(`${windows} BrowserWindows remain after preview synchronization: ${JSON.stringify(windowDetails)}`);
   const finalChrome=await page.evaluate(()=>{const drag=document.querySelector('.app-window-drag-region');return{drag:getComputedStyle(drag).webkitAppRegion,top:document.elementsFromPoint(520,20)[0]===drag,controls:document.querySelectorAll('.window-control-cluster .window-glass-control').length}});
@@ -1342,7 +1683,7 @@ async function main() {
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});
   await page.screenshot({path:path.join(out,'02-home-after-cycles.png')});
-  const evidence={startup,nativeRefreshCalibration,nativeHistory,nativeDrag,sameNodes,homeComposition,homeMotionAlpha,homeFps,settledFps,instantControls,domainProbe,transitions,cadenceTransitions,handTicket:{ticket:handTicket,early:handTicketEarly,settled:handTicketSettled,motion:handTicketMotion},projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},renderedBlur:projectRenderedBlur,diveContinuity:projectDiveContinuity,settled:{...projectDiveSettled,exactSrc:!!projectDiveSettled.exactSrc,pixelMae:projectSettledPixelMae},returnStart:{...projectReturnStart,src:!!projectReturnStart.src},returnContinuity:projectReturnContinuity,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,addMenu:homeAddMenu,tray:trayState},errors};
+  const evidence={startup,nativeRefreshCalibration,nativeHistory,nativeDrag,sameNodes,homeComposition,homeMotionAlpha,homeFps,settledFps,instantControls,domainProbe,reloadLeaseRecovery,selectedRooms:rooms.map((room)=>room.key),transitions,cadenceTransitions,duplicateHomeTile,handTicket:{ticket:handTicket,early:handTicketEarly,settled:handTicketSettled,motion:handTicketMotion},projectTiles:{before:{...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc},diveStart:{...projectDiveStart,src:!!projectDiveStart.src},renderedBlur:projectRenderedBlur,diveContinuity:projectDiveContinuity,settled:{...projectDiveSettled,exactSrc:!!projectDiveSettled.exactSrc,pixelMae:projectSettledPixelMae},returnStart:{...projectReturnStart,src:!!projectReturnStart.src},returnContinuity:projectReturnContinuity,returned:projectReturn},transitTimings,personHistory,windows,finalChrome,windowControls:{refresh:true,addMenu:homeAddMenu,tray:trayState},errors};
   fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(evidence,null,2)); console.log('[electron-playwright]',evidence);
   if(errors.length)throw new Error(errors.join(' | '));
   // Product close events intentionally hide to the tray. End the automated

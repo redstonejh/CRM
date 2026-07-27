@@ -192,11 +192,25 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
   isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
   setInteraction: (() => {
     let releaseTimer = null;
-    return (active) => {
+    let publishedActive = false;
+    const sources = new Set();
+    const publish = (active) => {
+      const next = !!active;
+      if (publishedActive === next) return;
+      publishedActive = next;
+      ipcRenderer.send('home-preview:interaction', next);
+    };
+    return (active, source = 'default') => {
+      const key = String(source || 'default');
       clearTimeout(releaseTimer);
       releaseTimer = null;
-      if (active) ipcRenderer.send('home-preview:interaction', true);
-      else releaseTimer = setTimeout(() => ipcRenderer.send('home-preview:interaction', false), 140);
+      if (active) {
+        sources.add(key);
+        publish(true);
+        return;
+      }
+      sources.delete(key);
+      if (!sources.size) releaseTimer = setTimeout(() => publish(false), 140);
     };
   })(),
   list: () => ipcRenderer.invoke('home-preview:list'),

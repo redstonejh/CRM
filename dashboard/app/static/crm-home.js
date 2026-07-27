@@ -102,6 +102,46 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     });
   };
   let homeTileRecords = readHomeTiles();
+  // A workspace may be represented by several independently placed Home
+  // tiles. Remember the exact physical tile that opened it: desk transit still
+  // resolves its return lid through data-module, while data-viewport-module
+  // remains the stable semantic workspace identity for every duplicate.
+  const returnTileByModule = new Map();
+  const moduleKeyOf = (node) => String(node?.dataset?.viewportModule || node?.dataset?.module || "");
+  const returnTileFor = (moduleKey) => {
+    const key = String(moduleKey || "");
+    const remembered = returnTileByModule.get(key);
+    const tile = homeTileRecords.find((candidate) => candidate.key === key && candidate.tile.id === remembered)
+      || homeTileRecords.find((candidate) => candidate.key === key)
+      || null;
+    if (tile) returnTileByModule.set(key, tile.tile.id);
+    else returnTileByModule.delete(key);
+    return tile;
+  };
+  const routeModuleReturnTo = (root, moduleKey, tileId) => {
+    const key = String(moduleKey || "");
+    const buckets = [...(root?.querySelectorAll?.(":scope > .crm-home-grid > .crm-home-bucket[data-viewport-module]") || [])]
+      .filter((bucket) => moduleKeyOf(bucket) === key);
+    const target = buckets.find((bucket) => bucket.dataset.tileId === String(tileId || "")) || buckets[0] || null;
+    buckets.forEach((bucket) => {
+      if (bucket === target) bucket.dataset.module = key;
+      else bucket.removeAttribute("data-module");
+    });
+    if (target) {
+      returnTileByModule.set(key, target.dataset.tileId);
+      root.dataset.returnModule = key;
+      root.dataset.returnTileId = target.dataset.tileId;
+    }
+    return target;
+  };
+  const restoreModuleRouting = (root) => {
+    [...(root?.querySelectorAll?.(":scope > .crm-home-grid > .crm-home-bucket[data-viewport-module]") || [])]
+      .forEach((bucket) => { bucket.dataset.module = moduleKeyOf(bucket); });
+    if (root) {
+      delete root.dataset.returnModule;
+      delete root.dataset.returnTileId;
+    }
+  };
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
@@ -137,14 +177,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     return clone(tile);
   };
   const removeHomeTile = (tileId) => {
-    const next = homeTileRecords.filter((tile) => tile.tile.id !== String(tileId || ""));
+    const removedId = String(tileId || "");
+    const removed = homeTileRecords.find((tile) => tile.tile.id === removedId);
+    const next = homeTileRecords.filter((tile) => tile.tile.id !== removedId);
     if (next.length === homeTileRecords.length) return false;
     homeTileRecords = next.map((tile, rank) => normalizeHomeTile(tile, rank));
+    if (removed && returnTileByModule.get(removed.key) === removedId) returnTileByModule.delete(removed.key);
     writeHomeTiles(); rebuildHomeTiles();
     return true;
   };
   const resetHomeTiles = () => {
     homeTileRecords = defaultHomeTiles();
+    returnTileByModule.clear();
     writeHomeTiles(); rebuildHomeTiles();
     return clone(homeTileRecords);
   };
@@ -169,6 +213,23 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface{position:fixed;inset:0;z-index:820;pointer-events:none;overflow:hidden}
       .crm-home-surface[hidden]{display:none}.crm-home-level{position:absolute;inset:0;transform-origin:0 0;
         isolation:isolate;contain:paint;will-change:transform;backface-visibility:hidden}
+      /* Keep exactly one decoded Home camera texture resident while another
+         workspace is active. The semantic [hidden] state and inert z-order are
+         preserved, but avoiding display:none prevents Windows/Viz from cold-
+         allocating Home's render surface during the first reverse frame. */
+      .crm-home-surface[data-crm-home-retained][hidden]{
+        display:block!important;z-index:0!important;
+        pointer-events:none!important;visibility:visible!important}
+      .crm-home-surface[data-crm-home-retained][hidden] .crm-home-level>:is(.crm-home-grid,.crm-home-title-layer,.crm-home-priority-hand){
+        visibility:hidden!important;pointer-events:none!important}
+      .crm-home-surface[data-crm-home-retained][hidden] .crm-home-level>.crm-home-motion-snapshot{
+        display:none!important}
+      .crm-home-surface[data-crm-home-retained][hidden] .crm-home-level>.crm-home-motion-variant{
+        display:none!important}
+      .crm-home-surface[data-crm-home-retained][hidden] .crm-home-level>.crm-home-motion-variant.is-active-motion-variant{
+        display:block!important;visibility:visible!important;opacity:.001!important;
+        transform:translateZ(0)!important;will-change:transform,opacity;
+        pointer-events:none!important}
       /* Inactive rooms that finished their idle baseline stay rasterized behind
          Home instead of returning to display:none and paying their first paint
          during a camera move. The attribute is semantic-only: [hidden] remains
@@ -183,7 +244,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-motion-variant.crm-home-preview-image{display:none;position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:fill;
         pointer-events:none;user-select:none;backface-visibility:hidden}
       .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:.001;transform:translateZ(0)}
-      .crm-home-surface:is(.crm-home-camera-moving,.crm-home-camera-handoff) .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:1}
+      .crm-home-surface.crm-home-camera-moving.crm-home-bitmap-motion .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant,
+      .crm-home-surface.crm-home-camera-handoff .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:1}
       /* During camera motion the decoded cut-out raster is the sole Home
          owner. Keeping the live grid/hand/title tree beneath that identical
          image still asks Chromium to composite four backdrop surfaces on its
@@ -205,7 +267,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
          variant carries every other Home object with the selected tile cut
          transparent and remains the covered owner while Home prepares for the
          endpoint exchange. */
-      .crm-home-surface.crm-home-camera-moving .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket:not(.is-camera-target)>.crm-home-preview{
+      .crm-home-surface.crm-home-camera-moving.crm-home-bitmap-motion .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-grid>.crm-home-bucket:not(.is-camera-target)>.crm-home-preview{
         visibility:hidden}
       /* The real selected tile and the full-size lid trade opacity while their
          geometry is identical. Its acrylic, preview and shadow therefore have
@@ -358,11 +420,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const mountHost = (host, preview, exact = false, exactOnly = false) => {
     if (!host || !isRenderablePreview(preview)) return false;
     const stamp = String(preview.capturedAt || 0);
+    const previewState = isCurrentPreview(preview) ? "ready" : "stale";
     const mountedForeground = host.querySelector(":scope > .crm-home-preview-foreground");
     const mountedExact = host.querySelector(":scope > .crm-home-preview-exact");
     if (host.dataset.capturedAt === stamp
       && (exactOnly ? !mountedForeground : !!mountedForeground)
-      && (!exact || !!mountedExact)) return true;
+      && (!exact || !!mountedExact)
+      && host.dataset.previewVersion === String(preview.version || "")
+      && host.dataset.previewState === previewState) return true;
     ensurePreviewState(host);
     host.style.removeProperty("--far-shift-y");
     let foreground = host.querySelector(":scope > .crm-home-preview-foreground");
@@ -384,8 +449,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (!full) { full = imageNode("crm-home-preview-exact", preview.exactSrc, "sync"); host.appendChild(full); }
       else if (full.src !== preview.exactSrc) full.src = preview.exactSrc;
     }
-    host.dataset.previewState = isCurrentPreview(preview) ? "ready" : "stale";
-    host.dataset.previewVersion = preview.version;
+    host.dataset.previewState = previewState;
+    host.dataset.previewVersion = String(preview.version || "");
     host.dataset.capturedAt = stamp;
     host.dataset.previewWidth = String(preview.width || 0);
     host.dataset.previewHeight = String(preview.height || 0);
@@ -393,7 +458,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     return true;
   };
   const mountPreview = (key) => {
-    const hosts = [...(camera?.layers?.()[0]?.querySelectorAll(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`) || [])];
+    const hosts = [...(camera?.layers?.()[0]?.querySelectorAll(`.crm-home-bucket[data-viewport-module="${cssValue(key)}"] .crm-home-preview`) || [])];
     return hosts.reduce((mounted, host) => mountHost(host, previews.get(key), false) || mounted, false);
   };
   const mountAll = () => MODULES.forEach(({ key }) => mountPreview(key));
@@ -407,7 +472,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     bucket.classList.remove("is-preview-hovered");
     bucket.closest(".crm-home-level")?.querySelector(`:scope > .crm-home-title-layer > .crm-home-title-slot[data-tile-id="${cssValue(bucket.dataset.tileId)}"]`)?.classList.remove("is-deemphasized");
   };
-  const previewCommitBlocked = () => !!camera?.isTransitioning?.()
+  const previewCommitBlocked = () => !camera?.isActive?.()
+    || !!camera?.isTransitioning?.()
     || !!camera?.surface?.()?.classList.contains("crm-home-camera-moving")
     || !!camera?.surface?.()?.classList.contains("crm-home-camera-handoff")
     || !!window.crmDeskTransit?.isBusy?.();
@@ -434,7 +500,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const flushPendingPreviews = () => {
     clearTimeout(previewCommitTimer); previewCommitTimer = 0;
     if (previewCommitBlocked()) {
-      previewCommitTimer = setTimeout(flushPendingPreviews, 48);
+      // Inactive Home deliberately retains its last decoded composition for
+      // the return camera. Do not poll from a live room; activation/settlement
+      // explicitly flushes the queued replacement.
+      if (camera?.isActive?.()) previewCommitTimer = setTimeout(flushPendingPreviews, 48);
       return;
     }
     pendingPreviews.forEach((entry, key) => {
@@ -478,7 +547,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     return JSON.stringify({
       viewport: [innerWidth, innerHeight, devicePixelRatio],
       grid: rectOf(grid),
-      buckets: [...(grid?.querySelectorAll(":scope > .crm-home-bucket") || [])].map((bucket) => [bucket.dataset.tileId || bucket.dataset.module, bucket.dataset.module, ...rectOf(bucket)]),
+      buckets: [...(grid?.querySelectorAll(":scope > .crm-home-bucket") || [])].map((bucket) => [bucket.dataset.tileId || moduleKeyOf(bucket), moduleKeyOf(bucket), ...rectOf(bucket)]),
       hand: rectOf(hand),
       cards: [...(hand?.querySelectorAll(":scope > .crm-home-hand-card") || [])].map((card) => [
         card.dataset.priorityId || "", ...rectOf(card), getComputedStyle(card).transform,
@@ -506,7 +575,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const signatureMatches = () => !!motionSnapshot?.layoutSignature
       && motionSnapshot.layoutSignature === motionLayoutSignature(root);
     const tileKeys = new Set([...(root.querySelectorAll(":scope > .crm-home-grid > .crm-home-bucket") || [])]
-      .map((bucket) => bucket.dataset.tileId || bucket.dataset.module)
+      .map((bucket) => bucket.dataset.tileId || moduleKeyOf(bucket))
       .filter(Boolean));
     const variants = Object.entries(motionSnapshot?.variants || {}).filter(([key, src]) => tileKeys.has(key) && !!src);
     if (!motionSnapshot?.src || variants.length !== tileKeys.size || !signatureMatches()) {
@@ -532,7 +601,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       // Keep the legacy module label for diagnostics and motion-contract
       // consumers while selecting duplicate viewport tiles by unique id.
       const bucket = root.querySelector(`:scope > .crm-home-grid > .crm-home-bucket[data-tile-id="${cssValue(key)}"]`);
-      variant.dataset.motionVariant = bucket?.dataset?.module || key;
+      variant.dataset.motionVariant = moduleKeyOf(bucket) || key;
       if (variant.dataset.motionCapturedAt !== stamp) {
         variant.dataset.motionCapturedAt = stamp;
         variant.src = src;
@@ -540,12 +609,28 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       return variant;
     });
     const images = [image, ...variantImages];
+    const selectedReady = () => {
+      const selected = root.querySelector(":scope > .crm-home-motion-variant.is-active-motion-variant");
+      return !!root.dataset.motionVariant
+        && selected?.dataset?.motionCapturedAt === stamp
+        && selected.complete
+        && selected.naturalWidth > 0;
+    };
     const ready = () => {
-      if (String(motionSnapshot?.capturedAt || "") !== stamp || images.some((node) => !node.complete || node.naturalWidth <= 0) || !signatureMatches()) {
-        root.dataset.motionSnapshotReady = "false";
+      // A superseded decode may finish after a newer snapshot has already
+      // seated its complete cutouts. It no longer owns root readiness and must
+      // never overwrite the newer true state with a stale false result.
+      if (String(motionSnapshot?.capturedAt || "") !== stamp) return;
+      if (root !== camera?.layers?.()[0] || !root.isConnected) return;
+      const signatureReady = signatureMatches();
+      const allReady = images.every((node) => node.complete && node.naturalWidth > 0);
+      // Camera motion consumes the one selected cutout. Preserve its exact,
+      // stamp-matched readiness while an unrelated dormant tile finishes
+      // decoding instead of demoting the return path for that boundary frame.
+      root.dataset.motionSnapshotReady = String(signatureReady && (allReady || selectedReady()));
+      if (!allReady || !signatureReady) {
         return;
       }
-      root.dataset.motionSnapshotReady = "true";
       const target = root.querySelector(".crm-home-bucket.is-camera-target");
       selectMotionVariant(root, target?.dataset?.tileId || target?.dataset?.module || "");
       const surface = camera?.surface?.();
@@ -557,7 +642,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     };
     if (images.every((node) => node.complete && node.naturalWidth > 0)) ready();
     else {
-      root.dataset.motionSnapshotReady = "false";
+      root.dataset.motionSnapshotReady = String(selectedReady());
       Promise.all(images.map((node) => node.decode?.().catch(() => null) || Promise.resolve())).then(ready);
     }
   };
@@ -567,6 +652,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     motionSnapshot = snapshot;
     clearTimeout(motionSnapshotSettleTimer);
     const settle = (attempt = 0) => {
+      motionSnapshotSettleTimer = 0;
       const root = camera?.layers?.()[0];
       syncMotionSnapshot(root);
       if (root?.dataset?.motionSnapshotReady === "true" || attempt >= 10) return;
@@ -582,7 +668,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     clearTimeout(motionCommitTimer); motionCommitTimer = 0;
     if (!pendingMotionSnapshot) return;
     if (previewCommitBlocked()) {
-      motionCommitTimer = setTimeout(flushPendingMotionSnapshot, 48);
+      if (camera?.isActive?.()) motionCommitTimer = setTimeout(flushPendingMotionSnapshot, 48);
       return;
     }
     const snapshot = pendingMotionSnapshot;
@@ -593,7 +679,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!snapshot?.src || !snapshot?.layoutSignature) return false;
     if (previewCommitBlocked()) {
       if (!pendingMotionSnapshot || Number(snapshot.capturedAt || 0) >= Number(pendingMotionSnapshot.capturedAt || 0)) pendingMotionSnapshot = snapshot;
-      if (!motionCommitTimer) motionCommitTimer = setTimeout(flushPendingMotionSnapshot, 48);
+      if (camera?.isActive?.() && !motionCommitTimer) motionCommitTimer = setTimeout(flushPendingMotionSnapshot, 48);
       return true;
     }
     return commitMotionSnapshot(snapshot);
@@ -965,6 +1051,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     homeTileRecords.forEach((module) => {
       const bucket = document.createElement("button"); bucket.type = "button"; bucket.className = "crm-home-bucket";
       bucket.dataset.module = module.key;
+      bucket.dataset.viewportModule = module.key;
       bucket.dataset.tileId = module.tile.id;
       bucket.dataset.crmTile = module.tile.id;
       bucket.dataset.tileKind = module.tile.kind;
@@ -984,7 +1071,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       grid.appendChild(bucket);
     });
     const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important linked work due today");
-    fillPriorityHand(hand); root.append(grid, titleLayer, hand); syncMotionSnapshot(root); requestAnimationFrame(mountAll); return root;
+    fillPriorityHand(hand); root.append(grid, titleLayer, hand);
+    const activeModule = String(document.body.dataset.crmModule || "");
+    const returnTile = returnTileFor(activeModule);
+    if (activeModule !== "home" && returnTile) routeModuleReturnTo(root, activeModule, returnTile.tile.id);
+    syncMotionSnapshot(root); requestAnimationFrame(mountAll); return root;
   };
   const layout = ({ expRect }) => {
     const surface = camera?.surface?.(); const grid = surface?.querySelector(".crm-home-grid"); const hand = surface?.querySelector(".crm-home-priority-hand"); if (!grid) return;
@@ -1032,11 +1123,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   const buildExpander = (target) => {
     const tile = homeTileRecords.find((candidate) => candidate.tile.id === target?.dataset?.tileId);
-    const module = MODULES.find(({ key }) => key === (tile?.key || target?.dataset?.module)) || MODULES[0];
+    const module = MODULES.find(({ key }) => key === (tile?.key || moduleKeyOf(target))) || MODULES[0];
     const bucket = recycledExpanders.get(module.key) || document.createElement("div");
     recycledExpanders.delete(module.key);
     bucket.className = "crm-home-bucket crm-home-expander";
     bucket.dataset.module = module.key;
+    bucket.dataset.viewportModule = module.key;
     bucket.dataset.tileId = tile?.tile?.id || target?.dataset?.tileId || module.tile.id;
     if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
     if (!bucket.querySelector(":scope > .crm-home-transition-acrylic")) {
@@ -1064,12 +1156,64 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const root = context?.layers?.[0];
     root?.querySelectorAll?.(".crm-home-bucket.is-camera-target")?.forEach?.((bucket) => bucket.classList.remove("is-camera-target"));
     target?.classList?.add?.("is-camera-target");
-    selectMotionVariant(root, target?.dataset?.tileId || target?.dataset?.module || "");
+    const key = target?.dataset?.tileId || moduleKeyOf(target);
+    const moduleKey = moduleKeyOf(target);
+    if (root && moduleKey && key) routeModuleReturnTo(root, moduleKey, key);
+    let selected = selectMotionVariant(root, key);
+    // Busy activation normally reuses the already-seated composition. If an
+    // obsolete decode completion cleared its flag, repair that exact root
+    // under the full-screen lid before the reverse camera begins.
+    if (root && (root.dataset.motionSnapshotReady !== "true" || !selected)) {
+      syncMotionSnapshot(root);
+      selected = selectMotionVariant(root, key);
+    }
+    const activeVariant = root?.querySelector?.(":scope > .crm-home-motion-variant.is-active-motion-variant");
+    const stamp = String(motionSnapshot?.capturedAt || "");
+    const targetReady = !!selected && !!motionSnapshot?.src
+      && motionSnapshot.layoutSignature === motionLayoutSignature(root)
+      && activeVariant?.dataset?.motionCapturedAt === stamp
+      && activeVariant.complete && activeVariant.naturalWidth > 0;
+    // Camera motion consumes one selected cutout, not every possible Home
+    // destination. An unrelated late image must not force the decoded target
+    // back onto the multi-backdrop fallback path.
+    if (root) root.dataset.motionSnapshotReady = String(targetReady);
+    return selected;
   };
   const clearCameraTarget = () => {
     const root = camera?.layers?.()[0];
     root?.querySelectorAll?.(".crm-home-bucket.is-camera-target")?.forEach?.((bucket) => bucket.classList.remove("is-camera-target"));
     selectMotionVariant(root, "");
+    if ((camera?.level?.() || 0) === 0) restoreModuleRouting(root);
+  };
+  const setInactiveMotionRetention = (retain) => {
+    const surface = camera?.surface?.();
+    if (!surface || window.crmHomePreviews?.isCaptureWorker) return false;
+    if (!retain) {
+      surface.removeAttribute("data-crm-home-retained");
+      surface.removeAttribute("data-crm-home-retained-tile");
+      return true;
+    }
+    const root = camera?.layers?.()[0];
+    // Workspace deactivation can run before the desk coordinator publishes the
+    // destination on <body>. The camera root already owns the authoritative
+    // source route, including which physical duplicate tile was clicked.
+    const routedModule = String(root?.dataset?.returnModule || "");
+    const moduleKey = routedModule || String(document.body.dataset.crmModule || "");
+    const routedTileId = String(root?.dataset?.returnTileId || "");
+    const tile = homeTileRecords.find((candidate) =>
+      candidate.key === moduleKey && candidate.tile.id === routedTileId)
+      || returnTileFor(moduleKey);
+    const key = tile?.tile?.id || routedTileId || moduleKey;
+    if (tile) routeModuleReturnTo(root, moduleKey, key);
+    const selected = root?.dataset?.motionSnapshotReady === "true" && selectMotionVariant(root, key);
+    if (!selected) {
+      surface.removeAttribute("data-crm-home-retained");
+      surface.removeAttribute("data-crm-home-retained-tile");
+      return false;
+    }
+    surface.setAttribute("data-crm-home-retained", moduleKey);
+    surface.setAttribute("data-crm-home-retained-tile", key);
+    return true;
   };
   const flushDisplayedPreviewRefreshes = () => {
     if (previewCommitBlocked() || !pendingDisplayedPreviewRefreshes.size) return false;
@@ -1093,7 +1237,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       const run = () => {
         transitionMaintenanceIdle = 0;
         if (previewCommitBlocked()) {
-          scheduleTransitionMaintenance(96);
+          // Inactive Home intentionally freezes its queued preview/motion
+          // commits. Activation and the next desk settlement re-arm this work;
+          // do not wake the renderer every 96ms behind another workspace.
+          if (camera?.isActive?.()) scheduleTransitionMaintenance(96);
           return;
         }
         flushPendingPreviews();
@@ -1140,15 +1287,26 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       else handoffResolve?.();
     }));
   };
+  const syncBitmapMotion = (context) => {
+    const motionRoot = context?.layers?.[0];
+    const motionVariant = motionRoot?.querySelector?.(":scope > .crm-home-motion-variant.is-active-motion-variant");
+    const ownsMotion = motionRoot?.dataset?.motionSnapshotReady === "true"
+      && !!motionRoot?.dataset?.motionVariant
+      && motionVariant?.dataset?.motionCapturedAt === String(motionSnapshot?.capturedAt || "")
+      && !!motionVariant?.complete
+      && motionVariant.naturalWidth > 0;
+    context?.surface?.classList.toggle("crm-home-bitmap-motion", ownsMotion);
+    return ownsMotion;
+  };
 
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
-    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,configureExpander:homeAcrylicLens.prepare,
-    primeExpander:(_expander,target,context)=>{selectMotionVariant(context.layers?.[0],target?.dataset?.tileId||target?.dataset?.module||"");homeAcrylicLens.prime()},
+    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,keepBelowVisibleDuringJump:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,configureExpander:homeAcrylicLens.prepare,
+    primeExpander:(_expander,target,context)=>{selectMotionVariant(context.layers?.[0],target?.dataset?.tileId||moduleKeyOf(target));homeAcrylicLens.prime()},
     contractExpanderAbove:true,holdContractEndpointFrame:true,keepExpanderOpaqueDuringTransition:true,
-    keyOf:(target)=>target.dataset.tileId||target.dataset.module||"",sourceSelector:(target)=>`.crm-home-bucket[data-tile-id="${cssValue(target.dataset.tileId || target.dataset.module)}"]`,
+    keyOf:(target)=>target.dataset.tileId||moduleKeyOf(target),sourceSelector:(target)=>`.crm-home-bucket[data-tile-id="${cssValue(target.dataset.tileId || moduleKeyOf(target))}"]`,
     prepareTarget:(target,context)=>markCameraTarget(target,context),
     prepareJump:(_expander,target,context)=>markCameraTarget(target,context),
     onTransitionStart:(direction,context)=>{
@@ -1157,13 +1315,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       handoffSequence += 1;
       factoryPrewarmAfter = Number.POSITIVE_INFINITY;
       context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff");
-      const motionRoot = context.layers?.[0];
-      const motionVariant = motionRoot?.querySelector?.(":scope > .crm-home-motion-variant.is-active-motion-variant");
-      context.surface?.classList.toggle("crm-home-bitmap-motion",
-        motionRoot?.dataset?.motionSnapshotReady === "true"
-        && !!motionRoot?.dataset?.motionVariant
-        && !!motionVariant?.complete
-        && motionVariant.naturalWidth > 0);
+      syncBitmapMotion(context);
       // Snapshot validity is maintained on data/layout changes. Recomputing its
       // complete geometry signature here forced style/layout immediately before
       // the first transform frame and made an otherwise compositor-only move
@@ -1173,10 +1325,17 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       context.surface?.classList.toggle("crm-home-camera-contracting",direction==="contract");
     },
     onTransformStart:(direction,context)=>{
+      // The contract path deliberately spends two covered frames precomposing
+      // Home. A selected cutout can finish decoding in that window, so make
+      // this last pre-transform ownership decision authoritative.
+      syncBitmapMotion(context);
       homeAcrylicLens.start(direction);
       window.crmDeskTransit?.noteHomeTransformStart?.(direction, performance.now(), context.morphMs);
       context.surface?.classList.toggle("crm-home-acrylic-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
+    },
+    onTransformReady:(_direction,context)=>{
+      homeAcrylicLens.sync(context.transformAnimation, context.transformStartTime);
     },
     onTransitionEnd:(direction,context)=>{
       window.crmDeskTransit?.noteHomeTransformEnd?.(direction, performance.now());
@@ -1200,9 +1359,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
 
   document.addEventListener("click", (event) => {
     if (!camera?.isActive?.()) return;
-    const target = event.target?.closest?.(".crm-home-bucket[data-module]");
+    const target = event.target?.closest?.(".crm-home-bucket[data-viewport-module]");
     if (!target || !camera.surface()?.contains(target)) return;
-    const key = target.dataset.module;
+    const key = moduleKeyOf(target);
     event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation();
     if (!camera.isTransitioning()) camera.expand(target);
     if (window.crmDeskTransit?.adoptDive) window.crmDeskTransit.adoptDive(key);
@@ -1213,7 +1372,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     subscribe();
     const changed = camera.isActive() !== !!on;
     if (changed) {
+      if (!on) setInactiveMotionRetention(true);
       camera.setActive(on);
+      if (on) setInactiveMotionRetention(false);
       if (on) factoryPrewarmAfter = performance.now() + 250;
     }
     if (on) {
@@ -1224,6 +1385,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       // that existing composition immediately so the next dive never begins
       // with a late material upload.
       if (!transitBusy) {
+        flushPendingPreviews();
+        flushPendingMotionSnapshot();
+        flushDisplayedPreviewRefreshes();
         requestAnimationFrame(() => syncMotionSnapshot());
         requestMotionSnapshot();
         scheduleFactoryPrewarm();
@@ -1321,10 +1485,29 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     return captureBaseline(key, viewState);
   };
   const waitForPreviewSync = async () => {
-    while (previewSyncs.size) await Promise.allSettled([...previewSyncs]);
-    const result = await window.crmHomePreviews?.waitForIdle?.().catch?.(() => null);
-    if (result?.ok === false) throw new Error(result.error || "Preview synchronization failed");
-    return true;
+    const paint = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (!previewCommitBlocked()) {
+        cancelTransitionMaintenance();
+        flushPendingPreviews();
+        flushPendingMotionSnapshot();
+        flushDisplayedPreviewRefreshes();
+      }
+      if (previewSyncs.size) await Promise.allSettled([...previewSyncs]);
+      const result = await window.crmHomePreviews?.waitForIdle?.().catch?.(() => null);
+      if (result?.ok === false) throw new Error(result.error || "Preview synchronization failed");
+      await paint();
+      const rendererBusy = previewSyncs.size || pendingDisplayedPreviewRefreshes.size
+        || pendingPreviews.size || pendingMotionSnapshot || previewCommitTimer
+        || motionCommitTimer || motionSnapshotSettleTimer
+        || transitionMaintenanceTimer || transitionMaintenanceIdle;
+      const previewsReady = MODULES.every(({ key }) => {
+        const preview = previews.get(key);
+        return !!preview && isCurrentPreview(preview) && !previewSyncKeys.has(key);
+      });
+      if (!previewCommitBlocked() && !rendererBusy && previewsReady) return true;
+    }
+    throw new Error("Preview renderer did not reach semantic idle");
   };
   const noteModuleReady = (key) => {
     const apiName = FACTORY_API_BY_MODULE[key];

@@ -123,7 +123,9 @@ let homePreviewInteractionActive = false;
 let homePreviewInteractionWaiters = [];
 
 function setHomePreviewInteraction(active) {
-  homePreviewInteractionActive = !!active;
+  const next = !!active;
+  if (homePreviewInteractionActive === next) return;
+  homePreviewInteractionActive = next;
   if (previewWindow && !previewWindow.isDestroyed()) {
     // The hidden renderer only paints static capture states. Throttle it to one
     // frame while the visible camera owns the GPU, then restore a deliberately
@@ -195,6 +197,15 @@ function createMainWindow() {
     mainWindow.webContents.send('crm:navigation-command', direction);
   });
 
+  // Interaction leases are owned by one renderer document. A reload or crashed
+  // renderer cannot publish its final release, so clear that document-scoped
+  // state authoritatively before the replacement document starts. This also
+  // releases any preview captures that were waiting behind the old lease.
+  mainWindow.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) setHomePreviewInteraction(false);
+  });
+  mainWindow.webContents.on('render-process-gone', () => setHomePreviewInteraction(false));
+
   mainWindow.loadFile(dashboardIndexPath());
 
   mainWindow.once('ready-to-show', () => {
@@ -242,6 +253,7 @@ function createMainWindow() {
   });
 
   mainWindow.on('closed', () => {
+    setHomePreviewInteraction(false);
     clearTimeout(homePreviewResizeTimer);
     clearTimeout(homePreviewRefreshTimer);
     clearTimeout(homePreviewStartupTimer);
@@ -1383,7 +1395,13 @@ const captureCalendarStripOffscreen = async (request, audit) => {
 };
 let calendarStripCaptureQueue = Promise.resolve();
 
-ipcMain.handle('dashboard-window:reload', (e) => { if (isMainSender(e)) mainWindow.webContents.reload(); return { ok: true }; });
+ipcMain.handle('dashboard-window:reload', (e) => {
+  if (isMainSender(e)) {
+    setHomePreviewInteraction(false);
+    mainWindow.webContents.reload();
+  }
+  return { ok: true };
+});
 ipcMain.handle('dashboard-window:minimize', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
 ipcMain.handle('dashboard-window:close', (e) => { if (isMainSender(e)) hideMainWindow(); return { ok: true }; });
 ipcMain.handle('calendar-transition:capture-strip', async (event) => {
@@ -1494,7 +1512,13 @@ ipcMain.handle('home-preview:idle', async (event) => {
   let quietSince = 0;
   while (Date.now() - started < 30000) {
     const queue = homePreviewQueue;
-    await queue.catch(() => null);
+    // Do not let a lost renderer lease or failed capture bypass this method's
+    // own timeout. Navigation resets the normal case; this race is the final
+    // bounded guard for worker/process failures.
+    await Promise.race([
+      queue.catch(() => null),
+      new Promise((resolve) => setTimeout(resolve, 250)),
+    ]);
     const capturing = !!previewWindow && !previewWindow.isDestroyed();
     if (homePreviewStartupTimer || homePreviewResizeTimer || homePreviewRefreshTimer || capturing || queue !== homePreviewQueue) {
       quietGeneration = -1;

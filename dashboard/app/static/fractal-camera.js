@@ -157,6 +157,43 @@
       );
       return lens;
     };
+    const sync = (transformAnimation, startTime) => {
+      const initialAnchor = Number(startTime);
+      if (!Number.isFinite(initialAnchor) || !lens?.isConnected || !state
+        || lens.parentElement?.dataset?.fractalCameraProbeHold === "true") return false;
+      const syncedLens = lens;
+      const syncedClip = clipAnimation;
+      const syncedOpacity = opacityAnimation;
+      const align = () => {
+        if (lens !== syncedLens || clipAnimation !== syncedClip || opacityAnimation !== syncedOpacity
+          || !syncedLens?.isConnected || syncedLens.parentElement?.dataset?.fractalCameraProbeHold === "true") return false;
+        const liveStart = Number(transformAnimation?.startTime);
+        const liveTime = Number(transformAnimation?.currentTime);
+        const anchor = Number.isFinite(liveStart) ? liveStart : initialAnchor;
+        let synchronized = false;
+        [syncedClip, syncedOpacity].forEach((animation) => {
+          // Calendar's native profiler deliberately pauses and seeks the
+          // compositor-owned transition. Never disturb that explicit hold, nor
+          // an opacity animation a material owner has intentionally cancelled.
+          if (!animation || animation.playState === "paused" || animation.playState === "idle"
+            || animation.replaceState === "removed") return;
+          try {
+            animation.startTime = anchor;
+            if (Number.isFinite(liveTime)) animation.currentTime = liveTime;
+            synchronized = true;
+          } catch {}
+        });
+        return synchronized;
+      };
+      const synchronized = align();
+      // Chromium may resolve a freshly-created WAAPI animation's pending play
+      // task after the first assignment and replace its start time. Re-align
+      // once all three animations report ready so that pending resolution
+      // cannot reintroduce a one-vblank clip/transform phase offset.
+      Promise.allSettled([transformAnimation, syncedClip, syncedOpacity]
+        .filter(Boolean).map((animation) => animation.ready)).then(align);
+      return synchronized;
+    };
     const prime = () => {
       if (!lens || !state || state.direction !== "prewarm") return null;
       stop();
@@ -168,7 +205,7 @@
       // preparation while the pointer rests over its source tile.
       return lens;
     };
-    return { prepare, start, prime, finish, element:() => lens };
+    return { prepare, start, sync, prime, finish, element:() => lens };
   };
 
   global.createFractalCamera = function createFractalCamera(config = {}) {
@@ -183,6 +220,7 @@
     const contractFadeMs = Number.isFinite(Number(config.contractFadeMs)) ? Number(config.contractFadeMs) : Math.round(morphMs * .35);
     const contractFadeDelay = Math.max(0, morphMs - contractFadeMs);
     const keepBelowVisible = config.keepBelowVisibleDuringTransition === true;
+    const keepBelowVisibleDuringJump = config.keepBelowVisibleDuringJump === true;
     const precomposeTransitions = config.precomposeTransitions === true;
     const lockInputDuringTransitions = config.lockInputDuringTransitions === true;
     const contractExpanderAbove = config.contractExpanderAbove === true;
@@ -299,6 +337,41 @@
       if (precomposeTransitions) requestAnimationFrame(fn);
       else fn();
     });
+    const announceTransformReady = (direction, expander, seq) => {
+      if (seq !== transitionSeq || !transitioning || !expander?.isConnected) return;
+      // Discover the just-created CSS transition in the trigger task, before
+      // the compositor interval begins. The former rAF retries performed
+      // getAnimations/getKeyframes work inside the first moving frames and
+      // could consume a 100 Hz vblank. `transitionProperty` excludes the short
+      // warm-up WAAPI transform without walking effect keyframes.
+      const transformAnimation = [...(expander.getAnimations?.({ subtree:false }) || [])]
+        .find((animation) => {
+          const property = String(animation.transitionProperty || "").replace(/^-webkit-/, "").toLowerCase();
+          const duration = Number(animation.effect?.getTiming?.().duration);
+          return animation.effect?.target === expander
+            && property === "transform"
+            && animation.playState !== "idle"
+            && animation.replaceState !== "removed"
+            && (!Number.isFinite(duration) || Math.abs(duration - morphMs) <= 1);
+        }) || null;
+      const rawTimelineNow = document.timeline?.currentTime;
+      const rawAnimationStart = transformAnimation?.startTime;
+      const rawAnimationTime = transformAnimation?.currentTime;
+      const timelineNow = rawTimelineNow == null ? NaN : Number(rawTimelineNow);
+      const animationStart = rawAnimationStart == null ? NaN : Number(rawAnimationStart);
+      const animationTime = rawAnimationTime == null ? NaN : Number(rawAnimationTime);
+      const transformStartTime = Number.isFinite(animationStart)
+        ? animationStart
+        : (Number.isFinite(timelineNow)
+          ? timelineNow - (Number.isFinite(animationTime) ? animationTime : 0)
+          : NaN);
+      config.onTransformReady?.(direction, {
+        ...ctx(),
+        expander,
+        transformAnimation,
+        transformStartTime,
+      });
+    };
     const ensure = () => {
       if (surface) return;
       config.ensureStyles?.(ctx());
@@ -329,10 +402,15 @@
       config.layout?.(ctx());
     };
     const keyOf = (target) => config.keyOf?.(target, ctx()) || "";
+    const navigationInteractionSource = `camera:${apiName || surfaceClass}:navigation`;
+    const hoverInteractionSource = `camera:${apiName || surfaceClass}:hover`;
     const navigationDetail = (phase, direction) => ({ apiName, phase, direction, level, state:historyState() });
     const announceNavigation = (phase, direction) => {
       if (!apiName) return;
-      try { global.crmHomePreviews?.setInteraction?.(phase === "start"); } catch {}
+      if (phase === "start") {
+        try { global.crmHomePreviews?.setInteraction?.(false, hoverInteractionSource); } catch {}
+      }
+      try { global.crmHomePreviews?.setInteraction?.(phase === "start", navigationInteractionSource); } catch {}
       document.dispatchEvent(new CustomEvent("crm:camera-navigation", { detail:navigationDetail(phase, direction) }));
     };
     const targetFromEvent = (event) => {
@@ -446,6 +524,7 @@
           : `transform ${morphMs}ms ${ease}, opacity ${belowFadeMs}ms ease`;
         below.style.transform = dive;
         below.style.opacity = keepBelowVisible ? "1" : "0";
+        announceTransformReady("expand", expander, seq);
       });
       const oldLevel = level;
       const commit = once(() => {
@@ -547,6 +626,7 @@
         armTransformFallback();
         expander.style.transform = `translate(${(rx - E.x).toFixed(2)}px, ${(ry - E.y).toFixed(2)}px) scale(${(sourceRect.w / E.w).toFixed(5)}, ${(sourceRect.h / E.h).toFixed(5)})`;
         expander.style.opacity = keepExpanderOpaque ? "1" : "0";
+        announceTransformReady("contract", expander, seq);
       };
       if (precomposeTransitions) requestAnimationFrame(() => {
         if (seq !== transitionSeq) return;
@@ -594,7 +674,9 @@
       const below = layers[level];
       below.style.zIndex = "0";
       below.style.pointerEvents = "none";
-      below.style.visibility = "hidden";
+      // Retained camera roots can remain compositor-resident beneath the
+      // full-screen lid. Avoid a hide/show boundary before reverse motion.
+      below.style.visibility = keepBelowVisibleDuringJump ? "" : "hidden";
       below.style.transform = "none";
       below.style.opacity = "1";
       level += 1;
@@ -671,7 +753,10 @@
       active = !!on;
       ensure();
       surface.hidden = !active;
-      if (!active) dropWarm();
+      if (!active) {
+        dropWarm();
+        try { global.crmHomePreviews?.setInteraction?.(false, hoverInteractionSource); } catch {}
+      }
       else layout();
       config.onActiveChange?.(active, ctx());
       return api;
@@ -687,7 +772,7 @@
     const onMouseMove = (event) => {
       if (!active || !surface || surface.hidden) return;
       const target = targetAtPoint(event.clientX, event.clientY);
-      try { global.crmHomePreviews?.setInteraction?.(!!target); } catch {}
+      try { global.crmHomePreviews?.setInteraction?.(!!target, hoverInteractionSource); } catch {}
       if (target) prefetch(target);
     };
     const onKeyDown = (event) => {

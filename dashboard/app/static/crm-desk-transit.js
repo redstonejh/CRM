@@ -768,9 +768,11 @@
     const recordHistory = options.history !== false && !navigationRestoring;
     if (recordHistory) noteViewportDeparture();
     busy = true;
+    try { window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
     announceNavigationHistory();
     const done = () => {
       busy = false;
+      try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
       if (recordHistory) commitCurrentViewport(); else announceNavigationHistory();
       resolve(true);
       document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));
@@ -795,12 +797,14 @@
     if (!ws || busy) { resolve(false); return; }
     noteViewportDeparture();
     busy = true;
+    try { window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
     announceNavigationHistory();
     const surface = camera()?.surface?.();
     if (surface) surface.style.zIndex = TRANSIT_Z;
     const stage = beginDiveDestination(key);
     const done = () => {
       busy = false;
+      try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
       commitCurrentViewport();
       resolve(true);
       document.dispatchEvent(new CustomEvent("crm:desk-transit-settled", { detail: { key: ws.active?.() || key } }));

@@ -2578,6 +2578,10 @@
       context.surface?.classList.toggle("fc-camera-contracting", direction === "contract");
       holdTransitionProbePhase(direction, context);
     },
+    onTransformReady: (_direction, context) => {
+      if (context.surface?.dataset?.fractalCameraProbeHold === "true") return;
+      sourceAcrylicLens?.sync?.(context.transformAnimation, context.transformStartTime);
+    },
     onTransitionEnd: (direction, context) => {
       context.surface?.classList.remove(
         "fc-camera-moving", "fc-camera-expanding", "fc-camera-contracting",

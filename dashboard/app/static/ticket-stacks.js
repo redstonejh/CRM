@@ -16,8 +16,16 @@
   const SEV_RGB = { low: "34,211,238", medium: "250,204,21", high: "249,115,22", critical: "239,68,68", none: "120,130,140" };
   const sevOf = (t) => { const p = priorityOf(t); return ["low", "medium", "high", "critical"].includes(p) ? p : (t ? "medium" : "none"); };
   const STACK_EXPAND_KEY = "crm-zone-expansion-v1:tickets";
-  const expandedStages = (() => { try { const value = JSON.parse(localStorage.getItem(STACK_EXPAND_KEY) || "[]"); return new Set(Array.isArray(value) ? value.map(String) : []); } catch { return new Set(); } })();
-  const writeExpandedStages = () => { if (!window.crmHomePreviews?.isCaptureWorker) { try { localStorage.setItem(STACK_EXPAND_KEY, JSON.stringify([...expandedStages])); } catch {} } };
+  const expandedStages = (() => {
+    // Bucket fan-out is transient viewport state. Discard the legacy persisted
+    // array so Tickets always starts from compact stacks.
+    try { localStorage.removeItem(STACK_EXPAND_KEY); } catch {}
+    return new Set();
+  })();
+  const writeExpandedStages = () => {
+    if (window.crmHomePreviews?.isCaptureWorker) return;
+    try { localStorage.removeItem(STACK_EXPAND_KEY); } catch {}
+  };
   const cardSizeKey = (id) => `card:tickets:${String(id || "")}`;
   const bucketSizeKey = (stage) => `bucket:tickets:${String(stage || "")}`;
   const isSmallObject = (element) => element?.classList?.contains("crm-object-small") || element?.dataset?.crmObjectSize === "small";
@@ -1223,8 +1231,10 @@
     return fanned[side];
   };
   const collapseCornerFans = () => {
-    const openSides = ["left", "right"].filter((side) => !!fanned[side]);
-    if (!openSides.length) return false;
+    // Include the independent recycle stack; a trash-only fan previously
+    // survived every corner reset.
+    const openSides = DECK_SIDES.filter((side) => !!fanned[side]);
+    if (!openSides.length && !trashMode) return false;
     openSides.forEach((side) => {
       fanned[side] = false;
       if (decks[side]) decks[side].scrollX = 0;
@@ -2214,18 +2224,18 @@
     writeExpandedStages(); renderZones(); layoutZones(); return expandedStages.has(stage);
   };
   const homePreviewState = () => ({
-    expandedStages:[...expandedStages],
+    expandedStages:[],
     zoneScroll:Object.fromEntries(STAGE_KEYS.map((stage) => [stage, zoneScroll[stage]?.sy || 0])),
-    fan:Object.fromEntries(["left", "right"].map((side) => [side, {
+    fan:Object.fromEntries(DECK_SIDES.map((side) => [side, {
       open:false,
       scrollX:0,
     }])),
   });
   const applyHomePreviewState = async (state = {}) => {
     ensureZones();
-    if (Array.isArray(state.expandedStages)) {
+    if (expandedStages.size || Array.isArray(state.expandedStages)) {
       expandedStages.clear();
-      state.expandedStages.map(String).filter((stage) => STAGE_KEYS.includes(stage)).forEach((stage) => expandedStages.add(stage));
+      writeExpandedStages();
       renderZones();
       layoutZones();
     }
@@ -2860,7 +2870,11 @@
       if (theater) theater.hidden = !visible;
       if (!visible) {
         if (fanEdgeRaf) { cancelAnimationFrame(fanEdgeRaf); fanEdgeRaf = 0; }
-        collapseCornerFans();
+        const hadExpandedBuckets = expandedStages.size > 0;
+        expandedStages.clear();
+        writeExpandedStages();
+        const hadOpenFan = collapseCornerFans();
+        if (hadExpandedBuckets || hadOpenFan) hasRendered = false;
         hideTicketMenu();
         stopTrashRing();
         window.ticketDetail?.close?.();

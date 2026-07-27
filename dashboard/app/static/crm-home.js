@@ -152,13 +152,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (window.crmHomePreviews?.isCaptureWorker) return;
     try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(homeTileRecords)); } catch {}
   };
-  const rebuildHomeTiles = () => {
+  const rebuildHomeTiles = (refreshKey = MODULES[0]?.key || "people") => {
     const rebuild = () => {
       camera?.rebuildRoot?.();
       camera?.layout?.();
       mountAll();
       requestAnimationFrame(() => syncMotionSnapshot());
       requestMotionSnapshot();
+      // A tile mutation changes both Home geometry and the physical ids used
+      // by per-tile cutouts. Queue one canonical room refresh immediately; its
+      // existing capture pipeline finishes by publishing a new Home motion
+      // snapshot, and captureBaseline registers that work with previewSyncs.
+      // Navigation can therefore await the exact new layout instead of racing
+      // an unrelated background refresh.
+      if (!window.crmHomePreviews?.isCaptureWorker) void captureBaseline(refreshKey);
       contextAddChanged("home-tiles");
     };
     if (camera?.isTransitioning?.()) camera.whenSettled?.().then(rebuild);
@@ -173,7 +180,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const tile = normalizeHomeTile({ id, moduleKey:module.key, label:firstText(options.label, module.label) }, homeTileRecords.length);
     if (!tile) return null;
     homeTileRecords = [...homeTileRecords, tile];
-    writeHomeTiles(); rebuildHomeTiles();
+    writeHomeTiles(); rebuildHomeTiles(module.key);
     return clone(tile);
   };
   const removeHomeTile = (tileId) => {
@@ -183,7 +190,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (next.length === homeTileRecords.length) return false;
     homeTileRecords = next.map((tile, rank) => normalizeHomeTile(tile, rank));
     if (removed && returnTileByModule.get(removed.key) === removedId) returnTileByModule.delete(removed.key);
-    writeHomeTiles(); rebuildHomeTiles();
+    writeHomeTiles(); rebuildHomeTiles(removed?.key);
     return true;
   };
   const resetHomeTiles = () => {

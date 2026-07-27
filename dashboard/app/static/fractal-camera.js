@@ -10,7 +10,7 @@
     const lensClass = config.lensClass || "fractal-camera-acrylic-lens";
     const entryHold = Number.isFinite(Number(config.entryHold)) ? Number(config.entryHold) : .86;
     const exitReveal = Number.isFinite(Number(config.exitReveal)) ? Number(config.exitReveal) : .14;
-    const releaseEase = config.releaseEase || "cubic-bezier(.37, 0, .63, 1)";
+    const releaseEase = config.releaseEase || "cubic-bezier(.3, 0, .7, 1)";
     let lens = null;
     let owner = null;
     let state = null;
@@ -383,9 +383,10 @@
       const onTransitionRun = (event) => {
         if (event.target !== expander || event.propertyName !== "transform") return;
         expander.removeEventListener("transitionrun", onTransitionRun);
-        // The event is dispatched from the style update that creates the CSS
-        // transition. Discovery here reads an existing animation; unlike a
-        // trigger-task query, it cannot force that style update into motion.
+        // This event runs after style resolution, so the CSS transition already
+        // exists and reading its startTime cannot force a style update. Event
+        // dispatch itself can lag the actual start by one vblank; the animation
+        // clock remains authoritative in both dispatch modes.
         resolveStart(event.timeStamp);
       };
       expander.addEventListener("transitionrun", onTransitionRun);

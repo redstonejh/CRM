@@ -339,37 +339,26 @@
     });
     const announceTransformReady = (direction, expander, seq) => {
       if (seq !== transitionSeq || !transitioning || !expander?.isConnected) return;
-      // Discover the just-created CSS transition in the trigger task, before
-      // the compositor interval begins. The former rAF retries performed
-      // getAnimations/getKeyframes work inside the first moving frames and
-      // could consume a 100 Hz vblank. `transitionProperty` excludes the short
-      // warm-up WAAPI transform without walking effect keyframes.
-      const transformAnimation = [...(expander.getAnimations?.({ subtree:false }) || [])]
-        .find((animation) => {
-          const property = String(animation.transitionProperty || "").replace(/^-webkit-/, "").toLowerCase();
-          const duration = Number(animation.effect?.getTiming?.().duration);
-          return animation.effect?.target === expander
-            && property === "transform"
-            && animation.playState !== "idle"
-            && animation.replaceState !== "removed"
-            && (!Number.isFinite(duration) || Math.abs(duration - morphMs) <= 1);
-        }) || null;
+      // CSS transitions and pending WAAPI effects created in this rAF task use
+      // the same document-timeline sample. Anchor the companion acrylic effects
+      // to that sample directly; querying CSS animations here forces a style
+      // update and can consume one or more 100 Hz vblanks before first paint.
       const rawTimelineNow = document.timeline?.currentTime;
-      const rawAnimationStart = transformAnimation?.startTime;
-      const rawAnimationTime = transformAnimation?.currentTime;
       const timelineNow = rawTimelineNow == null ? NaN : Number(rawTimelineNow);
-      const animationStart = rawAnimationStart == null ? NaN : Number(rawAnimationStart);
-      const animationTime = rawAnimationTime == null ? NaN : Number(rawAnimationTime);
-      const transformStartTime = Number.isFinite(animationStart)
-        ? animationStart
-        : (Number.isFinite(timelineNow)
-          ? timelineNow - (Number.isFinite(animationTime) ? animationTime : 0)
-          : NaN);
-      config.onTransformReady?.(direction, {
+      const transformStartTime = Number.isFinite(timelineNow) ? timelineNow : performance.now();
+      const transformContext = {
         ...ctx(),
         expander,
-        transformAnimation,
+        transformAnimation:null,
         transformStartTime,
+      };
+      config.onTransformReady?.(direction, transformContext);
+      // Compositor preparation is now complete and the task can yield to the
+      // first presentable transform frame. Performance/cadence ownership starts
+      // here, never before synchronous setup.
+      config.onTransformStart?.(direction, {
+        ...transformContext,
+        motionStartedAt:performance.now(),
       });
     };
     const ensure = () => {
@@ -511,7 +500,7 @@
       if (!precomposeTransitions) void expander.offsetWidth;
       let armTransformFallback = () => {};
       transitionFrame(() => {
-        config.onTransformStart?.("expand", ctx());
+        config.onTransformPrepare?.("expand", ctx());
         expander.dataset.fractalFrame = "viewport";
         expander.style.transition = keepExpanderOpaque
           ? `transform ${morphMs}ms ${ease}`
@@ -611,7 +600,7 @@
       let armTransformFallback = () => {};
       const beginTransition = () => {
         if (seq !== transitionSeq) return;
-        config.onTransformStart?.("contract", ctx());
+        config.onTransformPrepare?.("contract", ctx());
         expander.dataset.fractalFrame = "source";
         below.style.transition = keepBelowVisible
           ? `transform ${morphMs}ms ${ease}`

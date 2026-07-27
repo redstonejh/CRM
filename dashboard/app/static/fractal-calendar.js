@@ -2570,7 +2570,7 @@
       context.surface?.classList.add("fc-camera-moving");
       stageTransitionPortal(direction, context);
     },
-    onTransformStart: (direction, context) => {
+    onTransformPrepare: (direction, context) => {
       sourceAcrylicLens?.start?.(direction);
       holdTransitionAcrylicLens();
       startYearStripPortal();

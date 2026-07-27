@@ -1324,18 +1324,24 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       context.surface?.classList.toggle("crm-home-camera-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-camera-contracting",direction==="contract");
     },
-    onTransformStart:(direction,context)=>{
+    onTransformPrepare:(direction,context)=>{
       // The contract path deliberately spends two covered frames precomposing
       // Home. A selected cutout can finish decoding in that window, so make
       // this last pre-transform ownership decision authoritative.
       syncBitmapMotion(context);
       homeAcrylicLens.start(direction);
-      window.crmDeskTransit?.noteHomeTransformStart?.(direction, performance.now(), context.morphMs);
       context.surface?.classList.toggle("crm-home-acrylic-expanding",direction==="expand");
       context.surface?.classList.toggle("crm-home-acrylic-contracting",direction==="contract");
     },
     onTransformReady:(_direction,context)=>{
       homeAcrylicLens.sync(context.transformAnimation, context.transformStartTime);
+    },
+    onTransformStart:(direction,context)=>{
+      window.crmDeskTransit?.noteHomeTransformStart?.(
+        direction,
+        context.motionStartedAt || performance.now(),
+        context.morphMs,
+      );
     },
     onTransitionEnd:(direction,context)=>{
       window.crmDeskTransit?.noteHomeTransformEnd?.(direction, performance.now());

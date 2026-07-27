@@ -1145,7 +1145,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         context.surface?.classList.toggle("crm-project-camera-contracting", direction === "contract");
         if (direction === "contract") coverProjectWorld(context.layers[1], selectedProject());
       },
-      onTransformStart:(direction, context) => {
+      onTransformPrepare:(direction, context) => {
         projectAcrylicLens.start(direction);
         context.surface?.classList.toggle("crm-project-acrylic-expanding", direction === "expand");
         context.surface?.classList.toggle("crm-project-acrylic-contracting", direction === "contract");

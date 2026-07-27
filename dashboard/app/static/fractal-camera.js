@@ -186,12 +186,14 @@
         return synchronized;
       };
       const synchronized = align();
-      // Chromium may resolve a freshly-created WAAPI animation's pending play
-      // task after the first assignment and replace its start time. Re-align
-      // once all three animations report ready so that pending resolution
-      // cannot reintroduce a one-vblank clip/transform phase offset.
-      Promise.allSettled([transformAnimation, syncedClip, syncedOpacity]
-        .filter(Boolean).map((animation) => animation.ready)).then(align);
+      // When an actual transform animation supplied the anchor, re-check after
+      // pending play tasks resolve. The shared camera normally passes the
+      // resolved transform start directly; its effects are already ready then,
+      // so another promise/microtask alignment would only add moving-frame work.
+      if (transformAnimation) {
+        Promise.allSettled([transformAnimation, syncedClip, syncedOpacity]
+          .filter(Boolean).map((animation) => animation.ready)).then(align);
+      }
       return synchronized;
     };
     const prime = () => {
@@ -333,32 +335,66 @@
         fallback = setTimeout(finish, morphMs + 35);
       };
     };
-    const transitionFrame = (fn) => requestAnimationFrame(() => {
+    const transitionFrame = (fn) => requestAnimationFrame((frameTime) => {
       if (precomposeTransitions) requestAnimationFrame(fn);
-      else fn();
+      else fn(frameTime);
     });
-    const announceTransformReady = (direction, expander, seq) => {
-      if (seq !== transitionSeq || !transitioning || !expander?.isConnected) return;
-      // CSS transitions and pending WAAPI effects created in this rAF task use
-      // the same document-timeline sample. Anchor the companion acrylic effects
-      // to that sample directly; querying CSS animations here forces a style
-      // update and can consume one or more 100 Hz vblanks before first paint.
-      const rawTimelineNow = document.timeline?.currentTime;
-      const timelineNow = rawTimelineNow == null ? NaN : Number(rawTimelineNow);
-      const transformStartTime = Number.isFinite(timelineNow) ? timelineNow : performance.now();
-      const transformContext = {
-        ...ctx(),
-        expander,
-        transformAnimation:null,
-        transformStartTime,
+    const announceTransformReady = (direction, expander, seq, triggerFrameTime) => {
+      let published = false;
+      const publish = (startTime) => {
+        if (published) return;
+        if (seq !== transitionSeq || !transitioning || !expander?.isConnected) return;
+        published = true;
+        const resolvedStartTime = Number(startTime);
+        const transformStartTime = Number.isFinite(resolvedStartTime) ? resolvedStartTime : performance.now();
+        const transformContext = {
+          ...ctx(),
+          expander,
+          transformAnimation:null,
+          transformStartTime,
+        };
+        config.onTransformReady?.(direction, transformContext);
+        config.onTransformStart?.(direction, {
+          ...transformContext,
+          motionStartedAt:performance.now(),
+        });
       };
-      config.onTransformReady?.(direction, transformContext);
-      // Compositor preparation is now complete and the task can yield to the
-      // first presentable transform frame. Performance/cadence ownership starts
-      // here, never before synchronous setup.
-      config.onTransformStart?.(direction, {
-        ...transformContext,
-        motionStartedAt:performance.now(),
+      const resolveStart = (fallbackTime) => {
+        const transformAnimation = [...(expander.getAnimations?.({ subtree:false }) || [])]
+          .find((animation) => {
+            const property = String(animation.transitionProperty || "").replace(/^-webkit-/, "").toLowerCase();
+            return animation.effect?.target === expander
+              && property === "transform"
+              && animation.playState !== "idle"
+              && animation.replaceState !== "removed";
+          }) || null;
+        const rawStart = transformAnimation?.startTime;
+        const rawCurrent = transformAnimation?.currentTime;
+        const rawTimeline = document.timeline?.currentTime;
+        const start = rawStart == null ? NaN : Number(rawStart);
+        const current = rawCurrent == null ? NaN : Number(rawCurrent);
+        const timeline = rawTimeline == null ? NaN : Number(rawTimeline);
+        publish(Number.isFinite(start)
+          ? start
+          : (Number.isFinite(timeline) && Number.isFinite(current)
+            ? timeline - current
+            : fallbackTime));
+      };
+      const onTransitionRun = (event) => {
+        if (event.target !== expander || event.propertyName !== "transform") return;
+        expander.removeEventListener("transitionrun", onTransitionRun);
+        // The event is dispatched from the style update that creates the CSS
+        // transition. Discovery here reads an existing animation; unlike a
+        // trigger-task query, it cannot force that style update into motion.
+        resolveStart(event.timeStamp);
+      };
+      expander.addEventListener("transitionrun", onTransitionRun);
+      requestAnimationFrame((frameTime) => {
+        if (published) return;
+        expander.removeEventListener("transitionrun", onTransitionRun);
+        // Fallback for engines that omit transitionrun. At this rendering
+        // boundary the transition is likewise already materialized.
+        resolveStart(frameTime || triggerFrameTime);
       });
     };
     const ensure = () => {
@@ -499,7 +535,7 @@
       // flush because their transition begins on the next frame.
       if (!precomposeTransitions) void expander.offsetWidth;
       let armTransformFallback = () => {};
-      transitionFrame(() => {
+      transitionFrame((triggerFrameTime) => {
         config.onTransformPrepare?.("expand", ctx());
         expander.dataset.fractalFrame = "viewport";
         expander.style.transition = keepExpanderOpaque
@@ -513,7 +549,7 @@
           : `transform ${morphMs}ms ${ease}, opacity ${belowFadeMs}ms ease`;
         below.style.transform = dive;
         below.style.opacity = keepBelowVisible ? "1" : "0";
-        announceTransformReady("expand", expander, seq);
+        announceTransformReady("expand", expander, seq, triggerFrameTime);
       });
       const oldLevel = level;
       const commit = once(() => {
@@ -598,7 +634,7 @@
       config.onTransitionStart?.("contract", ctx());
       if (!precomposeTransitions) void below.offsetWidth;
       let armTransformFallback = () => {};
-      const beginTransition = () => {
+      const beginTransition = (triggerFrameTime) => {
         if (seq !== transitionSeq) return;
         config.onTransformPrepare?.("contract", ctx());
         expander.dataset.fractalFrame = "source";
@@ -615,7 +651,7 @@
         armTransformFallback();
         expander.style.transform = `translate(${(rx - E.x).toFixed(2)}px, ${(ry - E.y).toFixed(2)}px) scale(${(sourceRect.w / E.w).toFixed(5)}, ${(sourceRect.h / E.h).toFixed(5)})`;
         expander.style.opacity = keepExpanderOpaque ? "1" : "0";
-        announceTransformReady("contract", expander, seq);
+        announceTransformReady("contract", expander, seq, triggerFrameTime);
       };
       if (precomposeTransitions) requestAnimationFrame(() => {
         if (seq !== transitionSeq) return;

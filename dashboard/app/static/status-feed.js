@@ -1013,15 +1013,53 @@ async function startFeed() {
     publishSoon();
   });
 
-  // Refresh the company list + per-tab statuses + viewer IPs every 30s (the IP
-  // map fills in as connection circuits for each location stream in).
-  setInterval(async () => {
+  // Refresh the company list + per-tab statuses + viewer IPs every 30s. Keep
+  // network completion and unchanged-data publication out of camera/rail
+  // intervals: periodic maintenance must never steal a 100 Hz presentation
+  // frame merely to rebuild the same tabs.
+  let companyRefreshTimer = 0;
+  const companyRefreshInMotion = () => window.crmDeskTransit?.visualState?.().active
+    || window.crmHomeCamera?.isTransitioning?.()
+    || window.crmProjectsCamera?.isTransitioning?.()
+    || window.fractalCalendarCamera?.isTransitioning?.();
+  const scheduleCompanyRefresh = (delay = 30000) => {
+    clearTimeout(companyRefreshTimer);
+    companyRefreshTimer = setTimeout(() => {
+      const run = () => { void refreshCompanies(); };
+      if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout:2000 });
+      else run();
+    }, delay);
+  };
+  const refreshCompanies = async () => {
+    if (document.hidden || companyRefreshInMotion()) {
+      scheduleCompanyRefresh(1000);
+      return;
+    }
     try {
       const list = await bridge.getCompanies?.();
-      if (Array.isArray(list) && list.length) { companyState.companies = list; renderCompanyTabs(); }
+      if (Array.isArray(list) && list.length && !companyRefreshInMotion()) {
+        const before = JSON.stringify(companyState.companies || []);
+        const after = JSON.stringify(list);
+        if (after !== before) {
+          companyState.companies = list;
+          renderCompanyTabs();
+        }
+      }
     } catch {}
-    try { const m = await bridge.getViewerIps?.(); if (m && Object.keys(m).length) { viewerIpMap = m; publishSoon(); } } catch {}
-  }, 30000);
+    try {
+      const m = await bridge.getViewerIps?.();
+      if (m && Object.keys(m).length && !companyRefreshInMotion()) {
+        const before = JSON.stringify(Object.entries(viewerIpMap || {}).sort(([a], [b]) => a.localeCompare(b)));
+        const after = JSON.stringify(Object.entries(m).sort(([a], [b]) => a.localeCompare(b)));
+        if (after !== before) {
+          viewerIpMap = m;
+          publishSoon();
+        }
+      }
+    } catch {}
+    scheduleCompanyRefresh(companyRefreshInMotion() ? 1000 : 30000);
+  };
+  scheduleCompanyRefresh();
 }
 
 function whenDataRuntimeReady(callback, timeoutMs = 15000) {

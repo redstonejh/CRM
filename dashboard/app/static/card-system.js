@@ -2590,6 +2590,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const ZONE_RAIL_MAX_FRAME_STEP = 20;
   const ZONE_RAIL_MIN_FRAME_STEP = 3;
   const zoneHScroll = { x:0, target:0, raf:0, wheeling:false, releaseT:0 };
+  let zoneHPrimeAnimation = null;
+  let zoneHPrimeSignature = "";
   const zoneRailInteractionKey = `zone-rail:${theaterKey || apiName || "cards"}`;
   let zoneRailInteractionHeld = false;
   let zoneRailInteractionReleaseFrame = 0;
@@ -2950,6 +2952,24 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneHAcrylicLens.style.webkitClipPath = value;
     zoneHTrack.classList.add("has-shared-zone-acrylic");
   };
+  const primeHorizontalZoneCompositor = () => {
+    if (!horizontalZones || !zoneHTrack || !zoneHClip) return;
+    const signature = `${zoneHClip.clientWidth}:${zoneHTrack.scrollWidth}:${STAGES.length}`;
+    if (signature === zoneHPrimeSignature) return;
+    zoneHPrimeAnimation?.cancel?.();
+    const x = Math.round(zoneHScroll.x);
+    const base = `translate3d(${x}px,0,0)`;
+    const primed = `translate3d(${x - .25}px,0,0)`;
+    zoneHPrimeAnimation = zoneHTrack.animate(
+      [{ transform:base }, { transform:primed, offset:.5 }, { transform:base }],
+      { duration:64, easing:"linear" },
+    );
+    zoneHPrimeSignature = signature;
+    const animation = zoneHPrimeAnimation;
+    animation.finished.catch(() => null).finally(() => {
+      if (zoneHPrimeAnimation === animation) zoneHPrimeAnimation = null;
+    });
+  };
   const zoneHMin = () => {
     const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
     return Math.min(0, metrics.view - metrics.content);
@@ -2977,6 +2997,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const runZoneRailScroll = () => {
     if (!horizontalZones || zoneHScroll.raf) return;
+    zoneHPrimeAnimation?.cancel?.();
+    zoneHPrimeAnimation = null;
     holdZoneRailInteraction();
     const tick = () => {
       const minimum = zoneHMin(), goal = zoneHScroll.wheeling ? zoneHScroll.target : clamp(zoneHScroll.target, minimum, 0);
@@ -3258,7 +3280,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       }
       syncHorizontalZoneAcrylic();
       STAGES.forEach((stage) => clampZoneScroll(stage.key));
-      requestAnimationFrame(() => { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail(); });
+      requestAnimationFrame(() => {
+        zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0);
+        positionZoneRail();
+        primeHorizontalZoneCompositor();
+      });
       return;
     }
     if (scrollZoneRows && zoneVRail && zoneVClip && zoneVTrack) {
@@ -4252,6 +4278,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (state?.releaseT) clearTimeout(state.releaseT);
       });
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf); clearTimeout(zoneHScroll.releaseT); zoneHScroll.raf = 0; zoneHScroll.wheeling = false; releaseZoneRailInteraction(true);
+      zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null; zoneHPrimeSignature = "";
       zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zoneVResizeObserver?.disconnect(); zoneVResizeObserver = null;
       if (zoneVLodFrame) cancelAnimationFrame(zoneVLodFrame); zoneVLodFrame = 0; zoneVisibleStages.clear();

@@ -125,6 +125,21 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedStacks]));
     render(); return expandedStacks.has(key);
   };
+  const updateLinkedCommitment = async (commitment, fields) => {
+    if (!commitment?.id || !fields || !Object.keys(fields).length) return { ok:true, record:commitment || null };
+    let result = await window.crmDomain.update("commitments", commitment.id, fields, commitment.version);
+    if (!result?.record && result?.status === 409) {
+      const fresh = await window.crmDomain.get("commitments", commitment.id);
+      if (fresh?.record) {
+        // This is a field-level rebase, not a stale board replay: only the
+        // Planner fields from the current intent are applied over the fresh
+        // Assignment-owned stage/owner/version state.
+        result = await window.crmDomain.update("commitments", commitment.id, fields, fresh.record.version);
+      }
+    }
+    if (result?.record) Object.assign(commitment, result.record);
+    return result;
+  };
 
   const writeSelected = () => {
     if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(SELECTED_KEY, selectedId);
@@ -969,8 +984,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         if (entityType && recordId) commitmentFields.links.push({ entityType, recordId, relation:"supports" });
       }
       if (Object.keys(commitmentFields).length) {
-        const commitmentResult = await window.crmDomain.update("commitments", commitment.id, commitmentFields, commitment.version);
-        if (commitmentResult?.record) Object.assign(commitment, commitmentResult.record);
+        const commitmentResult = await updateLinkedCommitment(commitment, commitmentFields);
+        if (!commitmentResult?.record) {
+          await refresh(true, "commitment-reconcile");
+          return false;
+        }
       }
     }
     if (moving) {

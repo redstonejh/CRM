@@ -20,7 +20,7 @@ import {
 import {
   listRecords, getRecord, createRecord, updateRecord, deleteRecord,
   storeConnectionState, storeConnectionInfo, storeHealth, reportSummary,
-  listDomain, getDomain, createDomain, updateDomain, deleteDomain,
+  listDomain, getDomain, createDomain, updateDomain, batchDomain, deleteDomain,
 } from './store.js';
 const { PNG } = pngjs;
 const {
@@ -1702,13 +1702,30 @@ ipcMain.handle('domain:get', async (_e, { resource, id } = {}) => {
   if (resource !== 'commitments' || !result?.record) return result;
   return { ...result, record: cdms.decorateRecord('commitments', result.record) };
 });
-ipcMain.handle('domain:create', (_e, { resource, fields } = {}) => {
+const decorateDomainMutation = (resource, result) => {
+  if (resource !== 'commitments') return result;
+  if (Array.isArray(result?.records)) {
+    return { ...result, records: cdms.overlayRecords('commitments', result.records) };
+  }
+  if (result?.record) {
+    return { ...result, record: cdms.decorateRecord('commitments', result.record) };
+  }
+  return result;
+};
+ipcMain.handle('domain:create', async (_e, { resource, fields } = {}) => {
   const g = requireUser(); if (g.error) return g.error;
-  return createDomain(resource, { ...(fields || {}), actor: fields?.actor || g.who });
+  return decorateDomainMutation(resource,
+    await createDomain(resource, { ...(fields || {}), actor: fields?.actor || g.who }));
 });
-ipcMain.handle('domain:update', (_e, { resource, id, fields, expectedVersion } = {}) => {
+ipcMain.handle('domain:update', async (_e, { resource, id, fields, expectedVersion } = {}) => {
   const g = requireUser(); if (g.error) return g.error;
-  return updateDomain(resource, id, fields || {}, expectedVersion);
+  return decorateDomainMutation(resource,
+    await updateDomain(resource, id, fields || {}, expectedVersion));
+});
+ipcMain.handle('domain:batch', async (_e, { resource, updates } = {}) => {
+  const g = requireUser(); if (g.error) return g.error;
+  return decorateDomainMutation(resource,
+    await batchDomain(resource, Array.isArray(updates) ? updates : []));
 });
 ipcMain.handle('domain:delete', (_e, { resource, id, hard = false } = {}) => {
   const g = requireUser(); if (g.error) return g.error;

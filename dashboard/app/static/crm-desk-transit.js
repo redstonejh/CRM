@@ -7,7 +7,7 @@
 // boundaries (and at boot/restore, which is not navigation).
 (() => {
   const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
-  const TRANSIT_Z = "2500";        // below the untouched native drag strip/chrome
+  const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
   const STATIC_CROSSFADE_MS = 64;
 
   let busy = false;
@@ -59,6 +59,38 @@
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
         opacity:var(--crm-transit-rest-opacity,1)!important;
         transition:none!important}
+      /* Workspace activation keeps its semantic [hidden] ownership, while the
+         endpoint expander remains the one visible Home child above the room
+         being settled. This also covers a first launch with no capture image. */
+      .crm-home-surface[data-crm-transit-cover][hidden]{
+        display:block!important;visibility:visible!important;pointer-events:none!important;
+        z-index:${TRANSIT_Z}!important}
+      .crm-home-surface[data-crm-transit-cover][hidden]>.crm-home-level{
+        visibility:hidden!important}
+      .crm-home-surface[data-crm-transit-cover][hidden]>.crm-home-expander{
+        visibility:visible!important}
+      /* A first-run browser/Electron session may not have decoded the exact
+         room capture yet. Its fallback is a real opaque copy of the unchanged
+         workspace backdrop with the canonical neutral bucket tint—not the
+         transparent expander box previously mislabeled as a cover. */
+      .crm-home-endpoint-fallback{
+        position:absolute;inset:0;z-index:3;display:block;overflow:hidden;
+        pointer-events:none;opacity:1;background:var(--page-background) fixed;
+        background-color:var(--bg,rgba(10,15,23,1));transform:translateZ(0);
+        backface-visibility:hidden;will-change:opacity}
+      .crm-home-endpoint-fallback>.workspace-photo-backdrop{
+        position:absolute!important;inset:0!important;z-index:0!important;
+        display:block!important;visibility:visible!important;pointer-events:none!important}
+      .crm-home-endpoint-fallback-acrylic{
+        position:absolute;inset:0;z-index:1;display:block;pointer-events:none;
+        background:linear-gradient(180deg,rgba(52,59,70,.16),rgba(27,32,40,.12));
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+      /* Canonical room furniture can own high local z-indices (deck arrows,
+         drag flyers, loading state). Keep those room-only layers below the
+         endpoint cover; persistent window/navigation chrome remains above it. */
+      html.crm-transit-endpoint-covered :is(
+        .tk-stacks,.tk-scrim,.tk-system-state,.tk-arrow,.tk-stack-btn,.tk-zfly
+      ){z-index:4400!important}
       [data-crm-transit-retained]{transform:translate3d(-110vw,0,0)!important;pointer-events:none!important}
     `;
     document.head.appendChild(style);
@@ -233,32 +265,55 @@
     if (!rasterNodeIds.has(node)) rasterNodeIds.set(node, ++rasterNodeSequence);
     return rasterNodeIds.get(node);
   };
+  const coverSourceOf = (node) => {
+    if (!node) return "";
+    if (node instanceof HTMLImageElement) return node.currentSrc || node.src || "";
+    const style = getComputedStyle(node);
+    return [
+      node.tagName,
+      node.className,
+      style.backgroundColor,
+      style.backgroundImage,
+      style.backdropFilter,
+      style.webkitBackdropFilter,
+      style.borderColor,
+      style.boxShadow,
+    ].join("|");
+  };
   const inspectRasterCover = (stage) => {
     const cam = camera();
     const lid = stage?.lid || (cam?.level?.() >= 1 ? cam.layers()[1] : null);
     const host = stage?.coverHost || lid?.querySelector?.(":scope > .crm-home-preview");
-    const raster = stage?.coverRaster || host?.querySelector?.(":scope > .crm-home-preview-exact");
+    const raster = stage?.coverRaster?.isConnected
+      ? stage.coverRaster
+      : host?.querySelector?.(":scope > .crm-home-preview-exact, :scope > .crm-home-preview-foreground");
     if (!lid || !host || !raster) {
       return {
         ready:false,
         nodeId:rasterIdentity(raster),
+        mode:stage?.coverMode || lid?.dataset?.crmEndpointCover || "",
         frame:lid?.dataset?.fractalFrame || "",
         viewport:{ width:innerWidth, height:innerHeight },
       };
     }
-    const source = raster.currentSrc || raster.src || "";
+    const source = coverSourceOf(raster);
     const rect = raster.getBoundingClientRect();
     const rasterStyle = getComputedStyle(raster);
     const hostStyle = getComputedStyle(host);
     const lidStyle = lid.style;
+    const imageRaster = raster instanceof HTMLImageElement;
+    const complete = imageRaster ? !!raster.complete : true;
+    const naturalWidth = imageRaster ? raster.naturalWidth || 0 : Math.round(rect.width);
+    const naturalHeight = imageRaster ? raster.naturalHeight || 0 : Math.round(rect.height);
     const signature = {
-      ready:!!raster.complete && raster.naturalWidth > 0 && raster.naturalHeight > 0
+      ready:complete && naturalWidth > 0 && naturalHeight > 0
         && rect.width >= innerWidth - 1 && rect.height >= innerHeight - 1,
       nodeId:rasterIdentity(raster),
+      mode:stage?.coverMode || lid.dataset.crmEndpointCover || "",
       source:compactSource(source),
-      complete:!!raster.complete,
-      naturalWidth:raster.naturalWidth || 0,
-      naturalHeight:raster.naturalHeight || 0,
+      complete,
+      naturalWidth,
+      naturalHeight,
       rect:{
         x:roundGeometry(rect.x),
         y:roundGeometry(rect.y),
@@ -292,8 +347,12 @@
     .every((key) => Math.abs(Number(left?.[key]) - Number(right?.[key])) <= tolerance);
   const sameRasterCover = (stage, before, after) => !!before?.ready && !!after?.ready
     && before.nodeId === after.nodeId
-    && stage?.coverRaster === stage?.coverHost?.querySelector?.(":scope > .crm-home-preview-exact")
-    && stage?.coverSource === (stage?.coverRaster?.currentSrc || stage?.coverRaster?.src || "")
+    && before.mode === after.mode
+    && stage?.coverRaster?.isConnected
+    && (stage?.coverMode === "surface"
+      ? stage.coverRaster === stage.lid && stage.coverHost === stage.lid
+      : stage?.coverRaster?.parentElement === stage?.coverHost)
+    && stage?.coverSource === coverSourceOf(stage?.coverRaster)
     && before.source.length === after.source.length
     && before.source.head === after.source.head
     && before.source.tail === after.source.tail
@@ -343,26 +402,94 @@
     return detail;
   };
 
+  const buildFallbackCover = (host) => {
+    if (!host) return null;
+    host.querySelector(":scope > .crm-home-endpoint-fallback")?.remove();
+    const fallback = document.createElement("div");
+    fallback.className = "crm-home-endpoint-fallback";
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.style.width = `${innerWidth}px`;
+    fallback.style.height = `${innerHeight}px`;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const bodyStyle = getComputedStyle(document.body);
+    const backgroundStyle = rootStyle.backgroundImage !== "none" ? rootStyle : bodyStyle;
+    fallback.style.backgroundImage = backgroundStyle.backgroundImage;
+    fallback.style.backgroundColor = rootStyle.backgroundColor !== "rgba(0, 0, 0, 0)"
+      ? rootStyle.backgroundColor
+      : bodyStyle.backgroundColor;
+    fallback.style.backgroundPosition = backgroundStyle.backgroundPosition;
+    fallback.style.backgroundSize = backgroundStyle.backgroundSize;
+    fallback.style.backgroundRepeat = backgroundStyle.backgroundRepeat;
+    const backdrop = document.querySelector("body > .workspace-photo-backdrop");
+    if (backdrop) {
+      const copy = backdrop.cloneNode(true);
+      copy.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+      fallback.appendChild(copy);
+    }
+    const acrylic = document.createElement("span");
+    acrylic.className = "crm-home-endpoint-fallback-acrylic";
+    fallback.appendChild(acrylic);
+    host.appendChild(fallback);
+    return fallback;
+  };
+
+  const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
+    document.documentElement.classList.remove(
+      "crm-transit-materializing",
+      "crm-transit-revealing",
+      "crm-transit-endpoint-covered",
+    );
+    clearDestinationLayers();
+    const surface = camera()?.surface?.();
+    surface?.removeAttribute?.("data-crm-transit-cover");
+    const lid = stage?.lid;
+    lid?.classList?.remove("crm-home-endpoint-cover");
+    if (lid?.dataset) delete lid.dataset.crmEndpointCover;
+    stage?.fallbackCover?.remove?.();
+    if (!preserveOpacity) {
+      [stage?.coverHost, lid].filter(Boolean).forEach((node) => {
+        node.style.removeProperty("opacity");
+        node.style.removeProperty("transition");
+      });
+    }
+  };
+
   const seatEndpointRaster = async (stage) => {
     const cam = camera();
     const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
     const host = lid?.querySelector?.(":scope > .crm-home-preview");
-    const raster = host?.querySelector?.(":scope > .crm-home-preview-exact");
+    const exact = host?.querySelector?.(":scope > .crm-home-preview-exact");
+    const foreground = host?.querySelector?.(":scope > .crm-home-preview-foreground");
+    if (exact && (!exact.complete || exact.naturalWidth <= 0)) {
+      try { await exact.decode?.(); } catch {}
+    }
+    // Only the exact capture is guaranteed opaque. The foreground capture has
+    // transparent wallpaper pixels and cannot conceal a live room settling
+    // beneath it, so cold sessions receive an explicit opaque backdrop cover.
+    const imageRaster = exact?.complete && exact.naturalWidth > 0 ? exact : null;
+    const fallback = imageRaster ? null : buildFallbackCover(host);
+    const raster = imageRaster || fallback;
+    const coverMode = imageRaster ? "exact" : "fallback";
+    const coverHost = host;
     stage.lid = lid;
-    stage.coverHost = host;
+    stage.coverHost = coverHost;
     stage.coverRaster = raster;
-    if (!lid || !host || !raster) return false;
-    if (!raster.complete || raster.naturalWidth <= 0) {
+    stage.coverMode = coverMode;
+    stage.fallbackCover = fallback;
+    if (!lid || !host || !raster || !coverHost) return false;
+    if (raster instanceof HTMLImageElement && (!raster.complete || raster.naturalWidth <= 0)) {
       try { await raster.decode?.(); } catch {}
     }
     if (stage.sequence !== activeDive?.sequence) return false;
-    host.style.transition = "none";
-    host.style.opacity = "1";
+    coverHost.style.transition = "none";
+    coverHost.style.opacity = "1";
+    cam?.surface?.()?.setAttribute?.("data-crm-transit-cover", coverMode);
+    document.documentElement.classList.add("crm-transit-endpoint-covered");
+    lid.dataset.crmEndpointCover = coverMode;
     lid.classList.add("crm-home-endpoint-cover");
     stage.phase = "seating-cover";
-    // The exact image was decoded while the expander was built. Give its
-    // compositor surface two complete endpoint paints before any destination
-    // ownership changes occur.
+    // Prefer the decoded exact room capture. Until one exists, the duplicated
+    // unchanged backdrop plus neutral acrylic owns every endpoint pixel.
     await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
     stage.coverStart = inspectRasterCover(stage);
@@ -688,18 +815,33 @@
     await paint(1);
     if (stage.sequence !== activeDive?.sequence) return;
     stage.maintenanceStartedAt = performance.now();
-    try { await seatEndpointRaster(stage); } catch {}
-    try { await materializeDiveDestination(stage); } catch {}
-    if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
-    try { await settleDiveDestination(stage); } catch {}
-    armDestinationReveal(stage);
-    try { await stage.revealPromise; } catch {}
+    let coverReady = false;
+    try { coverReady = await seatEndpointRaster(stage); } catch {}
+    if (!coverReady) {
+      stage.revealError = "No opaque endpoint cover was available";
+      stage.resolveReveal?.();
+      stage.resolveReveal = null;
+    } else {
+      try { await materializeDiveDestination(stage); } catch {}
+      if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
+      try { await settleDiveDestination(stage); } catch {}
+      armDestinationReveal(stage);
+      try { await stage.revealPromise; } catch {}
+    }
     if (stage.revealError || !stage.liveReady) {
       // Fail closed, then recover through the same canonical camera instead of
       // freezing the viewport or dropping the cover. The opaque room raster
       // contracts back into its Home tile while Home is restored beneath it.
       document.dispatchEvent(new CustomEvent("crm:desk-transit-error", {
-        detail:{ key, phase:stage.phase, error:stage.revealError || "destination not ready" },
+        detail:{
+          key,
+          phase:stage.phase,
+          error:stage.revealError || "destination not ready",
+          coverStart:stage.coverStart || null,
+          coverBeforeSwap:stage.coverBeforeSwap || null,
+          coverAfterSettlement:stage.coverAfterSettlement || null,
+          settledState:stage.settledState || null,
+        },
       }));
       stage.phase = "recovering-home";
       stage.coverAnimation?.cancel?.();
@@ -708,11 +850,14 @@
         stage.coverHost.style.transition = "none";
         stage.coverHost.style.opacity = "1";
       }
+      document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
+      clearDestinationLayers();
       commit("home");
       if (surface) {
         surface.hidden = false;
         surface.style.zIndex = TRANSIT_Z;
       }
+      surface?.removeAttribute?.("data-crm-transit-cover");
       try {
         if (cam?.level?.() >= 1 && !cam?.isTransitioning?.()) {
           cam.back();
@@ -724,6 +869,7 @@
         if (cam?.restoreRoot) cam.restoreRoot();
         else cam?.rebuildRoot?.();
       }
+      cleanupEndpointCover(stage);
       if (surface) surface.style.zIndex = "";
       if (activeDive?.sequence === stage.sequence) activeDive = null;
       done(false);
@@ -736,6 +882,7 @@
     const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
     if (cam?.restoreRoot) cam.restoreRoot();
     else cam?.rebuildRoot?.();
+    cleanupEndpointCover(stage);
     try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
     if (surface) {
       surface.hidden = true;

@@ -262,6 +262,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   }[theaterKey] || widgetType));
   let active = config.active !== false;
   let started = false;
+  let loadPromise = null;
   let publicApi = null;
   let CARD_W = 185, CARD_H = 279;          // matched to the grid ticket card at render time
   const MARGIN = 18, GAP_FAN = 10, RADIUS = 15;
@@ -349,6 +350,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     ? (() => { try { return JSON.parse(localStorage.getItem(STAGE_STORE) || "{}") || {}; } catch { return {}; } })()
     : null;
   const pendingSourceWrites = new Set();
+  const pendingSourceStages = new Map();
   let sourceReconcilePromise = null;
   const reconcileSource = () => {
     if (sourceReconcilePromise) return sourceReconcilePromise;
@@ -358,27 +360,40 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return sourceReconcilePromise;
   };
   const ticketById = (id) => tickets.find((x) => x && x.id === id) || null;
+  const trackSourceWrite = (result, id, operation = "update") => {
+    if (stageAuthority !== "source" || !result || typeof result.then !== "function") return result;
+    const pending = Promise.resolve(result).then((value) => {
+      if (value === false || value?.ok === false) {
+        throw new Error(`Canonical ${widgetTitle.toLowerCase()} ${operation} failed`);
+      }
+      return value;
+    }).catch(async (error) => {
+      document.dispatchEvent(new CustomEvent("crm:card-source-write-error", {
+        detail:{
+          theater:theaterKey,
+          id,
+          operation,
+          error:String(error?.message || error || "source update failed"),
+        },
+      }));
+      await reconcileSource();
+      return { ok:false, error };
+    }).finally(() => pendingSourceWrites.delete(pending));
+    pendingSourceWrites.add(pending);
+    return pending;
+  };
   const patchTicketDoc = (id, fields) => {
     if (!id || !fields || !Object.keys(fields).length) return;
     try {
       const result = source?.update?.(id, fields);
-      if (stageAuthority !== "source" || !result || typeof result.then !== "function") return result;
-      const pending = Promise.resolve(result).then((value) => {
-        if (value === false || value?.ok === false) {
-          throw new Error(`Canonical ${widgetTitle.toLowerCase()} placement update failed`);
-        }
-        return value;
-      }).catch(async (error) => {
-        document.dispatchEvent(new CustomEvent("crm:card-source-write-error", {
-          detail:{ theater:theaterKey, id, error:String(error?.message || error || "source update failed") },
-        }));
-        await reconcileSource();
-        return { ok:false, error };
-      }).finally(() => pendingSourceWrites.delete(pending));
-      pendingSourceWrites.add(pending);
-      return pending;
+      return trackSourceWrite(result, id);
     } catch (error) {
-      if (stageAuthority === "source") void reconcileSource();
+      if (stageAuthority === "source") {
+        document.dispatchEvent(new CustomEvent("crm:card-source-write-error", {
+          detail:{ theater:theaterKey, id, operation:"update", error:String(error?.message || error) },
+        }));
+        void reconcileSource();
+      }
       return Promise.resolve({ ok:false, error });
     }
   };
@@ -410,7 +425,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (!zonesEnabled) return null;
     return stageForRecord(ticketById(id));
   };
-  const setStage = (id, stage) => {
+  const setStage = (id, stage, moveFields = {}) => {
     if (!zonesEnabled) return;
     if (!id) return;
     const nextStage = stage && STAGE_KEYS.includes(stage) ? stage : null;
@@ -419,12 +434,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       try { localStorage.setItem(STAGE_STORE, JSON.stringify(stageMap)); } catch {}
     }
     const t = ticketById(id);
-    const extra = stageUpdateFields ? (stageUpdateFields(id, nextStage, t) || {}) : {};
+    const previousStage = stageForRecord(t);
+    const extra = {
+      ...(moveFields && typeof moveFields === "object" ? moveFields : {}),
+      ...(stageUpdateFields ? (stageUpdateFields(id, nextStage, t) || {}) : {}),
+    };
+    if (stageAuthority === "source" && typeof source?.move === "function") {
+      pendingSourceStages.set(id, { fromStage:previousStage, stage:nextStage, fields:extra });
+    }
     if (t) {
       if (stageAuthority === "local" || !stageUpdateFields) t.stage = nextStage;
       Object.assign(t, extra);
     }
-    patchTicketDoc(id, { stage: nextStage, ...extra });
+    if (!(stageAuthority === "source" && typeof source?.move === "function")) {
+      patchTicketDoc(id, { stage: nextStage, ...extra });
+    }
   };
 
   // Per-stage card order = the vertical stacking order within a bucket. A ticket ENTERING a bucket
@@ -444,19 +468,75 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         try { return stageRankUpdateFields?.(record.id, rank, stageKey, record) || {}; }
         catch { return {}; }
       };
+      const orderedIds = (stageKey, excludeId = null) => tickets
+        .filter((record) => record?.id && record.id !== excludeId && stageForRecord(record) === stageKey)
+        .sort((a, b) => {
+          const ar = stageRankForRecord(a);
+          const br = stageRankForRecord(b);
+          return (ar ?? Number.MAX_SAFE_INTEGER) - (br ?? Number.MAX_SAFE_INTEGER)
+            || (configuredStageOrderCompare ? configuredStageOrderCompare(a, b, stageKey) : 0)
+            || (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0)
+            || String(a.id).localeCompare(String(b.id));
+        })
+        .map((record) => record.id);
+      if (typeof source?.move === "function") {
+        const pendingStage = pendingSourceStages.get(id) || {
+          fromStage:stageForRecord(ticketById(id)),
+          stage:stage && STAGE_KEYS.includes(stage) ? stage : null,
+          fields:{},
+        };
+        pendingSourceStages.delete(id);
+        const nextStage = stage && STAGE_KEYS.includes(stage) ? stage : null;
+        const updates = new Map();
+        const place = (recordId, stageKey, rank, includeMoveFields = false) => {
+          const record = ticketById(recordId);
+          if (!record) return;
+          const stageExtra = includeMoveFields
+            ? pendingStage.fields
+            : {};
+          const rankExtra = rankFields(record, rank, stageKey);
+          const fields = includeMoveFields
+            ? { stage:stageKey, stageRank:rank, ...stageExtra, ...rankExtra }
+            : { stageRank:rank, ...rankExtra };
+          if (includeMoveFields && !stageUpdateFields) record.stage = stageKey;
+          if (!stageRankUpdateFields) record.stageRank = rank;
+          Object.assign(record, stageExtra, rankExtra);
+          updates.set(recordId, { id:recordId, fields });
+        };
+
+        if (pendingStage.fromStage && pendingStage.fromStage !== nextStage && STAGE_KEYS.includes(pendingStage.fromStage)) {
+          orderedIds(pendingStage.fromStage).forEach((recordId, rank) => {
+            place(recordId, pendingStage.fromStage, rank);
+          });
+        }
+        if (nextStage) {
+          const destination = orderedIds(nextStage, id);
+          const requestedIndex = Number.isFinite(Number(index)) ? Math.trunc(Number(index)) : destination.length;
+          destination.splice(clamp(requestedIndex, 0, destination.length), 0, id);
+          destination.forEach((recordId, rank) => place(recordId, nextStage, rank, recordId === id));
+        } else {
+          place(id, null, null, true);
+        }
+        try {
+          return trackSourceWrite(source.move({
+            id,
+            fromStage:pendingStage.fromStage || null,
+            stage:nextStage,
+            index,
+            updates:[...updates.values()],
+          }), id, "move");
+        } catch (error) {
+          document.dispatchEvent(new CustomEvent("crm:card-source-write-error", {
+            detail:{ theater:theaterKey, id, operation:"move", error:String(error?.message || error) },
+          }));
+          void reconcileSource();
+          return Promise.resolve({ ok:false, error });
+        }
+      }
       if (stage && STAGE_KEYS.includes(stage)) {
-        const ordered = tickets
-          .filter((record) => record?.id && record.id !== id && stageForRecord(record) === stage)
-          .sort((a, b) => {
-            const ar = stageRankForRecord(a);
-            const br = stageRankForRecord(b);
-            return (ar ?? Number.MAX_SAFE_INTEGER) - (br ?? Number.MAX_SAFE_INTEGER)
-              || (configuredStageOrderCompare ? configuredStageOrderCompare(a, b, stage) : 0)
-              || (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0)
-              || String(a.id).localeCompare(String(b.id));
-          })
-          .map((record) => record.id);
-        ordered.splice(clamp(index | 0, 0, ordered.length), 0, id);
+        const ordered = orderedIds(stage, id);
+        const requestedIndex = Number.isFinite(Number(index)) ? Math.trunc(Number(index)) : ordered.length;
+        ordered.splice(clamp(requestedIndex, 0, ordered.length), 0, id);
         ordered.forEach((rankedId, rank) => {
           const record = ticketById(rankedId);
           if (!record) return;
@@ -2785,6 +2865,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     requestAnimationFrame(tick);
   });
   const waitForCanonicalGeometrySettled = async (maxFrames = 120) => {
+    if (loadPromise) await loadPromise;
     if (pendingSourceWrites.size) await Promise.allSettled([...pendingSourceWrites]);
     if (sourceReconcilePromise) await sourceReconcilePromise;
     let sourceState = { stable:true, applicable:false };
@@ -4411,22 +4492,32 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       render();
     }, 260);
   };
-  const load = async () => {
-    if (!tickets.length) showSystemState("loading");
-    try { const r = await source?.list?.(); tickets = recordsFromList(r); showSystemState(null); }
-    catch (error) { tickets = []; showSystemState("error", error?.message); }
-    migrateLegacyFaces();
-    render();
-    if (!subscribed) {
-      subscribed = true;
-      // While the config is open, the card the detail panel is animating from must NOT be rebuilt
-      // (that detaches it → a copy snaps back to the stack). Defer the render until the panel closes.
-      source?.onChanged?.((payload) => {
-        tickets = recordsFromList(payload);
-        if (detail?.isOpen?.()) { pendingRender = true; scheduleDeferredRender(); return; }
-        render();
-      });
-    }
+  const load = (options = {}) => {
+    if (loadPromise) return loadPromise;
+    const run = (async () => {
+      if (!tickets.length) showSystemState("loading");
+      try { const r = await source?.list?.(); tickets = recordsFromList(r); showSystemState(null); }
+      catch (error) { tickets = []; showSystemState("error", error?.message); }
+      migrateLegacyFaces();
+      if (typeof options.canRender !== "function" || options.canRender()) render();
+      else renderDirty = true;
+      if (!subscribed) {
+        subscribed = true;
+        // While the config is open, the card the detail panel is animating from must NOT be rebuilt
+        // (that detaches it → a copy snaps back to the stack). Defer the render until the panel closes.
+        source?.onChanged?.((payload) => {
+          tickets = recordsFromList(payload);
+          if (detail?.isOpen?.()) { pendingRender = true; scheduleDeferredRender(); return; }
+          render();
+        });
+      }
+      return tickets;
+    })();
+    loadPromise = run;
+    run.finally(() => {
+      if (loadPromise === run) loadPromise = null;
+    }).catch(() => {});
+    return run;
   };
   const refreshRecordFaces = (record) => {
     if (!record?.id) return null;
@@ -4464,6 +4555,20 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // delete/restore are the trash flag (NOT tickets.remove) so the ticket survives in the trash.
   publicApi = {
     reload: load,
+    // Programmatic moves use the identical canonical placement path as a
+    // pointer drop. Source-authoritative boards can therefore expose actions
+    // such as Complete/Reopen without inventing a second ordering routine.
+    moveToStage: async (id, stage, index = 1e9, fields = {}) => {
+      const nextStage = stage && STAGE_KEYS.includes(stage) ? stage : null;
+      if (!ticketById(id) || (stage && !nextStage)) return false;
+      setStage(id, nextStage, fields);
+      const write = setStageAt(id, nextStage, index);
+      render();
+      const writeResult = await Promise.resolve(write);
+      if (writeResult?.ok === false) return false;
+      const settled = await waitForCanonicalGeometrySettled();
+      return settled?.stable === true && stageOf(id) === nextStage;
+    },
     // Grouped furniture (People's company buckets) can arrive after the card
     // instance when the API reconnects. Replace the bucket definitions in
     // place so a transient empty company read never freezes the surface into
@@ -4525,6 +4630,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       restoreZoneExpansion,
       stageAuthority,
       deletionAuthority,
+      atomicSourceMove:typeof source?.move === "function",
       leftDeckEnabled,
       rightDeckEnabled,
       trashEnabled,
@@ -4581,7 +4687,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     baseline: async (options = {}) => {
       if (!started) {
         started = true;
-        await load();
+        await load(options);
+      } else if (loadPromise) {
+        await loadPromise;
       }
       // Home may begin a camera move while an idle prewarm is waiting on its
       // data source.  Do not let the eventual promise continuation build a

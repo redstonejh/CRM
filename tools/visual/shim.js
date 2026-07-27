@@ -247,7 +247,7 @@
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(String(event.data));
-        if (msg.type === 'domain-changed') {
+        if (msg.type === 'domain-changed' || msg.type === 'domain-batch-changed') {
           scheduleBroadcast();
           return;
         }
@@ -436,6 +436,9 @@
     create: (resource, fields) => request(domainPath(resource), { method: 'POST', body: { fields } }),
     update: (resource, id, fields, expectedVersion) => request(domainPath(resource, id), {
       method: 'PATCH', body: { fields, expectedVersion },
+    }),
+    batch: (resource, updates) => request(domainPath(resource), {
+      method: 'PATCH', body: { updates },
     }),
     remove: (resource, id, options = {}) => request(domainPath(resource, id, options.hard ? { hard: true } : {}), { method: 'DELETE' }),
     onChanged: (cb) => on('store:changed', cb),

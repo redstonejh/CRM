@@ -86,7 +86,7 @@ const WORKER_ASSIGNMENT_AUDIT_SOURCE = `(${async function assignmentWorkerAudit(
   });
   const requiredFactoryMethods = [
     'setActive', 'reload', 'baseline', 'contract', 'homePreviewState',
-    'applyHomePreviewState', 'performanceState', 'createCard',
+    'applyHomePreviewState', 'performanceState', 'createCard', 'moveToStage',
     'setStageExpanded', 'expandedStages', 'zoneScrollState', 'scrollZonesBy',
   ];
   const factoryMethodsMissing = requiredFactoryMethods.filter(
@@ -567,7 +567,7 @@ async function readCanonicalAssignmentSignature(page) {
     }));
     const requiredFactoryMethods = [
       'setActive', 'reload', 'baseline', 'contract', 'homePreviewState',
-      'applyHomePreviewState', 'performanceState', 'createCard',
+      'applyHomePreviewState', 'performanceState', 'createCard', 'moveToStage',
       'setStageExpanded', 'expandedStages', 'zoneScrollState', 'scrollZonesBy',
     ];
     const stageIds = new Set(zones.map((zone) => zone.id));
@@ -888,6 +888,7 @@ async function main() {
     assert.equal(canonicalAssignment.contract.restoreZoneExpansion, false);
     assert.equal(canonicalAssignment.contract.stageAuthority, 'source');
     assert.equal(canonicalAssignment.contract.deletionAuthority, 'source');
+    assert.equal(canonicalAssignment.contract.atomicSourceMove, true);
     assert.equal(canonicalAssignment.contract.deckScaffold, false);
     assert.equal(canonicalAssignment.contract.leftDeckEnabled, false);
     assert.equal(canonicalAssignment.contract.rightDeckEnabled, false);

@@ -169,7 +169,7 @@ function connectSocket() {
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(String(data));
-      if (msg.type === 'domain-changed') {
+      if (msg.type === 'domain-changed' || msg.type === 'domain-batch-changed') {
         emitChange();
         return;
       }
@@ -275,6 +275,13 @@ export async function updateDomain(resource, id, fields = {}, expectedVersion) {
   const key = safeDomainResource(resource);
   return request(`/api/domain/${encodeURIComponent(key)}/${encodeURIComponent(safeId(id))}`, {
     method: 'PATCH', body: { fields, expectedVersion },
+  });
+}
+
+export async function batchDomain(resource, updates = []) {
+  const key = safeDomainResource(resource);
+  return request(`/api/domain/${encodeURIComponent(key)}`, {
+    method: 'PATCH', body: { updates },
   });
 }
 

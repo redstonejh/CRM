@@ -17,15 +17,19 @@
   const first = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   const nowIso = () => new Date().toISOString();
-  const closed = (item) => ["completed", "cancelled", "canceled"].includes(String(item?.status || "").toLowerCase());
+  const CLOSED_STATES = new Set(["completed", "complete", "resolved", "done", "closed", "archived", "cancelled", "canceled"]);
+  const closed = (item) => CLOSED_STATES.has(String(item?.status || "").toLowerCase());
   const stageById = (id) => STAGES.find((stage) => stage.id === String(id));
   const contactName = (contact) => first(contact?.name, contact?.title, contact?.client, contact?.id, "Person");
   const recordName = (record) => first(record?.title, record?.name, record?.companyLabel, record?.description, record?.id, "Untitled");
 
-  let model = { commitments:[], flows:[], contacts:[], companies:[], tasks:[], tickets:[], workItems:[] };
+  let model = { commitments:[], contacts:[], companies:[], tasks:[], tickets:[], workItems:[] };
   let currentUser = "rosa";
   let loadPromise = null;
   let loadTail = Promise.resolve();
+  let mutationTail = Promise.resolve();
+  let requestedGeneration = 1;
+  let appliedGeneration = 0;
   let refreshTimer = 0;
   let subscriptionsBound = false;
   let assignmentDetail = null;
@@ -33,16 +37,12 @@
   let factory = null;
   let detailSaveTimer = 0;
   let detailSaveTail = Promise.resolve();
+  let shadowCleanupPromise = null;
   const listeners = new Set();
   const pendingDetailFields = new Map();
   const writeTails = new Map();
 
   const itemById = (id) => model.commitments.find((item) => String(item.id) === String(id));
-  const flowFor = (itemOrId) => {
-    const id = typeof itemOrId === "object" ? itemOrId?.id : itemOrId;
-    return model.flows.find((flow) => flow.workflowKey === "assignments"
-      && flow.entityType === "commitments" && String(flow.recordId) === String(id));
-  };
   const stageOf = (item) => {
     if (closed(item)) return "done";
     const explicit = String(item?.assignmentStage || "").toLowerCase();
@@ -62,10 +62,27 @@
     return `${entity} · ${recordName(targetRecord(link) || { id:link.recordId })}`;
   };
 
+  const removeLegacyAssignmentShadows = () => {
+    if (shadowCleanupPromise) return shadowCleanupPromise;
+    shadowCleanupPromise = (async () => {
+      const result = await window.crmDomain.list("workflow-entries", {
+        includeDeleted:false,
+        workflowKey:"assignments",
+        limit:5000,
+      });
+      for (const shadow of rows(result)) {
+        await window.crmDomain.remove("workflow-entries", shadow.id);
+      }
+    })().catch((error) => {
+      console.error("[CRM] Assignment shadow cleanup failed", error);
+    });
+    return shadowCleanupPromise;
+  };
+
   async function loadModel() {
-    const [commitments, flows, contacts, companies, tasks, tickets, workItems, session] = await Promise.all([
-      window.crmDomain.list("commitments", { includeDeleted:false, limit:1000 }),
-      window.crmDomain.list("workflow-entries", { includeDeleted:false, workflowKey:"assignments", limit:1000 }),
+    await removeLegacyAssignmentShadows();
+    const [commitments, contacts, companies, tasks, tickets, workItems, session] = await Promise.all([
+      window.crmDomain.list("commitments", { includeDeleted:false, limit:5000 }),
       window.crmStore.list("contacts", { includeDeleted:false }),
       window.crmStore.list("companies", { includeDeleted:false }),
       window.crmStore.list("tasks", { includeDeleted:false }),
@@ -76,7 +93,6 @@
     currentUser = first(session?.user?.username, currentUser, "rosa");
     model = {
       commitments:rows(commitments).filter((item) => !item.deletedAt),
-      flows:rows(flows).filter((item) => !item.deletedAt),
       contacts:rows(contacts).filter((item) => !item.deletedAt),
       companies:rows(companies).filter((item) => !item.deletedAt),
       tasks:rows(tasks).filter((item) => !item.deletedAt),
@@ -85,24 +101,41 @@
     };
     return model;
   }
-  const refreshModel = () => {
+  const refreshModel = (force = false) => {
+    if (force) requestedGeneration += 1;
     if (loadPromise) return loadPromise;
-    const run = loadTail.catch(() => null).then(loadModel);
+    if (appliedGeneration >= requestedGeneration) return Promise.resolve(model);
+    const run = loadTail.catch(() => null).then(async () => {
+      // An invalidation received during any in-flight read advances the
+      // requested generation. Keep reading until the applied snapshot catches
+      // it; a settled board can therefore never publish an older generation.
+      while (appliedGeneration < requestedGeneration) {
+        const generation = requestedGeneration;
+        await loadModel();
+        appliedGeneration = generation;
+      }
+      return model;
+    });
     loadTail = run;
     loadPromise = run;
     run.finally(() => { if (loadPromise === run) loadPromise = null; }).catch(() => {});
     return run;
   };
+  const emitModel = () => {
+    const payload = { records:model.commitments };
+    listeners.forEach((listener) => { try { listener(payload); } catch {} });
+    return payload;
+  };
   const publishModel = async () => {
     try {
       await refreshModel();
-      const payload = { records:model.commitments };
-      listeners.forEach((listener) => { try { listener(payload); } catch {} });
+      emitModel();
     } catch (error) {
       console.error("[CRM] Assignment refresh failed", error);
     }
   };
   const scheduleModelRefresh = () => {
+    requestedGeneration += 1;
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => {
       refreshTimer = 0;
@@ -126,7 +159,8 @@
         awaiting = false;
       }
       const quiet = !refreshTimer && !loadPromise && !writeTails.size
-        && !detailSaveTimer && !pendingDetailFields.size;
+        && !detailSaveTimer && !pendingDetailFields.size
+        && appliedGeneration === requestedGeneration;
       stable = quiet ? stable + 1 : 0;
       frame += 1;
       if (stable >= 3 || frame >= maxFrames) {
@@ -150,33 +184,9 @@
   const freshDomainRecord = async (resource, id) => {
     const direct = await window.crmDomain?.get?.(resource, id).catch?.(() => null);
     if (direct?.record) return direct.record;
-    return rows(await window.crmDomain.list(resource, { includeDeleted:false, limit:1000 }))
+    return rows(await window.crmDomain.list(resource, { includeDeleted:false, limit:5000 }))
       .find((record) => String(record.id) === String(id)) || null;
   };
-  async function syncFlow(item) {
-    if (!item?.id) return null;
-    const fields = {
-      workflowKey:"assignments",
-      entityType:"commitments",
-      recordId:item.id,
-      stage:stageOf(item),
-      rank:Number(item.assignmentRank ?? item.stageRank ?? 0) || 0,
-      owner:item.assignee || null,
-    };
-    let flow = flowFor(item);
-    if (!flow) {
-      const created = await window.crmDomain.create("workflow-entries", fields);
-      if (created?.record) model.flows.push(created.record);
-      return created?.record || null;
-    }
-    let result = await window.crmDomain.update("workflow-entries", flow.id, fields, flow.version);
-    if (!result?.record) {
-      const fresh = await freshDomainRecord("workflow-entries", flow.id);
-      if (fresh) result = await window.crmDomain.update("workflow-entries", fresh.id, fields, fresh.version);
-    }
-    if (result?.record) Object.assign(flow, result.record);
-    return result?.record || null;
-  }
   const normalizedPatch = (item, rawFields = {}) => {
     const fields = { ...rawFields };
     const requestedStage = fields.assignmentStage ?? fields.stage;
@@ -214,35 +224,40 @@
     }
     return fields;
   };
+  const queueMutation = (key, task) => {
+    const run = mutationTail.catch(() => null).then(task);
+    mutationTail = run;
+    writeTails.set(String(key), run);
+    run.finally(() => {
+      if (writeTails.get(String(key)) === run) writeTails.delete(String(key));
+    }).catch(() => {});
+    return run;
+  };
   const updateCommitment = (id, rawFields = {}) => {
     const item = itemById(id);
     if (!item) return Promise.resolve({ ok:false, record:null });
     const fields = normalizedPatch(item, rawFields);
     Object.assign(item, fields);
     factory?.patchRecord?.(id, fields);
-    const syncWorkflow = ["assignmentStage","assignmentRank","assignee","assignedContactId"].some((key) => Object.prototype.hasOwnProperty.call(fields, key));
-    const prior = writeTails.get(String(id)) || Promise.resolve();
-    const run = prior.catch(() => null).then(async () => {
-      let current = itemById(id) || await freshDomainRecord("commitments", id);
-      if (!current) return { ok:false, record:null };
-      let result = await window.crmDomain.update("commitments", id, fields, current.version);
-      if (!result?.record) {
-        current = await freshDomainRecord("commitments", id);
-        if (current) result = await window.crmDomain.update("commitments", id, fields, current.version);
+    return queueMutation(id, async () => {
+      try {
+        let current = itemById(id) || await freshDomainRecord("commitments", id);
+        if (!current) return { ok:false, record:null };
+        const result = await window.crmDomain.update("commitments", id, fields, current.version);
+        if (result?.record) {
+          const canonical = itemById(id);
+          if (canonical) Object.assign(canonical, result.record);
+          return result;
+        }
+        await refreshModel(true);
+        emitModel();
+        return result || { ok:false, record:null };
+      } catch (error) {
+        console.error("[CRM] Assignment update failed", error);
+        try { await refreshModel(true); emitModel(); } catch {}
+        return { ok:false, record:null, error:String(error?.message || error) };
       }
-      if (result?.record) {
-        const canonical = itemById(id);
-        if (canonical) Object.assign(canonical, result.record);
-        if (syncWorkflow) await syncFlow(canonical || result.record);
-      }
-      return result || { ok:false, record:null };
-    }).catch((error) => {
-      console.error("[CRM] Assignment update failed", error);
-      return { ok:false, record:null };
     });
-    writeTails.set(String(id), run);
-    run.finally(() => { if (writeTails.get(String(id)) === run) writeTails.delete(String(id)); }).catch(() => {});
-    return run;
   };
 
   const assignmentSource = {
@@ -258,24 +273,90 @@
         assignmentStage:stage,
         assignmentRank:Number.isFinite(Number(fields?.assignmentRank))
           ? Number(fields.assignmentRank)
-          : model.commitments.filter((item) => stageOf(item) === stage).length,
+          : model.commitments.reduce((highest, item) => stageOf(item) === stage
+            ? Math.max(highest, Number(item.assignmentRank) || 0)
+            : highest, -1) + 1,
       });
       const result = await window.crmDomain.create("commitments", payload);
-      if (result?.record) {
-        model.commitments.push(result.record);
-        await syncFlow(result.record);
-      }
+      if (result?.record) model.commitments.push(result.record);
       return result;
     },
     update:(id, fields) => updateCommitment(id, fields),
-    remove:async (id) => {
-      const flow = flowFor(id);
-      const result = await window.crmDomain.remove("commitments", id);
-      if (flow) await window.crmDomain.remove("workflow-entries", flow.id);
-      model.commitments = model.commitments.filter((item) => String(item.id) !== String(id));
-      model.flows = model.flows.filter((item) => String(item.id) !== String(flow?.id));
-      return result;
-    },
+    move:({ id, updates = [] } = {}) => queueMutation(`move:${id}`, async () => {
+      const operationsForCurrentModel = () => updates.map((operation) => {
+        const item = itemById(operation.id);
+        return {
+          id:operation.id,
+          fields:normalizedPatch(item, operation.fields),
+          expectedVersion:item?.version,
+        };
+      });
+      try {
+        const operations = operationsForCurrentModel();
+        if (operations.some((operation) => !itemById(operation.id)
+          || !Number.isFinite(Number(operation.expectedVersion)))) {
+          await refreshModel(true);
+          emitModel();
+          return { ok:false, status:409, records:[], error:"Canonical move topology changed" };
+        }
+        const result = await window.crmDomain.batch("commitments", operations);
+        if (Array.isArray(result?.records)) {
+          result.records.forEach((record) => {
+            const current = itemById(record.id);
+            if (current) Object.assign(current, record);
+          });
+          return result;
+        }
+        await refreshModel(true);
+        emitModel();
+        return result || { ok:false, records:[] };
+      } catch (error) {
+        console.error("[CRM] Assignment move failed", error);
+        try { await refreshModel(true); emitModel(); } catch {}
+        return { ok:false, records:[], error:String(error?.message || error) };
+      }
+    }),
+    remove:(id) => queueMutation(`remove:${id}`, async () => {
+      const item = itemById(id);
+      if (!item || !Number.isFinite(Number(item.version))) return { ok:false, deleted:false };
+      const origin = stageOf(item);
+      const peers = model.commitments
+        .filter((candidate) => candidate.id !== item.id && stageOf(candidate) === origin)
+        .sort((a, b) => (Number(a.assignmentRank) || 0) - (Number(b.assignmentRank) || 0)
+          || stageOrderCompare(a, b)
+          || String(a.id).localeCompare(String(b.id)));
+      const updates = [
+        { id:item.id, delete:true, expectedVersion:item.version },
+        ...peers.map((peer, rank) => ({
+          id:peer.id,
+          fields:normalizedPatch(peer, { assignmentRank:rank }),
+          expectedVersion:peer.version,
+        })),
+      ];
+      if (updates.some((operation) => !Number.isFinite(Number(operation.expectedVersion)))) {
+        await refreshModel(true);
+        emitModel();
+        return { ok:false, deleted:false, status:409 };
+      }
+      try {
+        const result = await window.crmDomain.batch("commitments", updates);
+        if (!Array.isArray(result?.records)) {
+          await refreshModel(true);
+          emitModel();
+          return { ...(result || {}), ok:false, deleted:false };
+        }
+        const changed = new Map(result.records.map((record) => [String(record.id), record]));
+        model.commitments = model.commitments
+          .filter((candidate) => String(candidate.id) !== String(item.id))
+          .map((candidate) => changed.has(String(candidate.id))
+            ? { ...candidate, ...changed.get(String(candidate.id)) }
+            : candidate);
+        return { ...result, ok:true, deleted:true };
+      } catch (error) {
+        try { await refreshModel(true); emitModel(); } catch {}
+        return { ok:false, deleted:false, error:String(error?.message || error) };
+      }
+    }),
     resolve:(id) => updateCommitment(id, { assignmentStage:"done" }),
     onChanged:subscribe,
     waitForSettled:waitForSourceSettled,
@@ -323,6 +404,8 @@
   function queueDetailFields(itemId, rawFields = {}) {
     const item = itemById(itemId);
     if (!item) return false;
+    const previous = pendingDetailFields.get(item.id);
+    const fromStage = previous?.fromStage || stageOf(item);
     const fields = {};
     if (Object.prototype.hasOwnProperty.call(rawFields, "title")) {
       const title = String(rawFields.title || "").trim();
@@ -337,10 +420,6 @@
     if (Object.prototype.hasOwnProperty.call(rawFields, "stage")) {
       const nextStage = String(rawFields.stage || "unassigned");
       fields.assignmentStage = nextStage;
-      if (stageOf(item) !== nextStage) {
-        fields.assignmentRank = model.commitments.filter((candidate) =>
-          candidate.id !== item.id && stageOf(candidate) === nextStage).length;
-      }
     }
     if (Object.prototype.hasOwnProperty.call(rawFields, "assignedTarget")) {
       const value = String(rawFields.assignedTarget || "");
@@ -363,9 +442,10 @@
       fields.links = links;
     }
     const normalized = normalizedPatch(item, fields);
-    Object.assign(item, normalized);
-    factory?.patchRecord?.(item.id, normalized);
-    pendingDetailFields.set(item.id, { ...(pendingDetailFields.get(item.id) || {}), ...normalized });
+    pendingDetailFields.set(item.id, {
+      fromStage,
+      fields:{ ...(previous?.fields || {}), ...normalized },
+    });
     clearTimeout(detailSaveTimer);
     detailSaveTimer = setTimeout(flushDetailFields, 180);
     return true;
@@ -377,7 +457,18 @@
     pendingDetailFields.clear();
     if (!batch.length) return detailSaveTail;
     detailSaveTail = detailSaveTail.catch(() => null).then(async () => {
-      for (const [itemId, fields] of batch) await updateCommitment(itemId, fields);
+      for (const [itemId, pending] of batch) {
+        const fields = { ...(pending?.fields || {}) };
+        const desiredStage = stageById(fields.assignmentStage)?.id || pending.fromStage;
+        if (desiredStage && desiredStage !== pending.fromStage) {
+          delete fields.assignmentStage;
+          delete fields.assignmentRank;
+          const moved = await factory.moveToStage(itemId, desiredStage, 1e9, fields);
+          if (!moved) await refreshModel(true);
+        } else {
+          await updateCommitment(itemId, fields);
+        }
+      }
     });
     return detailSaveTail;
   }
@@ -568,29 +659,25 @@
     const item = itemById(itemId);
     const stage = stageById(stageId);
     if (!item || !stage) return false;
-    const rank = model.commitments.filter((candidate) => candidate.id !== item.id && stageOf(candidate) === stage.id).length;
-    const result = await updateCommitment(item.id, { assignmentStage:stage.id, assignmentRank:rank });
-    await factory.reload();
-    return !!result?.record;
+    return factory.moveToStage(item.id, stage.id, 1e9);
   }
   async function assign(itemId, contactId) {
     const item = itemById(itemId);
     const contact = model.contacts.find((candidate) => String(candidate.id) === String(contactId));
     if (!item || !contact) return false;
-    const result = await updateCommitment(item.id, {
+    return factory.moveToStage(item.id, "assigned", 1e9, {
       assignee:contactName(contact),
       assignedContactId:contact.id,
       assignedContactName:contactName(contact),
       assignedAt:nowIso(),
-      assignmentStage:"assigned",
-      assignmentRank:stageOf(item) === "assigned"
-        ? item.assignmentRank
-        : model.commitments.filter((candidate) => candidate.id !== item.id && stageOf(candidate) === "assigned").length,
     });
-    await factory.reload();
-    return !!result?.record;
   }
   const unassign = (itemId) => move(itemId, "unassigned");
+  const remove = async (itemId) => {
+    const result = await assignmentSource.remove(itemId);
+    await factory.reload();
+    return result?.deleted === true;
+  };
   async function open(itemId) {
     if (!itemById(itemId)) await factory.reload();
     const item = itemById(itemId);
@@ -613,6 +700,7 @@
     move,
     assign,
     unassign,
+    remove,
     create:openEditor,
     openCreate:openEditor,
     open,

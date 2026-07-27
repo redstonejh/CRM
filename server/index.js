@@ -280,7 +280,7 @@ async function listDomain(res, spec, url) {
   }
   if (spec.key === 'commitments' && url.searchParams.has('dueBefore')) add('d.due_at <= ?', url.searchParams.get('dueBefore'));
   if (spec.key === 'commitments' && url.searchParams.has('dueAfter')) add('d.due_at >= ?', url.searchParams.get('dueAfter'));
-  const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 200));
+  const limit = Math.max(1, Math.min(5000, Number(url.searchParams.get('limit')) || 200));
   values.push(limit);
   const rows = await pool.query(
     `SELECT d.* FROM ${spec.table} d ${linkJoin} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY d.updated_at DESC LIMIT $${values.length}`,
@@ -362,6 +362,98 @@ async function patchDomain(res, spec, id, body) {
     const record = domainRow(spec, updated.rows[0], linkMap.get(id) || []);
     broadcast({ type: 'domain-changed', resource: spec.key, record });
     ok(res, { resource: spec.key, record });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return fail(res, 409, 'A matching active record already exists');
+    throw err;
+  } finally { client.release(); }
+}
+
+async function patchDomainBatch(res, spec, body) {
+  if (!objectBody(body) || !Array.isArray(body.updates) || !body.updates.length) {
+    return fail(res, 400, 'updates must be a non-empty array');
+  }
+  if (body.updates.length > 5000) return fail(res, 400, 'A batch may update at most 5000 records');
+  const updates = body.updates.map((operation) => ({
+    id: safeId(operation?.id),
+    fields: operation?.delete === true ? {} : objectBody(operation?.fields),
+    delete: operation?.delete === true,
+    expectedVersion: operation?.expectedVersion,
+  }));
+  if (updates.some((operation) => !operation.id || !operation.fields)) {
+    return fail(res, 400, 'Every update requires an id and fields object');
+  }
+  if (new Set(updates.map((operation) => operation.id)).size !== updates.length) {
+    return fail(res, 400, 'A batch may update each record only once');
+  }
+
+  const client = await pool.connect();
+  const changed = [];
+  try {
+    await client.query('BEGIN');
+    // Lock in deterministic order so two concurrent board moves cannot
+    // deadlock while touching the same bucket ranks in a different sequence.
+    const selectedById = new Map();
+    for (const id of [...updates.map((operation) => operation.id)].sort()) {
+      const selected = await client.query(`SELECT * FROM ${spec.table} WHERE id = $1 FOR UPDATE`, [id]);
+      if (!selected.rows[0]) {
+        await client.query('ROLLBACK');
+        return fail(res, 404, `Record not found: ${id}`);
+      }
+      selectedById.set(id, selected.rows[0]);
+    }
+    // Validate every compare-and-swap precondition before the first write.
+    // PostgreSQL would roll a later conflict back, but doing this as a distinct
+    // phase also guarantees all-or-nothing behavior in the in-memory parity
+    // harness and avoids needless write work on a known-stale board intent.
+    for (const operation of updates) {
+      const current = selectedById.get(operation.id);
+      const hasExpected = operation.expectedVersion !== undefined
+        && operation.expectedVersion !== null
+        && operation.expectedVersion !== '';
+      const expected = hasExpected ? Number(operation.expectedVersion) : Number.NaN;
+      if (hasExpected && (!Number.isFinite(expected) || expected !== current.version)) {
+        await client.query('ROLLBACK');
+        return fail(res, 409, `Version conflict: ${operation.id}`);
+      }
+    }
+    for (const operation of updates) {
+      const current = selectedById.get(operation.id);
+      if (operation.delete) {
+        const deleted = await client.query(
+          `UPDATE ${spec.table} SET deleted_at = now(), version = version + 1, updated_at = now() WHERE id = $1 RETURNING *`,
+          [operation.id],
+        );
+        changed.push(deleted.rows[0]);
+        continue;
+      }
+      const sets = ['doc = $2', 'version = version + 1', 'updated_at = now()'];
+      const values = [operation.id, domainDoc(spec, operation.fields, current.doc)];
+      Object.entries(spec.fields).forEach(([api, column]) => {
+        if (!hasOwn(operation.fields, api)) return;
+        values.push(domainValue(spec, api, operation.fields[api]));
+        sets.push(`${column} = $${values.length}`);
+      });
+      const updated = await client.query(
+        `UPDATE ${spec.table} SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, values,
+      );
+      if (spec.linkTable && hasOwn(operation.fields, 'links')) {
+        await replaceDomainLinks(client, spec, operation.id, operation.fields.links || []);
+      }
+      changed.push(updated.rows[0]);
+    }
+    // Read the response projection before COMMIT. Once COMMIT succeeds, no
+    // fallible database work remains that could report a rolled-back batch
+    // even though its writes are already durable.
+    const linkMap = await domainLinks(client, spec, changed.map((row) => row.id));
+    const records = changed.map((row) => domainRow(spec, row, linkMap.get(row.id) || []));
+    await client.query('COMMIT');
+    try {
+      broadcast({ type: 'domain-batch-changed', resource: spec.key, records });
+    } catch (broadcastError) {
+      console.error('Domain batch broadcast failed after commit:', broadcastError);
+    }
+    ok(res, { resource: spec.key, records });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     if (err.code === '23505') return fail(res, 409, 'A matching active record already exists');
@@ -1301,6 +1393,7 @@ async function route(req, res) {
     if (req.method === 'GET' && !domainRecordId) return listDomain(res, spec, url);
     if (req.method === 'GET' && domainRecordId) return getDomain(res, spec, domainRecordId);
     if (req.method === 'POST' && !domainRecordId) return createDomain(res, spec, await readBody(req));
+    if (req.method === 'PATCH' && !domainRecordId) return patchDomainBatch(res, spec, await readBody(req));
     if (req.method === 'PATCH' && domainRecordId) return patchDomain(res, spec, domainRecordId, await readBody(req));
     if (req.method === 'DELETE' && domainRecordId) return deleteDomain(res, spec, domainRecordId, url);
     return fail(res, 405, 'Method not allowed');

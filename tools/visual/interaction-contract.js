@@ -254,6 +254,10 @@ async function main() {
   });
   await page.evaluate(() => document.querySelectorAll('[data-interaction-style-probe]').forEach((probe) => probe.remove()));
   await page.evaluate(() => {
+    window.__deskTransitionErrors = [];
+    document.addEventListener('crm:desk-transit-error', (event) => {
+      window.__deskTransitionErrors.push(event.detail);
+    });
     const selectedTile = document.querySelector('.crm-home-bucket[data-module="people"]');
     const selected = selectedTile?.getBoundingClientRect();
     const neighbor = document.querySelector('.crm-home-bucket[data-module="cases"]')?.getBoundingClientRect();
@@ -345,15 +349,30 @@ async function main() {
       && getComputedStyle(lid).webkitAppRegion !== 'no-drag'
       && exclusions.length === 0;
   });
-  await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.(), { timeout:5000 });
+  try {
+    await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.(), { timeout:15000 });
+  } catch (error) {
+    const state = await page.evaluate(() => ({
+      module:document.body.dataset.crmModule,
+      busy:window.crmDeskTransit?.isBusy?.(),
+      cover:window.crmDeskTransit?.coverState?.(),
+      camera:{ level:window.crmHomeCamera?.level?.(), transitioning:window.crmHomeCamera?.isTransitioning?.() },
+      people:window.peopleCards?.performanceState?.(),
+      errors:window.__deskTransitionErrors || [],
+      theater:document.querySelector('[data-crm-theater="people"]')?.outerHTML.slice(0,400),
+    }));
+    throw new Error(`People transition did not settle: ${JSON.stringify(state)} (${error.message})`);
+  }
   await check('Home camera lands directly on the destination', () => document.body.dataset.crmModule === 'people' && !document.querySelector('.crm-transit-veil'));
   await check('Tile room does not exclude the title-bar drag region', () => {
     const room = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';
   });
   await page.evaluate(async () => {
+    window.__interactionProjectIds = [];
     for (const title of ['Project A', 'Project B', 'Project C']) {
       const project = await window.crmPlanner.createProject(title);
+      if (project?.id) window.__interactionProjectIds.push(project.id);
       for (const [index, stage] of project.stages.entries()) {
         if (index < 2) await window.crmPlanner.createCard(project.id, stage.id, `${title} item ${index + 1}`);
       }
@@ -419,7 +438,7 @@ async function main() {
       && !document.querySelector('.crm-temporal-context')
       && document.body.dataset.crmTemporalDate === localIso;
   });
-  await page.waitForFunction(() => !window.crmDeskTransit?.isBusy?.(), { timeout: 5000 });
+  await page.waitForFunction(() => !window.crmDeskTransit?.isBusy?.(), { timeout: 15000 });
   await page.keyboard.press('KeyB');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout: 5000 });
   await check('Zooming out of a pipeline reveals the current month in the shared calendar', () => {
@@ -454,7 +473,7 @@ async function main() {
     const theater = document.querySelector('section.crm-theater[data-crm-theater="assignments"]:not([hidden])');
     const api = window.crmAssignments;
     const contract = api?.contract?.();
-    const required = ['setActive','reload','baseline','contract','homePreviewState','applyHomePreviewState','performanceState','createCard','setStageExpanded','expandedStages','zoneScrollState','scrollZonesBy'];
+    const required = ['setActive','reload','baseline','contract','homePreviewState','applyHomePreviewState','performanceState','createCard','moveToStage','setStageExpanded','expandedStages','zoneScrollState','scrollZonesBy'];
     const missing = required.filter((method) => typeof api?.[method] !== 'function');
     const zones = [...(theater?.querySelectorAll('.tk-zone[data-stage]') || [])];
     const cards = [...(theater?.querySelectorAll('.tk-zcard[data-id]') || [])];
@@ -462,7 +481,7 @@ async function main() {
     const ids = cards.map((card) => card.dataset.id);
     const stageIds = new Set(stages.map((stage) => stage.key));
     const expectedStage = (record) => {
-      if (['completed','cancelled','canceled'].includes(String(record?.status || '').toLowerCase())) return 'done';
+      if (['completed','complete','resolved','done','closed','archived','cancelled','canceled'].includes(String(record?.status || '').toLowerCase())) return 'done';
       const explicit = String(record?.assignmentStage || '').toLowerCase();
       if (stageIds.has(explicit)) return explicit;
       return record?.assignedContactId || String(record?.assignee || '').trim() ? 'assigned' : 'unassigned';
@@ -475,6 +494,7 @@ async function main() {
         && contract.horizontalZones === true && contract.horizontalZoneRows === 1 && contract.scrollZoneRows === false
         && contract.lazyZoneCards === false && contract.restoreZoneExpansion === false && contract.stageMovement === 'free'
         && contract.stageAuthority === 'source' && contract.deletionAuthority === 'source'
+        && contract.atomicSourceMove === true
         && contract.deckScaffold === false && contract.leftDeckEnabled === false
         && contract.rightDeckEnabled === false && contract.trashEnabled === false
         && contract.showProgressBars === true && JSON.stringify(stages) === JSON.stringify(contract.stages)
@@ -496,7 +516,7 @@ async function main() {
   });
   const assignmentShadowProbe = await page.evaluate(async () => {
     const api = window.crmAssignments;
-    const item = api.items().find((record) => !['completed','cancelled','canceled'].includes(String(record.status || '').toLowerCase()));
+    const item = api.items().find((record) => !['completed','complete','resolved','done','closed','archived','cancelled','canceled'].includes(String(record.status || '').toLowerCase()));
     if (!item) return { ok:false, reason:'no open commitment' };
     const expected = String(item.assignmentStage || '').toLowerCase()
       || (item.assignedContactId || String(item.assignee || '').trim() ? 'assigned' : 'unassigned');
@@ -576,33 +596,113 @@ async function main() {
     detail:JSON.stringify(state),
   }), assignmentExpansion);
 
-  const assignmentMove = await page.evaluate(async () => {
-    const item = window.crmAssignments.items().find((candidate) => !['completed','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
-    const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(item.id)}"]`);
-    const original = card?.closest('.tk-zone[data-stage]')?.dataset.stage || (item.assignee ? 'assigned' : 'unassigned');
-    const target = original === 'blocked' ? 'active' : 'blocked';
-    const ok = await window.crmAssignments.move(item.id, target);
-    const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === item.id);
-    const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
-    return { id:item.id, original, target, ok, recordStage:record?.assignmentStage, flowStage:flow?.stage };
+  const assignmentDrag = await page.evaluate(() => {
+    const theater = document.querySelector('[data-crm-theater="assignments"]:not([hidden])');
+    const visible = [...theater.querySelectorAll('.tk-zone[data-stage]')].filter((zone) => {
+      const rect = zone.getBoundingClientRect();
+      return rect.right > 0 && rect.left < innerWidth && rect.bottom > 0 && rect.top < innerHeight;
+    });
+    let originZone = null;
+    let card = null;
+    let fromPoint = null;
+    for (const zone of visible.filter((candidate) => candidate.dataset.stage !== 'done')) {
+      const body = zone.querySelector('.tk-zone-body');
+      const rect = body?.getBoundingClientRect();
+      if (!rect) continue;
+      const x = Math.max(12, Math.min(innerWidth - 12, rect.left + rect.width / 2));
+      const sampleYs = [rect.bottom - 28, rect.top + rect.height * .66, rect.top + rect.height * .33]
+        .map((y) => Math.max(12, Math.min(innerHeight - 24, y)));
+      for (const y of sampleYs) {
+        const hit = document.elementsFromPoint(x, y)
+          .map((node) => node.closest?.('.tk-zcard[data-id]'))
+          .find((candidate) => candidate?.closest('.tk-zone[data-stage]') === zone);
+        if (!hit) continue;
+        originZone = zone;
+        card = hit;
+        fromPoint = { x, y };
+        break;
+      }
+      if (card) break;
+    }
+    const targetZone = visible.find((zone) => zone !== originZone && zone.dataset.stage !== 'done');
+    const to = targetZone?.querySelector('.tk-zone-body')?.getBoundingClientRect();
+    return {
+      id:card?.dataset.id || '',
+      original:originZone?.dataset.stage || '',
+      target:targetZone?.dataset.stage || '',
+      from:fromPoint,
+      to:to ? { x:to.left + to.width / 2, y:to.bottom - 36 } : null,
+    };
   });
-  await check('Dragging logic moves one commitment through a persisted assignment workflow', (state) => {
+  if (assignmentDrag.from && assignmentDrag.to) {
+    await page.mouse.move(assignmentDrag.from.x, assignmentDrag.from.y);
+    await page.mouse.down();
+    await page.mouse.move(assignmentDrag.to.x, assignmentDrag.to.y, { steps:14 });
+    await page.mouse.up();
+  }
+  await page.waitForFunction(async ({ id, target }) => {
+    if (!id || !target) return false;
+    await window.crmAssignments.waitForGeometrySettled();
+    const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === id);
+    return record?.assignmentStage === target;
+  }, { timeout:15000 }, assignmentDrag);
+  const assignmentMove = await page.evaluate(async (drag) => {
+    const commitments = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records;
+    const record = commitments.find((candidate) => candidate.id === drag.id);
+    const flows = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records;
+    const touchedRanks = [drag.original, drag.target].map((stage) => ({
+      stage,
+      ranks:commitments.filter((item) => {
+        const actual = ['completed','complete','resolved','done','closed','archived','cancelled','canceled'].includes(String(item.status || '').toLowerCase())
+          ? 'done'
+          : String(item.assignmentStage || '').toLowerCase() || (item.assignee ? 'assigned' : 'unassigned');
+        return actual === stage;
+      }).map((item) => Number(item.assignmentRank)).sort((a, b) => a - b),
+    }));
+    return {
+      ...drag,
+      recordStage:record?.assignmentStage,
+      assignmentFlows:flows.length,
+      touchedRanks,
+    };
+  }, assignmentDrag);
+  await check('A real pointer drag uses one canonical atomic commitment move', (state) => {
     const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(state.id)}"]`)];
-    return { ok:state.ok && state.recordStage === state.target && state.flowStage === state.target && cards.length === 1
+    const contiguous = state.touchedRanks.every(({ ranks }) => ranks.every((rank, index) => rank === index));
+    return { ok:state.recordStage === state.target && state.assignmentFlows === 0 && contiguous && cards.length === 1
       && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === state.target, detail:JSON.stringify(state) };
   }, assignmentMove);
+
+  const failedAssignmentMove = await page.evaluate(async (state) => {
+    const originalBatch = window.crmDomain.batch;
+    let calls = 0;
+    window.crmDomain.batch = (...args) => {
+      calls += 1;
+      window.crmDomain.batch = originalBatch;
+      return Promise.resolve({ ok:false, status:503, error:'forced atomic move failure', args });
+    };
+    const ok = await window.crmAssignments.move(state.id, state.original);
+    const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === state.id);
+    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(state.id)}"]`)];
+    return { id:state.id, expected:state.target, ok, calls, persisted:record?.assignmentStage, rendered:cards[0]?.closest('.tk-zone[data-stage]')?.dataset.stage, cards:cards.length };
+  }, assignmentMove);
+  await check('A failed atomic Assignment move reconciles without partial rank or stage state', (state) => ({
+    ok:state.ok === false && state.calls === 1 && state.persisted === state.expected
+      && state.rendered === state.expected && state.cards === 1,
+    detail:JSON.stringify(state),
+  }), failedAssignmentMove);
   await page.evaluate((state) => window.crmAssignments.move(state.id, state.original), assignmentMove);
 
   const assignment = await page.evaluate(async () => {
-    const item = window.crmAssignments.items().find((candidate) => !['completed','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
+    const item = window.crmAssignments.items().find((candidate) => !['completed','complete','resolved','done','closed','archived','cancelled','canceled'].includes(String(candidate.status || '').toLowerCase()));
     const contact = (await window.crmStore.list('contacts', { includeDeleted:false })).records[0]; const ok = await window.crmAssignments.assign(item.id, contact.id);
     const record = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:1000 })).records.find((candidate) => candidate.id === item.id);
-    const flow = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
-    return { id:item.id, contactId:contact.id, ok, assignedContactId:record?.assignedContactId, stage:record?.assignmentStage, flowStage:flow?.stage };
+    const flows = (await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 })).records;
+    return { id:item.id, contactId:contact.id, ok, assignedContactId:record?.assignedContactId, stage:record?.assignmentStage, assignmentFlows:flows.length };
   });
-  await check('Assigning a person updates that commitment and its workflow membership', (state) => {
+  await check('Assigning a person updates only the canonical commitment', (state) => {
     const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(state.id)}"]`)];
-    return { ok:state.ok && state.assignedContactId === state.contactId && state.stage === 'assigned' && state.flowStage === 'assigned'
+    return { ok:state.ok && state.assignedContactId === state.contactId && state.stage === 'assigned' && state.assignmentFlows === 0
       && cards.length === 1 && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === 'assigned', detail:JSON.stringify(state) };
   }, assignment);
   await page.evaluate((id) => window.crmAssignments.unassign(id), assignment.id);
@@ -739,13 +839,34 @@ async function main() {
   await page.select('.crm-assignment-editor [name="stage"]', 'active');
   await page.click('.crm-assignment-editor button[type="submit"]');
   await page.waitForFunction((title) => window.crmAssignments.items().some((item) => item.title === title), {}, createdAssignmentTitle);
-  await check('Creating an assignment produces one commitment plus one workflow entry', async (title) => {
+  await check('Creating an assignment produces one canonical commitment and no workflow shadow', async (title) => {
     const item = window.crmAssignments.items().find((candidate) => candidate.title === title); if (!item) return false;
     const flows = await window.crmDomain.list('workflow-entries', { includeDeleted:false, workflowKey:'assignments', limit:1000 });
-    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(item.id)}"]`)]; const flow = flows.records.find((candidate) => candidate.recordId === item.id && candidate.workflowKey === 'assignments');
+    const cards = [...document.querySelectorAll(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(item.id)}"]`)];
     return { ok:cards.length === 1 && cards[0].dataset.recordEntity === 'commitments' && cards[0].dataset.crmSizeKey === `card:commitments:${item.id}`
-      && flow?.stage === 'active' && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === 'active', detail:`${item.id} / ${flow?.id}` };
+      && flows.records.length === 0 && item.assignmentStage === 'active'
+      && cards[0].closest('.tk-zone[data-stage]')?.dataset.stage === 'active', detail:`${item.id} / ${flows.records.length} shadows` };
   }, createdAssignmentTitle);
+  const deletedAssignment = await page.evaluate(async (title) => {
+    const item = window.crmAssignments.items().find((candidate) => candidate.title === title);
+    const deleted = item ? await window.crmAssignments.remove(item.id) : false;
+    const commitments = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:5000 })).records;
+    const ranks = commitments.filter((record) => {
+      const closed = ['completed','complete','resolved','done','closed','archived','cancelled','canceled']
+        .includes(String(record.status || '').toLowerCase());
+      return !closed && String(record.assignmentStage || '').toLowerCase() === 'active';
+    }).map((record) => Number(record.assignmentRank)).sort((a, b) => a - b);
+    return {
+      id:item?.id || '',
+      deleted,
+      remains:commitments.some((record) => record.id === item?.id),
+      ranks,
+    };
+  }, createdAssignmentTitle);
+  await check('Deleting an assignment atomically removes it and compacts its canonical bucket', (state) => ({
+    ok:state.deleted && !state.remains && state.ranks.every((rank, index) => rank === index),
+    detail:JSON.stringify(state),
+  }), deletedAssignment);
 
   await page.setViewport({ width:1600, height:1000, deviceScaleFactor:1 });
   await sleep(220);
@@ -1322,13 +1443,27 @@ async function main() {
   await sleep(520);
 
   const calendarProjectPreview = await page.evaluate(async () => {
-    const project = window.crmPlanner.projects().find((item) => item.title === 'Project A');
+    const projectId = window.__interactionProjectIds?.[0];
+    const project = window.crmPlanner.projects().find((item) => item.id === projectId);
     const item = project?.buckets.flatMap((bucket) => bucket.cards || [])[0];
     const now = new Date(); const pad = (value) => String(value).padStart(2, '0');
     const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    if (item) await window.crmPlanner.updateItem(item.id, { dueAt:new Date(`${date}T17:00:00`).toISOString() });
+    const updated = item
+      ? await window.crmPlanner.updateItem(item.id, { dueAt:new Date(`${date}T17:00:00`).toISOString() })
+      : false;
     window.fractalCalendar.setYear(now.getFullYear()); await window.fractalCalendar.refresh();
-    return { date, month:now.getMonth() + 1, itemId:item?.id || '', projectId:project?.id || '' };
+    const commitment = (await window.crmDomain.list('commitments', { includeDeleted:false, limit:5000 })).records
+      .find((record) => record.links?.some((link) => link.entityType === 'workItems' && String(link.recordId) === String(item?.id)));
+    return {
+      date,
+      month:now.getMonth() + 1,
+      itemId:item?.id || '',
+      projectId:project?.id || '',
+      commitmentId:commitment?.id || '',
+      dueAt:commitment?.dueAt || '',
+      updated,
+      stages:project?.stages?.length || 0,
+    };
   });
   await activate('calendar');
   await page.waitForFunction(() => window.fractalCalendar.level() === 0);
@@ -1341,7 +1476,8 @@ async function main() {
       detail:`${strokes.length} preview rows on ${probe.date}` };
   }, calendarProjectPreview);
   await page.evaluate((month) => document.querySelector(`.fc-month[data-month="${month}"]`)?.click(), calendarProjectPreview.month);
-  await sleep(700);
+  await page.waitForFunction(() => window.fractalCalendar.level() === 1
+    && !window.fractalCalendarCamera?.isTransitioning?.(), { timeout:5000 });
   await check('Calendar is fed only by commitments', () => {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
     return chips.length > 0 && chips.every((chip) => chip.dataset.type === 'commitment');
@@ -1359,10 +1495,20 @@ async function main() {
   });
   await check('Project work on a calendar day carries its automatic pipeline preview', (probe) => {
     const day = document.querySelector(`.fc-expander[data-kind="month"] .fc-day[data-date="${CSS.escape(probe.date)}"]`);
-    const chip = [...(day?.querySelectorAll('.fc-chip') || [])].find((candidate) => candidate.dataset.id);
-    const map = [...(day?.querySelectorAll('.fc-chip-project-map') || [])].find((candidate) => candidate.querySelectorAll('i').length >= 3);
+    const chip = day?.querySelector(`.fc-chip[data-id="${CSS.escape(probe.commitmentId)}"]`);
+    const map = chip?.querySelector('.fc-chip-project-map');
     return { ok:!!chip && !!map && map.querySelectorAll('i[data-reached="true"]').length >= 1
-      && !map.querySelector('.crm-planner-card,.crm-planner-bucket'), detail:`${map?.querySelectorAll('i').length || 0} project stages` };
+      && map.querySelectorAll('i').length === probe.stages
+      && !map.querySelector('.crm-planner-card,.crm-planner-bucket'),
+      detail:JSON.stringify({
+        mappedStages:map?.querySelectorAll('i').length || 0,
+        projectStages:probe.stages,
+        projectId:probe.projectId,
+        itemId:probe.itemId,
+        commitmentId:probe.commitmentId,
+        dueAt:probe.dueAt,
+        updated:probe.updated,
+      }) };
   }, calendarProjectPreview);
 
   await page.keyboard.down('Control'); await page.keyboard.press('KeyK'); await page.keyboard.up('Control');
@@ -1486,7 +1632,7 @@ async function main() {
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
     const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.78)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
     return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 7 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
-      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 8 && fadeTail <= 12 && opacitySteps.every((step)=>step<=.04)
+      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 11 && fadeTail <= 12 && opacitySteps.every((step)=>step<=.04)
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,

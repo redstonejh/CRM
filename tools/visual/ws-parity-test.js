@@ -4,7 +4,7 @@
 // REST behaviors the shim/electron store rely on: hello + fresh-list on
 // connect (replay), change broadcasts on create/update, soft-delete tombstones
 // (kept + broadcast + filterable), hard-delete 'deleted' packets, and
-// optimistic version conflicts with re-fetch → retry. 12 assertions.
+// optimistic version conflicts, and atomic/coalesced domain batches.
 'use strict';
 const { installPgMem } = require('./pg-mem-adapter.js');
 
@@ -170,6 +170,54 @@ async function main() {
   const flowList = await api('GET', '/api/domain/workflow-entries?workflowKey=sales&stage=proposal');
   assert('workflow entries filter by workflow and stage', flowList.json.records.length === 1
     && flowList.json.records[0].recordId === 'deal_1');
+
+  // 9 — one board intent is one all-or-nothing domain transaction and one
+  // live-feed invalidation, including the canonical soft-delete operation.
+  const batchA = await api('POST', '/api/domain/commitments', { fields: {
+    id: 'batch_a', title: 'Batch A', kind: 'assignment', assignmentStage: 'active', assignmentRank: 0,
+  } });
+  const batchB = await api('POST', '/api/domain/commitments', { fields: {
+    id: 'batch_b', title: 'Batch B', kind: 'assignment', assignmentStage: 'active', assignmentRank: 1,
+  } });
+  const batchMessageStart = client.messages.length;
+  const batch = await api('PATCH', '/api/domain/commitments', { updates: [
+    { id: 'batch_a', fields: { assignmentStage: 'done', assignmentRank: 0 }, expectedVersion: batchA.json.record.version },
+    { id: 'batch_b', fields: { assignmentRank: 0 }, expectedVersion: batchB.json.record.version },
+  ] });
+  const batchMessage = await client.waitFor((m) => m.type === 'domain-batch-changed'
+    && m.resource === 'commitments' && m.records?.some((record) => record.id === 'batch_a'));
+  const batchMessages = client.messages.slice(batchMessageStart)
+    .filter((message) => message.type === 'domain-batch-changed' && message.resource === 'commitments');
+  const perRowBatchMessages = client.messages.slice(batchMessageStart)
+    .filter((message) => message.type === 'domain-changed'
+      && ['batch_a', 'batch_b'].includes(message.record?.id));
+  assert('atomic domain batch updates every requested record', batch.status === 200
+    && batch.json.records.length === 2
+    && batch.json.records.find((record) => record.id === 'batch_a')?.assignmentStage === 'done');
+  assert('atomic domain batch emits one coalesced live invalidation', !!batchMessage
+    && batchMessages.length === 1 && perRowBatchMessages.length === 0);
+
+  const beforeConflict = await api('GET', '/api/domain/commitments/batch_a');
+  const conflictBatch = await api('PATCH', '/api/domain/commitments', { updates: [
+    { id: 'batch_a', fields: { assignmentRank: 9 }, expectedVersion: beforeConflict.json.record.version },
+    { id: 'batch_b', fields: { assignmentRank: 9 }, expectedVersion: 1 },
+  ] });
+  const afterConflict = await api('GET', '/api/domain/commitments/batch_a');
+  assert('a stale member rolls back the complete domain batch', conflictBatch.status === 409
+    && afterConflict.json.record.assignmentRank === beforeConflict.json.record.assignmentRank
+    && afterConflict.json.record.version === beforeConflict.json.record.version);
+
+  const liveB = await api('GET', '/api/domain/commitments/batch_b');
+  const deleteBatch = await api('PATCH', '/api/domain/commitments', { updates: [
+    { id: 'batch_b', delete: true, expectedVersion: liveB.json.record.version },
+    { id: 'batch_a', fields: { assignmentRank: 0 }, expectedVersion: afterConflict.json.record.version },
+  ] });
+  const activeAfterDelete = await api('GET', '/api/domain/commitments?includeDeleted=false&limit=5000');
+  const allAfterDelete = await api('GET', '/api/domain/commitments?includeDeleted=true&limit=5000');
+  assert('canonical batch delete tombstones one record while compacting its peers', deleteBatch.status === 200
+    && !activeAfterDelete.json.records.some((record) => record.id === 'batch_b')
+    && allAfterDelete.json.records.some((record) => record.id === 'batch_b' && record.deletedAt)
+    && activeAfterDelete.json.records.find((record) => record.id === 'batch_a')?.assignmentRank === 0);
 
   client.ws.close();
   console.log(`\nWS parity: ${passed}/${passed + failed} assertions passed.`);

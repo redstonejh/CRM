@@ -388,8 +388,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
          opaque, pixel-stable raster lid instead of a translucent foreground
          cutout that could double-paint acrylic objects. */
       .crm-home-expander .crm-home-preview-exact{display:none;filter:none;transform:none;opacity:1;transition:none}
-      .crm-home-expander.crm-home-endpoint-cover .crm-home-preview-exact{display:block;z-index:3}
-      .crm-home-expander.crm-home-endpoint-cover .crm-home-preview-foreground{visibility:hidden}
+      .crm-home-expander.crm-home-endpoint-cover[data-crm-endpoint-cover="exact"] .crm-home-preview-exact{display:block;z-index:3}
+      .crm-home-expander.crm-home-endpoint-cover[data-crm-endpoint-cover="exact"] .crm-home-preview-foreground{visibility:hidden}
+      .crm-home-expander.crm-home-endpoint-cover[data-crm-endpoint-cover="foreground"] .crm-home-preview-exact{display:none}
+      .crm-home-expander.crm-home-endpoint-cover[data-crm-endpoint-cover="foreground"] .crm-home-preview-foreground{visibility:visible;z-index:3}
+      .crm-home-expander.crm-home-endpoint-cover[data-crm-endpoint-cover="surface"] .crm-home-preview-state-mark::after{animation-play-state:paused}
       /* The warm expander itself is already at .001 opacity. Keep its one
          transparent room texture composited so the first camera frame never
          performs a wallpaper-sized upload. */
@@ -1163,6 +1166,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const preview = expander.querySelector(":scope > .crm-home-preview");
     preview?.style.removeProperty("opacity");
     preview?.style.removeProperty("transition");
+    expander.style.removeProperty("opacity");
+    expander.style.removeProperty("transition");
+    expander.classList.remove("crm-home-endpoint-cover");
+    preview?.querySelector(":scope > .crm-home-endpoint-fallback")?.remove();
+    delete expander.dataset.crmEndpointCover;
     expander.remove();
     expander.className = "crm-home-bucket crm-home-expander";
     recycledExpanders.set(key, expander);

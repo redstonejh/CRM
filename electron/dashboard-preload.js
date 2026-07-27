@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('crmDomain', {
   get: (resource, id) => ipcRenderer.invoke('domain:get', { resource, id }),
   create: (resource, fields) => ipcRenderer.invoke('domain:create', { resource, fields }),
   update: (resource, id, fields, expectedVersion) => ipcRenderer.invoke('domain:update', { resource, id, fields, expectedVersion }),
+  batch: (resource, updates) => ipcRenderer.invoke('domain:batch', { resource, updates }),
   remove: (resource, id, options = {}) => ipcRenderer.invoke('domain:delete', { resource, id, ...options }),
   onChanged: (cb) => ipcRenderer.on('store:changed', (_e, payload) => cb(payload)),
 });

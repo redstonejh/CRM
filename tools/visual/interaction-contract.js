@@ -94,6 +94,11 @@ async function main() {
     const control = document.querySelector('.crm-viewport-date');
     return !!control && control.hidden && getComputedStyle(control).display === 'none';
   });
+  await check('Legacy status company tabs never mount inside the CRM shell', () => (
+    document.body.dataset.appShell === 'crm'
+      && !document.querySelector('.company-tab-bar')
+      && document.querySelector('.workspace-tab-bar')?.hidden === true
+  ));
   await check('Every Home preview is a proportional viewport of its destination', () => {
     const expected = innerWidth / innerHeight;
     const tiles = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')].map((tile) => {
@@ -740,9 +745,13 @@ async function main() {
   await page.waitForFunction(() => document.querySelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]')?.hidden === true);
   await check('Calendar navigation is one fixed top-center control, never card chrome', () => {
     const controls = [...document.querySelectorAll('.crm-viewport-date')]; const rect = controls[0]?.getBoundingClientRect(); const style = controls[0] && getComputedStyle(controls[0]);
-    return controls.length === 1 && !controls[0].hidden && !document.querySelector('[data-crm-card-date],.crm-card-date') && style?.position === 'fixed'
-      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 13 && rect.top <= 15
-      && rect.width >= 57 && rect.height >= 51 && parseFloat(style.fontSize) >= 9;
+    const topControl = document.querySelector('.window-control-cluster .window-glass-control'); const topStyle = topControl && getComputedStyle(topControl);
+    return controls.length === 1 && !controls[0].hidden && controls[0].classList.contains('window-glass-control')
+      && !document.querySelector('[data-crm-card-date],.crm-card-date') && style?.position === 'fixed'
+      && Math.abs((rect.left + rect.width / 2) - innerWidth / 2) <= 1 && rect.top >= 11 && rect.top <= 13
+      && Math.abs(rect.width - 46) <= .5 && Math.abs(rect.height - 46) <= .5 && parseFloat(style.borderRadius) >= 23
+      && !!topStyle && ['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow']
+        .every((property) => style[property] === topStyle[property]);
   });
   await page.click('.crm-viewport-date');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout:2500 });
@@ -751,6 +760,13 @@ async function main() {
     const pane = document.querySelector(`[data-crm-theater="calendar"] .fc-expander[data-month="${month}"]`);
     return { ok:document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1 && pane?.hidden === false && window.fractalCalendar.year() === date.getFullYear(),
       detail:JSON.stringify({ module:document.body.dataset.crmModule, level:window.fractalCalendar?.level?.(), year:window.fractalCalendar?.year?.(), pane:!!pane, hidden:pane?.hidden }) };
+  });
+  await check('Calendar suppresses the redundant date tile above its year arrows', () => {
+    const control = document.querySelector('.crm-viewport-date');
+    const strip = document.querySelector('[data-crm-theater="calendar"]:not([hidden]) .fc-year-strip');
+    const arrows = [...(strip?.querySelectorAll('.fc-year-btn') || [])];
+    return !!control && control.hidden && getComputedStyle(control).display === 'none'
+      && !!strip && arrows.length === 2 && arrows.every((arrow) => arrow.getClientRects().length > 0);
   });
   await activate('assignments');
 

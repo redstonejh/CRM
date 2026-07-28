@@ -869,6 +869,21 @@ async function main() {
       invariant(calendarControls.some(({ label }) => label === 'Next year'), 'Calendar Next year control was not found');
       return summary;
     });
+    await check('Calendar year navigation has no overlapping global date tile or legacy company strip', async () => {
+      const state = await page.evaluate(() => {
+        const date = document.querySelector('.crm-viewport-date');
+        const strip = document.querySelector('[data-crm-theater="calendar"]:not([hidden]) .fc-year-strip');
+        return {
+          dateHidden: !!date?.hidden && getComputedStyle(date).display === 'none',
+          stripVisible: !!strip && strip.getClientRects().length > 0,
+          companyTabs: document.querySelectorAll('.company-tab-bar').length,
+        };
+      });
+      invariant(state.dateHidden, 'Global date tile remained visible inside Calendar');
+      invariant(state.stripVisible, 'Calendar year selector is not visible');
+      invariant(state.companyTabs === 0, `Legacy company strip mounted ${state.companyTabs} time(s)`);
+      return state;
+    });
     await screenshot('08-calendar-controls.png');
 
     await check('Renderer completed without uncaught page errors', () => {

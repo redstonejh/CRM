@@ -752,8 +752,22 @@ function visibleCompanies() {
   return companyState.companies.filter((c) => !c.historical || c.id === companyState.active);
 }
 function renderCompanyTabs() {
-  injectCompanyCss();
   const wsBar = document.querySelector(".workspace-tab-bar");
+  // This tab strip belongs to the pre-CRM status dashboard. The CRM already
+  // owns company navigation inside People, so mounting the legacy strip here
+  // duplicates that hierarchy above every room and collides with the calendar
+  // controls. Keep the status data bridge alive, but never mount its old chrome
+  // inside the CRM shell.
+  if (document.body?.dataset?.appShell === "crm") {
+    closeOverflowMenu();
+    document.querySelector(".company-tab-bar")?.remove();
+    if (wsBar) {
+      wsBar.hidden = true;
+      wsBar.style.display = "none";
+    }
+    return;
+  }
+  injectCompanyCss();
   if (wsBar) wsBar.style.display = "none"; // company tabs take over the tab strip
   let bar = document.querySelector(".company-tab-bar");
   if (!bar) {

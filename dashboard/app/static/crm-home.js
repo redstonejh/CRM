@@ -302,10 +302,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-bucket.crm-menu-surface{box-shadow:inset 0 1px 0 var(--crm-menu-highlight),0 14px 26px -16px rgba(0,0,0,.72)!important}
       .crm-home-bucket:hover{background:linear-gradient(180deg,rgba(40,55,76,.27),rgba(18,26,38,.23));
         box-shadow:inset 0 0 0 1px rgba(166,196,236,.27),inset 0 1px rgba(255,255,255,.15),0 14px 26px -16px rgba(0,0,0,.72)}
-      .crm-home-title-glass{position:absolute;z-index:4;left:17px;bottom:16px;max-width:calc(100% - 34px);
+      .crm-home-title-glass{position:absolute;z-index:4;left:17px;bottom:30px;max-width:calc(100% - 34px);
         padding:0;text-align:left;pointer-events:none;opacity:.94;background:none;border:0;box-shadow:none;
         transition:opacity .16s ease;display:block}
-      .crm-home-title{font:600 var(--crm-type-tile,15px)/1.2 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;letter-spacing:.008em;
+      .crm-home-title{font:650 clamp(15px,1.25vw,16px)/1.2 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;letter-spacing:.008em;
         max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(246,249,253,.91);
         text-rendering:geometricPrecision;font-synthesis:none;text-shadow:0 1px 1px rgba(0,0,0,.86)}
       .crm-home-title-slot.is-deemphasized .crm-home-title-glass{opacity:.28}
@@ -322,9 +322,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       @keyframes crm-home-preview-turn{to{transform:rotate(1turn)}}
       .crm-home-preview-image{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;
         z-index:1;user-select:none;transform:none;transform-origin:center;backface-visibility:hidden}
-      /* Each tile is one inert raster. A small GPU filter provides the resting
-         depth cue and is the only visual property released on hover. */
-      .crm-home-preview-foreground{filter:blur(1.8px) saturate(.9) brightness(.82);transition:filter .18s ease}
+      /* Each tile is one inert raster. Keep the resting depth cue genuinely
+         subtle: the prior 1.8px filter obscured the canonical objects enough
+         to make a fully-settled Home look like an unfinished loading state. */
+      .crm-home-preview-foreground{filter:blur(.65px) saturate(.95) brightness(.88);transition:filter .18s ease}
       .crm-home-bucket:is(.is-preview-hovered,:focus-visible) .crm-home-preview-foreground{filter:blur(0) saturate(.96) brightness(.9)}
       /* These are the card system's real .tk-card objects. Home contributes
          only the held-hand geometry and compositor-friendly reveal motion. */

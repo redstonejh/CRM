@@ -107,7 +107,7 @@ async function main() {
     const titles = [...document.querySelectorAll('.crm-home-title-layer > .crm-home-title-slot .crm-home-title')];
     return titles.length === 4 && titles.every((title) => {
       const style = getComputedStyle(title);
-      return style.fontSize === '15px' && style.fontWeight === '600'
+      return style.fontSize === '16px' && style.fontWeight === '650'
         && style.fontFamily.includes('Segoe UI Variable Text') && !style.textShadow.includes('12px')
         && !title.closest('.crm-home-bucket');
     }) && getComputedStyle(document.querySelector('.crm-home-level')).willChange.includes('transform');
@@ -225,8 +225,8 @@ async function main() {
     const images = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')];
     return images.length === 4 && images.every((image) => {
       const filter = getComputedStyle(image).filter;
-      return image.dataset.previewVariant === 'filtered' && filter.includes('blur(1.8px)')
-        && filter.includes('saturate(0.9)') && filter.includes('brightness(0.82)');
+      return image.dataset.previewVariant === 'filtered' && filter.includes('blur(0.65px)')
+        && filter.includes('saturate(0.95)') && filter.includes('brightness(0.88)');
     })
       && !document.querySelector('.crm-home-grid .crm-home-preview-sharp');
   });
@@ -242,12 +242,12 @@ async function main() {
     const saturation = Number(filter?.match(/saturate\(([-+\deE.]+)\)/)?.[1]);
     const stateArmed = tile?.classList.contains('is-preview-hovered')
       && title?.closest('.crm-home-title-slot')?.classList.contains('is-deemphasized');
-    const filterIsValid = (blur <= .12 && saturation >= .956) || (blur === 1.8 && saturation === .9);
+    const filterIsValid = blur <= .12 && saturation >= .956;
     const opacityIsValid = (Number(titleStyle.opacity) >= .23 && Number(titleStyle.opacity) < .33)
       || Number(titleStyle.opacity) === .94;
     const ok = !!foreground && !!title && stateArmed && filterIsValid && opacityIsValid
       && !tile.querySelector('.crm-home-preview-sharp')
-      && titleStyle.left === '17px' && titleStyle.bottom === '16px';
+      && titleStyle.left === '17px' && titleStyle.bottom === '30px';
     return { ok, detail:JSON.stringify({ filter, blur, saturation, opacity:titleStyle?.opacity, left:titleStyle?.left, bottom:titleStyle?.bottom,
       hovered:tile?.matches(':hover'), previewHovered:tile?.classList.contains('is-preview-hovered'),
       titleDeemphasized:title?.closest('.crm-home-title-slot')?.classList.contains('is-deemphasized') }) };

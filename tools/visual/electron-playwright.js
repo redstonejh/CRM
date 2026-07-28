@@ -8,7 +8,7 @@ const { start } = require('./harness.js');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { nativeHz: 100, maxFrameMs: 15, maxOver15Ms: 0, maxLongTasks: 0 };
 const HOME_PREVIEW_VERSION = 'filtered-home-v46';
-const HOME_PREVIEW_REST_FILTER = 'blur(1.8px)';
+const HOME_PREVIEW_REST_FILTER = 'blur(0.65px)';
 let nativeRefreshCalibration = null;
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
@@ -1475,7 +1475,7 @@ async function main() {
     const preview=(await window.crmHomePreviews.projectList()).previews.find((item)=>item.key===projectId);if(image)image.dataset.nativeProjectProbe='preserve';
     return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],image:!!image,natural:[image?.naturalWidth||0,image?.naturalHeight||0],filter:image?getComputedStyle(image).filter:'',exactSrc:preview?.exactSrc||'',foregroundSrc:preview?.foregroundSrc||'',title:document.querySelector(`[data-project-title="${CSS.escape(projectId)}"] .crm-home-title`)?.textContent.trim()||''};
   },nativeProjectId);
-  if(!projectPreviewBefore.image||!projectPreviewBefore.exactSrc||!projectPreviewBefore.foregroundSrc||!projectPreviewBefore.filter.includes('blur(1.8px)')||projectPreviewBefore.natural[0]!==1280||projectPreviewBefore.natural[1]!==860||projectPreviewBefore.title!=='Native preview project')throw new Error(`Nested project tile did not use the native Home preview contract: ${JSON.stringify({...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc})}`);
+  if(!projectPreviewBefore.image||!projectPreviewBefore.exactSrc||!projectPreviewBefore.foregroundSrc||!projectPreviewBefore.filter.includes(HOME_PREVIEW_REST_FILTER)||projectPreviewBefore.natural[0]!==1280||projectPreviewBefore.natural[1]!==860||projectPreviewBefore.title!=='Native preview project')throw new Error(`Nested project tile did not use the native Home preview contract: ${JSON.stringify({...projectPreviewBefore,exactSrc:!!projectPreviewBefore.exactSrc,foregroundSrc:!!projectPreviewBefore.foregroundSrc})}`);
   await page.screenshot({path:path.join(out,'projects-nested.png')});
   await page.evaluate(()=>{window.__startNativeProjectContinuity=(layerForFrame)=>new Promise((resolve)=>{
     const samples=[];let sawOwnedMotion=false;const armedAt=performance.now();

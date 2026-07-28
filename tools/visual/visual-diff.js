@@ -25,6 +25,18 @@ const MAX_DIFF_RATIO = 0.02;
 function shoot(outDir) {
   fs.rmSync(outDir, { recursive: true, force: true });
   execFileSync(process.execPath, [path.join(__dirname, 'shoot.js'), outDir], { stdio: 'inherit' });
+  // Replace the browser harness's unavoidable Home loading placeholder with
+  // the real Electron surface after all four canonical captures have settled.
+  const repoRoot = path.join(__dirname, '..', '..');
+  const buildCommand = process.platform === 'win32'
+    ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm run build:electron-runtime']]
+    : ['npm', ['run', 'build:electron-runtime']];
+  execFileSync(buildCommand[0], buildCommand[1], { cwd:repoRoot, stdio:'inherit' });
+  execFileSync(
+    process.execPath,
+    [path.join(__dirname, 'native-home-shot.cjs'), path.join(outDir, '01-home.png')],
+    { stdio:'inherit' },
+  );
 }
 
 function compareOne(name) {

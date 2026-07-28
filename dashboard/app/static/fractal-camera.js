@@ -11,11 +11,16 @@
     const entryHold = Number.isFinite(Number(config.entryHold)) ? Number(config.entryHold) : .86;
     const exitReveal = Number.isFinite(Number(config.exitReveal)) ? Number(config.exitReveal) : .14;
     const releaseEase = config.releaseEase || "cubic-bezier(.3, 0, .7, 1)";
+    const holdThroughMotion = config.holdThroughMotion === true;
+    const releaseMs = Math.max(1, Number(config.releaseMs) || 140);
     let lens = null;
+    let clipOwner = null;
     let owner = null;
     let state = null;
     let clipAnimation = null;
     let opacityAnimation = null;
+    let frameAnimation = null;
+    let releaseAnimation = null;
 
     const material = (node) => {
       const style = node && getComputedStyle(node);
@@ -53,16 +58,23 @@
     const stop = () => {
       clipAnimation?.cancel();
       opacityAnimation?.cancel();
+      frameAnimation?.cancel();
+      releaseAnimation?.cancel();
       clipAnimation = null;
       opacityAnimation = null;
+      frameAnimation = null;
+      releaseAnimation = null;
     };
     const finish = () => {
+      const frame = state?.frame;
       stop();
-      lens?.remove();
+      (clipOwner || lens)?.remove();
       lens = null;
+      clipOwner = null;
       owner?.classList.remove(ownerClass);
       owner = null;
       state = null;
+      if (frame) frame.style.removeProperty("opacity");
     };
     const clipFor = (rect, surfaceRect, radiusX, radiusY) => {
       const top = Math.max(0, rect.top - surfaceRect.top);
@@ -97,7 +109,8 @@
       const destinationClip = clipFor(destinationRect, surfaceRect, sourceMaterial.radiusX / scaleX, sourceMaterial.radiusY / scaleY);
 
       const direction = context.direction || "prewarm";
-      const canReuse = !!lens && owner === expander && lens.parentElement === context.surface;
+      const mountedOwner = clipOwner || lens;
+      const canReuse = !!lens && owner === expander && mountedOwner?.parentElement === context.surface;
       if (!canReuse) {
         finish();
         owner = expander;
@@ -105,13 +118,43 @@
         lens = document.createElement("span");
         lens.className = lensClass;
         lens.setAttribute("aria-hidden", "true");
-        context.surface.appendChild(lens);
+        if (holdThroughMotion) {
+          // Keep the expensive full-viewport backdrop plane geometrically
+          // static and animate only a parent clip. Applying clip-path directly
+          // to a backdrop-filter element makes Chromium resize/reallocate the
+          // blur pass as the tile grows, which is both slower and visually less
+          // stable than masking one precomposed acrylic plane.
+          clipOwner = document.createElement("span");
+          clipOwner.className = `${lensClass}-clip`;
+          clipOwner.setAttribute("aria-hidden", "true");
+          clipOwner.appendChild(lens);
+          context.surface.appendChild(clipOwner);
+        } else {
+          clipOwner = null;
+          context.surface.appendChild(lens);
+        }
       } else stop();
       lens.dataset.fractalAcrylicLens = direction;
-      Object.assign(lens.style, {
+      const initialClip = direction === "contract" ? destinationClip : sourceClip;
+      const initialOpacity = direction === "prewarm"
+        ? ".001"
+        : (holdThroughMotion ? "1" : (direction === "expand" ? "1" : "0"));
+      const geometryOwner = clipOwner || lens;
+      Object.assign(geometryOwner.style, {
         position:"absolute",
         inset:"0",
         zIndex:direction === "contract" ? String(config.contractZIndex ?? 5) : String(config.expandZIndex ?? 4),
+        boxSizing:"border-box",
+        pointerEvents:"none",
+        clipPath:initialClip,
+        webkitClipPath:initialClip,
+        transform:"translateZ(0)",
+        willChange:"clip-path",
+        backfaceVisibility:"hidden",
+      });
+      Object.assign(lens.style, {
+        position:"absolute",
+        inset:"0",
         boxSizing:"border-box",
         pointerEvents:"none",
         backgroundColor:sourceMaterial.backgroundColor,
@@ -121,14 +164,17 @@
         backgroundRepeat:sourceMaterial.backgroundRepeat,
         webkitBackdropFilter:sourceMaterial.backdropFilter,
         backdropFilter:sourceMaterial.backdropFilter,
-        clipPath:direction === "contract" ? destinationClip : sourceClip,
-        webkitClipPath:direction === "contract" ? destinationClip : sourceClip,
+        clipPath:clipOwner ? "none" : initialClip,
+        webkitClipPath:clipOwner ? "none" : initialClip,
         // Hover prefetch uploads the exact same backdrop layer before motion.
         // Its .001 coat is visually inert but avoids allocating a full acrylic
         // surface in the first animated frame.
-        opacity:direction === "prewarm" ? ".001" : (direction === "expand" ? "1" : "0"),
+        opacity:initialOpacity,
         transform:"translateZ(0)",
-        willChange:"clip-path,opacity",
+        // Promote the actual material during hover prewarm. In hold mode its
+        // separate parent owns clip motion, so this full-screen blur surface
+        // never changes geometry during the transition.
+        willChange:clipOwner ? "opacity,backdrop-filter" : "clip-path,opacity,backdrop-filter",
         backfaceVisibility:"hidden",
       });
       state = {
@@ -137,36 +183,88 @@
         destinationClip,
         duration:Number(context.morphMs) || 460,
         easing:context.ease || "cubic-bezier(.22, 1, .26, 1)",
+        frame,
+        clipOwner:geometryOwner,
       };
+      lens.dataset.fractalAcrylicPhase = direction === "prewarm" ? "prewarm" : "prepared";
+      lens.dataset.fractalAcrylicDirection = direction;
       return lens;
     };
     const start = (direction) => {
       if (!lens || !state || state.direction !== direction) return null;
       stop();
+      lens.dataset.fractalAcrylicPhase = "motion";
+      lens.dataset.fractalAcrylicDirection = direction;
       const from = direction === "expand" ? state.sourceClip : state.destinationClip;
       const to = direction === "expand" ? state.destinationClip : state.sourceClip;
-      clipAnimation = lens.animate(
+      clipAnimation = state.clipOwner.animate(
         [{ clipPath:from }, { clipPath:to }],
         { duration:state.duration, easing:state.easing, fill:"forwards" },
       );
+      if (holdThroughMotion) {
+        // Acrylic is a material, not an opacity cue. Keep its tint and live
+        // screen-space backdrop fully owned for every geometric frame. Entry
+        // releases it only after the transform has reached the viewport; exit
+        // carries it intact all the way back into the source tile.
+        lens.style.opacity = "1";
+        if (state.frame) state.frame.style.opacity = "1";
+      }
       opacityAnimation = lens.animate(
-        direction === "expand"
-          ? [{ opacity:1, offset:0 }, { opacity:1, offset:entryHold, easing:releaseEase }, { opacity:0, offset:1 }]
-          : [{ opacity:0, offset:0, easing:releaseEase }, { opacity:1, offset:exitReveal }, { opacity:1, offset:1 }],
+        holdThroughMotion
+          ? [{ opacity:1, offset:0 }, { opacity:1, offset:1 }]
+          : (direction === "expand"
+            ? [{ opacity:1, offset:0 }, { opacity:1, offset:entryHold, easing:releaseEase }, { opacity:0, offset:1 }]
+            : [{ opacity:0, offset:0, easing:releaseEase }, { opacity:1, offset:exitReveal }, { opacity:1, offset:1 }]),
         { duration:state.duration, easing:"linear", fill:"forwards" },
       );
       return lens;
     };
+    const release = () => {
+      if (!holdThroughMotion || !lens || !state) return Promise.resolve(false);
+      const releaseLens = lens;
+      const releaseFrame = state.frame;
+      const endpointClip = state.direction === "expand" ? state.destinationClip : state.sourceClip;
+      clipAnimation?.cancel();
+      opacityAnimation?.cancel();
+      frameAnimation?.cancel();
+      releaseAnimation?.cancel();
+      clipAnimation = null;
+      opacityAnimation = null;
+      frameAnimation = null;
+      releaseAnimation = null;
+      state.clipOwner.style.clipPath = endpointClip;
+      state.clipOwner.style.webkitClipPath = endpointClip;
+      releaseLens.style.opacity = "1";
+      if (releaseFrame) releaseFrame.style.opacity = "1";
+      releaseLens.dataset.fractalAcrylicPhase = "release";
+      const timing = { duration:releaseMs, easing:releaseEase, fill:"forwards" };
+      const lensFade = releaseLens.animate([{ opacity:1 }, { opacity:0 }], timing);
+      const frameFade = releaseFrame?.animate?.([{ opacity:1 }, { opacity:0 }], timing) || null;
+      releaseAnimation = lensFade;
+      frameAnimation = frameFade;
+      return Promise.allSettled([lensFade.finished, frameFade?.finished].filter(Boolean)).then(() => {
+        if (lens !== releaseLens || releaseAnimation !== lensFade) return false;
+        releaseLens.style.opacity = "0";
+        if (releaseFrame) releaseFrame.style.opacity = "0";
+        lensFade.cancel();
+        frameFade?.cancel?.();
+        releaseAnimation = null;
+        frameAnimation = null;
+        releaseLens.dataset.fractalAcrylicPhase = "released";
+        return true;
+      });
+    };
     const sync = (transformAnimation, startTime) => {
       const initialAnchor = Number(startTime);
+      const probeHeld = () => state?.clipOwner?.parentElement?.dataset?.fractalCameraProbeHold === "true";
       if (!Number.isFinite(initialAnchor) || !lens?.isConnected || !state
-        || lens.parentElement?.dataset?.fractalCameraProbeHold === "true") return false;
+        || probeHeld()) return false;
       const syncedLens = lens;
       const syncedClip = clipAnimation;
       const syncedOpacity = opacityAnimation;
       const align = () => {
         if (lens !== syncedLens || clipAnimation !== syncedClip || opacityAnimation !== syncedOpacity
-          || !syncedLens?.isConnected || syncedLens.parentElement?.dataset?.fractalCameraProbeHold === "true") return false;
+          || !syncedLens?.isConnected || probeHeld()) return false;
         const liveStart = Number(transformAnimation?.startTime);
         const liveTime = Number(transformAnimation?.currentTime);
         const anchor = Number.isFinite(liveStart) ? liveStart : initialAnchor;
@@ -199,15 +297,23 @@
     const prime = () => {
       if (!lens || !state || state.direction !== "prewarm") return null;
       stop();
-      lens.style.clipPath = state.destinationClip;
-      lens.style.webkitClipPath = state.destinationClip;
+      state.clipOwner.style.clipPath = state.destinationClip;
+      state.clipOwner.style.webkitClipPath = state.destinationClip;
       lens.style.opacity = ".001";
+      lens.dataset.fractalAcrylicPhase = "prewarm";
       // Contract is smooth on first use because its full-viewport, transparent
       // lens receives covered paints before motion. Give expansion the same
       // preparation while the pointer rests over its source tile.
       return lens;
     };
-    return { prepare, start, sync, prime, finish, element:() => lens };
+    const status = () => ({
+      active:!!lens && ["motion", "release"].includes(lens.dataset.fractalAcrylicPhase || ""),
+      phase:lens?.dataset?.fractalAcrylicPhase || "",
+      direction:lens?.dataset?.fractalAcrylicDirection || state?.direction || "",
+      holdThroughMotion,
+      releaseMs,
+    });
+    return { prepare, start, sync, prime, release, finish, element:() => lens, status };
   };
 
   global.createFractalCamera = function createFractalCamera(config = {}) {
@@ -356,7 +462,7 @@
     });
     const announceTransformReady = (direction, expander, seq, triggerFrameTime) => {
       let published = false;
-      const publish = (startTime) => {
+      const publish = (startTime, transformAnimation = null) => {
         if (published) return;
         if (seq !== transitionSeq || !transitioning || !expander?.isConnected) return;
         published = true;
@@ -365,7 +471,7 @@
         const transformContext = {
           ...ctx(),
           expander,
-          transformAnimation:null,
+          transformAnimation,
           transformStartTime,
         };
         config.onTransformReady?.(direction, transformContext);
@@ -378,8 +484,9 @@
         const transformAnimation = [...(expander.getAnimations?.({ subtree:false }) || [])]
           .find((animation) => {
             const property = String(animation.transitionProperty || "").replace(/^-webkit-/, "").toLowerCase();
+            const keyframes = animation.effect?.getKeyframes?.() || [];
             return animation.effect?.target === expander
-              && property === "transform"
+              && (property === "transform" || keyframes.some((keyframe) => keyframe.transform != null))
               && animation.playState !== "idle"
               && animation.replaceState !== "removed";
           }) || null;
@@ -393,7 +500,7 @@
           ? start
           : (Number.isFinite(timeline) && Number.isFinite(current)
             ? timeline - current
-            : fallbackTime));
+            : fallbackTime), transformAnimation);
       };
       const onTransitionRun = (event) => {
         if (event.target !== expander || event.propertyName !== "transform") return;

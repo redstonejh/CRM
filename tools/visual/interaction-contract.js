@@ -292,12 +292,14 @@ async function main() {
   await check('The moving tile keeps one acrylic coat over the shared wallpaper', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
     const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
-    const acrylic = document.querySelector('.crm-home-surface > .crm-home-screen-acrylic');
+    const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
     const exact = expander?.querySelector('.crm-home-preview-exact');
     const style = acrylic && getComputedStyle(acrylic);
+    const acrylicHost = acrylic?.parentElement?.classList.contains('crm-home-screen-acrylic-clip') ? acrylic.parentElement : acrylic;
+    const hostStyle = acrylicHost && getComputedStyle(acrylicHost);
     const frameStyle = frame && getComputedStyle(frame);
     const exactStyle = exact && getComputedStyle(exact);
-    const transform = style?.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : new DOMMatrix();
+    const transform = hostStyle?.transform && hostStyle.transform !== 'none' ? new DOMMatrix(hostStyle.transform) : new DOMMatrix();
     const status = window.crmHome?.motionStatus?.();
     const source = window.__homeAcrylicMaterial;
     const exactMaterial = !!style && !!source
@@ -309,13 +311,17 @@ async function main() {
     const state = { ready:status?.ready, materialMode:status?.materialMode, background:style?.backgroundImage,
       backdrop:style?.backdropFilter, opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
       exact:!!exact, exactOpacity:exactStyle ? Number(exactStyle.opacity) : null, foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
-      exactMaterial, exactFrame, source, clip:style?.clipPath, screenScale:[transform.a,transform.d],
+      exactMaterial, exactFrame, acrylicState:window.crmHome?.acrylicState?.(), source, clip:hostStyle?.clipPath, screenScale:[transform.a,transform.d],
       transformedFrame:{ background:frameStyle?.backgroundImage, backdrop:frameStyle?.backdropFilter } };
     return { ok:!!style && (!status?.ready || status.materialMode === 'cached-acrylic')
       && exactMaterial && exactFrame && Number(style.opacity) > .99
+      && (style.webkitBackdropFilter || style.backdropFilter).includes('blur(')
+      && (style.webkitBackdropFilter || style.backdropFilter).includes('saturate(')
+      && window.crmHome?.acrylicState?.().phase === 'motion'
+      && Number(frameStyle?.opacity) > .99
       && Number(getComputedStyle(expander).opacity) > .99 && !expander.style.transition.includes('opacity')
-      && acrylic.parentElement === window.crmHomeCamera?.surface?.() && Math.abs(transform.a-1)<.001 && Math.abs(transform.d-1)<.001
-      && style.clipPath.startsWith('inset(') && frameStyle?.backgroundImage === 'none' && frameStyle?.backdropFilter === 'none'
+      && acrylicHost?.parentElement === window.crmHomeCamera?.surface?.() && Math.abs(transform.a-1)<.001 && Math.abs(transform.d-1)<.001
+      && hostStyle?.clipPath.startsWith('inset(') && frameStyle?.backgroundImage === 'none' && frameStyle?.backdropFilter === 'none'
       && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
       && !exact && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
       , detail:JSON.stringify(state) };
@@ -353,6 +359,30 @@ async function main() {
     return getComputedStyle(strip).webkitAppRegion === 'drag'
       && getComputedStyle(lid).webkitAppRegion !== 'no-drag'
       && exclusions.length === 0;
+  });
+  await page.waitForFunction(() => {
+    const lens = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
+    return window.crmHome?.acrylicState?.().phase === 'release'
+      && lens && Number(getComputedStyle(lens).opacity) < .9;
+  }, { timeout:5000 });
+  await check('Acrylic releases only after the tile has seated as the viewport', () => {
+    const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+    const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
+    const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
+    const rect = expander?.getBoundingClientRect();
+    const style = acrylic && getComputedStyle(acrylic);
+    const frameStyle = frame && getComputedStyle(frame);
+    const opacity = Number(style?.opacity);
+    const frameOpacity = Number(frameStyle?.opacity);
+    const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
+    const motion = window.crmDeskTransit?.motionState?.();
+    const acrylicState = window.crmHome?.acrylicState?.();
+    return { ok:!!rect && Math.abs(rect.left) <= .5 && Math.abs(rect.top) <= .5
+      && Math.abs(rect.width - innerWidth) <= .5 && Math.abs(rect.height - innerHeight) <= .5
+      && motion?.active === false && acrylicState?.phase === 'release'
+      && opacity > .05 && opacity < .9 && frameOpacity > .05 && frameOpacity < .9
+      && material.includes('blur(') && material.includes('saturate('),
+      detail:JSON.stringify({ rect:[rect?.x,rect?.y,rect?.width,rect?.height], opacity, frameOpacity, material, motion, acrylicState }) };
   });
   try {
     await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.(), { timeout:15000 });
@@ -393,6 +423,19 @@ async function main() {
 
   await page.evaluate(() => { void window.crmDeskTransit.driveTo('home'); });
   await sleep(100);
+  await check('The returning viewport carries real acrylic for the full zoom-out', () => {
+    const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+    const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
+    const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
+    const style = acrylic && getComputedStyle(acrylic);
+    const frameStyle = frame && getComputedStyle(frame);
+    const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
+    return !!expander && window.crmHome?.acrylicState?.().phase === 'motion'
+      && window.crmHome?.acrylicState?.().direction === 'contract'
+      && Number(style?.opacity) > .99 && Number(frameStyle?.opacity) > .99
+      && material.includes('blur(') && material.includes('saturate(')
+      && !expander.style.transition.includes('opacity');
+  });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-out', () => {
     const root = window.crmHomeCamera?.layers?.()[0];
     const selected = root?.querySelector('.crm-home-bucket[data-module="people"]')?.getBoundingClientRect();
@@ -1610,11 +1653,11 @@ async function main() {
   }, plannerTileStart);
   if (plannerWarmPoint) await page.mouse.move(plannerWarmPoint.x, plannerWarmPoint.y);
   await page.waitForFunction((projectId) => !![...document.querySelectorAll('.crm-planner-warm')].find((layer) => layer.dataset.projectId === projectId)
-    && !!document.querySelector('.crm-planner-surface > .crm-project-screen-acrylic'), { timeout:5000 }, plannerTileStart);
+    && !!document.querySelector('.crm-planner-surface .crm-project-screen-acrylic'), { timeout:5000 }, plannerTileStart);
   await sleep(120);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const plannerNestedDive = await page.evaluate((projectId) => new Promise((resolve) => {
-    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = []; const acrylicOpacities = []; let acrylicFrames = 0; let objectFrames = 0; let acrylicKeyframes = []; let screenSpaceFrames = 0;
+    const tile = document.querySelector(`.crm-project-bucket[data-planner-project="${CSS.escape(projectId)}"]`); const source = tile?.getBoundingClientRect(); const samples = []; const acrylicOpacities = []; const motionAcrylic = []; const releaseAcrylic = []; let acrylicFrames = 0; let objectFrames = 0; let motionKeyframes = []; let releaseKeyframes = []; let screenSpaceFrames = 0;
     if (!tile || !source) { resolve(null); return; }
     const sourceStyle = getComputedStyle(tile);
     const sourceMaterial = {
@@ -1629,8 +1672,8 @@ async function main() {
     const tick = () => {
       const layer = window.crmProjectsCamera?.layers?.()[1] || document.querySelector('.crm-planner-project-world'); const rect = layer?.getBoundingClientRect();
       if (rect) samples.push([rect.x, rect.y, rect.width, rect.height]);
-      const acrylic=document.querySelector('.crm-planner-surface>.crm-project-screen-acrylic');const acrylicFrame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();
-      if(acrylic){const acrylicStyle=getComputedStyle(acrylic);const layerStyle=getComputedStyle(layer);const frameStyle=acrylicFrame&&getComputedStyle(acrylicFrame);acrylicOpacities.push(Number(acrylicStyle.opacity));if(!acrylicKeyframes.length){const animation=acrylic.getAnimations().find((candidate)=>(candidate.effect?.getKeyframes?.()||[]).some((keyframe)=>keyframe.opacity!=null));acrylicKeyframes=(animation?.effect?.getKeyframes?.()||[]).map((keyframe)=>({offset:keyframe.computedOffset,opacity:Number(keyframe.opacity)}));}const exactMaterial=acrylicStyle.backgroundColor===sourceMaterial.backgroundColor&&acrylicStyle.backgroundImage===sourceMaterial.backgroundImage&&(acrylicStyle.webkitBackdropFilter||acrylicStyle.backdropFilter)===sourceMaterial.backdropFilter;const matrix=acrylicStyle.transform&&acrylicStyle.transform!=='none'?new DOMMatrix(acrylicStyle.transform):new DOMMatrix();if(Math.abs(matrix.a-1)<.001&&Math.abs(matrix.d-1)<.001&&acrylic.parentElement===window.crmProjectsCamera?.surface?.())screenSpaceFrames+=1;if(Number(layerStyle.opacity)>.99&&!layer.style.transition.includes('opacity')&&exactMaterial&&frameStyle?.backgroundImage==='none'&&frameStyle?.backdropFilter==='none')acrylicFrames+=1;}
+      const acrylic=document.querySelector('.crm-planner-surface .crm-project-screen-acrylic');const acrylicFrame=layer?.querySelector(':scope>.crm-project-transition-acrylic');const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const live=layer?.querySelector(':scope>.crm-planner-project-live');const moving=!!window.crmProjectsCamera?.isTransitioning?.();
+      if(acrylic){const acrylicStyle=getComputedStyle(acrylic);const acrylicHost=acrylic.parentElement?.classList.contains('crm-project-screen-acrylic-clip')?acrylic.parentElement:acrylic;const hostStyle=getComputedStyle(acrylicHost);const layerStyle=getComputedStyle(layer);const frameStyle=acrylicFrame&&getComputedStyle(acrylicFrame);const opacity=Number(acrylicStyle.opacity);const phase=acrylic.dataset.fractalAcrylicPhase||'';acrylicOpacities.push(opacity);if(phase==='motion')motionAcrylic.push(opacity);if(phase==='release')releaseAcrylic.push(opacity);const animation=acrylic.getAnimations().find((candidate)=>(candidate.effect?.getKeyframes?.()||[]).some((keyframe)=>keyframe.opacity!=null));const keyframes=(animation?.effect?.getKeyframes?.()||[]).map((keyframe)=>({offset:keyframe.computedOffset,opacity:Number(keyframe.opacity)}));if(phase==='motion'&&!motionKeyframes.length)motionKeyframes=keyframes;if(phase==='release'&&!releaseKeyframes.length)releaseKeyframes=keyframes;const backdrop=acrylicStyle.webkitBackdropFilter||acrylicStyle.backdropFilter;const exactMaterial=acrylicStyle.backgroundColor===sourceMaterial.backgroundColor&&acrylicStyle.backgroundImage===sourceMaterial.backgroundImage&&backdrop===sourceMaterial.backdropFilter&&backdrop.includes('blur(')&&backdrop.includes('saturate(');const matrix=hostStyle.transform&&hostStyle.transform!=='none'?new DOMMatrix(hostStyle.transform):new DOMMatrix();if(Math.abs(matrix.a-1)<.001&&Math.abs(matrix.d-1)<.001&&acrylicHost.parentElement===window.crmProjectsCamera?.surface?.()&&hostStyle.clipPath.startsWith('inset('))screenSpaceFrames+=1;if(Number(layerStyle.opacity)>.99&&!layer.style.transition.includes('opacity')&&exactMaterial&&Number(frameStyle?.opacity)>.01&&frameStyle?.backgroundImage==='none'&&frameStyle?.backdropFilter==='none')acrylicFrames+=1;}
       else if(!moving&&acrylicOpacities.length&&acrylicOpacities.at(-1)>.05)acrylicOpacities.push(0);
       if((overlay&&Number(getComputedStyle(overlay).opacity)>.01)||(live&&Number(getComputedStyle(live).opacity)>.01))objectFrames+=1;
       if (moving) { requestAnimationFrame(tick); return; }
@@ -1638,21 +1681,22 @@ async function main() {
       const seat = () => {
         stable.push(JSON.stringify([...document.querySelectorAll('.crm-planner-bucket')].map((bucket) => { const bounds=bucket.getBoundingClientRect(); return [bounds.x,bounds.y,bounds.width,bounds.height]; })));
         if (++frame < 10) requestAnimationFrame(seat);
-        else resolve({ source:[source.x,source.y,source.width,source.height], sourceMaterial, acrylicKeyframes, samples, unique:new Set(samples.map((sample) => sample.map((value) => value.toFixed(1)).join(','))).size,
-          stable:new Set(stable).size, acrylicFrames, acrylicOpacities, screenSpaceFrames, objectFrames, wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
+        else resolve({ source:[source.x,source.y,source.width,source.height], sourceMaterial, motionKeyframes, releaseKeyframes, samples, unique:new Set(samples.map((sample) => sample.map((value) => value.toFixed(1)).join(','))).size,
+          stable:new Set(stable).size, acrylicFrames, acrylicOpacities, motionAcrylic, releaseAcrylic, screenSpaceFrames, objectFrames, wallpapers:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length, level:window.crmPlanner.level(), layers:window.crmProjectsCamera?.layers?.().filter(Boolean).length || 0 });
       };
       requestAnimationFrame(seat);
     };
     requestAnimationFrame(tick);
   }), plannerTileStart);
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
-    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const opacitySteps = acrylic.slice(1).map((value,index)=>value-acrylic[index]); const fadeStart = acrylic.findIndex((opacity)=>opacity<.99); const fadeTail = fadeStart<0?0:acrylic.length-fadeStart; const intermediateFrames=acrylic.filter((opacity)=>opacity>.01&&opacity<.99).length; const keyframes=probe?.acrylicKeyframes||[]; const endpointCurve=keyframes.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-.78)<.001&&frame.opacity===1)&&keyframes.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
-    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 7 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames === probe.acrylicFrames && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
-      && acrylic[0] >= .99 && acrylic.at(-1) <= .05 && endpointCurve && intermediateFrames <= 11 && fadeTail <= 12 && opacitySteps.every((step)=>step<=.04)
+    const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const motion=probe?.motionAcrylic||[];const release=probe?.releaseAcrylic||[];const releaseSteps=release.slice(1).map((value,index)=>value-release[index]);const releaseIntermediate=release.filter((opacity)=>opacity>.05&&opacity<.95).length;const motionCurve=probe?.motionKeyframes||[];const releaseCurve=probe?.releaseKeyframes||[];const heldCurve=motionCurve.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&motionCurve.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===1);const endpointCurve=releaseCurve.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&releaseCurve.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
+    return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 7 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames >= probe.acrylicFrames && probe.screenSpaceFrames-probe.acrylicFrames <= 2 && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
+      && acrylic[0] >= .99 && acrylic.at(-1) <= .1 && motion.length >= 20 && motion.every((opacity)=>opacity>=.99) && heldCurve
+      && release.length >= 5 && release[0] >= .8 && release.at(-1) <= .2 && releaseIntermediate >= 3 && releaseSteps.every((step)=>step<=.04) && endpointCurve
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,
-      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,acrylicFrames:probe?.acrylicFrames,screenSpaceFrames:probe?.screenSpaceFrames,acrylicFirst:acrylic[0],acrylicLast:acrylic.at(-1),acrylicFadeTail:fadeTail,acrylicIntermediateFrames:intermediateFrames,acrylicMaxStep:Math.max(0,...opacitySteps.map(Math.abs)),acrylicKeyframes:keyframes,objectFrames:probe?.objectFrames,wallpapers:probe?.wallpapers,source:probe?.source,last}) };
+      detail:JSON.stringify({frames:probe?.samples?.length,unique:probe?.unique,stable:probe?.stable,acrylicFrames:probe?.acrylicFrames,screenSpaceFrames:probe?.screenSpaceFrames,acrylicFirst:acrylic[0],acrylicLast:acrylic.at(-1),motionFrames:motion.length,motionMin:Math.min(1,...motion),releaseFrames:release.length,releaseIntermediate,releaseMaxStep:Math.max(0,...releaseSteps.map(Math.abs)),motionKeyframes:motionCurve,releaseKeyframes:releaseCurve,objectFrames:probe?.objectFrames,wallpapers:probe?.wallpapers,source:probe?.source,last}) };
   }, plannerNestedDive);
   await check('A project tile zooms into its real aligned custom pipeline', (projectId) => {
     const project = window.crmPlanner.projects().find((item) => item.id === projectId); const buckets = [...document.querySelectorAll('.crm-planner-bucket')];

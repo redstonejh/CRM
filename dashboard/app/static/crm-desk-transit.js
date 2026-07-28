@@ -1165,13 +1165,18 @@
     noteHomeTransformEnd,
     motionState:() => ({ ...homeMotionState }),
     ownershipFadeState:() => ({ ...ownershipFadeState }),
-    visualState:() => ({
-      active:homeMotionState.active || ownershipFadeState.active,
-      cameraActive:homeMotionState.active,
-      ownershipActive:ownershipFadeState.active,
-      camera:{ ...homeMotionState },
-      ownership:{ ...ownershipFadeState },
-    }),
+    visualState:() => {
+      const material = window.crmHome?.acrylicState?.() || null;
+      return {
+        active:homeMotionState.active || ownershipFadeState.active || material?.active === true,
+        cameraActive:homeMotionState.active,
+        ownershipActive:ownershipFadeState.active,
+        materialActive:material?.active === true,
+        camera:{ ...homeMotionState },
+        ownership:{ ...ownershipFadeState },
+        material,
+      };
+    },
     coverState:() => activeDive ? {
       key:activeDive.key,
       sequence:activeDive.sequence,

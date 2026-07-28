@@ -368,18 +368,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);
         opacity:0;transform:translateZ(0);will-change:opacity,transform}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
-      @keyframes crm-home-acrylic-expand{0%{opacity:1}78%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
-      @keyframes crm-home-acrylic-contract{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}22%,100%{opacity:1}}
-      .crm-home-surface.crm-home-acrylic-expanding .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-home-surface.crm-home-acrylic-contracting .crm-home-expander>.crm-home-transition-acrylic{animation:crm-home-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
       /* Freeze only the four resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
-      /* The neutral tint still expands in screen space, but its blur is baked
-         into the decoded Home pixels. A live backdrop-filter here allocates a
-         viewport surface on the first dive and is visually redundant. */
-      .crm-home-surface.crm-home-bitmap-motion>.crm-home-screen-acrylic{
-        -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+      /* The selected tile's acrylic is a fixed screen-space lens whose clip
+         follows the transformed tile. Do not flatten or disable its backdrop:
+         the live blur/saturation is the material the user sees during travel,
+         while the transformed child owns only the matching edge and shadow. */
       .crm-home-expander .crm-home-title-glass{display:none}
       .crm-home-expander .crm-home-preview{opacity:1;border-radius:0;box-shadow:none}
       .crm-home-expander .crm-home-preview-foreground{filter:none;transform:none;opacity:1;transition:none}
@@ -1137,8 +1132,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const homeAcrylicLens = window.createFractalAcrylicLens({
     frameSelector:":scope > .crm-home-transition-acrylic",
     lensClass:"crm-home-screen-acrylic",
-    entryHold:.78,
-    exitReveal:.22,
+    holdThroughMotion:true,
+    releaseMs:140,
   });
   const buildExpander = (target) => {
     const tile = homeTileRecords.find((candidate) => candidate.tile.id === target?.dataset?.tileId);
@@ -1433,8 +1428,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         context.morphMs,
       );
     },
-    onTransitionEnd:(direction,context)=>{
+    onTransitionEnd:async(direction,context)=>{
       window.crmDeskTransit?.noteHomeTransformEnd?.(direction, performance.now());
+      if (direction === "expand") await homeAcrylicLens.release();
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting","crm-home-bitmap-motion");
       const sequence = ++handoffSequence;
       let endpointPromise = null;
@@ -1449,7 +1445,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       // Expanding leaves Home inactive, so its longer guard remains appropriate.
       factoryPrewarmAfter = performance.now() + (direction === "contract" ? 60 : 250);
       scheduleFactoryPrewarm();
-      return endpointPromise;
+      if (endpointPromise) await endpointPromise;
     },
     onLevelChange:(context)=>{
       if (context.active && context.level === 0 && !window.crmDeskTransit?.isBusy?.()) mountAll();
@@ -1638,6 +1634,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
+    acrylicState:()=>homeAcrylicLens.status(),
     tiles:()=>clone(homeTileRecords),createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),

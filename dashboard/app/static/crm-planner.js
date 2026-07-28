@@ -169,8 +169,6 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{visibility:visible;opacity:1}
       .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);transform:translateZ(0);will-change:opacity,transform}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
-      @keyframes crm-project-acrylic-expand{0%{opacity:1}78%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
-      @keyframes crm-project-acrylic-contract{0%{opacity:0;animation-timing-function:cubic-bezier(.37,0,.63,1)}22%,100%{opacity:1}}
       @keyframes crm-project-live-in{0%{opacity:.001}78%{opacity:.001;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:1}}
       @keyframes crm-project-texture-out{0%{opacity:1}78%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:0}}
       @keyframes crm-project-live-out{0%{opacity:1;animation-timing-function:cubic-bezier(.37,0,.63,1)}22%,100%{opacity:.001}}
@@ -181,11 +179,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-planner-surface.crm-project-camera-contracting .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{animation:crm-project-texture-in var(--fractal-camera-morph-ms,460ms) linear both}
       .crm-planner-surface.crm-project-camera-moving .crm-planner-project-world.has-transition-preview>.crm-planner-project-live{visibility:hidden;opacity:0!important;animation:none!important}
       .crm-planner-surface.crm-project-camera-moving .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{visibility:visible;opacity:1!important;animation:none!important}
-      /* The tile material changes owners while geometry is still moving: it
-         dissolves into the settled project surface on entry and reforms before
-         the return reaches its source tile. No endpoint style swap remains. */
-      .crm-planner-surface.crm-project-acrylic-expanding .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-expand var(--fractal-camera-morph-ms,460ms) linear both}
-      .crm-planner-surface.crm-project-acrylic-contracting .crm-planner-project-world>.crm-project-transition-acrylic{animation:crm-project-acrylic-contract var(--fractal-camera-morph-ms,460ms) linear both}
+      /* The project tile keeps its real screen-space acrylic for the complete
+         transform. The shared lens releases only after the world is seated. */
       .crm-planner-warm>.crm-project-transition-acrylic{opacity:1!important;animation:none!important}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-project-bucket.is-camera-target{opacity:0}
       .crm-planner-surface[data-level="1"] .crm-project-gallery-level .crm-home-preview-state{visibility:hidden!important;opacity:0!important}
@@ -582,8 +577,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const projectAcrylicLens = window.createFractalAcrylicLens({
     frameSelector:":scope > .crm-project-transition-acrylic",
     lensClass:"crm-project-screen-acrylic",
-    entryHold:.78,
-    exitReveal:.22,
+    holdThroughMotion:true,
+    releaseMs:140,
   });
   function markProjectCameraTarget(target, context) {
     const gallery = context?.layers?.[0];
@@ -1173,7 +1168,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       onTransformReady:(_direction, context) => {
         projectAcrylicLens.sync(context.transformAnimation, context.transformStartTime);
       },
-      onTransitionEnd:(direction, context) => {
+      onTransitionEnd:async(direction, context) => {
+        if (direction === "expand") await projectAcrylicLens.release();
         projectAcrylicLens.finish();
         context.surface?.classList.remove("crm-project-camera-moving", "crm-project-camera-expanding", "crm-project-camera-contracting", "crm-project-acrylic-expanding", "crm-project-acrylic-contracting");
         if (direction === "expand") {

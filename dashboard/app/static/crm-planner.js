@@ -9,10 +9,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const TILE_MIGRATED_KEY = "crm-planner-project-tiles-migrated-v1";
   const EXPANDED_KEY = "crm-planner-stack-expansion-v1";
   const PROJECT_PREVIEW_VERSION = "project-tile-v1";
+  const PROJECT_HANDOFF_MS = 64;
   const listeners = new Set();
   const rows = (result) => result?.records || [];
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
+  const paintFrames = (frames = 1) => new Promise((resolve) => {
+    let remaining = Math.max(1, Number(frames) || 1);
+    const next = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(next);
+    };
+    requestAnimationFrame(next);
+  });
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[character]));
   const cssValue = (value) => window.CSS?.escape?.(String(value ?? "")) || String(value ?? "").replace(/["\\]/g, "\\$&");
   const uid = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
@@ -167,6 +177,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;visibility:hidden;opacity:0}
       .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{visibility:visible;opacity:1}
+      .crm-project-transition-exact{position:absolute;inset:0;z-index:21;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;visibility:hidden;opacity:0;transform:translateZ(0);will-change:opacity}
       .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);transform:translateZ(0);will-change:opacity,transform}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
       @keyframes crm-project-live-in{0%{opacity:.001}78%{opacity:.001;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:1}}
@@ -433,6 +444,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const preview = projectPreviews.get(project.id);
     if (!isProjectPreviewCurrent(preview, project)) {
       layer.querySelector(":scope > .crm-project-transition-preview")?.remove();
+      layer.querySelector(":scope > .crm-project-transition-exact")?.remove();
       layer.classList.remove("has-transition-preview");
       return null;
     }
@@ -458,49 +470,191 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const galleryDecoded = galleryImage?.src === preview.foregroundSrc
       && galleryImage.complete && galleryImage.naturalWidth > 0;
     const decoded = galleryDecoded || (image.complete && image.naturalWidth > 0);
+    let exact = layer.querySelector(":scope > .crm-project-transition-exact");
+    if (!exact) {
+      exact = document.createElement("img"); exact.className = "crm-project-transition-exact";
+      exact.alt = ""; exact.draggable = false; exact.decoding = "sync";
+      layer.appendChild(exact);
+    }
+    if (exact.src !== preview.exactSrc) exact.src = preview.exactSrc;
     layer.classList.toggle("has-transition-preview", decoded);
     return decoded ? image : null;
   }
-  function revealProjectWorld(layer) {
+  const projectAcrylicState = (layer) => {
+    const owners = [...(layer?.querySelectorAll?.(".crm-planner-bucket") || [])].filter((bucket) => {
+      const style = getComputedStyle(bucket);
+      const filter = style.webkitBackdropFilter || style.backdropFilter || "";
+      const rect = bucket.getBoundingClientRect();
+      return filter.includes("blur(") && !/blur\(\s*0(?:px)?\s*\)/i.test(filter)
+        && rect.width > 2 && rect.height > 2
+        && rect.right > 0 && rect.bottom > 0
+        && rect.left < innerWidth && rect.top < innerHeight
+        && style.display !== "none" && style.visibility === "visible"
+        && Number(style.opacity) > .99;
+    }).map((bucket) => {
+      const style = getComputedStyle(bucket);
+      const rect = bucket.getBoundingClientRect();
+      return [
+        bucket.dataset.plannerBucket || "",
+        style.webkitBackdropFilter || style.backdropFilter || "",
+        ...[rect.x, rect.y, rect.width, rect.height].map((value) => Math.round(value * 100) / 100),
+      ];
+    });
+    return { ownerCount:owners.length, owners, signature:JSON.stringify(owners) };
+  };
+  const waitForProjectAcrylic = async (layer, sequence) => {
+    let previous = "";
+    let stableFrames = 0;
+    let snapshot = { ownerCount:0, owners:[], signature:"" };
+    let frames = 0;
+    for (; frames < 36 && sequence === projectRevealSeq && layer?.isConnected; frames += 1) {
+      await paintFrames(1);
+      snapshot = projectAcrylicState(layer);
+      stableFrames = snapshot.ownerCount > 0 && snapshot.signature === previous
+        ? stableFrames + 1
+        : (snapshot.ownerCount > 0 ? 1 : 0);
+      previous = snapshot.signature;
+      if (stableFrames >= 4) break;
+    }
+    return {
+      ...snapshot,
+      frames:frames + 1,
+      stableFrames,
+      stable:stableFrames >= 4 && snapshot.ownerCount > 0,
+    };
+  };
+  const holdProjectHandoff = async (phase, detail) => {
+    document.dispatchEvent(new CustomEvent("crm:planner-project-handoff", { detail:{ phase, ...detail } }));
+    const hold = window.__crmProjectHandoffProbe?.hold;
+    if (typeof hold !== "function") return;
+    try { await Promise.resolve(hold(phase, detail)); } catch {}
+  };
+  async function seatProjectEndpointCover(layer, project) {
     const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
-    const live = layer?.querySelector?.(":scope > .crm-planner-project-live"); if (!image || !live) return;
-    // Keep the exact, already-decoded project texture visible while Chromium
-    // uploads the resting live world. The exchange happens only after two
-    // endpoint paints, so live bucket acrylic never has to raster while the
-    // camera is moving and no object flashes into existence after it seats.
+    const exact = layer?.querySelector?.(":scope > .crm-project-transition-exact");
+    const preview = projectPreviews.get(project?.id);
+    if (!layer || !project || !image || !exact || exact.src !== preview?.exactSrc) return null;
+    if (!exact.complete || exact.naturalWidth <= 0) {
+      try { await exact.decode?.(); } catch {}
+    }
+    if (!exact.complete || exact.naturalWidth <= 0 || !layer.isConnected) return null;
+
+    const sequence = ++projectRevealSeq;
+    layer.dataset.projectWorldSeating = "true";
+    layer.dataset.projectAcrylicReady = "false";
+    layer.dataset.projectAcrylicCoveredDuringWarm = "false";
+    layer.style.pointerEvents = "none";
+    exact.style.transition = "none"; exact.style.visibility = "visible"; exact.style.opacity = "1";
+    image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "1";
+    // The screen-space lens has completed its visible fade. Seat the exact
+    // endpoint before disconnecting that now-transparent compositor surface.
+    await paintFrames(2);
+    if (sequence !== projectRevealSeq || !layer.isConnected) return null;
+    const exactStyle = getComputedStyle(exact);
+    if (exactStyle.visibility !== "visible" || Number(exactStyle.opacity) < .99) return null;
+    const detail = { sequence, exact:true };
+    await holdProjectHandoff("cover-seated", detail);
+    return { sequence, layer, image, exact };
+  }
+
+  async function warmProjectWorldHandoff(seating, project) {
+    const { sequence, layer, image, exact } = seating || {};
+    if (!layer || !project || !image || !exact || sequence !== projectRevealSeq) return null;
+    renderProjectLayer(layer, project);
+    const live = layer.querySelector(":scope > .crm-planner-project-live");
+    if (!live) return null;
+    live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1";
+    image.style.transition = "none"; image.style.visibility = "hidden"; image.style.opacity = "0";
+    exact.style.transition = "none"; exact.style.visibility = "visible"; exact.style.opacity = "1";
+
+    const acrylic = await waitForProjectAcrylic(layer, sequence);
+    const exactStyle = exact.isConnected ? getComputedStyle(exact) : null;
+    const coveredDuringWarm = exactStyle?.visibility === "visible" && Number(exactStyle.opacity) > .99;
+    if (sequence !== projectRevealSeq || !layer.isConnected || !acrylic.stable || !coveredDuringWarm) return null;
+    layer.dataset.projectAcrylicReady = "true";
+    layer.dataset.projectAcrylicCoveredDuringWarm = "true";
+    layer.dataset.projectAcrylicOwners = String(acrylic.ownerCount);
+    layer.dataset.projectAcrylicWarmFrames = String(acrylic.frames);
+    const detail = { sequence, acrylic, exact:true, coveredDuringWarm };
+    await holdProjectHandoff("warm-covered", detail);
+    return { sequence, layer, image, exact, live, acrylic };
+  }
+  async function revealProjectWorld(layer, seating = null) {
+    const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
+    const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
+    if (!image || !live) return false;
+    if (seating?.exact?.isConnected && seating.sequence === projectRevealSeq) {
+      const exact = seating.exact;
+      await holdProjectHandoff("before-reveal", {
+        sequence:seating.sequence,
+        acrylic:seating.acrylic,
+        exact:true,
+      });
+      const animation = exact.animate(
+        [{ opacity:1 }, { opacity:0 }],
+        { duration:PROJECT_HANDOFF_MS, easing:"linear", fill:"both" },
+      );
+      try { await animation.finished; } catch {}
+      if (seating.sequence !== projectRevealSeq || !layer.isConnected) return false;
+      exact.style.transition = "none"; exact.style.visibility = "hidden"; exact.style.opacity = "0";
+      animation.cancel();
+      live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1";
+      image.style.transition = "none"; image.style.visibility = "hidden"; image.style.opacity = "0";
+      exact.remove();
+      layer.style.pointerEvents = "";
+      delete layer.dataset.projectWorldSeating;
+      await paintFrames(1);
+      await holdProjectHandoff("live", {
+        sequence:seating.sequence,
+        acrylic:projectAcrylicState(layer),
+        exact:false,
+      });
+      return true;
+    }
+
+    // Cold/stale previews retain the guarded legacy exchange. Current project
+    // previews always use the opaque exact-cover path above.
     const sequence = ++projectRevealSeq;
     layer.dataset.projectWorldSeating = "true";
     layer.style.pointerEvents = "none";
     live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = ".001";
     image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "1";
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (sequence !== projectRevealSeq || !layer.isConnected || camera?.isTransitioning?.()) return;
-      live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1";
-      image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "0";
-      layer.style.pointerEvents = "";
-      delete layer.dataset.projectWorldSeating;
-    }));
+    await paintFrames(2);
+    if (sequence !== projectRevealSeq || !layer.isConnected) return false;
+    live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1";
+    image.style.transition = "none"; image.style.visibility = "hidden"; image.style.opacity = "0";
+    layer.style.pointerEvents = "";
+    delete layer.dataset.projectWorldSeating;
+    return true;
   }
   function coverProjectWorld(layer, project) {
     const image = ensureProjectTransitionPreview(layer, project); if (!image) return;
     const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
+    const exact = layer?.querySelector?.(":scope > .crm-project-transition-exact");
     ++projectRevealSeq;
     layer.style.pointerEvents = "";
     delete layer.dataset.projectWorldSeating;
+    delete layer.dataset.projectAcrylicReady;
+    delete layer.dataset.projectAcrylicCoveredDuringWarm;
+    delete layer.dataset.projectAcrylicOwners;
+    delete layer.dataset.projectAcrylicWarmFrames;
     // The capture is the same project foreground at the same endpoint. Make
     // it the sole moving object before the first contract paint; only the
     // shared screen-space acrylic then changes during the camera move.
     if (live) { live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1"; }
     image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "1";
+    if (exact) { exact.style.transition = "none"; exact.style.visibility = "hidden"; exact.style.opacity = "0"; }
   }
   function settleProjectWorld(layer) {
     ++projectRevealSeq;
     const image = layer?.querySelector?.(":scope > .crm-project-transition-preview");
+    const exact = layer?.querySelector?.(":scope > .crm-project-transition-exact");
     const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
     const acrylic = layer?.querySelector?.(":scope > .crm-project-transition-acrylic");
     layer?.style?.setProperty?.("pointer-events", "");
     if (layer) delete layer.dataset.projectWorldSeating;
     if (image) { image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "0"; }
+    exact?.remove?.();
     if (live) { live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1"; }
     if (acrylic) acrylic.style.opacity = "";
   }
@@ -1169,21 +1323,47 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         projectAcrylicLens.sync(context.transformAnimation, context.transformStartTime);
       },
       onTransitionEnd:async(direction, context) => {
-        if (direction === "expand") await projectAcrylicLens.release();
+        const layer = direction === "expand" ? context.layers[1] : null;
+        const project = direction === "expand" ? selectedProject() : null;
+        let endpointCover = null;
+        let seating = null;
+        if (direction === "expand" && layer && project) {
+          // Preserve the intended full-strength screen-space acrylic through
+          // motion and let its 140ms endpoint release remain visible.
+          await projectAcrylicLens.release();
+          // Its opacity is now zero. Remove that completed compositor surface
+          // before seating the exact endpoint; the live buckets do not exist
+          // yet, so this topology change cannot invalidate their acrylic.
+          projectAcrylicLens.finish();
+          context.surface?.classList.remove("crm-project-acrylic-expanding", "crm-project-acrylic-contracting");
+          endpointCover = await seatProjectEndpointCover(layer, project);
+        }
         projectAcrylicLens.finish();
         context.surface?.classList.remove("crm-project-camera-moving", "crm-project-camera-expanding", "crm-project-camera-contracting", "crm-project-acrylic-expanding", "crm-project-acrylic-contracting");
+        if (direction === "expand" && layer && project) {
+          // The exact endpoint is now opaque. Materialize the real project
+          // buckets only after the moving lens is gone, then require their
+          // backdrop filters to own four stable paints in final topology.
+          if (endpointCover) seating = await warmProjectWorldHandoff(endpointCover, project);
+          if (!seating) {
+            const exact = layer.querySelector(":scope > .crm-project-transition-exact");
+            const image = layer.querySelector(":scope > .crm-project-transition-preview");
+            const live = layer.querySelector(":scope > .crm-planner-project-live");
+            if (exact) { exact.style.visibility = "hidden"; exact.style.opacity = "0"; }
+            if (image) { image.style.visibility = "visible"; image.style.opacity = "1"; }
+            if (live) { live.style.visibility = "visible"; live.style.opacity = ".001"; }
+          }
+        }
         if (direction === "expand") {
-          const layer = context.layers[1];
-          const project = selectedProject();
           const live = layer?.querySelector?.(":scope > .crm-planner-project-live");
-          if (project && (!live?.childElementCount || layer.dataset.projectWorldSignature !== projectPreviewSignature(project))) {
+          if (!seating && project && (!live?.childElementCount || layer.dataset.projectWorldSignature !== projectPreviewSignature(project))) {
             renderProjectLayer(layer, project);
-          } else if (project) {
+          } else if (!seating && project) {
             window.crmObjectSizing?.scan?.(layer);
             fitPlannerCards(layer);
             wirePlannerScroller(project.id, layer);
           }
-          revealProjectWorld(layer);
+          await revealProjectWorld(layer, seating);
         }
         if (direction === "contract") { clearProjectCameraTarget(context); closeFloating(); }
         contextAddChanged(`planner-${direction === "expand" ? "project" : "projects"}`);

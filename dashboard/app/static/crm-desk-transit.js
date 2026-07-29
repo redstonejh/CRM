@@ -85,6 +85,19 @@
         position:absolute;inset:0;z-index:1;display:block;pointer-events:none;
         background:linear-gradient(180deg,rgba(52,59,70,.16),rgba(27,32,40,.12));
         box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+      /* Once the camera has reached the viewport, transfer its exact decoded
+         endpoint to a body-level bridge. The source camera can then retire to
+         its real inactive z-order while these unchanged pixels continue to
+         cover the destination's backdrop-filter warm-up. */
+      .crm-home-endpoint-bridge{
+        position:fixed;inset:0;z-index:${TRANSIT_Z};display:block;overflow:hidden;
+        width:100vw;height:100vh;pointer-events:none;opacity:1;
+        background:var(--page-background);transform:translateZ(0);
+        backface-visibility:hidden;will-change:opacity}
+      .crm-home-endpoint-bridge-raster{
+        position:absolute;inset:0;display:block;width:100%;height:100%;
+        object-fit:cover;pointer-events:none;user-select:none;opacity:1;
+        transform:translateZ(0);backface-visibility:hidden}
       /* Canonical room furniture can own high local z-indices (deck arrows,
          drag flyers, loading state). Keep those room-only layers below the
          endpoint cover; persistent window/navigation chrome remains above it. */
@@ -300,7 +313,8 @@
     const rect = raster.getBoundingClientRect();
     const rasterStyle = getComputedStyle(raster);
     const hostStyle = getComputedStyle(host);
-    const lidStyle = lid.style;
+    const bridgeOwned = stage?.coverBridge === host && host.isConnected;
+    const lidStyle = bridgeOwned ? null : lid.style;
     const imageRaster = raster instanceof HTMLImageElement;
     const complete = imageRaster ? !!raster.complete : true;
     const naturalWidth = imageRaster ? raster.naturalWidth || 0 : Math.round(rect.width);
@@ -324,14 +338,14 @@
       hostOpacity:roundGeometry(hostStyle.opacity),
       display:rasterStyle.display,
       visibility:rasterStyle.visibility,
-      frame:lid.dataset.fractalFrame || "",
+      frame:bridgeOwned ? "viewport" : (lid.dataset.fractalFrame || ""),
       lidStyle:{
-        left:lidStyle.left || "",
-        top:lidStyle.top || "",
-        width:lidStyle.width || "",
-        height:lidStyle.height || "",
-        transform:lidStyle.transform || "",
-        opacity:lidStyle.opacity || "",
+        left:lidStyle?.left || "",
+        top:lidStyle?.top || "",
+        width:lidStyle?.width || "",
+        height:lidStyle?.height || "",
+        transform:lidStyle?.transform || "",
+        opacity:lidStyle?.opacity || "",
       },
       viewport:{ width:innerWidth, height:innerHeight },
     };
@@ -382,6 +396,64 @@
       visibility:style.visibility,
     };
   });
+  const destinationAcrylicState = (stage) => {
+    const root = stage?.theater || findDestinationTheater(stage?.key);
+    const candidates = root
+      ? [root, ...root.querySelectorAll(".tk-zone-hacrylic-lens,.tk-zone,.crm-planner-bucket,.crm-project-bucket,.crm-menu-surface")]
+      : [];
+    const owners = candidates.filter((node) => {
+      if (!node?.isConnected) return false;
+      const style = getComputedStyle(node);
+      const filter = style.webkitBackdropFilter || style.backdropFilter || "";
+      if (!filter || filter === "none" || /blur\(\s*0(?:px)?\s*\)/i.test(filter)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 2 && rect.height > 2
+        && rect.right > 0 && rect.bottom > 0
+        && rect.left < innerWidth && rect.top < innerHeight
+        && style.display !== "none" && style.visibility === "visible"
+        && Number(style.opacity) > .99;
+    }).map((node) => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return {
+        className:String(node.className || ""),
+        filter:style.webkitBackdropFilter || style.backdropFilter || "",
+        opacity:roundGeometry(style.opacity),
+        rect:[
+          roundGeometry(rect.x),
+          roundGeometry(rect.y),
+          roundGeometry(rect.width),
+          roundGeometry(rect.height),
+        ],
+      };
+    });
+    return {
+      ownerCount:owners.length,
+      owners,
+      signature:JSON.stringify(owners),
+    };
+  };
+  const waitForDestinationAcrylic = async (stage) => {
+    let previous = "";
+    let stableFrames = 0;
+    let snapshot = { ownerCount:0, owners:[], signature:"" };
+    let frames = 0;
+    for (; frames < 36 && stage?.sequence === activeDive?.sequence; frames += 1) {
+      await paint(1);
+      snapshot = destinationAcrylicState(stage);
+      stableFrames = snapshot.ownerCount > 0 && snapshot.signature === previous
+        ? stableFrames + 1
+        : (snapshot.ownerCount > 0 ? 1 : 0);
+      previous = snapshot.signature;
+      if (stableFrames >= 4) break;
+    }
+    return {
+      ...snapshot,
+      frames:frames + 1,
+      stableFrames,
+      stable:stableFrames >= 4 && snapshot.ownerCount > 0,
+    };
+  };
   const phaseDetail = (stage, phase) => ({
     key:stage?.key || "",
     sequence:stage?.sequence || 0,
@@ -389,6 +461,9 @@
     coverInvariant:stage?.coverInvariant !== false,
     cover:inspectRasterCover(stage),
     liveReady:!!stage?.liveReady,
+    sourceRetired:stage?.sourceRetired === true,
+    acrylicStable:stage?.acrylicState?.stable === true,
+    acrylicOwners:stage?.acrylicState?.ownerCount || 0,
     liveLayers:liveLayerState(stage?.finalDestinationLayers?.length
       ? stage.finalDestinationLayers
       : destinationLayers),
@@ -433,6 +508,40 @@
     return fallback;
   };
 
+  const buildEndpointBridge = async (stage, raster) => {
+    if (!stage || !raster) return false;
+    stage.coverBridge?.remove?.();
+    const bridge = document.createElement("div");
+    bridge.className = "crm-home-endpoint-bridge";
+    bridge.setAttribute("aria-hidden", "true");
+    bridge.dataset.crmEndpointBridge = stage.coverMode || "endpoint";
+    let bridgeRaster = null;
+    if (raster instanceof HTMLImageElement) {
+      bridgeRaster = raster.cloneNode(false);
+      bridgeRaster.removeAttribute("id");
+      bridgeRaster.className = "crm-home-endpoint-bridge-raster";
+      bridge.appendChild(bridgeRaster);
+      if (!bridgeRaster.complete || bridgeRaster.naturalWidth <= 0) {
+        try { await bridgeRaster.decode?.(); } catch {}
+      }
+    } else {
+      bridgeRaster = raster;
+      bridgeRaster.classList.add("crm-home-endpoint-bridge-raster");
+      bridge.appendChild(bridgeRaster);
+    }
+    if (!bridgeRaster) return false;
+    bridge.style.opacity = "1";
+    bridge.style.transition = "none";
+    document.body.appendChild(bridge);
+    stage.coverBridge = bridge;
+    stage.coverHost = bridge;
+    stage.coverRaster = bridgeRaster;
+    await paint(2);
+    return stage.sequence === activeDive?.sequence
+      && bridge.isConnected
+      && bridgeRaster.isConnected;
+  };
+
   const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
     document.documentElement.classList.remove(
       "crm-transit-materializing",
@@ -446,8 +555,9 @@
     lid?.classList?.remove("crm-home-endpoint-cover");
     if (lid?.dataset) delete lid.dataset.crmEndpointCover;
     stage?.fallbackCover?.remove?.();
+    stage?.coverBridge?.remove?.();
     if (!preserveOpacity) {
-      [stage?.coverHost, lid].filter(Boolean).forEach((node) => {
+      [stage?.coverHost, stage?.originalCoverHost, lid].filter(Boolean).forEach((node) => {
         node.style.removeProperty("opacity");
         node.style.removeProperty("transition");
       });
@@ -455,6 +565,7 @@
   };
 
   const seatEndpointRaster = async (stage) => {
+    ensureStyles();
     const cam = camera();
     const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
     const host = lid?.querySelector?.(":scope > .crm-home-preview");
@@ -472,6 +583,8 @@
     const coverMode = imageRaster ? "exact" : "fallback";
     const coverHost = host;
     stage.lid = lid;
+    stage.originalCoverHost = coverHost;
+    stage.originalCoverRaster = raster;
     stage.coverHost = coverHost;
     stage.coverRaster = raster;
     stage.coverMode = coverMode;
@@ -491,6 +604,12 @@
     // Prefer the decoded exact room capture. Until one exists, the duplicated
     // unchanged backdrop plus neutral acrylic owns every endpoint pixel.
     await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    // Transfer the already-decoded endpoint into an independent screen-space
+    // bridge before changing the source camera's layer ownership. The clone
+    // shares the decoded image resource; two covered paints seat its compositor
+    // surface without changing a visible pixel.
+    if (!await buildEndpointBridge(stage, raster)) return false;
     if (stage.sequence !== activeDive?.sequence) return false;
     stage.coverStart = inspectRasterCover(stage);
     stage.coverSeatedAt = performance.now();
@@ -514,6 +633,8 @@
       stage.liveLayersBeforeSwap = liveLayerState(liveLayers);
       stage.preSwapLiveReady = liveLayers.length > 0
         && stage.settledState?.stable === true
+        && stage.sourceRetired === true
+        && stage.acrylicState?.stable === true
         && stage.liveLayersBeforeSwap.every((layer) =>
           layer.display !== "none" && layer.visibility !== "hidden"
           && layer.opacity === 1);
@@ -526,7 +647,7 @@
         throw new Error("Endpoint raster changed while the destination was settling");
       }
       if (!stage.preSwapLiveReady) {
-        throw new Error("Destination did not reach stable natural geometry under its endpoint cover");
+        throw new Error("Destination acrylic did not reach stable final composition under its endpoint cover");
       }
 
       // The active room, its natural display ownership, and all temporary
@@ -741,6 +862,46 @@
     return stage.settledState?.stable === true;
   };
 
+  const retireDiveSource = async (stage) => {
+    if (!stage || stage.sequence !== activeDive?.sequence) return false;
+    if (stage.sourceRetired) return stage.acrylicState?.stable === true;
+    const cam = camera();
+    const surface = cam?.surface?.();
+    const lid = stage.lid || (cam?.level?.() >= 1 ? cam.layers()[1] : null);
+    stage.coverBeforeSourceRetirement = inspectRasterCover(stage);
+    stage.coverInvariant = stage.coverInvariant !== false
+      && sameRasterCover(stage, stage.coverStart, stage.coverBeforeSourceRetirement);
+    if (!stage.coverInvariant || !stage.coverBridge?.isConnected) return false;
+
+    // The independent opaque bridge now owns the endpoint. Put Home into the
+    // exact retained state it will keep while this room is active, including
+    // its final z-order, before any live destination pixel can be exposed.
+    if (cam?.restoreRoot) cam.restoreRoot();
+    else cam?.rebuildRoot?.();
+    surface?.removeAttribute?.("data-crm-transit-cover");
+    lid?.classList?.remove("crm-home-endpoint-cover");
+    if (lid?.dataset) delete lid.dataset.crmEndpointCover;
+    try { window.crmHome?.recycleExpander?.(stage.key, lid); } catch {}
+    if (surface) {
+      surface.hidden = true;
+      surface.style.zIndex = "";
+    }
+    stage.sourceRetiredAt = performance.now();
+    stage.sourceRetired = true;
+    stage.phase = "warming-acrylic-covered";
+
+    // Backdrop filters are sensitive to the set of layers behind them. Require
+    // four identical native paints after Home has moved behind the destination;
+    // computed filter text alone is not enough to establish a warm surface.
+    stage.acrylicState = await waitForDestinationAcrylic(stage);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    stage.coverAfterSourceRetirement = inspectRasterCover(stage);
+    stage.coverInvariant = stage.coverInvariant !== false
+      && sameRasterCover(stage, stage.coverStart, stage.coverAfterSourceRetirement);
+    stage.acrylicReadyAt = performance.now();
+    return stage.coverInvariant && stage.acrylicState?.stable === true;
+  };
+
   const beginDiveDestination = (key) => {
     let resolveReveal = null;
     const revealPromise = new Promise((resolve) => { resolveReveal = resolve; });
@@ -758,6 +919,8 @@
       phase:"preparing",
       coverInvariant:null,
       liveReady:false,
+      sourceRetired:false,
+      acrylicState:null,
     };
     activeDive = stage;
     stage.preparePromise = prepareDiveDestination(stage);
@@ -825,8 +988,16 @@
       try { await materializeDiveDestination(stage); } catch {}
       if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
       try { await settleDiveDestination(stage); } catch {}
-      armDestinationReveal(stage);
-      try { await stage.revealPromise; } catch {}
+      let sourceRetired = false;
+      try { sourceRetired = await retireDiveSource(stage); } catch {}
+      if (!sourceRetired) {
+        stage.revealError = "Destination acrylic did not stabilize in its final layer topology";
+        stage.resolveReveal?.();
+        stage.resolveReveal = null;
+      } else {
+        armDestinationReveal(stage);
+        try { await stage.revealPromise; } catch {}
+      }
     }
     if (stage.revealError || !stage.liveReady) {
       // Fail closed, then recover through the same canonical camera instead of
@@ -876,18 +1047,20 @@
       return;
     }
 
-    // The fade above was the only visible endpoint action. Everything below
-    // is retirement of the now-transparent Home cover; the destination tree
-    // and its final styling are deliberately left untouched.
-    const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
-    if (cam?.restoreRoot) cam.restoreRoot();
-    else cam?.rebuildRoot?.();
-    cleanupEndpointCover(stage);
-    try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
-    if (surface) {
-      surface.hidden = true;
-      surface.style.zIndex = "";
+    // Home was already retired beneath the opaque body-level bridge. After its
+    // dissolve, only remove that now-transparent bridge; no layer behind the
+    // live acrylic changes at this public boundary.
+    const lid = stage.lid;
+    if (!stage.sourceRetired) {
+      if (cam?.restoreRoot) cam.restoreRoot();
+      else cam?.rebuildRoot?.();
+      try { window.crmHome?.recycleExpander?.(key, lid); } catch {}
+      if (surface) {
+        surface.hidden = true;
+        surface.style.zIndex = "";
+      }
     }
+    cleanupEndpointCover(stage);
     stage.coverAnimation?.cancel?.();
     stage.coverAnimation = null;
     if (ownershipFadeState.active) {
@@ -912,9 +1085,19 @@
       releaseMs:(stage.revealedAt || doneAt) - (stage.releaseAt || doneAt),
       coverInvariant:stage.coverInvariant === true,
       liveReady:stage.liveReady === true,
+      sourceRetired:stage.sourceRetired === true,
+      sourceRetiredBeforeRelease:stage.sourceRetired === true
+        && Number(stage.sourceRetiredAt) > 0
+        && Number(stage.sourceRetiredAt) <= Number(stage.releaseAt),
+      acrylicStable:stage.acrylicState?.stable === true,
+      acrylicOwners:stage.acrylicState?.ownerCount || 0,
+      acrylicWarmFrames:stage.acrylicState?.frames || 0,
+      acrylicWarmMs:(stage.acrylicReadyAt || doneAt) - (stage.sourceRetiredAt || doneAt),
       coverStart:stage.coverStart || null,
       coverBeforeSwap:stage.coverBeforeSwap || null,
       coverAfterSwap:stage.coverAfterSwap || null,
+      coverBeforeSourceRetirement:stage.coverBeforeSourceRetirement || null,
+      coverAfterSourceRetirement:stage.coverAfterSourceRetirement || null,
       liveLayersBeforeSwap:stage.liveLayersBeforeSwap || [],
       liveLayersAfterSwap:stage.liveLayersAfterSwap || [],
       preSwapLiveReady:stage.preSwapLiveReady === true,
@@ -1191,6 +1374,10 @@
       coverSeatedAt:activeDive.coverSeatedAt || 0,
       readyAt:activeDive.readyAt || 0,
       swappedAt:activeDive.swappedAt || 0,
+      sourceRetired:activeDive.sourceRetired === true,
+      sourceRetiredAt:activeDive.sourceRetiredAt || 0,
+      acrylicStable:activeDive.acrylicState?.stable === true,
+      acrylicOwners:activeDive.acrylicState?.ownerCount || 0,
     } : null,
     back:() => moveThroughHistory(-1),
     forward:() => moveThroughHistory(1),

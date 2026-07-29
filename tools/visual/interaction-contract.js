@@ -313,7 +313,7 @@ async function main() {
       exact:!!exact, exactOpacity:exactStyle ? Number(exactStyle.opacity) : null, foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
       exactMaterial, exactFrame, acrylicState:window.crmHome?.acrylicState?.(), source, clip:hostStyle?.clipPath, screenScale:[transform.a,transform.d],
       transformedFrame:{ background:frameStyle?.backgroundImage, backdrop:frameStyle?.backdropFilter } };
-    return { ok:!!style && (!status?.ready || status.materialMode === 'cached-acrylic')
+    return { ok:!!style && (!status?.ready || status.materialMode === 'live-peripheral-acrylic')
       && exactMaterial && exactFrame && Number(style.opacity) > .99
       && (style.webkitBackdropFilter || style.backdropFilter).includes('blur(')
       && (style.webkitBackdropFilter || style.backdropFilter).includes('saturate(')
@@ -325,6 +325,33 @@ async function main() {
       && document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length === 1
       && !exact && (!status?.ready || expander.querySelectorAll('.crm-home-preview-foreground').length === 1)
       , detail:JSON.stringify(state) };
+  });
+  await check('Every non-focused Home tile keeps one real screen-space acrylic plane during zoom-in', () => {
+    const surface = window.crmHomeCamera?.surface?.();
+    const acrylic = surface?.querySelector('.crm-home-peripheral-screen-acrylic');
+    const clipHost = acrylic?.parentElement;
+    const style = acrylic && getComputedStyle(acrylic);
+    const hostStyle = clipHost && getComputedStyle(clipHost);
+    const matrix = style?.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : new DOMMatrix();
+    const state = window.crmHome?.peripheralAcrylicState?.();
+    const motion = window.crmHome?.motionStatus?.();
+    const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
+    const liveNeighbors = [...(window.crmHomeCamera?.layers?.()[0]?.querySelectorAll('.crm-home-bucket:not(.is-camera-target)') || [])];
+    const liveFallback = !motion?.ready && liveNeighbors.length === 3 && liveNeighbors.every((bucket) => {
+      const bucketStyle = getComputedStyle(bucket);
+      const bucketMaterial = bucketStyle.webkitBackdropFilter || bucketStyle.backdropFilter || '';
+      return bucketStyle.visibility !== 'hidden' && bucketMaterial.includes('blur(') && bucketMaterial.includes('saturate(');
+    });
+    const clippedPlane = !!acrylic && clipHost?.parentElement === surface
+      && surface.classList.contains('crm-home-peripheral-acrylic-active')
+      && state?.active && state.phase === 'motion' && state.direction === 'expand' && state.neighborCount === 3
+      && Number(style.opacity) > .99 && style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.backgroundImage === 'none'
+      && material.includes('blur(') && material.includes('saturate(')
+      && hostStyle?.clipPath.startsWith('path(')
+      && Math.abs(matrix.a - 1) < .001 && Math.abs(matrix.d - 1) < .001;
+    return { ok:motion?.ready ? clippedPlane : liveFallback,
+      detail:JSON.stringify({ motion, state, liveFallback, opacity:Number(style?.opacity || 0), material, clip:hostStyle?.clipPath,
+        screenScale:[matrix.a,matrix.d], active:surface?.classList.contains('crm-home-peripheral-acrylic-active') }) };
   });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-in', () => {
     const root = window.crmHomeCamera?.layers?.()[0];
@@ -435,6 +462,33 @@ async function main() {
       && Number(style?.opacity) > .99 && Number(frameStyle?.opacity) > .99
       && material.includes('blur(') && material.includes('saturate(')
       && !expander.style.transition.includes('opacity');
+  });
+  await check('Every non-focused Home tile keeps one real screen-space acrylic plane during zoom-out', () => {
+    const surface = window.crmHomeCamera?.surface?.();
+    const acrylic = surface?.querySelector('.crm-home-peripheral-screen-acrylic');
+    const clipHost = acrylic?.parentElement;
+    const style = acrylic && getComputedStyle(acrylic);
+    const hostStyle = clipHost && getComputedStyle(clipHost);
+    const matrix = style?.transform && style.transform !== 'none' ? new DOMMatrix(style.transform) : new DOMMatrix();
+    const state = window.crmHome?.peripheralAcrylicState?.();
+    const motion = window.crmHome?.motionStatus?.();
+    const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
+    const liveNeighbors = [...(window.crmHomeCamera?.layers?.()[0]?.querySelectorAll('.crm-home-bucket:not(.is-camera-target)') || [])];
+    const liveFallback = !motion?.ready && liveNeighbors.length === 3 && liveNeighbors.every((bucket) => {
+      const bucketStyle = getComputedStyle(bucket);
+      const bucketMaterial = bucketStyle.webkitBackdropFilter || bucketStyle.backdropFilter || '';
+      return bucketStyle.visibility !== 'hidden' && bucketMaterial.includes('blur(') && bucketMaterial.includes('saturate(');
+    });
+    const clippedPlane = !!acrylic && clipHost?.parentElement === surface
+      && surface.classList.contains('crm-home-peripheral-acrylic-active')
+      && state?.active && state.phase === 'motion' && state.direction === 'contract' && state.neighborCount === 3
+      && Number(style.opacity) > .99 && style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.backgroundImage === 'none'
+      && material.includes('blur(') && material.includes('saturate(')
+      && hostStyle?.clipPath.startsWith('path(')
+      && Math.abs(matrix.a - 1) < .001 && Math.abs(matrix.d - 1) < .001;
+    return { ok:motion?.ready ? clippedPlane : liveFallback,
+      detail:JSON.stringify({ motion, state, liveFallback, opacity:Number(style?.opacity || 0), material, clip:hostStyle?.clipPath,
+        screenScale:[matrix.a,matrix.d], active:surface?.classList.contains('crm-home-peripheral-acrylic-active') }) };
   });
   await check('Neighbor tiles retain their spatial relationship throughout the dive-out', () => {
     const root = window.crmHomeCamera?.layers?.()[0];

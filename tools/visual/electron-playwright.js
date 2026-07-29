@@ -221,6 +221,16 @@ async function startEndpointProbe(page, label, room, direction) {
         const materialMoving = !!surface?.classList.contains(motionDirection === 'in' ? 'crm-home-acrylic-expanding' : 'crm-home-acrylic-contracting');
         const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic')
           || document.querySelector('.crm-home-expander:not(.crm-home-warm) > .crm-home-transition-acrylic');
+        const peripheralAcrylic = surface?.querySelector?.('.crm-home-peripheral-screen-acrylic');
+        const peripheralStyle = peripheralAcrylic && getComputedStyle(peripheralAcrylic);
+        const peripheralBackdrop = peripheralStyle?.webkitBackdropFilter || peripheralStyle?.backdropFilter || '';
+        const peripheralHostStyle = peripheralAcrylic?.parentElement && getComputedStyle(peripheralAcrylic.parentElement);
+        const peripheralAcrylicOwned = !!peripheralAcrylic
+          && peripheralAcrylic.parentElement?.parentElement === surface
+          && surface.classList.contains('crm-home-peripheral-acrylic-active')
+          && Number(peripheralStyle.opacity) > .99
+          && peripheralBackdrop.includes('blur(') && peripheralBackdrop.includes('saturate(')
+          && peripheralHostStyle?.clipPath?.startsWith('path(');
         if (moving && materialMoving && acrylic) {
           const acrylicOpacity = Number(getComputedStyle(acrylic).opacity);
           probe.acrylicSamples.push(acrylicOpacity);
@@ -262,6 +272,7 @@ async function startEndpointProbe(page, label, room, direction) {
             rootTransformReady:!!root && getComputedStyle(root).willChange.includes('transform'),
             materialMoving,
             acrylicOpacity:probe.acrylicSamples.at(-1) ?? null,
+            peripheralAcrylicOwned,
           });
           requestAnimationFrame(capture);
           return;
@@ -296,6 +307,7 @@ async function startEndpointProbe(page, label, room, direction) {
           && Number(getComputedStyle(cameraTarget).opacity) > .99
           && homeBuckets.filter((bucket) => bucket !== cameraTarget).every((bucket) => Number(getComputedStyle(bucket).opacity) <= .01)
           && Number(getComputedStyle(homeHand).opacity) <= .01;
+        const homePeripheralReady = homeHandoff && peripheralAcrylicOwned;
         const veil = document.querySelector('.crm-transit-veil');
         const ownershipFade = window.crmDeskTransit?.ownershipFadeState?.();
         if (!acrylicKeyframes.length && acrylic) {
@@ -318,7 +330,7 @@ async function startEndpointProbe(page, label, room, direction) {
           homeReleasing: !!surface?.classList.contains('crm-home-camera-releasing'),
           homeGridOpacity: homeGrid ? Number(getComputedStyle(homeGrid).opacity) : null,
           homeHandOpacity: homeHand ? Number(getComputedStyle(homeHand).opacity) : null,
-          homeMaterialsReady, homeOwnersContinuous,
+          homeMaterialsReady, homeOwnersContinuous, homePeripheralReady,
           materialMoving,
           acrylicOpacity: acrylic ? Number(getComputedStyle(acrylic).opacity) : null,
           acrylicKeyframes,
@@ -360,6 +372,7 @@ async function startEndpointProbe(page, label, room, direction) {
             liveOwnersHiddenEveryFrame:movingSamples.length > 0 && movingSamples.every((sample) => sample.liveOwnersHidden),
             rootTransformReadyEveryFrame:movingSamples.length > 0 && movingSamples.every((sample) => sample.rootTransformReady),
             materialMovingEveryFrame:movingSamples.length > 0 && movingSamples.every((sample) => sample.materialMoving),
+            peripheralAcrylicEveryFrame:movingSamples.length > 0 && movingSamples.every((sample) => sample.peripheralAcrylicOwned),
             homePrecomposed:movingSamples.length > 0 && movingSamples.every((sample) => sample.motionCutoutOwned),
             endpointFrames: endpoint.length,
             endpointSignatures: new Set(endpoint.map((sample) => motionDirection === 'in' ? sample.roomSignature : sample.homeSignature)).size,
@@ -367,6 +380,7 @@ async function startEndpointProbe(page, label, room, direction) {
             endpointShadowSignatures: motionDirection === 'in' ? 0 : new Set(endpoint.map((sample) => sample.homeShadow)).size,
             endpointHomeMaterialsReady: motionDirection === 'in' || endpoint.every((sample) => sample.homeMaterialsReady),
             endpointOwnersContinuous: motionDirection === 'in' || endpoint.every((sample) => sample.homeOwnersContinuous),
+            endpointPeripheralAcrylicReady: motionDirection === 'in' || endpoint.every((sample) => sample.homePeripheralReady),
             acrylicFrames: acrylicOpacities.length,
             acrylicFirst: acrylicOpacities[0] ?? null,
             acrylicLast: acrylicOpacities.at(-1) ?? null,
@@ -849,7 +863,7 @@ async function main() {
   const motionLayout = JSON.parse(motionSnapshotResult?.snapshot?.layoutSignature || '{}');
   const [motionGridX=0,motionGridY=0] = motionLayout.grid || [];
   const motionVariantCutouts = (motionLayout.buckets || []).map(([key,x,y,width,height]) => ({ key, maxAlpha:imageRegionMaxAlpha(Buffer.from((motionSnapshotResult?.snapshot?.variants?.[key] || '').split(',')[1] || '', 'base64'), [motionGridX+x,motionGridY+y,width,height], motionLayout.viewport) }));
-  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'cached-acrylic' || motionVariants.length !== 4 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
+  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== 4 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
     throw new Error(`Home transition texture is not the current cached cutout architecture: ${JSON.stringify({ snapshot:motionSnapshotResult?.snapshot && { version:motionSnapshotResult.snapshot.version, backgroundMode:motionSnapshotResult.snapshot.backgroundMode, materialMode:motionSnapshotResult.snapshot.materialMode, foregroundBounds:motionSnapshotResult.snapshot.foregroundBounds }, alpha:homeMotionAlpha })}`);
   }
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);
@@ -1013,7 +1027,7 @@ async function main() {
         rootComposited:root?getComputedStyle(root).willChange.includes('transform'):false,
         noEndpointImage:exactHidden,
         sharedBackground:status?.backgroundMode==='shared'
-          &&status?.materialMode==='cached-acrylic'
+          &&status?.materialMode==='live-peripheral-acrylic'
           &&document.querySelectorAll('.crm-home-scene-backdrop').length===0
           &&document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1
           &&!!foreground&&exactHidden&&expanderNeutral,
@@ -1032,6 +1046,8 @@ async function main() {
       const edge=expander?.querySelector(':scope>.crm-home-transition-acrylic');
       const plane=surface?.querySelector('.crm-home-screen-acrylic');
       const clipHost=plane?.parentElement?.classList.contains('crm-home-screen-acrylic-clip')?plane.parentElement:plane;
+      const peripheralPlane=surface?.querySelector('.crm-home-peripheral-screen-acrylic');
+      const peripheralHost=peripheralPlane?.parentElement;
       const exact=expander?.querySelector('.crm-home-preview-exact');
       const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
@@ -1063,6 +1079,7 @@ async function main() {
         };
       };
       const lid=material(expander),lens=material(plane),lensHost=material(clipHost,true),frame=material(edge);
+      const peripheralLens=material(peripheralPlane),peripheralClip=material(peripheralHost);
       const animationFor=(node,property)=>{
         const matches=[...(node?.getAnimations?.()||[])].filter((animation)=>{
           const duration=Number(animation.effect?.getComputedTiming?.().duration);
@@ -1078,6 +1095,7 @@ async function main() {
       const transformAnimation=animationFor(expander,'transform');
       const clipAnimation=animationFor(clipHost,'clipPath');
       const opacityAnimation=animationFor(plane,'opacity');
+      const peripheralClipAnimation=animationFor(peripheralHost,'clipPath');
       const animations=[transformAnimation,clipAnimation,opacityAnimation];
       const animationTimes=animations.map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
       const animationStarts=animations.map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
@@ -1094,9 +1112,12 @@ async function main() {
         &&frame.borderColor===expected.borderColor
         &&frame.borderStyle===expected.borderStyle
         &&frame.shadow===expected.boxShadow;
+      const peripheralState=window.crmHome?.peripheralAcrylicState?.();
+      const peripheralTimes=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
+      const peripheralStarts=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
       return{
         frame:expander?.dataset.fractalFrame||'',
-        lid,lens,lensHost,edge:frame,exact:material(exact),
+        lid,lens,lensHost,edge:frame,exact:material(exact),peripheralLens,peripheralClip,peripheralState,
         lensAligned:!!lensHost&&!!lid&&lensHost.rect.every((value,index)=>Math.abs(value-lid.rect[index])<=1.25),
         timelineAligned:animations.every(Boolean)&&aligned(animationTimes)&&aligned(animationStarts),
         animationTimes,
@@ -1106,6 +1127,18 @@ async function main() {
         sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&exactHidden&&!!expander?.querySelector('.crm-home-preview-foreground'),
         tintCopied,
         frameCopied,
+        peripheralTimelineAligned:!!peripheralClipAnimation&&aligned(peripheralTimes)&&aligned(peripheralStarts),
+        peripheralAcrylic:!!peripheralLens&&!!peripheralClip
+          &&peripheralHost?.parentElement===surface
+          &&surface?.classList.contains('crm-home-peripheral-acrylic-active')
+          &&peripheralState?.active&&peripheralState.phase==='motion'&&peripheralState.direction==='expand'&&peripheralState.neighborCount===3
+          &&peripheralLens.opacity>.99
+          &&peripheralLens.backgroundColor==='rgba(0, 0, 0, 0)'
+          &&peripheralLens.backgroundImage==='none'
+          &&peripheralLens.scale.every((value)=>Math.abs(value-1)<.001)
+          &&peripheralLens.backdrop.includes('blur(26px)')
+          &&peripheralLens.backdrop.includes('saturate(1.4)')
+          &&peripheralClip.clip.startsWith('path('),
         cachedLens:!!lens&&!!lensHost&&clipHost?.parentElement===surface
           &&lens.scale.every((value)=>Math.abs(value-1)<.001)
           &&lensHost.scale.every((value)=>Math.abs(value-1)<.001)
@@ -1120,11 +1153,11 @@ async function main() {
     },homeSourceMaterial);
     const inFlight=mid.module==='home'&&mid.transitioning&&mid.images>=1&&mid.images<=2&&mid.noEndpointImage&&mid.rect&&mid.rect.width>inboundReaction.sourceWidth+20;
     const alreadyLanded=mid.module===room.key&&!mid.transitioning;
-    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.rootOpacity<.99||!mid.liveOwnersHidden||!mid.motionCutoutOwns||!mid.signatureMatches||!mid.rootComposited||!mid.sharedBackground||!mid.surfaceMoving||!acrylicMid.cutoutOwned||!acrylicMid.sharedWallpaper||!acrylicMid.cachedLens||!acrylicMid.tintCopied||!acrylicMid.frameCopied||!acrylicMid.lensAligned||!acrylicMid.timelineAligned||!acrylicMid.surfaceMoving))||!mid.dragTop||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify({mid,acrylicMid,homeSourceMaterial})}`);
+    if((!inFlight&&!alreadyLanded)||(inFlight&&(mid.rootOpacity<.99||!mid.liveOwnersHidden||!mid.motionCutoutOwns||!mid.signatureMatches||!mid.rootComposited||!mid.sharedBackground||!mid.surfaceMoving||!acrylicMid.cutoutOwned||!acrylicMid.sharedWallpaper||!acrylicMid.cachedLens||!acrylicMid.tintCopied||!acrylicMid.frameCopied||!acrylicMid.lensAligned||!acrylicMid.timelineAligned||!acrylicMid.peripheralAcrylic||!acrylicMid.peripheralTimelineAligned||!acrylicMid.surfaceMoving))||(!nativeDrag.syntheticMissAllowed&&!mid.dragTop)||!mid.controlsTop)throw new Error(`${room.key} camera mid-state broken: ${JSON.stringify({mid,acrylicMid,homeSourceMaterial})}`);
     await page.waitForFunction((key)=>document.body.dataset.crmModule===key&&!window.crmDeskTransit?.isBusy?.()&&!document.querySelector('.crm-transit-veil'),room.key,{timeout:15000});
     const inboundEndpoint=await finishEndpointProbe(page,`in-${room.key}`);
     assertHomeFade(`${room.key} inbound visual`,inboundEndpoint,'in');
-    if(inboundEndpoint.hadVeil||!inboundEndpoint.destinationDeferredThroughMotion||!inboundEndpoint.destinationPrecomposed||!inboundEndpoint.sawRoomReveal||!inboundEndpoint.roomRevealAtomic||!inboundEndpoint.ownershipFadeTimed||inboundEndpoint.endpointFrames<1||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.snapshotVisible||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound did not hand to its endpoint-precomposed live room: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
+    if(inboundEndpoint.hadVeil||!inboundEndpoint.destinationDeferredThroughMotion||!inboundEndpoint.destinationPrecomposed||!inboundEndpoint.sawRoomReveal||!inboundEndpoint.roomRevealAtomic||!inboundEndpoint.ownershipFadeTimed||!inboundEndpoint.peripheralAcrylicEveryFrame||inboundEndpoint.endpointFrames<1||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.snapshotVisible||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound did not hand to its endpoint-precomposed live room: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
     const inactiveHomeRetention=await page.evaluate((key)=>{const surface=window.crmHomeCamera?.surface?.();const root=window.crmHomeCamera?.layers?.()[0];const variant=root?.querySelector(':scope>.crm-home-motion-variant.is-active-motion-variant');const surfaceStyle=surface&&getComputedStyle(surface);const variantStyle=variant&&getComputedStyle(variant);return{hidden:surface?.hidden===true,key:surface?.dataset.crmHomeRetained||'',display:surfaceStyle?.display||'',zIndex:surfaceStyle?.zIndex||'',pointerEvents:surfaceStyle?.pointerEvents||'',gridVisibility:getComputedStyle(root?.querySelector(':scope>.crm-home-grid')).visibility,variant:variant?.dataset.motionVariant||'',variantDisplay:variantStyle?.display||'',variantOpacity:Number(variantStyle?.opacity),variantTransform:variantStyle?.transform||'',variantWillChange:variantStyle?.willChange||'',expected:key}},room.key);
     if(!inactiveHomeRetention.hidden||inactiveHomeRetention.key!==room.key||inactiveHomeRetention.display!=='block'||inactiveHomeRetention.zIndex!=='0'||inactiveHomeRetention.pointerEvents!=='none'||inactiveHomeRetention.gridVisibility!=='hidden'||inactiveHomeRetention.variant!==room.key||inactiveHomeRetention.variantDisplay==='none'||inactiveHomeRetention.variantOpacity!==.001||inactiveHomeRetention.variantTransform==='none'||!inactiveHomeRetention.variantWillChange.includes('transform'))throw new Error(`${room.key} did not leave exactly one inert Home camera bitmap resident: ${JSON.stringify(inactiveHomeRetention)}`);
     await page.mouse.move(1,1); await sleep(80);
@@ -1263,7 +1296,7 @@ async function main() {
         expanderAbove:!!expander&&!!root&&Number(getComputedStyle(expander).zIndex)>Number(getComputedStyle(root).zIndex),
         noEndpointImage:exactHidden,
         sharedBackground:status?.backgroundMode==='shared'
-          &&status?.materialMode==='cached-acrylic'
+          &&status?.materialMode==='live-peripheral-acrylic'
           &&document.querySelectorAll('.crm-home-scene-backdrop').length===0
           &&document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1
           &&!!expander?.querySelector('.crm-home-preview-foreground')&&exactHidden&&expanderNeutral,
@@ -1276,6 +1309,8 @@ async function main() {
       const edge=expander?.querySelector(':scope>.crm-home-transition-acrylic');
       const plane=surface?.querySelector('.crm-home-screen-acrylic');
       const clipHost=plane?.parentElement?.classList.contains('crm-home-screen-acrylic-clip')?plane.parentElement:plane;
+      const peripheralPlane=surface?.querySelector('.crm-home-peripheral-screen-acrylic');
+      const peripheralHost=peripheralPlane?.parentElement;
       const exact=expander?.querySelector('.crm-home-preview-exact');
       const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
@@ -1307,6 +1342,7 @@ async function main() {
         };
       };
       const lid=material(expander),lens=material(plane),lensHost=material(clipHost,true),frame=material(edge);
+      const peripheralLens=material(peripheralPlane),peripheralClip=material(peripheralHost);
       const animationFor=(node,property)=>{
         const matches=[...(node?.getAnimations?.()||[])].filter((animation)=>{
           const duration=Number(animation.effect?.getComputedTiming?.().duration);
@@ -1322,6 +1358,7 @@ async function main() {
       const transformAnimation=animationFor(expander,'transform');
       const clipAnimation=animationFor(clipHost,'clipPath');
       const opacityAnimation=animationFor(plane,'opacity');
+      const peripheralClipAnimation=animationFor(peripheralHost,'clipPath');
       const animations=[transformAnimation,clipAnimation,opacityAnimation];
       const animationTimes=animations.map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
       const animationStarts=animations.map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
@@ -1338,9 +1375,12 @@ async function main() {
         &&frame.borderColor===expected.borderColor
         &&frame.borderStyle===expected.borderStyle
         &&frame.shadow===expected.boxShadow;
+      const peripheralState=window.crmHome?.peripheralAcrylicState?.();
+      const peripheralTimes=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
+      const peripheralStarts=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
       return{
         frame:expander?.dataset.fractalFrame||'',
-        lid,lens,lensHost,edge:frame,exact:material(exact),
+        lid,lens,lensHost,edge:frame,exact:material(exact),peripheralLens,peripheralClip,peripheralState,
         lensAligned:!!lensHost&&!!lid&&lensHost.rect.every((value,index)=>Math.abs(value-lid.rect[index])<=1.25),
         timelineAligned:animations.every(Boolean)&&aligned(animationTimes)&&aligned(animationStarts),
         animationTimes,
@@ -1350,6 +1390,18 @@ async function main() {
         sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&exactHidden&&!!expander?.querySelector('.crm-home-preview-foreground'),
         tintCopied,
         frameCopied,
+        peripheralTimelineAligned:!!peripheralClipAnimation&&aligned(peripheralTimes)&&aligned(peripheralStarts),
+        peripheralAcrylic:!!peripheralLens&&!!peripheralClip
+          &&peripheralHost?.parentElement===surface
+          &&surface?.classList.contains('crm-home-peripheral-acrylic-active')
+          &&peripheralState?.active&&peripheralState.phase==='motion'&&peripheralState.direction==='contract'&&peripheralState.neighborCount===3
+          &&peripheralLens.opacity>.99
+          &&peripheralLens.backgroundColor==='rgba(0, 0, 0, 0)'
+          &&peripheralLens.backgroundImage==='none'
+          &&peripheralLens.scale.every((value)=>Math.abs(value-1)<.001)
+          &&peripheralLens.backdrop.includes('blur(26px)')
+          &&peripheralLens.backdrop.includes('saturate(1.4)')
+          &&peripheralClip.clip.startsWith('path('),
         cachedLens:!!lens&&!!lensHost&&clipHost?.parentElement===surface
           &&lens.scale.every((value)=>Math.abs(value-1)<.001)
           &&lensHost.scale.every((value)=>Math.abs(value-1)<.001)
@@ -1361,11 +1413,11 @@ async function main() {
           &&frame?.backgroundImage==='none',
       };
     },outboundSourceMaterial);
-    if(!outboundMid.moving||outboundMid.rootOpacity<.99||!outboundMid.liveOwnersHidden||!outboundMid.motionCutoutOwns||!outboundMid.noEndpointImage||!outboundMid.sharedBackground||!outboundMid.signatureMatches||!outboundMid.expanderAbove||!outboundMid.contracting||!outboundAcrylic.cutoutOwned||!outboundAcrylic.sharedWallpaper||!outboundAcrylic.cachedLens||!outboundAcrylic.tintCopied||!outboundAcrylic.frameCopied||!outboundAcrylic.lensAligned||!outboundAcrylic.timelineAligned)throw new Error(`${room.key} return composition diverged from resting Home: ${JSON.stringify({outboundMid,outboundAcrylic,outboundSourceMaterial})}`);
+    if(!outboundMid.moving||outboundMid.rootOpacity<.99||!outboundMid.liveOwnersHidden||!outboundMid.motionCutoutOwns||!outboundMid.noEndpointImage||!outboundMid.sharedBackground||!outboundMid.signatureMatches||!outboundMid.expanderAbove||!outboundMid.contracting||!outboundAcrylic.cutoutOwned||!outboundAcrylic.sharedWallpaper||!outboundAcrylic.cachedLens||!outboundAcrylic.tintCopied||!outboundAcrylic.frameCopied||!outboundAcrylic.lensAligned||!outboundAcrylic.timelineAligned||!outboundAcrylic.peripheralAcrylic||!outboundAcrylic.peripheralTimelineAligned)throw new Error(`${room.key} return composition diverged from resting Home: ${JSON.stringify({outboundMid,outboundAcrylic,outboundSourceMaterial})}`);
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outboundEndpoint=await finishEndpointProbe(page,`out-${room.key}`);
     assertHomeFade(`${room.key} outbound visual`,outboundEndpoint,'out');
-    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||outboundEndpoint.sawHomeCrossfade||outboundEndpoint.snapshotVisible||outboundEndpoint.endpointFrames<1||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not hand smoothly to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
+    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||outboundEndpoint.sawHomeCrossfade||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<1||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not hand smoothly to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
     const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
     await page.waitForFunction(({key,before})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);return status?.state==='ready'&&status.capturedAt>before;},{key:room.key,before},{timeout:60000});
     const synchronizedPreview=await page.evaluate(async({key,token})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===key);const host=document.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);const image=host?.querySelector(':scope > .crm-home-preview-foreground');return{after:status?.capturedAt||0,state:status?.state,sameNode:image?.dataset.liveSyncProbe===token,hostCapturedAt:Number(host?.dataset.capturedAt||0),viewState:preview?.viewState||null,exactSrc:preview?.exactSrc||''};},{key:room.key,token:previewNodeToken});

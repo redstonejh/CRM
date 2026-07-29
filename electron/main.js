@@ -596,9 +596,10 @@ async function captureHomeMotionSnapshot(worker) {
   await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
   const layoutSignature = await worker.webContents.executeJavaScript(`window.crmHome?.motionLayoutSignature?.() || ''`, true);
   if (!layoutSignature) throw new Error('Home motion layout signature unavailable');
-  // Capture Home's objects plus its translucent acrylic coat, never the fixed
-  // workspace backdrop or a live backdrop filter. One cached texture can then
-  // carry peripheral material without re-rasterizing moving glass every frame.
+  // Capture Home's objects plus each tile's translucent coat, never the fixed
+  // workspace backdrop or a live backdrop filter. During camera travel the
+  // renderer places a fixed, clipped backdrop-filter plane beneath this PNG,
+  // preserving real peripheral acrylic without re-rasterizing moving glass.
   const foreground = await captureForeground(worker, { preserveHomePreviewFilter: true, homeMotionObjectsOnly: true });
   if (!foreground?.image || foreground.image.isEmpty()) return null;
   const size = foreground.image.getSize();
@@ -620,7 +621,7 @@ async function captureHomeMotionSnapshot(worker) {
   homeMotionSnapshot = {
     version: HOME_PREVIEW_VERSION, width: size.width, height: size.height,
     capturedAt: Date.now(), src: foreground.image.toDataURL(), layoutSignature,
-    foregroundBounds: foreground.bounds, backgroundMode: 'shared', materialMode: 'cached-acrylic', variants,
+    foregroundBounds: foreground.bounds, backgroundMode: 'shared', materialMode: 'live-peripheral-acrylic', variants,
   };
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:motion-changed', homeMotionSnapshot);
   return homeMotionSnapshot;

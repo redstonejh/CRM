@@ -206,8 +206,6 @@ function createMainWindow() {
   });
   mainWindow.webContents.on('render-process-gone', () => setHomePreviewInteraction(false));
 
-  mainWindow.loadFile(dashboardIndexPath());
-
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.show();
@@ -251,6 +249,12 @@ function createMainWindow() {
       capturePreviewKeys(HOME_PREVIEW_KEYS, 'startup');
     }, 250);
   });
+
+  // Register every one-shot lifecycle listener before navigation begins. A
+  // local static dashboard can finish loading in the gap after loadFile();
+  // missing did-finish-load leaves Home's preview startup job unarmed and all
+  // four tiles permanently displaying their "Preparing view" placeholders.
+  mainWindow.loadFile(dashboardIndexPath());
 
   mainWindow.on('closed', () => {
     setHomePreviewInteraction(false);

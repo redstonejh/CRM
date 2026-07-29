@@ -281,6 +281,15 @@ async function main() {
       wr: neighbor.width / selected.width,
       hr: neighbor.height / selected.height,
     } : null;
+    window.__homeEndpointAcrylicGate = {};
+    window.__crmDeskTransitProbe = {
+      hold(phase, detail) {
+        if (phase !== 'covered') return undefined;
+        return new Promise((resolve) => {
+          window.__homeEndpointAcrylicGate = { phase, detail, resolve };
+        });
+      },
+    };
   });
   await page.click('.crm-home-bucket[data-module="people"]');
   await sleep(100);
@@ -389,16 +398,19 @@ async function main() {
   });
   await page.waitForFunction(() => {
     const lens = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
-    return window.crmHome?.acrylicState?.().phase === 'release'
-      && lens && Number(getComputedStyle(lens).opacity) < .9;
+    return window.__homeEndpointAcrylicGate?.phase === 'covered'
+      && window.crmHome?.acrylicState?.().phase === 'endpoint-held'
+      && lens && Number(getComputedStyle(lens).opacity) > .99;
   }, { timeout:5000 });
-  await check('Acrylic releases only after the tile has seated as the viewport', () => {
+  await check('Acrylic remains fully composited after the tile seats until an opaque endpoint owns the viewport', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
     const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
     const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
+    const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
     const rect = expander?.getBoundingClientRect();
     const style = acrylic && getComputedStyle(acrylic);
     const frameStyle = frame && getComputedStyle(frame);
+    const bridgeStyle = bridge && getComputedStyle(bridge);
     const opacity = Number(style?.opacity);
     const frameOpacity = Number(frameStyle?.opacity);
     const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
@@ -406,10 +418,18 @@ async function main() {
     const acrylicState = window.crmHome?.acrylicState?.();
     return { ok:!!rect && Math.abs(rect.left) <= .5 && Math.abs(rect.top) <= .5
       && Math.abs(rect.width - innerWidth) <= .5 && Math.abs(rect.height - innerHeight) <= .5
-      && motion?.active === false && acrylicState?.phase === 'release'
-      && opacity > .05 && opacity < .9 && frameOpacity > .05 && frameOpacity < .9
+      && motion?.active === false && acrylicState?.phase === 'endpoint-held'
+      && opacity > .99 && frameOpacity > .99
+      && Number(bridgeStyle?.opacity) === 1
       && material.includes('blur(') && material.includes('saturate('),
-      detail:JSON.stringify({ rect:[rect?.x,rect?.y,rect?.width,rect?.height], opacity, frameOpacity, material, motion, acrylicState }) };
+      detail:JSON.stringify({ rect:[rect?.x,rect?.y,rect?.width,rect?.height], opacity, frameOpacity,
+        bridgeOpacity:Number(bridgeStyle?.opacity), material, motion, acrylicState }) };
+  });
+  await page.evaluate(() => {
+    const gate = window.__homeEndpointAcrylicGate;
+    delete window.__homeEndpointAcrylicGate;
+    delete window.__crmDeskTransitProbe;
+    gate?.resolve?.();
   });
   try {
     await page.waitForFunction(() => document.body.dataset.crmModule === 'people' && !window.crmDeskTransit?.isBusy?.(), { timeout:15000 });

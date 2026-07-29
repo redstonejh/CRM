@@ -48,6 +48,7 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       acrylic:[],
       acrylicMaterial:[],
       acrylicRelease:[],
+      acrylicEndpointHold:[],
       longTasks:[],
       sampleVisual:readVisuals,
       triggered:false,
@@ -242,19 +243,23 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
         }
       }
       if (readVisuals && probe.triggered && !cameraMotion) {
-        const lens = document.querySelector('.crm-home-screen-acrylic[data-fractal-acrylic-phase="release"]');
-        if (lens) {
+        const lens = document.querySelector('.crm-home-screen-acrylic');
+        const phase = lens?.dataset?.fractalAcrylicPhase || '';
+        if (lens && ['release', 'endpoint-held'].includes(phase)) {
           const frame = document.querySelector('.crm-home-expander:not(.crm-home-warm) > .crm-home-transition-acrylic');
           const style = getComputedStyle(lens);
           const clipOwner = lens.parentElement?.classList.contains('crm-home-screen-acrylic-clip') ? lens.parentElement : lens;
           const clipStyle = getComputedStyle(clipOwner);
           const frameStyle = frame ? getComputedStyle(frame) : null;
-          probe.acrylicRelease.push({
+          const sample = {
+            phase,
             opacity:Number(style.opacity),
             backdrop:style.webkitBackdropFilter || style.backdropFilter || '',
             clip:clipStyle.clipPath || '',
             frameOpacity:frameStyle ? Number(frameStyle.opacity) : null,
-          });
+          };
+          if (phase === 'release') probe.acrylicRelease.push(sample);
+          else probe.acrylicEndpointHold.push(sample);
         }
       }
       if (probe.started && !cameraMoving && !busy) {
@@ -300,6 +305,13 @@ async function takeProbe(page) {
     const releaseOpacity = probe.acrylicRelease.map((sample) => sample.opacity).filter(Number.isFinite);
     const releaseIntermediate = releaseOpacity.filter((value) => value > .05 && value < .95);
     const releaseSteps = releaseOpacity.slice(1).map((value, index) => value - releaseOpacity[index]);
+    const endpointOpacity = probe.acrylicEndpointHold.map((sample) => sample.opacity).filter(Number.isFinite);
+    const endpointMaterialFrames = probe.acrylicEndpointHold.filter((sample) =>
+      sample.opacity >= .99
+      && sample.frameOpacity >= .99
+      && sample.backdrop.includes('blur(')
+      && sample.backdrop.includes('saturate(')
+      && sample.clip.startsWith('inset('));
     const materialFrames = probe.acrylicMaterial.filter((sample) =>
       sample.phase === 'motion'
       && sample.opacity >= .99
@@ -328,6 +340,9 @@ async function takeProbe(page) {
       releaseIntermediateFrames:releaseIntermediate.length,
       releaseMaxOpacityStep:Math.max(0, ...releaseSteps.map(Math.abs)),
       releaseMonotonic:releaseSteps.every((step) => step <= .035),
+      endpointHoldFrames:endpointOpacity.length,
+      endpointHoldMinOpacity:Math.min(1, ...endpointOpacity),
+      endpointHoldMaterialFrames:endpointMaterialFrames.length,
     };
   });
 }
@@ -399,14 +414,12 @@ function validateCadence(probe) {
 }
 
 function validateVisual(probe) {
-  const releaseValid = probe.direction === 'expand'
-    ? probe.releaseFrames >= 5
-      && probe.releaseFirst >= .8
-      && probe.releaseLast <= .2
-      && probe.releaseIntermediateFrames >= 3
-      && probe.releaseMaxOpacityStep <= .2
-      && probe.releaseMonotonic
-    : probe.releaseFrames === 0;
+  const releaseValid = probe.releaseFrames === 0;
+  const endpointHoldValid = probe.direction === 'expand'
+    ? probe.endpointHoldFrames >= 4
+      && probe.endpointHoldMinOpacity >= .99
+      && probe.endpointHoldMaterialFrames === probe.endpointHoldFrames
+    : probe.endpointHoldFrames === 0;
   if (probe.childMutations.length
     || probe.unexpectedAttributes.length
     || probe.opacityFirst < .99
@@ -415,6 +428,7 @@ function validateVisual(probe) {
     || probe.maxOpacityStep > .02
     || probe.realMaterialFrames !== probe.acrylic.length
     || !releaseValid
+    || !endpointHoldValid
   ) {
     throw new Error(`Home ${probe.direction} acrylic continuity failed: ${JSON.stringify(summary(probe))}`);
   }
@@ -477,6 +491,9 @@ const summary = (probe) => ({
   releaseIntermediateFrames:probe.releaseIntermediateFrames,
   releaseMaxOpacityStep:probe.releaseMaxOpacityStep,
   releaseMonotonic:probe.releaseMonotonic,
+  endpointHoldFrames:probe.endpointHoldFrames,
+  endpointHoldMinOpacity:probe.endpointHoldMinOpacity,
+  endpointHoldMaterialFrames:probe.endpointHoldMaterialFrames,
 });
 
 const compactProbe = (probe) => ({
@@ -512,6 +529,9 @@ const compactProbe = (probe) => ({
     releaseIntermediateFrames:probe.releaseIntermediateFrames,
     releaseMaxStep:probe.releaseMaxOpacityStep,
     releaseMonotonic:probe.releaseMonotonic,
+    endpointHoldFrames:probe.endpointHoldFrames,
+    endpointHoldMinOpacity:probe.endpointHoldMinOpacity,
+    endpointHoldMaterialFrames:probe.endpointHoldMaterialFrames,
   },
 });
 
@@ -736,7 +756,7 @@ async function captureSwapEquivalence(page, tile, outDir) {
   );
   const invariant = beforeDetail?.cover?.ready === true
     && beforeDetail.cover.opacity === 1
-    && beforeDetail.cover.hostOpacity === 1
+    && beforeDetail.cover.hostOpacity >= .99
     && beforeDetail.coverInvariant === true
     && beforeDetail.liveLayers?.length > 0
     // Destination owners are fully composed underneath the opaque raster.
@@ -746,7 +766,7 @@ async function captureSwapEquivalence(page, tile, outDir) {
     && readyDetail?.liveReady === true
     && readyDetail.liveLayers?.length === beforeDetail.liveLayers.length
     && readyDetail.liveLayers.every((layer) => layer.opacity === 1)
-    && readyDetail.cover?.hostOpacity === 1
+    && readyDetail.cover?.hostOpacity >= .99
     && middleDetail?.cover?.hostOpacity > .15
     && middleDetail.cover.hostOpacity < .85
     && afterDetail?.liveReady === true
@@ -962,6 +982,14 @@ async function captureEvidenceFrames(page, outDir) {
       probe.lens.style.backdropFilter = probe.filter.backdrop;
       probe.lens.style.webkitBackdropFilter = probe.filter.webkit;
     }
+    window.__crmDeskTransitProbe = {
+      hold(phase, detail) {
+        if (phase !== 'covered') return undefined;
+        return new Promise((resolve) => {
+          window.__crmHomeEndpointGate = { phase, detail, resolve };
+        });
+      },
+    };
     probe?.animations?.forEach?.((animation) => {
       try { animation.play(); } catch {}
     });
@@ -970,11 +998,20 @@ async function captureEvidenceFrames(page, outDir) {
     await new Promise((resolve) => requestAnimationFrame(resolve));
   });
   await page.waitForFunction(() => {
-    const lens = document.querySelector('.crm-home-screen-acrylic[data-fractal-acrylic-phase="release"]');
-    const opacity = lens ? Number(getComputedStyle(lens).opacity) : 1;
-    return !!lens && opacity > .25 && opacity < .75;
+    const lens = document.querySelector('.crm-home-screen-acrylic[data-fractal-acrylic-phase="endpoint-held"]');
+    const frame = document.querySelector('.crm-home-expander:not(.crm-home-warm) > .crm-home-transition-acrylic');
+    return window.__crmHomeEndpointGate?.phase === 'covered'
+      && !!lens
+      && Number(getComputedStyle(lens).opacity) > .99
+      && Number(getComputedStyle(frame).opacity) > .99;
   }, null, { timeout:5_000 });
-  await page.screenshot({ path:path.join(outDir, 'home-cases-endpoint-acrylic-release.png') });
+  await page.screenshot({ path:path.join(outDir, 'home-cases-endpoint-acrylic-held.png') });
+  await page.evaluate(() => {
+    const gate = window.__crmHomeEndpointGate;
+    delete window.__crmHomeEndpointGate;
+    delete window.__crmDeskTransitProbe;
+    gate?.resolve?.();
+  });
   await page.waitForFunction(() => !window.crmHomeCamera?.isTransitioning?.() && !window.crmDeskTransit?.isBusy?.(), null, { timeout:30_000 });
   await page.screenshot({ path:path.join(outDir, 'home-cases-endpoint.png') });
   await page.evaluate(() => { void window.crmDeskTransit.driveTo('home'); });

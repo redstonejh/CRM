@@ -204,8 +204,8 @@
       if (holdThroughMotion) {
         // Acrylic is a material, not an opacity cue. Keep its tint and live
         // screen-space backdrop fully owned for every geometric frame. Entry
-        // releases it only after the transform has reached the viewport; exit
-        // carries it intact all the way back into the source tile.
+        // can retain that same owner at the viewport endpoint until an opaque
+        // handoff covers it; exit carries it intact back into the source tile.
         lens.style.opacity = "1";
         if (state.frame) state.frame.style.opacity = "1";
       }
@@ -218,6 +218,17 @@
         { duration:state.duration, easing:"linear", fill:"forwards" },
       );
       return lens;
+    };
+    const holdEndpoint = () => {
+      if (!holdThroughMotion || !lens || !state) return false;
+      const endpointClip = state.direction === "expand" ? state.destinationClip : state.sourceClip;
+      stop();
+      state.clipOwner.style.clipPath = endpointClip;
+      state.clipOwner.style.webkitClipPath = endpointClip;
+      lens.style.opacity = "1";
+      if (state.frame) state.frame.style.opacity = "1";
+      lens.dataset.fractalAcrylicPhase = "endpoint-held";
+      return true;
     };
     const release = () => {
       if (!holdThroughMotion || !lens || !state) return Promise.resolve(false);
@@ -307,13 +318,13 @@
       return lens;
     };
     const status = () => ({
-      active:!!lens && ["motion", "release"].includes(lens.dataset.fractalAcrylicPhase || ""),
+      active:!!lens && ["motion", "endpoint-held", "release"].includes(lens.dataset.fractalAcrylicPhase || ""),
       phase:lens?.dataset?.fractalAcrylicPhase || "",
       direction:lens?.dataset?.fractalAcrylicDirection || state?.direction || "",
       holdThroughMotion,
       releaseMs,
     });
-    return { prepare, start, sync, prime, release, finish, element:() => lens, status };
+    return { prepare, start, sync, prime, holdEndpoint, release, finish, element:() => lens, status };
   };
 
   global.createFractalCamera = function createFractalCamera(config = {}) {

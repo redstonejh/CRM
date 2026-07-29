@@ -669,6 +669,12 @@
     // The two seating paints above already close a clean raster-owned refresh
     // interval before live-room ownership work begins.
     if (stage.sequence !== activeDive?.sequence) return false;
+    // The camera's full-viewport acrylic stayed fully composited until this
+    // independent raster had owned completed opaque paints. Retire it only
+    // now, invisibly beneath that exact cover; no low-opacity material frame
+    // can appear between the transform and the destination's live acrylic.
+    stage.endpointAcrylicRetired = window.crmHome?.retireEndpointAcrylic?.() === true;
+    stage.endpointAcrylicRetiredAt = stage.endpointAcrylicRetired ? performance.now() : 0;
     return stage.coverInvariant;
   };
 

@@ -1653,8 +1653,17 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     },
     onTransitionEnd:async(direction,context)=>{
       window.crmDeskTransit?.noteHomeTransformEnd?.(direction, performance.now());
+      let endpointAcrylicHeld = false;
       if (direction === "expand") {
-        await homeAcrylicLens.release();
+        // The destination coordinator cannot begin seating its exact endpoint
+        // raster until this camera settles. Keep the real screen-space acrylic
+        // fully owned while that cover is prepared instead of fading it first
+        // and exposing the transparent room foreground over the wallpaper.
+        if (window.crmDeskTransit?.isBusy?.()) {
+          endpointAcrylicHeld = homeAcrylicLens.holdEndpoint();
+        } else {
+          await homeAcrylicLens.release();
+        }
         homePeripheralAcrylic.finish();
       }
       context.surface?.classList.remove("crm-home-camera-moving","crm-home-camera-expanding","crm-home-camera-contracting","crm-home-acrylic-expanding","crm-home-acrylic-contracting","crm-home-bitmap-motion");
@@ -1663,7 +1672,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (direction === "contract" && context.layers?.[0]?.dataset?.motionSnapshotReady === "true") {
         endpointPromise = beginHomeHandoff(context, sequence, () => settleHomeEndpoint(context));
       } else {
-        homeAcrylicLens.finish();
+        if (!endpointAcrylicHeld) homeAcrylicLens.finish();
         homePeripheralAcrylic.finish();
         if (direction === "contract") context.retireOutgoingLayer?.();
         finishHandoff();
@@ -1861,7 +1870,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
-    acrylicState:()=>homeAcrylicLens.status(),peripheralAcrylicState:()=>homePeripheralAcrylic.status(),
+    acrylicState:()=>homeAcrylicLens.status(),
+    retireEndpointAcrylic:()=>{
+      if (homeAcrylicLens.status().phase !== "endpoint-held") return false;
+      homeAcrylicLens.finish();
+      return true;
+    },
+    peripheralAcrylicState:()=>homePeripheralAcrylic.status(),
     tiles:()=>clone(homeTileRecords),createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),

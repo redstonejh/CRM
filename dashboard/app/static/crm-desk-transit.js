@@ -10,6 +10,7 @@
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
   const STATIC_CROSSFADE_MS = 120;
   const ENDPOINT_UNOCCLUDE_OPACITY = .99;
+  const ENDPOINT_PARKED_OPACITY = .001;
   const ACRYLIC_WARM_FRAMES = 8;
 
   let busy = false;
@@ -31,6 +32,7 @@
   let ownershipFadeState = { active:false, startedAt:0, endedAt:0, duration:0, sequence:0 };
   const rasterNodeIds = new WeakMap();
   let rasterNodeSequence = 0;
+  let persistentEndpointBridge = null;
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
@@ -93,7 +95,7 @@
          cover the destination's backdrop-filter warm-up. */
       .crm-home-endpoint-bridge{
         position:fixed;inset:0;z-index:${TRANSIT_Z};display:block;overflow:hidden;
-        width:100vw;height:100vh;pointer-events:none;opacity:1;
+        width:100vw;height:100vh;pointer-events:none;opacity:${ENDPOINT_PARKED_OPACITY};
         background:var(--page-background);transform:translateZ(0);
         backface-visibility:hidden;will-change:opacity}
       .crm-home-endpoint-bridge-raster{
@@ -512,34 +514,78 @@
     return fallback;
   };
 
-  const buildEndpointBridge = async (stage, raster) => {
-    if (!stage || !raster) return false;
-    stage.coverBridge?.remove?.();
+  const ensureEndpointBridge = () => {
+    if (persistentEndpointBridge?.isConnected) return persistentEndpointBridge;
+    const existing = document.querySelector("body > .crm-home-endpoint-bridge[data-crm-persistent-bridge]");
+    if (existing) {
+      persistentEndpointBridge = existing;
+      return existing;
+    }
     const bridge = document.createElement("div");
     bridge.className = "crm-home-endpoint-bridge";
     bridge.setAttribute("aria-hidden", "true");
+    bridge.setAttribute("data-crm-persistent-bridge", "");
+    bridge.dataset.crmEndpointBridge = "parked";
+    bridge.style.transition = "none";
+    bridge.style.opacity = String(ENDPOINT_PARKED_OPACITY);
+    const image = document.createElement("img");
+    image.className = "crm-home-endpoint-bridge-raster";
+    image.alt = "";
+    image.draggable = false;
+    image.decoding = "sync";
+    bridge.appendChild(image);
+    document.body.appendChild(bridge);
+    persistentEndpointBridge = bridge;
+    return bridge;
+  };
+
+  const parkEndpointBridge = (bridge = persistentEndpointBridge) => {
+    if (!bridge?.isConnected) return;
+    bridge.getAnimations?.().forEach((animation) => animation.cancel());
+    bridge.style.transition = "none";
+    bridge.style.opacity = String(ENDPOINT_PARKED_OPACITY);
+    bridge.dataset.crmEndpointBridge = "parked";
+  };
+
+  const buildEndpointBridge = async (stage, raster) => {
+    if (!stage || !raster) return false;
+    const bridge = ensureEndpointBridge();
+    parkEndpointBridge(bridge);
     bridge.dataset.crmEndpointBridge = stage.coverMode || "endpoint";
     let bridgeRaster = null;
     if (raster instanceof HTMLImageElement) {
-      bridgeRaster = raster.cloneNode(false);
-      bridgeRaster.removeAttribute("id");
-      bridgeRaster.className = "crm-home-endpoint-bridge-raster";
-      bridge.appendChild(bridgeRaster);
+      bridge.querySelectorAll(":scope > :not(img.crm-home-endpoint-bridge-raster)").forEach((node) => node.remove());
+      bridgeRaster = bridge.querySelector(":scope > img.crm-home-endpoint-bridge-raster");
+      if (!bridgeRaster) {
+        bridgeRaster = document.createElement("img");
+        bridgeRaster.className = "crm-home-endpoint-bridge-raster";
+        bridgeRaster.alt = "";
+        bridgeRaster.draggable = false;
+        bridgeRaster.decoding = "sync";
+        bridge.appendChild(bridgeRaster);
+      }
+      const source = raster.currentSrc || raster.src;
+      if (bridgeRaster.src !== source) bridgeRaster.src = source;
       if (!bridgeRaster.complete || bridgeRaster.naturalWidth <= 0) {
         try { await bridgeRaster.decode?.(); } catch {}
       }
     } else {
-      bridgeRaster = raster;
+      bridgeRaster = raster.cloneNode(true);
+      bridgeRaster.querySelectorAll?.("[id]")?.forEach?.((node) => node.removeAttribute("id"));
+      bridgeRaster.removeAttribute?.("id");
       bridgeRaster.classList.add("crm-home-endpoint-bridge-raster");
-      bridge.appendChild(bridgeRaster);
+      bridge.replaceChildren(bridgeRaster);
     }
     if (!bridgeRaster) return false;
-    bridge.style.opacity = "1";
-    bridge.style.transition = "none";
-    document.body.appendChild(bridge);
     stage.coverBridge = bridge;
     stage.coverHost = bridge;
     stage.coverRaster = bridgeRaster;
+    // The bridge and its raster node were already compositor residents at rest.
+    // Load a new decoded texture while parked, close two paints, and only then
+    // let it take ownership over the still-identical expanded Home endpoint.
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence || !bridge.isConnected || !bridgeRaster.isConnected) return false;
+    bridge.style.opacity = "1";
     await paint(2);
     return stage.sequence === activeDive?.sequence
       && bridge.isConnected
@@ -559,9 +605,9 @@
     lid?.classList?.remove("crm-home-endpoint-cover");
     if (lid?.dataset) delete lid.dataset.crmEndpointCover;
     stage?.fallbackCover?.remove?.();
-    stage?.coverBridge?.remove?.();
+    parkEndpointBridge(stage?.coverBridge);
     if (!preserveOpacity) {
-      [stage?.coverHost, stage?.originalCoverHost, lid].filter(Boolean).forEach((node) => {
+      [stage?.originalCoverHost, lid].filter(Boolean).forEach((node) => {
         node.style.removeProperty("opacity");
         node.style.removeProperty("transition");
       });
@@ -685,7 +731,7 @@
         detail:{ phase:"start", ...ownershipFadeState },
       }));
       stage.coverAnimation = host.animate(
-        [{ opacity:ENDPOINT_UNOCCLUDE_OPACITY }, { opacity:0 }],
+        [{ opacity:ENDPOINT_UNOCCLUDE_OPACITY }, { opacity:ENDPOINT_PARKED_OPACITY }],
         { duration:STATIC_CROSSFADE_MS, easing:"linear", fill:"both" },
       );
 
@@ -713,7 +759,7 @@
       try { await stage.coverAnimation.finished; } catch {}
       if (stage.sequence !== activeDive?.sequence) return;
       host.style.transition = "none";
-      host.style.opacity = "0";
+      host.style.opacity = String(ENDPOINT_PARKED_OPACITY);
       stage.coverAnimation?.cancel?.();
       stage.coverAnimation = null;
       stage.swappedAt = performance.now();
@@ -1064,8 +1110,8 @@
     }
 
     // Home was already retired beneath the opaque body-level bridge. After its
-    // dissolve, only remove that now-transparent bridge; no layer behind the
-    // live acrylic changes at this public boundary.
+    // dissolve, leave that bridge compositor-resident at its parked opacity;
+    // no layer topology changes while the live acrylic endpoint owns the frame.
     const lid = stage.lid;
     if (!stage.sourceRetired) {
       if (cam?.restoreRoot) cam.restoreRoot();
@@ -1418,6 +1464,8 @@
     performanceTimings: () => performanceTimings.map((item) => ({ ...item })),
   };
   const initializeNavigation = () => {
+    ensureStyles();
+    ensureEndpointBridge();
     syncTemporalContext();
     requestAnimationFrame(() => requestAnimationFrame(() => seedNavigationHistory()));
   };

@@ -11,6 +11,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const PROJECT_PREVIEW_VERSION = "project-tile-v1";
   const PROJECT_HANDOFF_MS = 120;
   const PROJECT_UNOCCLUDE_OPACITY = .99;
+  const PROJECT_PARKED_OPACITY = .001;
   const PROJECT_ACRYLIC_WARM_FRAMES = 8;
   const listeners = new Set();
   const rows = (result) => result?.records || [];
@@ -179,7 +180,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;visibility:hidden;opacity:0}
       .crm-planner-project-world.has-transition-preview>.crm-project-transition-preview{visibility:visible;opacity:1}
-      .crm-project-transition-exact{position:absolute;inset:0;z-index:21;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;visibility:hidden;opacity:0;transform:translateZ(0);will-change:opacity}
+      .crm-project-transition-exact{position:absolute;inset:0;z-index:21;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;visibility:visible;opacity:${PROJECT_PARKED_OPACITY};transform:translateZ(0);will-change:opacity}
       .crm-project-transition-acrylic{position:absolute;inset:0;z-index:0;box-sizing:border-box;pointer-events:none;opacity:0;border:1px solid var(--crm-menu-border,rgba(255,255,255,.22));border-radius:var(--fractal-source-radius-x,28px) / var(--fractal-source-radius-y,28px);background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),0 14px 26px -16px rgba(0,0,0,.72);transform:translateZ(0);will-change:opacity,transform}
       .crm-planner-project-world[data-fractal-frame="source"]>.crm-project-transition-acrylic{opacity:1}
       @keyframes crm-project-live-in{0%{opacity:.001}78%{opacity:.001;animation-timing-function:cubic-bezier(.37,0,.63,1)}100%{opacity:1}}
@@ -597,16 +598,15 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         exact:true,
       });
       const animation = exact.animate(
-        [{ opacity:PROJECT_UNOCCLUDE_OPACITY }, { opacity:0 }],
+        [{ opacity:PROJECT_UNOCCLUDE_OPACITY }, { opacity:PROJECT_PARKED_OPACITY }],
         { duration:PROJECT_HANDOFF_MS, easing:"linear", fill:"both" },
       );
       try { await animation.finished; } catch {}
       if (seating.sequence !== projectRevealSeq || !layer.isConnected) return false;
-      exact.style.transition = "none"; exact.style.visibility = "hidden"; exact.style.opacity = "0";
+      exact.style.transition = "none"; exact.style.visibility = "visible"; exact.style.opacity = String(PROJECT_PARKED_OPACITY);
       animation.cancel();
       live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1";
       image.style.transition = "none"; image.style.visibility = "hidden"; image.style.opacity = "0";
-      exact.remove();
       layer.style.pointerEvents = "";
       delete layer.dataset.projectWorldSeating;
       await paintFrames(1);
@@ -650,7 +650,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // shared screen-space acrylic then changes during the camera move.
     if (live) { live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1"; }
     image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "1";
-    if (exact) { exact.style.transition = "none"; exact.style.visibility = "hidden"; exact.style.opacity = "0"; }
+    if (exact) { exact.style.transition = "none"; exact.style.visibility = "visible"; exact.style.opacity = String(PROJECT_PARKED_OPACITY); }
   }
   function settleProjectWorld(layer) {
     ++projectRevealSeq;
@@ -661,7 +661,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     layer?.style?.setProperty?.("pointer-events", "");
     if (layer) delete layer.dataset.projectWorldSeating;
     if (image) { image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "0"; }
-    exact?.remove?.();
+    if (exact) {
+      exact.getAnimations?.().forEach((animation) => animation.cancel());
+      exact.style.transition = "none";
+      exact.style.visibility = "visible";
+      exact.style.opacity = String(PROJECT_PARKED_OPACITY);
+    }
     if (live) { live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1"; }
     if (acrylic) acrylic.style.opacity = "";
   }
@@ -1356,7 +1361,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
             const exact = layer.querySelector(":scope > .crm-project-transition-exact");
             const image = layer.querySelector(":scope > .crm-project-transition-preview");
             const live = layer.querySelector(":scope > .crm-planner-project-live");
-            if (exact) { exact.style.visibility = "hidden"; exact.style.opacity = "0"; }
+            if (exact) { exact.style.visibility = "visible"; exact.style.opacity = String(PROJECT_PARKED_OPACITY); }
             if (image) { image.style.visibility = "visible"; image.style.opacity = "1"; }
             if (live) { live.style.visibility = "visible"; live.style.opacity = ".001"; }
           }

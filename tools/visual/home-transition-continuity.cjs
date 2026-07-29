@@ -373,7 +373,21 @@ function validateCadence(probe) {
       // Chromium exposes this covered interval on a 0.1 ms clock while its
       // component waits land on native 10 ms frames. Round away representational
       // noise; visible cadence retains the exact max/dropped-frame gates above.
-      || Math.round(maintenanceMs) > 260
+      // The endpoint stays visually covered while the destination acrylic is
+      // deliberately rasterized for eight native paints, then released over a
+      // 120 ms crossfade. Budget that protected work without weakening the
+      // visible-motion cadence gates above.
+      || Math.round(maintenanceMs) > 520
+      || probe.transitTiming.sourceRetiredBeforeRelease !== true
+      || probe.transitTiming.acrylicUnderpaintExposed !== true
+      || probe.transitTiming.acrylicStable !== true
+      || Number(probe.transitTiming.acrylicOwners) < 1
+      || Number(probe.transitTiming.acrylicWarmFrames) < 8
+      || Number(probe.transitTiming.acrylicUnderpaintMs) <= 0
+      || Number(probe.transitTiming.acrylicUnderpaintMs) > 180
+      || Number(probe.transitTiming.crossfadeDuration) !== 120
+      || Number(probe.transitTiming.crossfadeMs) < 110
+      || Number(probe.transitTiming.crossfadeMs) > 160
       || probe.ownership.frames < 5
       || Math.round(probe.ownership.cadenceHz) !== 100
       || probe.ownership.p95Ms > 12.5

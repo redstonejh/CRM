@@ -9,7 +9,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const TILE_MIGRATED_KEY = "crm-planner-project-tiles-migrated-v1";
   const EXPANDED_KEY = "crm-planner-stack-expansion-v1";
   const PROJECT_PREVIEW_VERSION = "project-tile-v1";
-  const PROJECT_HANDOFF_MS = 64;
+  const PROJECT_HANDOFF_MS = 120;
+  const PROJECT_UNOCCLUDE_OPACITY = .99;
+  const PROJECT_ACRYLIC_WARM_FRAMES = 8;
   const listeners = new Set();
   const rows = (result) => result?.records || [];
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
@@ -514,13 +516,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         ? stableFrames + 1
         : (snapshot.ownerCount > 0 ? 1 : 0);
       previous = snapshot.signature;
-      if (stableFrames >= 4) break;
+      if (stableFrames >= PROJECT_ACRYLIC_WARM_FRAMES) break;
     }
     return {
       ...snapshot,
       frames:frames + 1,
       stableFrames,
-      stable:stableFrames >= 4 && snapshot.ownerCount > 0,
+      stable:stableFrames >= PROJECT_ACRYLIC_WARM_FRAMES && snapshot.ownerCount > 0,
     };
   };
   const holdProjectHandoff = async (phase, detail) => {
@@ -543,6 +545,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     layer.dataset.projectWorldSeating = "true";
     layer.dataset.projectAcrylicReady = "false";
     layer.dataset.projectAcrylicCoveredDuringWarm = "false";
+    layer.dataset.projectAcrylicUnderpaintExposed = "false";
     layer.style.pointerEvents = "none";
     exact.style.transition = "none"; exact.style.visibility = "visible"; exact.style.opacity = "1";
     image.style.transition = "none"; image.style.visibility = "visible"; image.style.opacity = "1";
@@ -565,11 +568,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!live) return null;
     live.style.transition = "none"; live.style.visibility = "visible"; live.style.opacity = "1";
     image.style.transition = "none"; image.style.visibility = "hidden"; image.style.opacity = "0";
-    exact.style.transition = "none"; exact.style.visibility = "visible"; exact.style.opacity = "1";
+    exact.style.transition = "none"; exact.style.visibility = "visible";
+    exact.style.opacity = String(PROJECT_UNOCCLUDE_OPACITY);
+    layer.dataset.projectAcrylicUnderpaintExposed = "true";
 
     const acrylic = await waitForProjectAcrylic(layer, sequence);
     const exactStyle = exact.isConnected ? getComputedStyle(exact) : null;
-    const coveredDuringWarm = exactStyle?.visibility === "visible" && Number(exactStyle.opacity) > .99;
+    const coveredDuringWarm = exactStyle?.visibility === "visible"
+      && Number(exactStyle.opacity) >= PROJECT_UNOCCLUDE_OPACITY;
     if (sequence !== projectRevealSeq || !layer.isConnected || !acrylic.stable || !coveredDuringWarm) return null;
     layer.dataset.projectAcrylicReady = "true";
     layer.dataset.projectAcrylicCoveredDuringWarm = "true";
@@ -591,7 +597,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         exact:true,
       });
       const animation = exact.animate(
-        [{ opacity:1 }, { opacity:0 }],
+        [{ opacity:PROJECT_UNOCCLUDE_OPACITY }, { opacity:0 }],
         { duration:PROJECT_HANDOFF_MS, easing:"linear", fill:"both" },
       );
       try { await animation.finished; } catch {}
@@ -636,6 +642,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     delete layer.dataset.projectWorldSeating;
     delete layer.dataset.projectAcrylicReady;
     delete layer.dataset.projectAcrylicCoveredDuringWarm;
+    delete layer.dataset.projectAcrylicUnderpaintExposed;
     delete layer.dataset.projectAcrylicOwners;
     delete layer.dataset.projectAcrylicWarmFrames;
     // The capture is the same project foreground at the same endpoint. Make
@@ -1343,7 +1350,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         if (direction === "expand" && layer && project) {
           // The exact endpoint is now opaque. Materialize the real project
           // buckets only after the moving lens is gone, then require their
-          // backdrop filters to own four stable paints in final topology.
+          // backdrop filters to own eight stable paints in final topology.
           if (endpointCover) seating = await warmProjectWorldHandoff(endpointCover, project);
           if (!seating) {
             const exact = layer.querySelector(":scope > .crm-project-transition-exact");

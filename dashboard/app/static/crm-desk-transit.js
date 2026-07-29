@@ -8,7 +8,9 @@
 (() => {
   const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
-  const STATIC_CROSSFADE_MS = 64;
+  const STATIC_CROSSFADE_MS = 120;
+  const ENDPOINT_UNOCCLUDE_OPACITY = .99;
+  const ACRYLIC_WARM_FRAMES = 8;
 
   let busy = false;
   let queued = null;
@@ -374,7 +376,8 @@
     && before.naturalHeight === after.naturalHeight
     && sameGeometry(before.rect, after.rect)
     && before.opacity === 1 && after.opacity === 1
-    && before.hostOpacity === 1 && after.hostOpacity === 1
+    && before.hostOpacity >= ENDPOINT_UNOCCLUDE_OPACITY
+    && after.hostOpacity >= ENDPOINT_UNOCCLUDE_OPACITY
     && before.display !== "none" && after.display !== "none"
     && before.visibility === "visible" && after.visibility === "visible"
     && before.frame === "viewport" && after.frame === "viewport"
@@ -445,13 +448,13 @@
         ? stableFrames + 1
         : (snapshot.ownerCount > 0 ? 1 : 0);
       previous = snapshot.signature;
-      if (stableFrames >= 4) break;
+      if (stableFrames >= ACRYLIC_WARM_FRAMES) break;
     }
     return {
       ...snapshot,
       frames:frames + 1,
       stableFrames,
-      stable:stableFrames >= 4 && snapshot.ownerCount > 0,
+      stable:stableFrames >= ACRYLIC_WARM_FRAMES && snapshot.ownerCount > 0,
     };
   };
   const phaseDetail = (stage, phase) => ({
@@ -462,6 +465,7 @@
     cover:inspectRasterCover(stage),
     liveReady:!!stage?.liveReady,
     sourceRetired:stage?.sourceRetired === true,
+    acrylicUnderpaintExposed:stage?.acrylicUnderpaintExposed === true,
     acrylicStable:stage?.acrylicState?.stable === true,
     acrylicOwners:stage?.acrylicState?.ownerCount || 0,
     liveLayers:liveLayerState(stage?.finalDestinationLayers?.length
@@ -681,7 +685,7 @@
         detail:{ phase:"start", ...ownershipFadeState },
       }));
       stage.coverAnimation = host.animate(
-        [{ opacity:1 }, { opacity:0 }],
+        [{ opacity:ENDPOINT_UNOCCLUDE_OPACITY }, { opacity:0 }],
         { duration:STATIC_CROSSFADE_MS, easing:"linear", fill:"both" },
       );
 
@@ -888,11 +892,22 @@
     }
     stage.sourceRetiredAt = performance.now();
     stage.sourceRetired = true;
-    stage.phase = "warming-acrylic-covered";
+    stage.phase = "unoccluding-acrylic";
+
+    // A fully opaque cover lets Chromium occlusion-cull every live blur plane,
+    // even though computed styles claim the filters are ready. Preserve 99% of
+    // the exact endpoint while exposing a 1% underpaint: the visual remains the
+    // captured frame, but the GPU must now raster the real destination acrylic.
+    stage.coverBridge.style.opacity = String(ENDPOINT_UNOCCLUDE_OPACITY);
+    stage.acrylicUnderpaintExposed = true;
+    stage.acrylicUnderpaintAt = performance.now();
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    stage.phase = "warming-acrylic-underpaint";
 
     // Backdrop filters are sensitive to the set of layers behind them. Require
-    // four identical native paints after Home has moved behind the destination;
-    // computed filter text alone is not enough to establish a warm surface.
+    // repeated identical native paints after Home has moved behind the
+    // destination and the live underpaint is actually participating.
     stage.acrylicState = await waitForDestinationAcrylic(stage);
     if (stage.sequence !== activeDive?.sequence) return false;
     stage.coverAfterSourceRetirement = inspectRasterCover(stage);
@@ -920,6 +935,7 @@
       coverInvariant:null,
       liveReady:false,
       sourceRetired:false,
+      acrylicUnderpaintExposed:false,
       acrylicState:null,
     };
     activeDive = stage;
@@ -1089,6 +1105,8 @@
       sourceRetiredBeforeRelease:stage.sourceRetired === true
         && Number(stage.sourceRetiredAt) > 0
         && Number(stage.sourceRetiredAt) <= Number(stage.releaseAt),
+      acrylicUnderpaintExposed:stage.acrylicUnderpaintExposed === true,
+      acrylicUnderpaintMs:(stage.acrylicReadyAt || doneAt) - (stage.acrylicUnderpaintAt || doneAt),
       acrylicStable:stage.acrylicState?.stable === true,
       acrylicOwners:stage.acrylicState?.ownerCount || 0,
       acrylicWarmFrames:stage.acrylicState?.frames || 0,
@@ -1376,6 +1394,7 @@
       swappedAt:activeDive.swappedAt || 0,
       sourceRetired:activeDive.sourceRetired === true,
       sourceRetiredAt:activeDive.sourceRetiredAt || 0,
+      acrylicUnderpaintExposed:activeDive.acrylicUnderpaintExposed === true,
       acrylicStable:activeDive.acrylicState?.stable === true,
       acrylicOwners:activeDive.acrylicState?.ownerCount || 0,
     } : null,

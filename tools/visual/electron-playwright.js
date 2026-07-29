@@ -328,6 +328,7 @@ async function startEndpointProbe(page, label, room, direction) {
           ownershipFading:ownershipFade?.active === true,
           ownershipFadeDuration:Number(ownershipFade?.duration) || 0,
           sourceRetired:endpointCover?.sourceRetired === true,
+          destinationUnderpaintExposed:endpointCover?.acrylicUnderpaintExposed === true,
           destinationAcrylicStable:endpointCover?.acrylicStable === true,
           destinationAcrylicOwners:Number(endpointCover?.acrylicOwners) || 0,
           homeHandoff,
@@ -364,11 +365,12 @@ async function startEndpointProbe(page, label, room, direction) {
               return revealing.length > 0 && revealing.every((sample) => sample.roomTransitionDuration === 0);
             })(),
             ownershipFadeTimed: probe.samples.some((sample) => sample.ownershipFading
-              && sample.ownershipFadeDuration >= 60 && sample.ownershipFadeDuration <= 68),
+              && sample.ownershipFadeDuration >= 118 && sample.ownershipFadeDuration <= 122),
             ownershipFadeAfterAcrylicWarm: (() => {
               const fading = probe.samples.filter((sample) => sample.ownershipFading);
               return fading.length > 0 && fading.every((sample) =>
-                sample.sourceRetired && sample.destinationAcrylicStable
+                sample.sourceRetired && sample.destinationUnderpaintExposed
+                && sample.destinationAcrylicStable
                 && sample.destinationAcrylicOwners > 0);
             })(),
             sawHomeHandoff: probe.samples.some((sample) => sample.homeHandoff),
@@ -1684,8 +1686,8 @@ async function main() {
   const projectDiveContinuity=await page.evaluate(()=>window.__nativeProjectContinuity);
   if(projectDiveContinuity.frames<20||projectDiveContinuity.materialFrames<20||projectDiveContinuity.motionFrames<20||projectDiveContinuity.releaseFrames<5||!projectDiveContinuity.motionHeldEveryFrame||!projectDiveContinuity.releaseMonotonic||!projectDiveContinuity.releasePreviewHeldEveryFrame||projectDiveContinuity.firstOpacity<.99||projectDiveContinuity.lastOpacity>.05||projectDiveContinuity.intermediateFrames<2||projectDiveContinuity.intermediateFrames>14||projectDiveContinuity.maxOpacityStep>.18||!projectDiveContinuity.nonIncreasing||!projectDiveContinuity.timedEveryFrame||!projectDiveContinuity.screenSpaceEveryFrame||!projectDiveContinuity.frameNeutralEveryFrame||!keyframesMatch(projectDiveContinuity.opacityKeyframes,[[0,1],[1,1]])||!projectDiveContinuity.ownedEveryFrame||!projectDiveContinuity.realEveryFrame||projectDiveContinuity.minObjectCoverage<.94||projectDiveContinuity.maxObjectCoverage>1.08)throw new Error(`Project zoom did not visibly release real acrylic over its unchanged project preview: ${JSON.stringify(projectDiveContinuity)}`);
   await page.waitForFunction(()=>window.crmPlanner?.view?.()==='project'&&!window.crmProjectsCamera?.isTransitioning?.(),null,{timeout:15000});await sleep(30);
-  const projectDiveSettled=await page.evaluate(()=>{const layer=window.crmProjectsCamera.layers()[1];const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const exact=layer?.querySelector(':scope>.crm-project-transition-exact');const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const rect=layer?.getBoundingClientRect();return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],opacity:overlay?Number(getComputedStyle(overlay).opacity):null,noEndpointImage:!exact,acrylicOpacity:acrylic?Number(getComputedStyle(acrylic).opacity):null,liveOpacity:live?Number(getComputedStyle(live).opacity):null,acrylicReady:layer?.dataset.projectAcrylicReady==='true',acrylicCoveredDuringWarm:layer?.dataset.projectAcrylicCoveredDuringWarm==='true',acrylicOwners:Number(layer?.dataset.projectAcrylicOwners)||0,acrylicWarmFrames:Number(layer?.dataset.projectAcrylicWarmFrames)||0,lenses:document.querySelectorAll('.crm-planner-surface .crm-project-screen-acrylic').length,buckets:layer?.querySelectorAll('.crm-planner-bucket').length||0,cards:layer?.querySelectorAll('.crm-planner-card').length||0}});
-  if(!projectDiveSettled.rect||projectDiveSettled.rect.some((value,index)=>Math.abs(value-[0,0,1280,860][index])>1)||projectDiveSettled.opacity!==0||!projectDiveSettled.noEndpointImage||projectDiveSettled.acrylicOpacity!==0||projectDiveSettled.liveOpacity!==1||!projectDiveSettled.acrylicReady||!projectDiveSettled.acrylicCoveredDuringWarm||projectDiveSettled.acrylicOwners<1||projectDiveSettled.acrylicWarmFrames<4||projectDiveSettled.lenses!==0||projectDiveSettled.buckets!==3||projectDiveSettled.cards!==1)throw new Error(`Project zoom did not warm its real acrylic buckets beneath the exact endpoint before handoff: ${JSON.stringify(projectDiveSettled)}`);
+  const projectDiveSettled=await page.evaluate(()=>{const layer=window.crmProjectsCamera.layers()[1];const overlay=layer?.querySelector(':scope>.crm-project-transition-preview');const exact=layer?.querySelector(':scope>.crm-project-transition-exact');const acrylic=layer?.querySelector(':scope>.crm-project-transition-acrylic');const live=layer?.querySelector(':scope>.crm-planner-project-live');const rect=layer?.getBoundingClientRect();return{rect:rect&&[rect.x,rect.y,rect.width,rect.height],opacity:overlay?Number(getComputedStyle(overlay).opacity):null,noEndpointImage:!exact,acrylicOpacity:acrylic?Number(getComputedStyle(acrylic).opacity):null,liveOpacity:live?Number(getComputedStyle(live).opacity):null,acrylicReady:layer?.dataset.projectAcrylicReady==='true',acrylicCoveredDuringWarm:layer?.dataset.projectAcrylicCoveredDuringWarm==='true',acrylicUnderpaintExposed:layer?.dataset.projectAcrylicUnderpaintExposed==='true',acrylicOwners:Number(layer?.dataset.projectAcrylicOwners)||0,acrylicWarmFrames:Number(layer?.dataset.projectAcrylicWarmFrames)||0,lenses:document.querySelectorAll('.crm-planner-surface .crm-project-screen-acrylic').length,buckets:layer?.querySelectorAll('.crm-planner-bucket').length||0,cards:layer?.querySelectorAll('.crm-planner-card').length||0}});
+  if(!projectDiveSettled.rect||projectDiveSettled.rect.some((value,index)=>Math.abs(value-[0,0,1280,860][index])>1)||projectDiveSettled.opacity!==0||!projectDiveSettled.noEndpointImage||projectDiveSettled.acrylicOpacity!==0||projectDiveSettled.liveOpacity!==1||!projectDiveSettled.acrylicReady||!projectDiveSettled.acrylicCoveredDuringWarm||!projectDiveSettled.acrylicUnderpaintExposed||projectDiveSettled.acrylicOwners<1||projectDiveSettled.acrylicWarmFrames<8||projectDiveSettled.lenses!==0||projectDiveSettled.buckets!==3||projectDiveSettled.cards!==1)throw new Error(`Project zoom did not raster its real acrylic buckets beneath the unoccluded exact endpoint before handoff: ${JSON.stringify(projectDiveSettled)}`);
   const projectWorldBuffer=await page.screenshot({path:path.join(out,'project-world.png')});
   const projectSettledPixelMae=imageDifference(Buffer.from(projectPreviewBefore.exactSrc.split(',')[1]||'','base64'),projectWorldBuffer,{left:50,right:1230,top:105,bottom:755});
   if(projectSettledPixelMae>1)throw new Error(`Project endpoint texture displaced from its settled world: ${JSON.stringify({projectSettledPixelMae})}`);
@@ -1705,7 +1707,7 @@ async function main() {
   const transitTimings=await page.evaluate(()=>window.crmDeskTransit?.performanceTimings?.()||[]);
   const unsettled=transitTimings.filter((item)=>item.settled===false);
   if(unsettled.length)throw new Error(`Destinations were revealed before stable geometry: ${JSON.stringify(unsettled)}`);
-  const coldAcrylicHandoffs=transitTimings.filter((item)=>!item.sourceRetiredBeforeRelease||!item.acrylicStable||item.acrylicOwners<1||item.acrylicWarmFrames<4);
+  const coldAcrylicHandoffs=transitTimings.filter((item)=>!item.sourceRetiredBeforeRelease||!item.acrylicUnderpaintExposed||!item.acrylicStable||item.acrylicOwners<1||item.acrylicWarmFrames<8);
   if(coldAcrylicHandoffs.length)throw new Error(`Destinations were revealed before their final acrylic surfaces were warm: ${JSON.stringify(coldAcrylicHandoffs)}`);
   await page.evaluate(()=>window.crmWorkspaces.setActive('people'));
   await page.waitForFunction(()=>!!document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]'),null,{timeout:10000});

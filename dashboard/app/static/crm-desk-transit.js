@@ -10,6 +10,7 @@
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
   const ENDPOINT_BRIDGE_Z = "4501"; // above the moving Home surface, still below native chrome
   const ENDPOINT_MATERIAL_BLEND_MS = 180;
+  const ENDPOINT_MATERIAL_LEAD_MS = 52;
   const ENDPOINT_MATERIAL_BLEND_EASE = "cubic-bezier(.4, 0, .2, 1)";
   const STATIC_CROSSFADE_MS = 120;
   const ENDPOINT_UNOCCLUDE_OPACITY = .99;
@@ -36,6 +37,9 @@
   const rasterNodeIds = new WeakMap();
   let rasterNodeSequence = 0;
   let persistentEndpointBridge = null;
+  let endpointBridgeLoadSequence = 0;
+  let endpointBridgeLoadIdentity = "";
+  let endpointBridgeLoadPromise = null;
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
@@ -550,29 +554,109 @@
     bridge.dataset.crmEndpointBridge = "parked";
   };
 
+  const endpointImageIdentity = (source, key = "", capturedAt = "") => {
+    const value = String(source || "");
+    return `${key}|${capturedAt}|${value.length}|${value.slice(-24)}`;
+  };
+
+  const loadEndpointBridgeImage = (source, {
+    key = "",
+    capturedAt = "",
+    mode = "exact",
+  } = {}) => {
+    const value = String(source || "");
+    if (!value) return Promise.resolve(null);
+    const bridge = ensureEndpointBridge();
+    const identity = endpointImageIdentity(value, key, capturedAt);
+    const existing = bridge.querySelector(":scope > img.crm-home-endpoint-bridge-raster");
+    if (bridge.dataset.crmEndpointIdentity === identity
+      && bridge.dataset.crmEndpointRasterReady === "true"
+      && existing?.complete
+      && existing.naturalWidth > 0) {
+      parkEndpointBridge(bridge);
+      bridge.dataset.crmEndpointBridge = mode;
+      return Promise.resolve({ bridge, raster:existing });
+    }
+    if (endpointBridgeLoadIdentity === identity && endpointBridgeLoadPromise) {
+      return endpointBridgeLoadPromise;
+    }
+    const sequence = ++endpointBridgeLoadSequence;
+    endpointBridgeLoadIdentity = identity;
+    endpointBridgeLoadPromise = (async () => {
+      parkEndpointBridge(bridge);
+      bridge.dataset.crmEndpointBridge = mode;
+      bridge.dataset.crmEndpointIdentity = identity;
+      bridge.dataset.crmEndpointRasterReady = "false";
+      bridge.querySelectorAll(":scope > :not(img.crm-home-endpoint-bridge-raster)").forEach((node) => node.remove());
+      let image = bridge.querySelector(":scope > img.crm-home-endpoint-bridge-raster");
+      if (!image) {
+        image = document.createElement("img");
+        image.className = "crm-home-endpoint-bridge-raster";
+        image.alt = "";
+        image.draggable = false;
+        image.decoding = "sync";
+        bridge.appendChild(image);
+      }
+      if (image.src !== value) image.src = value;
+      if (!image.complete || image.naturalWidth <= 0) {
+        try { await image.decode?.(); } catch {}
+      }
+      // This is deliberately completed during hover or before programmatic
+      // camera launch. Two parked paints upload the destination texture before
+      // the transform begins, keeping the camera pass compositor-only.
+      await paint(2);
+      if (sequence !== endpointBridgeLoadSequence
+        || bridge.dataset.crmEndpointIdentity !== identity
+        || !image.isConnected
+        || !image.complete
+        || image.naturalWidth <= 0) return null;
+      bridge.dataset.crmEndpointRasterReady = "true";
+      return { bridge, raster:image };
+    })();
+    const promise = endpointBridgeLoadPromise;
+    const clearPendingLoad = () => {
+      if (endpointBridgeLoadPromise === promise) endpointBridgeLoadPromise = null;
+    };
+    void promise.then(clearPendingLoad, clearPendingLoad);
+    return promise;
+  };
+
+  const primeEndpointRaster = async (sourceOrExpander, key = "", capturedAt = "") => {
+    const host = sourceOrExpander instanceof Element
+      ? (sourceOrExpander.matches?.(".crm-home-preview")
+        ? sourceOrExpander
+        : sourceOrExpander.querySelector?.(":scope > .crm-home-preview"))
+      : null;
+    const exact = host?.querySelector?.(":scope > .crm-home-preview-exact");
+    const source = exact
+      ? (exact.currentSrc || exact.src)
+      : (typeof sourceOrExpander === "string" ? sourceOrExpander : "");
+    const stamp = capturedAt || host?.dataset?.capturedAt || "";
+    return !!await loadEndpointBridgeImage(source, { key, capturedAt:stamp, mode:"exact" });
+  };
+
+  const primeEndpointPreview = async (key) => {
+    const preview = window.crmHome?.endpointPreview?.(key);
+    if (!preview?.src) return false;
+    return primeEndpointRaster(preview.src, key, preview.capturedAt);
+  };
+
   const buildEndpointBridge = async (stage, raster) => {
     if (!stage || !raster) return false;
-    const bridge = ensureEndpointBridge();
-    parkEndpointBridge(bridge);
-    bridge.dataset.crmEndpointBridge = stage.coverMode || "endpoint";
+    let bridge = ensureEndpointBridge();
     let bridgeRaster = null;
     if (raster instanceof HTMLImageElement) {
-      bridge.querySelectorAll(":scope > :not(img.crm-home-endpoint-bridge-raster)").forEach((node) => node.remove());
-      bridgeRaster = bridge.querySelector(":scope > img.crm-home-endpoint-bridge-raster");
-      if (!bridgeRaster) {
-        bridgeRaster = document.createElement("img");
-        bridgeRaster.className = "crm-home-endpoint-bridge-raster";
-        bridgeRaster.alt = "";
-        bridgeRaster.draggable = false;
-        bridgeRaster.decoding = "sync";
-        bridge.appendChild(bridgeRaster);
-      }
       const source = raster.currentSrc || raster.src;
-      if (bridgeRaster.src !== source) bridgeRaster.src = source;
-      if (!bridgeRaster.complete || bridgeRaster.naturalWidth <= 0) {
-        try { await bridgeRaster.decode?.(); } catch {}
-      }
+      const loaded = await loadEndpointBridgeImage(source, {
+        key:stage.key,
+        capturedAt:stage.originalCoverHost?.dataset?.capturedAt || "",
+        mode:stage.coverMode || "exact",
+      });
+      bridge = loaded?.bridge;
+      bridgeRaster = loaded?.raster;
     } else {
+      parkEndpointBridge(bridge);
+      bridge.dataset.crmEndpointBridge = stage.coverMode || "fallback";
       bridgeRaster = raster.cloneNode(true);
       bridgeRaster.querySelectorAll?.("[id]")?.forEach?.((node) => node.removeAttribute("id"));
       bridgeRaster.removeAttribute?.("id");
@@ -581,23 +665,19 @@
       bridgeRaster.style.visibility = "visible";
       bridgeRaster.style.opacity = "1";
       bridge.replaceChildren(bridgeRaster);
+      await paint(2);
     }
-    if (!bridgeRaster) return false;
+    if (!bridge?.isConnected || !bridgeRaster?.isConnected) return false;
     stage.coverBridge = bridge;
     stage.coverHost = bridge;
     stage.coverRaster = bridgeRaster;
-    // The bridge and its raster node were already compositor residents at rest.
-    // Load the new decoded texture while parked and close two paints. A separate
-    // endpoint blend gives it ownership gradually; never switch it to opaque
-    // in the same paint that removes the selected tile's outer acrylic.
-    await paint(2);
     if (stage.sequence !== activeDive?.sequence || !bridge.isConnected || !bridgeRaster.isConnected) return false;
     return stage.sequence === activeDive?.sequence
       && bridge.isConnected
       && bridgeRaster.isConnected;
   };
 
-  const blendEndpointMaterial = async (stage) => {
+  const runEndpointMaterialBlend = async (stage) => {
     const bridge = stage?.coverBridge;
     if (!bridge?.isConnected || stage.sequence !== activeDive?.sequence) return false;
     bridge.getAnimations?.().forEach((animation) => animation.cancel());
@@ -668,6 +748,107 @@
       && Number(getComputedStyle(bridge).opacity) >= .999;
   };
 
+  const blendEndpointMaterial = (stage) => {
+    if (!stage) return Promise.resolve(false);
+    if (stage.endpointBlendFinishedAt
+      && stage.coverBridge?.isConnected
+      && Number(getComputedStyle(stage.coverBridge).opacity) >= .999) {
+      return Promise.resolve(true);
+    }
+    if (stage.endpointBlendPromise) return stage.endpointBlendPromise;
+    const promise = runEndpointMaterialBlend(stage);
+    stage.endpointBlendPromise = promise;
+    void promise.then((ready) => {
+      if (!ready && stage.endpointBlendPromise === promise) stage.endpointBlendPromise = null;
+    });
+    return promise;
+  };
+
+  const endpointLid = () => {
+    const cam = camera();
+    return cam?.surface?.()?.querySelector?.(":scope > .crm-home-expander:not(.crm-home-warm)")
+      || (cam?.level?.() >= 1 ? cam.layers()?.[1] : null);
+  };
+
+  const prepareEndpointBridge = async (stage) => {
+    if (!stage) return false;
+    if (stage.endpointBridgeReady
+      && stage.coverBridge?.isConnected
+      && stage.coverRaster?.isConnected) return true;
+    if (stage.endpointBridgePromise) return stage.endpointBridgePromise;
+    stage.endpointBridgePromise = (async () => {
+      ensureStyles();
+      const lid = endpointLid();
+      const host = lid?.querySelector?.(":scope > .crm-home-preview");
+      const exact = host?.querySelector?.(":scope > .crm-home-preview-exact");
+      if (exact && (!exact.complete || exact.naturalWidth <= 0)) {
+        try { await exact.decode?.(); } catch {}
+      }
+      // Only the exact capture is guaranteed opaque. The foreground capture
+      // has transparent wallpaper pixels, so cold sessions receive the same
+      // explicit opaque fallback used at the settled endpoint.
+      const imageRaster = exact?.complete && exact.naturalWidth > 0 ? exact : null;
+      const fallback = imageRaster ? null : buildFallbackCover(host);
+      if (fallback) fallback.style.visibility = "hidden";
+      const raster = imageRaster || fallback;
+      const coverMode = imageRaster ? "exact" : "fallback";
+      stage.lid = lid;
+      stage.originalCoverHost = host;
+      stage.originalCoverRaster = raster;
+      stage.coverHost = host;
+      stage.coverRaster = raster;
+      stage.coverMode = coverMode;
+      stage.fallbackCover = fallback;
+      if (!lid || !host || !raster || stage.sequence !== activeDive?.sequence) return false;
+      if (raster instanceof HTMLImageElement && (!raster.complete || raster.naturalWidth <= 0)) {
+        try { await raster.decode?.(); } catch {}
+      }
+      if (stage.sequence !== activeDive?.sequence) return false;
+      const ready = await buildEndpointBridge(stage, raster);
+      stage.endpointBridgeReady = ready === true;
+      return stage.endpointBridgeReady;
+    })();
+    const promise = stage.endpointBridgePromise;
+    const ready = await promise;
+    if (!ready && stage.endpointBridgePromise === promise) stage.endpointBridgePromise = null;
+    return ready;
+  };
+
+  const waitForEndpointLead = (stage) => new Promise((resolve) => {
+    const deadline = stage.motionStartedAt + stage.morphMs - ENDPOINT_MATERIAL_LEAD_MS;
+    const sample = (now) => {
+      if (stage.sequence !== activeDive?.sequence) {
+        resolve(false);
+        return;
+      }
+      if (now >= deadline) {
+        resolve(true);
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+
+  const armEndpointMaterialLead = (stage) => {
+    if (!stage) return Promise.resolve(false);
+    if (stage.endpointLeadPromise) return stage.endpointLeadPromise;
+    stage.endpointLeadPromise = (async () => {
+      // Confirm the preloaded exact destination remains parked at .001 until
+      // the final portion of the transform. The unchanged 180 ms dissolve then
+      // overlaps the landing instead of waiting several paints after it.
+      if (!await prepareEndpointBridge(stage)) return false;
+      if (!await waitForEndpointLead(stage)) return false;
+      if (stage.sequence !== activeDive?.sequence) return false;
+      stage.originalCoverHost.style.transition = "none";
+      stage.originalCoverHost.style.opacity = "1";
+      document.documentElement.classList.add("crm-transit-endpoint-covered");
+      stage.endpointLeadArmedAt = performance.now();
+      return blendEndpointMaterial(stage);
+    })();
+    return stage.endpointLeadPromise;
+  };
+
   const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
     stage?.endpointBlendAnimation?.cancel?.();
     if (stage) stage.endpointBlendAnimation = null;
@@ -695,45 +876,19 @@
   const seatEndpointRaster = async (stage) => {
     ensureStyles();
     const cam = camera();
-    const lid = cam?.level?.() >= 1 ? cam.layers()[1] : null;
-    const host = lid?.querySelector?.(":scope > .crm-home-preview");
-    const exact = host?.querySelector?.(":scope > .crm-home-preview-exact");
-    const foreground = host?.querySelector?.(":scope > .crm-home-preview-foreground");
-    if (exact && (!exact.complete || exact.naturalWidth <= 0)) {
-      try { await exact.decode?.(); } catch {}
-    }
-    // Only the exact capture is guaranteed opaque. The foreground capture has
-    // transparent wallpaper pixels and cannot conceal a live room settling
-    // beneath it, so cold sessions receive an explicit opaque backdrop cover.
-    const imageRaster = exact?.complete && exact.naturalWidth > 0 ? exact : null;
-    const fallback = imageRaster ? null : buildFallbackCover(host);
-    if (fallback) fallback.style.visibility = "hidden";
-    const raster = imageRaster || fallback;
-    const coverMode = imageRaster ? "exact" : "fallback";
-    const coverHost = host;
-    stage.lid = lid;
-    stage.originalCoverHost = coverHost;
-    stage.originalCoverRaster = raster;
-    stage.coverHost = coverHost;
-    stage.coverRaster = raster;
-    stage.coverMode = coverMode;
-    stage.fallbackCover = fallback;
-    if (!lid || !host || !raster || !coverHost) return false;
-    if (raster instanceof HTMLImageElement && (!raster.complete || raster.naturalWidth <= 0)) {
-      try { await raster.decode?.(); } catch {}
-    }
+    if (!await prepareEndpointBridge(stage)) return false;
+    const lid = stage.lid;
+    const coverMode = stage.coverMode;
+    const coverHost = stage.originalCoverHost;
+    if (!lid || !coverHost) return false;
     if (stage.sequence !== activeDive?.sequence) return false;
     coverHost.style.transition = "none";
     coverHost.style.opacity = "1";
     document.documentElement.classList.add("crm-transit-endpoint-covered");
-    stage.phase = "preparing-endpoint-material";
-    // Decode and seat the final room while the expanded tile still owns the
-    // viewport. The bridge begins almost transparent, then blends the complete
-    // single-acrylic room over the complete double-acrylic source. That makes
-    // the outer tile coat recede smoothly without ever weakening either real
-    // acrylic composition into a translucent approximation.
-    if (!await buildEndpointBridge(stage, raster)) return false;
-    if (stage.sequence !== activeDive?.sequence) return false;
+    if (!stage.endpointBlendStartedAt) stage.phase = "preparing-endpoint-material";
+    // The bridge was decoded during motion and its full-duration dissolve was
+    // armed just before landing. Await the same animation here before retiring
+    // any source acrylic; this preserves the original ownership invariant.
     if (!await blendEndpointMaterial(stage)) return false;
     if (stage.sequence !== activeDive?.sequence) return false;
 
@@ -1091,6 +1246,7 @@
     if (direction !== "expand" || !activeDive || Number.isFinite(activeDive.motionStartedAt)) return true;
     activeDive.motionStartedAt = start;
     activeDive.morphMs = Math.max(1, Number(morphMs) || 460);
+    void armEndpointMaterialLead(activeDive);
     return true;
   };
   const noteHomeTransformEnd = (direction, endedAt = performance.now()) => {
@@ -1231,6 +1387,11 @@
       endpointMaterialBlendMs:(stage.endpointBlendFinishedAt || doneAt)
         - (stage.endpointBlendStartedAt || stage.endpointBlendFinishedAt || doneAt),
       endpointMaterialBlendDuration:ENDPOINT_MATERIAL_BLEND_MS,
+      endpointMaterialLead:ENDPOINT_MATERIAL_LEAD_MS,
+      endpointBlendStartDeltaMs:(stage.endpointBlendStartedAt || doneAt)
+        - (stage.motionEndedAt || stage.maintenanceStartedAt || doneAt),
+      endpointBlendStartedBeforeMotionEnd:Number(stage.endpointBlendStartedAt) > 0
+        && Number(stage.endpointBlendStartedAt) <= Number(stage.motionEndedAt),
       endpointAcrylicRetired:stage.endpointAcrylicRetired === true,
       endpointAcrylicRetiredAfterBlend:stage.endpointAcrylicRetired === true
         && Number(stage.endpointAcrylicRetiredAt) >= Number(stage.endpointBlendFinishedAt),
@@ -1276,11 +1437,18 @@
     const stage = beginDiveDestination(key);
     const surface = cam.surface();
     if (surface) surface.style.zIndex = TRANSIT_Z;
-    if (expandFirst) {
-      if (cam.level() > 0) cam.rebuildRoot();
-      cam.expand(bucket);
-    }
-    Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
+    void (async () => {
+      if (expandFirst) {
+        // Programmatic navigation has no pointer-hover interval. Seat the same
+        // parked texture before starting its camera so cold launches retain
+        // the exact compositor-only cadence of ordinary prewarmed clicks.
+        try { await primeEndpointPreview(key); } catch {}
+        if (stage.sequence !== activeDive?.sequence) { done(false); return; }
+        if (cam.level() > 0) cam.rebuildRoot();
+        cam.expand(bucket);
+      }
+      Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
+    })();
   };
 
   // Module → Home: seat the module's own bucket lid over the stage at full
@@ -1501,6 +1669,7 @@
   window.crmDeskTransit = {
     driveTo,
     adoptDive,
+    primeEndpointRaster,
     noteHomeTransformStart,
     noteHomeTransformEnd,
     motionState:() => ({ ...homeMotionState }),
@@ -1531,6 +1700,12 @@
       endpointBlendStartedAt:activeDive.endpointBlendStartedAt || 0,
       endpointBlendFinishedAt:activeDive.endpointBlendFinishedAt || 0,
       endpointBlendDuration:ENDPOINT_MATERIAL_BLEND_MS,
+      endpointMaterialLead:ENDPOINT_MATERIAL_LEAD_MS,
+      endpointBlendStartDeltaMs:activeDive.endpointBlendStartedAt && activeDive.motionEndedAt
+        ? activeDive.endpointBlendStartedAt - activeDive.motionEndedAt
+        : 0,
+      endpointBlendStartedBeforeMotionEnd:Number(activeDive.endpointBlendStartedAt) > 0
+        && Number(activeDive.endpointBlendStartedAt) <= Number(activeDive.motionEndedAt),
       coverSeatedAt:activeDive.coverSeatedAt || 0,
       readyAt:activeDive.readyAt || 0,
       swappedAt:activeDive.swappedAt || 0,

@@ -1729,9 +1729,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
-    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,keepBelowVisibleDuringJump:true,precomposeTransitions:true,lockInputDuringTransitions:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
+    expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,keepBelowVisibleDuringJump:true,precomposeTransitions:true,lockInputDuringTransitions:true,delegateClickToOwner:true,measureTop:()=>0,ensureStyles,buildRoot,layout,targetFromEvent,targetAtPoint,buildExpander,
     configureExpander:(expander,target,context)=>{homeAcrylicLens.prepare(expander,target,context);homePeripheralAcrylic.prepare(expander,target,context)},
-    primeExpander:(_expander,target,context)=>{selectMotionVariant(context.layers?.[0],target?.dataset?.tileId||moduleKeyOf(target));homeAcrylicLens.prime();homePeripheralAcrylic.prime()},
+    primeExpander:(expander,target,context)=>{
+      const key = moduleKeyOf(target);
+      selectMotionVariant(context.layers?.[0],target?.dataset?.tileId || key);
+      homeAcrylicLens.prime();
+      homePeripheralAcrylic.prime();
+      // Hover precomposition also uploads the exact endpoint into the parked
+      // body bridge. A subsequent click only animates compositor opacity near
+      // landing; it never uploads a viewport-sized image during camera motion.
+      void window.crmDeskTransit?.primeEndpointRaster?.(expander, key);
+    },
     contractExpanderAbove:true,holdContractEndpointFrame:true,keepExpanderOpaqueDuringTransition:true,
     keyOf:(target)=>target.dataset.tileId||moduleKeyOf(target),sourceSelector:(target)=>`.crm-home-bucket[data-tile-id="${cssValue(target.dataset.tileId || moduleKeyOf(target))}"]`,
     prepareTarget:(target,context)=>markCameraTarget(target,context),
@@ -1821,9 +1830,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!target || !camera.surface()?.contains(target)) return;
     const key = moduleKeyOf(target);
     event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation();
-    if (!camera.isTransitioning()) camera.expand(target);
-    if (window.crmDeskTransit?.adoptDive) window.crmDeskTransit.adoptDive(key);
-    else window.crmWorkspaces?.setActive?.(key);
+    if (camera.isTransitioning()) return;
+    if (window.crmDeskTransit?.driveTo) void window.crmDeskTransit.driveTo(key);
+    else {
+      camera.expand(target);
+      window.crmWorkspaces?.setActive?.(key);
+    }
   }, true);
 
   const setActive = (on) => {
@@ -1997,6 +2009,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   window.addEventListener("resize",()=>{camera?.layout?.();requestAnimationFrame(()=>syncMotionSnapshot())});
   window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,
+    endpointPreview:(key)=>{const preview=previews.get(key);return isRenderablePreview(preview)?{key,src:preview.exactSrc,capturedAt:preview.capturedAt||0,width:preview.width||0,height:preview.height||0}:null},
     acrylicState:()=>homeAcrylicLens.status(),
     retireEndpointAcrylic:()=>{
       if (homeAcrylicLens.status().phase !== "endpoint-held") return false;

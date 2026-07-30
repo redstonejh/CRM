@@ -421,6 +421,8 @@ async function main() {
     const bridgeOpacity = Number(bridgeStyle?.opacity);
     const bridgeZ = Number(bridgeStyle?.zIndex);
     const surfaceZ = Number(surface ? getComputedStyle(surface).zIndex : NaN);
+    const cover = window.crmDeskTransit?.coverState?.();
+    const blendLead = Number(cover?.motionEndedAt) - Number(cover?.endpointBlendStartedAt);
     const material = acrylicStyle?.webkitBackdropFilter || acrylicStyle?.backdropFilter || '';
     const sourceRasterParked = exact
       ? getComputedStyle(exact).display === 'none'
@@ -438,12 +440,16 @@ async function main() {
         && duration === 180
         && Number(keyframes[0]?.opacity) <= .001
         && Number(keyframes.at(-1)?.opacity) === 1
+        && cover?.endpointMaterialLead === 52
+        && cover?.endpointBlendStartedBeforeMotionEnd === true
+        && blendLead >= 0 && blendLead <= 100
         && sourceRasterParked,
       detail:JSON.stringify({
         rect:[rect?.x,rect?.y,rect?.width,rect?.height],
         bridgeOpacity,
         zOrder:[surfaceZ,bridgeZ],
         duration,
+        blendLead,
         keyframes:keyframes.map((keyframe) => ({ offset:keyframe.computedOffset, opacity:keyframe.opacity })),
         acrylicOpacity:Number(acrylicStyle?.opacity),
         frameOpacity:Number(frameStyle?.opacity),

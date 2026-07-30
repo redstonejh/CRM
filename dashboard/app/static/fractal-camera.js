@@ -359,6 +359,7 @@
     const keepBelowVisibleDuringJump = config.keepBelowVisibleDuringJump === true;
     const precomposeTransitions = config.precomposeTransitions === true;
     const lockInputDuringTransitions = config.lockInputDuringTransitions === true;
+    const delegateClickToOwner = config.delegateClickToOwner === true;
     const contractExpanderAbove = config.contractExpanderAbove === true;
     const holdContractEndpointFrame = config.holdContractEndpointFrame === true;
     const keepExpanderOpaque = config.keepExpanderOpaqueDuringTransition === true;
@@ -970,6 +971,10 @@
     const onClick = (event) => {
       if (!active || !surface || surface.hidden) return;
       if (event.target?.closest?.(ignoreSelector)) return;
+      // Some cameras have an outer navigation coordinator that must complete
+      // covered preflight work before calling expand(). Let that owner consume
+      // the same event instead of starting an uncoordinated camera first.
+      if (delegateClickToOwner) return;
       const target = targetFromEvent(event) || targetAtPoint(event.clientX, event.clientY);
       if (!target) return;
       event.preventDefault();

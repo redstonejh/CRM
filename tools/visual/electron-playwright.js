@@ -227,10 +227,10 @@ async function startEndpointProbe(page, label, room, direction) {
         const peripheralHostStyle = peripheralAcrylic?.parentElement && getComputedStyle(peripheralAcrylic.parentElement);
         const peripheralAcrylicMaterialReady = !!peripheralAcrylic
           && peripheralAcrylic.parentElement?.parentElement === surface
-          && surface.classList.contains('crm-home-peripheral-acrylic-active')
           && peripheralBackdrop.includes('blur(') && peripheralBackdrop.includes('saturate(')
           && peripheralHostStyle?.clipPath?.startsWith('path(');
         const peripheralAcrylicOwned = peripheralAcrylicMaterialReady
+          && surface.classList.contains('crm-home-peripheral-acrylic-active')
           && Number(peripheralStyle.opacity) > .99;
         if (moving && materialMoving && acrylic) {
           const acrylicOpacity = Number(getComputedStyle(acrylic).opacity);
@@ -305,24 +305,35 @@ async function startEndpointProbe(page, label, room, direction) {
           return backdrop.includes('blur(') && style.backgroundImage !== 'none' && style.boxShadow.includes('26px -16px');
         });
         const homeReleasing = !!surface?.classList.contains('crm-home-camera-releasing');
+        const homeCommitting = !!surface?.classList.contains('crm-home-camera-committing');
         const opacity = (node) => node ? Number(getComputedStyle(node).opacity) : NaN;
-        const homeIncomingOpacities = [...homeBuckets.map(opacity), opacity(homeTitle), opacity(homeHand)];
+        const homeBucketOpacities = homeBuckets.map(opacity);
+        const homeTitleOpacity = opacity(homeTitle);
+        const homeHandOpacity = opacity(homeHand);
+        const homeIncomingOpacities = [...homeBucketOpacities, homeTitleOpacity, homeHandOpacity];
         const homeOutgoingOpacities = [opacity(handoffVariant), opacity(expander), opacity(acrylic), opacity(peripheralAcrylic)];
         const finiteIncoming = homeIncomingOpacities.filter(Number.isFinite);
         const finiteOutgoing = homeOutgoingOpacities.filter(Number.isFinite);
         const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
         const incomingAverage = finiteIncoming.length ? average(finiteIncoming) : NaN;
         const outgoingAverage = finiteOutgoing.length ? average(finiteOutgoing) : NaN;
-        const spread = (values) => values.length ? Math.max(...values) - Math.min(...values) : Infinity;
+        const bucketsUnderpainted = homeBucketOpacities.length === 4
+          && homeBucketOpacities.every((value) => value <= .01);
+        const bucketsOwned = homeBucketOpacities.length === 4
+          && homeBucketOpacities.every((value) => value >= .99);
+        const outgoingOwned = finiteOutgoing.length === 4
+          && finiteOutgoing.every((value) => value >= .99);
+        const outgoingParked = finiteOutgoing.length === 4
+          && finiteOutgoing.every((value) => value <= .01);
         const homeOwnersContinuous = homeHandoff && !!cameraTarget && !!handoffVariant && !!expander
           && getComputedStyle(handoffVariant).display !== 'none'
           && finiteIncoming.length === homeBuckets.length + 2
           && finiteOutgoing.length === 4
           && (!homeReleasing
-            ? finiteIncoming.every((value) => value <= .01) && finiteOutgoing.every((value) => value >= .99)
-            : spread(finiteIncoming) <= .035
-              && spread(finiteOutgoing) <= .035
-              && Math.abs(incomingAverage + outgoingAverage - 1) <= .08);
+            ? bucketsUnderpainted && homeTitleOpacity <= .01 && homeHandOpacity <= .01 && outgoingOwned
+            : (!homeCommitting
+              ? bucketsUnderpainted && homeHandOpacity <= .01 && outgoingOwned
+              : bucketsOwned && homeTitleOpacity >= .99 && homeHandOpacity >= .99 && outgoingParked));
         const homePeripheralReady = homeHandoff && peripheralAcrylicMaterialReady
           && Number(peripheralStyle.opacity) >= 0 && Number(peripheralStyle.opacity) <= 1;
         const expanderForeground = expander?.querySelector?.('.crm-home-preview-foreground');
@@ -351,12 +362,18 @@ async function startEndpointProbe(page, label, room, direction) {
           destinationAcrylicOwners:Number(endpointCover?.acrylicOwners) || 0,
           homeHandoff,
           homeReleasing,
+          homeCommitting,
           homeGridOpacity: homeGrid ? Number(getComputedStyle(homeGrid).opacity) : null,
-          homeHandOpacity: homeHand ? Number(getComputedStyle(homeHand).opacity) : null,
+          homeBucketMinOpacity:homeBucketOpacities.length ? Math.min(...homeBucketOpacities) : null,
+          homeBucketMaxOpacity:homeBucketOpacities.length ? Math.max(...homeBucketOpacities) : null,
+          homeTitleOpacity,
+          homeHandOpacity,
           homeIncomingOpacity:incomingAverage,
           homeOutgoingOpacity:outgoingAverage,
           homeSelectedAcrylicOpacity:opacity(acrylic),
           homePeripheralAcrylicOpacity:opacity(peripheralAcrylic),
+          homeSelectedAcrylicPhase:acrylic?.dataset?.fractalAcrylicPhase || '',
+          homePeripheralAcrylicPhase:peripheralAcrylic?.dataset?.crmPeripheralAcrylicPhase || '',
           homeExpanderFilter:expanderForeground ? getComputedStyle(expanderForeground).filter : '',
           homeMaterialsReady, homeOwnersContinuous, homePeripheralReady,
           materialMoving,
@@ -376,11 +393,12 @@ async function startEndpointProbe(page, label, room, direction) {
             : probe.samples.filter((sample) => sample.homeHandoff && sample.homeSignature);
           const homeHold = endpoint.filter((sample) => !sample.homeReleasing);
           const homeRelease = endpoint.filter((sample) => sample.homeReleasing);
+          const homeMatch = homeRelease.filter((sample) => !sample.homeCommitting);
+          const homeCommit = homeRelease.filter((sample) => sample.homeCommitting);
           const releaseIncoming = homeRelease.map((sample) => sample.homeIncomingOpacity).filter(Number.isFinite);
           const releaseOutgoing = homeRelease.map((sample) => sample.homeOutgoingOpacity).filter(Number.isFinite);
           const releaseIncomingSteps = releaseIncoming.slice(1).map((value, index) => value - releaseIncoming[index]);
           const releaseOutgoingSteps = releaseOutgoing.slice(1).map((value, index) => value - releaseOutgoing[index]);
-          const releaseIntermediate = releaseIncoming.filter((value) => value > .05 && value < .95);
           const movingSamples = probe.samples.filter((sample) => sample.moving);
           const acrylicOpacities = [...probe.acrylicSamples];
           const acrylicSteps = acrylicOpacities.slice(1).map((value, index) => value - acrylicOpacities[index]);
@@ -404,7 +422,7 @@ async function startEndpointProbe(page, label, room, direction) {
                 && sample.destinationAcrylicOwners > 0);
             })(),
             sawHomeHandoff: probe.samples.some((sample) => sample.homeHandoff),
-            sawHomeCrossfade: probe.samples.some((sample) => sample.homeReleasing),
+            sawHomeMaterialMatch: homeMatch.length > 0,
             snapshotVisible: probe.samples.some((sample) => sample.snapshotDisplay !== 'none' && sample.snapshotOpacity > .01),
             destinationPrecomposed: probe.samples.some((sample) => sample.materializing && !sample.roomRevealing && sample.roomObjects > 0 && sample.roomOpacity <= .01),
             destinationDeferredThroughMotion: !probe.samples.some((sample) => sample.moving && sample.materializing),
@@ -424,17 +442,29 @@ async function startEndpointProbe(page, label, room, direction) {
             endpointOwnersContinuous: motionDirection === 'in' || endpoint.every((sample) => sample.homeOwnersContinuous),
             endpointPeripheralAcrylicReady: motionDirection === 'in' || endpoint.every((sample) => sample.homePeripheralReady),
             homeReleaseFrames:homeRelease.length,
+            homeMatchFrames:homeMatch.length,
+            homeCommitFrames:homeCommit.length,
             homeReleaseFirstIncoming:releaseIncoming[0] ?? null,
             homeReleaseLastIncoming:releaseIncoming.at(-1) ?? null,
             homeReleaseFirstOutgoing:releaseOutgoing[0] ?? null,
             homeReleaseLastOutgoing:releaseOutgoing.at(-1) ?? null,
-            homeReleaseIntermediateFrames:releaseIntermediate.length,
             homeReleaseDistinctFilters:new Set(homeRelease.map((sample) => sample.homeExpanderFilter).filter(Boolean)).size,
             homeReleaseMaxStep:Math.max(0, ...releaseIncomingSteps.map(Math.abs), ...releaseOutgoingSteps.map(Math.abs)),
             homeReleaseMonotonic:releaseIncomingSteps.every((step) => step >= -.035)
               && releaseOutgoingSteps.every((step) => step <= .035),
-            homeReleaseOwnerAlignment:Math.max(0, ...homeRelease.map((sample) =>
-              Math.abs(sample.homeIncomingOpacity + sample.homeOutgoingOpacity - 1)).filter(Number.isFinite)),
+            homeReleaseCoverageFloor:Math.min(1, ...homeRelease.map((sample) =>
+              1 - (1 - sample.homeIncomingOpacity) * (1 - sample.homeOutgoingOpacity)).filter(Number.isFinite)),
+            homeReleaseFullOwnerEveryFrame:homeRelease.length > 0 && homeRelease.every((sample) =>
+              sample.homeIncomingOpacity >= .99 || sample.homeOutgoingOpacity >= .99),
+            homeMatchCoveredEveryFrame:homeMatch.length > 0 && homeMatch.every((sample) =>
+              sample.homeBucketMaxOpacity <= .01
+              && sample.homeHandOpacity <= .01
+              && sample.homeOutgoingOpacity >= .99),
+            homeCommitCoveredEveryFrame:homeCommit.length > 0 && homeCommit.every((sample) =>
+              sample.homeBucketMinOpacity >= .99
+              && sample.homeTitleOpacity >= .99
+              && sample.homeHandOpacity >= .99
+              && sample.homeOutgoingOpacity <= .01),
             acrylicFrames: acrylicOpacities.length,
             acrylicFirst: acrylicOpacities[0] ?? null,
             acrylicLast: acrylicOpacities.at(-1) ?? null,
@@ -444,7 +474,7 @@ async function startEndpointProbe(page, label, room, direction) {
             acrylicNonIncreasing: acrylicSteps.every((step) => step <= .04),
             acrylicNonDecreasing: acrylicSteps.every((step) => step >= -.04),
             acrylicKeyframes,
-            timeline: probe.samples.filter((sample, index, samples) => index === 0 || ['module','busy','moving','materializing','veil','veilReleasing','roomRevealing','homeHandoff','homeReleasing'].some((key) => sample[key] !== samples[index - 1][key])).map((sample) => ({ at:sample.at,module:sample.module,busy:sample.busy,moving:sample.moving,materializing:sample.materializing,veil:sample.veil,veilReleasing:sample.veilReleasing,roomRevealing:sample.roomRevealing,homeHandoff:sample.homeHandoff,homeReleasing:sample.homeReleasing })),
+            timeline: probe.samples.filter((sample, index, samples) => index === 0 || ['module','busy','moving','materializing','veil','veilReleasing','roomRevealing','homeHandoff','homeReleasing','homeCommitting'].some((key) => sample[key] !== samples[index - 1][key])).map((sample) => ({ at:sample.at,module:sample.module,busy:sample.busy,moving:sample.moving,materializing:sample.materializing,veil:sample.veil,veilReleasing:sample.veilReleasing,roomRevealing:sample.roomRevealing,homeHandoff:sample.homeHandoff,homeReleasing:sample.homeReleasing,homeCommitting:sample.homeCommitting })),
             final: probe.samples.at(-1),
           };
           resolve(result);
@@ -1471,7 +1501,7 @@ async function main() {
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outboundEndpoint=await finishEndpointProbe(page,`out-${room.key}`);
     assertHomeFade(`${room.key} outbound visual`,outboundEndpoint,'out');
-    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||!outboundEndpoint.sawHomeCrossfade||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<10||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.homeReleaseFrames<8||outboundEndpoint.homeReleaseFirstIncoming>.1||outboundEndpoint.homeReleaseLastIncoming<.9||outboundEndpoint.homeReleaseFirstOutgoing<.9||outboundEndpoint.homeReleaseLastOutgoing>.1||outboundEndpoint.homeReleaseIntermediateFrames<6||outboundEndpoint.homeReleaseDistinctFilters<6||outboundEndpoint.homeReleaseMaxStep>.25||!outboundEndpoint.homeReleaseMonotonic||outboundEndpoint.homeReleaseOwnerAlignment>.08||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not dissolve smoothly to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
+    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||!outboundEndpoint.sawHomeMaterialMatch||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<8||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.homeReleaseFrames<8||outboundEndpoint.homeMatchFrames<7||outboundEndpoint.homeCommitFrames<1||outboundEndpoint.homeReleaseFirstIncoming>.2||outboundEndpoint.homeReleaseLastIncoming<.99||outboundEndpoint.homeReleaseFirstOutgoing<.99||outboundEndpoint.homeReleaseLastOutgoing>.01||outboundEndpoint.homeReleaseDistinctFilters<6||!outboundEndpoint.homeReleaseMonotonic||outboundEndpoint.homeReleaseCoverageFloor<.99||!outboundEndpoint.homeReleaseFullOwnerEveryFrame||!outboundEndpoint.homeMatchCoveredEveryFrame||!outboundEndpoint.homeCommitCoveredEveryFrame||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.homeCommitting||outboundEndpoint.final.homeSelectedAcrylicPhase!=='parked'||outboundEndpoint.final.homePeripheralAcrylicPhase!=='parked'||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not match and atomically commit to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
     const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
     await page.waitForFunction(({key,before})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);return status?.state==='ready'&&status.capturedAt>before;},{key:room.key,before},{timeout:60000});
     const synchronizedPreview=await page.evaluate(async({key,token})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===key);const host=document.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);const image=host?.querySelector(':scope > .crm-home-preview-foreground');return{after:status?.capturedAt||0,state:status?.state,sameNode:image?.dataset.liveSyncProbe===token,hostCapturedAt:Number(host?.dataset.capturedAt||0),viewState:preview?.viewState||null,exactSrc:preview?.exactSrc||''};},{key:room.key,token:previewNodeToken});

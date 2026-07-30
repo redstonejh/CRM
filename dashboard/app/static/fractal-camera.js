@@ -76,6 +76,18 @@
       state = null;
       if (frame) frame.style.removeProperty("opacity");
     };
+    const park = () => {
+      if (!lens) return false;
+      const frame = state?.frame;
+      stop();
+      lens.style.opacity = "0";
+      lens.dataset.fractalAcrylicPhase = "parked";
+      owner?.classList.remove(ownerClass);
+      owner = null;
+      state = null;
+      if (frame) frame.style.removeProperty("opacity");
+      return true;
+    };
     const clipFor = (rect, surfaceRect, radiusX, radiusY) => {
       const top = Math.max(0, rect.top - surfaceRect.top);
       const right = Math.max(0, surfaceRect.right - rect.right);
@@ -110,7 +122,7 @@
 
       const direction = context.direction || "prewarm";
       const mountedOwner = clipOwner || lens;
-      const canReuse = !!lens && owner === expander && mountedOwner?.parentElement === context.surface;
+      const canReuse = !!lens && mountedOwner?.parentElement === context.surface;
       if (!canReuse) {
         finish();
         owner = expander;
@@ -133,7 +145,12 @@
           clipOwner = null;
           context.surface.appendChild(lens);
         }
-      } else stop();
+      } else {
+        stop();
+        owner?.classList.remove(ownerClass);
+        owner = expander;
+        owner.classList.add(ownerClass);
+      }
       lens.dataset.fractalAcrylicLens = direction;
       const initialClip = direction === "contract" ? destinationClip : sourceClip;
       const initialOpacity = direction === "prewarm"
@@ -324,7 +341,7 @@
       holdThroughMotion,
       releaseMs,
     });
-    return { prepare, start, sync, prime, holdEndpoint, release, finish, element:() => lens, status };
+    return { prepare, start, sync, prime, holdEndpoint, release, park, finish, element:() => lens, status };
   };
 
   global.createFractalCamera = function createFractalCamera(config = {}) {

@@ -49,6 +49,7 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       acrylicMaterial:[],
       acrylicRelease:[],
       acrylicEndpointHold:[],
+      homeReturnCoverage:[],
       longTasks:[],
       sampleVisual:readVisuals,
       triggered:false,
@@ -261,6 +262,46 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
           if (phase === 'release') probe.acrylicRelease.push(sample);
           else probe.acrylicEndpointHold.push(sample);
         }
+        const surface = window.crmHomeCamera?.surface?.();
+        const root = window.crmHomeCamera?.layers?.()[0];
+        if (probeDirection === 'contract'
+          && surface?.classList.contains('crm-home-camera-handoff') && root) {
+          const opacity = (node) => node ? Number(getComputedStyle(node).opacity) : NaN;
+          const incoming = [
+            ...root.querySelectorAll(':scope > .crm-home-grid > .crm-home-bucket'),
+            root.querySelector(':scope > .crm-home-title-layer'),
+            root.querySelector(':scope > .crm-home-priority-hand'),
+          ].map(opacity).filter(Number.isFinite);
+          const outgoing = [
+            root.querySelector(':scope > .crm-home-motion-variant.is-active-motion-variant'),
+            surface.querySelector('.crm-home-expander:not(.crm-home-warm)'),
+            lens,
+            surface.querySelector('.crm-home-peripheral-screen-acrylic'),
+          ].map(opacity).filter(Number.isFinite);
+          const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
+          const incomingOpacity = incoming.length === 6 ? average(incoming) : NaN;
+          const outgoingOpacity = outgoing.length === 4 ? average(outgoing) : NaN;
+          const bucketOpacity = incoming.slice(0, 4);
+          const titleOpacity = incoming[4];
+          const handOpacity = incoming[5];
+          const matching = surface.classList.contains('crm-home-camera-releasing')
+            && !surface.classList.contains('crm-home-camera-committing');
+          const committing = surface.classList.contains('crm-home-camera-committing');
+          probe.homeReturnCoverage.push({
+            matching,
+            committing,
+            bucketMinOpacity:bucketOpacity.length === 4 ? Math.min(...bucketOpacity) : NaN,
+            bucketMaxOpacity:bucketOpacity.length === 4 ? Math.max(...bucketOpacity) : NaN,
+            titleOpacity,
+            handOpacity,
+            outgoingMinOpacity:outgoing.length === 4 ? Math.min(...outgoing) : NaN,
+            outgoingMaxOpacity:outgoing.length === 4 ? Math.max(...outgoing) : NaN,
+            incomingOpacity,
+            outgoingOpacity,
+            combinedCoverage:1 - (1 - incomingOpacity) * (1 - outgoingOpacity),
+            fullOwner:incomingOpacity >= .99 || outgoingOpacity >= .99,
+          });
+        }
       }
       if (probe.started && !cameraMoving && !busy) {
         finish();
@@ -329,6 +370,8 @@ async function takeProbe(page) {
       && sample.clip.startsWith('inset(')
       && sample.frameBorder === 'solid'
       && sample.frameShadow && sample.frameShadow !== 'none');
+    const returnCoverage = probe.homeReturnCoverage
+      .map((sample) => sample.combinedCoverage).filter(Number.isFinite);
     return {
       ...probe,
       ...metrics(probe.visualDeltas),
@@ -352,6 +395,23 @@ async function takeProbe(page) {
       endpointHoldFrames:endpointOpacity.length,
       endpointHoldMinOpacity:Math.min(1, ...endpointOpacity),
       endpointHoldMaterialFrames:endpointMaterialFrames.length,
+      returnCoverageFrames:returnCoverage.length,
+      returnCoverageFloor:Math.min(1, ...returnCoverage),
+      returnFullOwnerEveryFrame:probe.homeReturnCoverage.length > 0
+        && probe.homeReturnCoverage.every((sample) => sample.fullOwner),
+      returnMatchFrames:probe.homeReturnCoverage.filter((sample) => sample.matching).length,
+      returnCommitFrames:probe.homeReturnCoverage.filter((sample) => sample.committing).length,
+      returnMatchCoveredEveryFrame:probe.homeReturnCoverage.some((sample) => sample.matching)
+        && probe.homeReturnCoverage.filter((sample) => sample.matching).every((sample) =>
+          sample.bucketMaxOpacity <= .01
+          && sample.handOpacity <= .01
+          && sample.outgoingMinOpacity >= .99),
+      returnCommitCoveredEveryFrame:probe.homeReturnCoverage.some((sample) => sample.committing)
+        && probe.homeReturnCoverage.filter((sample) => sample.committing).every((sample) =>
+          sample.bucketMinOpacity >= .99
+          && sample.titleOpacity >= .99
+          && sample.handOpacity >= .99
+          && sample.outgoingMaxOpacity <= .01),
     };
   });
 }
@@ -431,19 +491,21 @@ function validateCadence(probe) {
 function validateVisual(probe) {
   const releaseValid = probe.direction === 'expand'
     ? probe.releaseFrames === 0
-    : probe.releaseFrames >= 10
-      && probe.releaseFirst >= .9
-      && probe.releaseLast <= .1
-      && probe.releaseIntermediateFrames >= 8
-      && probe.releaseMaxOpacityStep <= .2
-      && probe.releaseMonotonic
-      && probe.releaseMaterialFrames === probe.releaseFrames
-      && probe.releaseOwnerAlignment <= .03;
+    : probe.releaseFrames === 0;
   const endpointHoldValid = probe.direction === 'expand'
     ? probe.endpointHoldFrames >= 4
       && probe.endpointHoldMinOpacity >= .99
       && probe.endpointHoldMaterialFrames === probe.endpointHoldFrames
     : probe.endpointHoldFrames === 0;
+  const returnCoverageValid = probe.direction === 'expand'
+    ? probe.returnCoverageFrames === 0
+    : probe.returnCoverageFrames >= 8
+      && probe.returnCoverageFloor >= .99
+      && probe.returnFullOwnerEveryFrame
+      && probe.returnMatchFrames >= 7
+      && probe.returnCommitFrames >= 1
+      && probe.returnMatchCoveredEveryFrame
+      && probe.returnCommitCoveredEveryFrame;
   if (probe.childMutations.length
     || probe.unexpectedAttributes.length
     || probe.opacityFirst < .99
@@ -453,6 +515,7 @@ function validateVisual(probe) {
     || probe.realMaterialFrames !== probe.acrylic.length
     || !releaseValid
     || !endpointHoldValid
+    || !returnCoverageValid
   ) {
     throw new Error(`Home ${probe.direction} acrylic continuity failed: ${JSON.stringify(summary(probe))}`);
   }
@@ -520,6 +583,13 @@ const summary = (probe) => ({
   endpointHoldFrames:probe.endpointHoldFrames,
   endpointHoldMinOpacity:probe.endpointHoldMinOpacity,
   endpointHoldMaterialFrames:probe.endpointHoldMaterialFrames,
+  returnCoverageFrames:probe.returnCoverageFrames,
+  returnCoverageFloor:probe.returnCoverageFloor,
+  returnFullOwnerEveryFrame:probe.returnFullOwnerEveryFrame,
+  returnMatchFrames:probe.returnMatchFrames,
+  returnCommitFrames:probe.returnCommitFrames,
+  returnMatchCoveredEveryFrame:probe.returnMatchCoveredEveryFrame,
+  returnCommitCoveredEveryFrame:probe.returnCommitCoveredEveryFrame,
 });
 
 const compactProbe = (probe) => ({
@@ -560,6 +630,13 @@ const compactProbe = (probe) => ({
     endpointHoldFrames:probe.endpointHoldFrames,
     endpointHoldMinOpacity:probe.endpointHoldMinOpacity,
     endpointHoldMaterialFrames:probe.endpointHoldMaterialFrames,
+    returnCoverageFrames:probe.returnCoverageFrames,
+    returnCoverageFloor:probe.returnCoverageFloor,
+    returnFullOwnerEveryFrame:probe.returnFullOwnerEveryFrame,
+    returnMatchFrames:probe.returnMatchFrames,
+    returnCommitFrames:probe.returnCommitFrames,
+    returnMatchCoveredEveryFrame:probe.returnMatchCoveredEveryFrame,
+    returnCommitCoveredEveryFrame:probe.returnCommitCoveredEveryFrame,
   },
 });
 

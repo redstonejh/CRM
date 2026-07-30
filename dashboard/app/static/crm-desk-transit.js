@@ -12,6 +12,9 @@
   const ENDPOINT_MATERIAL_BLEND_MS = 180;
   const ENDPOINT_MATERIAL_LEAD_MS = 52;
   const ENDPOINT_MATERIAL_BLEND_EASE = "cubic-bezier(.4, 0, .2, 1)";
+  const NAVIGATION_ENTRANCE_MS = 210;
+  const NAVIGATION_ENTRANCE_LEAD_MS = 180;
+  const NAVIGATION_ENTRANCE_EASE = "cubic-bezier(.16, 1, .3, 1)";
   const STATIC_CROSSFADE_MS = 120;
   const ENDPOINT_UNOCCLUDE_OPACITY = .99;
   const ENDPOINT_PARKED_OPACITY = .001;
@@ -67,6 +70,15 @@
         opacity:.001!important;will-change:opacity;transition:none!important}
       html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][hidden]{
         display:grid!important}
+      /* Room navigation enters from below the viewport during the final part
+         of the camera landing. It remains semantically hidden and inert while
+         entering, but no longer pops in after the room settles. */
+      .crm-module-switch[data-crm-transit-nav-entering][hidden]{
+        display:grid!important}
+      .crm-module-switch[data-crm-transit-nav-entering]{
+        pointer-events:none!important;will-change:transform}
+      html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][data-crm-transit-nav-entering]{
+        opacity:1!important}
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
         opacity:var(--crm-transit-rest-opacity,1)!important;
         transition:none!important}
@@ -814,8 +826,8 @@
     return ready;
   };
 
-  const waitForEndpointLead = (stage) => new Promise((resolve) => {
-    const deadline = stage.motionStartedAt + stage.morphMs - ENDPOINT_MATERIAL_LEAD_MS;
+  const waitForMotionLead = (stage, leadMs) => new Promise((resolve) => {
+    const deadline = stage.motionStartedAt + stage.morphMs - leadMs;
     const sample = (now) => {
       if (stage.sequence !== activeDive?.sequence) {
         resolve(false);
@@ -830,6 +842,41 @@
     requestAnimationFrame(sample);
   });
 
+  const armNavigationEntrance = (stage) => {
+    if (!stage) return Promise.resolve(false);
+    if (stage.navigationEntrancePromise) return stage.navigationEntrancePromise;
+    stage.navigationEntrancePromise = (async () => {
+      if (!await waitForMotionLead(stage, NAVIGATION_ENTRANCE_LEAD_MS)) return false;
+      if (stage.sequence !== activeDive?.sequence) return false;
+      const navigation = document.querySelector(".crm-module-switch");
+      if (!navigation) return false;
+      navigation.setAttribute("data-crm-transit-nav-entering", "");
+      navigation.inert = true;
+      const travel = Math.max(72, Math.ceil(navigation.getBoundingClientRect().height + 36));
+      stage.navigationControl = navigation;
+      stage.navigationEntranceStartedAt = performance.now();
+      stage.navigationEntranceTravel = travel;
+      stage.navigationEntranceAnimation?.cancel?.();
+      const animation = navigation.animate(
+        [
+          { transform:`translateX(-50%) translateY(${travel}px)` },
+          { transform:"translateX(-50%) translateY(0px)" },
+        ],
+        {
+          duration:NAVIGATION_ENTRANCE_MS,
+          easing:NAVIGATION_ENTRANCE_EASE,
+          fill:"both",
+        },
+      );
+      stage.navigationEntranceAnimation = animation;
+      try { await animation.finished; } catch {}
+      if (stage.sequence !== activeDive?.sequence || stage.navigationEntranceAnimation !== animation) return false;
+      stage.navigationEntranceFinishedAt = performance.now();
+      return true;
+    })();
+    return stage.navigationEntrancePromise;
+  };
+
   const armEndpointMaterialLead = (stage) => {
     if (!stage) return Promise.resolve(false);
     if (stage.endpointLeadPromise) return stage.endpointLeadPromise;
@@ -838,7 +885,7 @@
       // the final portion of the transform. The unchanged 180 ms dissolve then
       // overlaps the landing instead of waiting several paints after it.
       if (!await prepareEndpointBridge(stage)) return false;
-      if (!await waitForEndpointLead(stage)) return false;
+      if (!await waitForMotionLead(stage, ENDPOINT_MATERIAL_LEAD_MS)) return false;
       if (stage.sequence !== activeDive?.sequence) return false;
       stage.originalCoverHost.style.transition = "none";
       stage.originalCoverHost.style.opacity = "1";
@@ -852,6 +899,13 @@
   const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
     stage?.endpointBlendAnimation?.cancel?.();
     if (stage) stage.endpointBlendAnimation = null;
+    stage?.navigationEntranceAnimation?.cancel?.();
+    if (stage) stage.navigationEntranceAnimation = null;
+    const navigation = stage?.navigationControl;
+    if (navigation) {
+      navigation.removeAttribute("data-crm-transit-nav-entering");
+      navigation.inert = false;
+    }
     document.documentElement.classList.remove(
       "crm-transit-materializing",
       "crm-transit-revealing",
@@ -1246,6 +1300,7 @@
     if (direction !== "expand" || !activeDive || Number.isFinite(activeDive.motionStartedAt)) return true;
     activeDive.motionStartedAt = start;
     activeDive.morphMs = Math.max(1, Number(morphMs) || 460);
+    void armNavigationEntrance(activeDive);
     void armEndpointMaterialLead(activeDive);
     return true;
   };
@@ -1392,6 +1447,14 @@
         - (stage.motionEndedAt || stage.maintenanceStartedAt || doneAt),
       endpointBlendStartedBeforeMotionEnd:Number(stage.endpointBlendStartedAt) > 0
         && Number(stage.endpointBlendStartedAt) <= Number(stage.motionEndedAt),
+      navigationEntranceDuration:NAVIGATION_ENTRANCE_MS,
+      navigationEntranceLead:NAVIGATION_ENTRANCE_LEAD_MS,
+      navigationEntranceStartedAt:stage.navigationEntranceStartedAt || 0,
+      navigationEntranceFinishedAt:stage.navigationEntranceFinishedAt || 0,
+      navigationEntranceStartDeltaMs:(stage.navigationEntranceStartedAt || doneAt)
+        - (stage.motionEndedAt || stage.maintenanceStartedAt || doneAt),
+      navigationEntranceFinishDeltaMs:(stage.navigationEntranceFinishedAt || doneAt)
+        - (stage.motionEndedAt || stage.maintenanceStartedAt || doneAt),
       endpointAcrylicRetired:stage.endpointAcrylicRetired === true,
       endpointAcrylicRetiredAfterBlend:stage.endpointAcrylicRetired === true
         && Number(stage.endpointAcrylicRetiredAt) >= Number(stage.endpointBlendFinishedAt),
@@ -1706,6 +1769,10 @@
         : 0,
       endpointBlendStartedBeforeMotionEnd:Number(activeDive.endpointBlendStartedAt) > 0
         && Number(activeDive.endpointBlendStartedAt) <= Number(activeDive.motionEndedAt),
+      navigationEntranceStartedAt:activeDive.navigationEntranceStartedAt || 0,
+      navigationEntranceFinishedAt:activeDive.navigationEntranceFinishedAt || 0,
+      navigationEntranceDuration:NAVIGATION_ENTRANCE_MS,
+      navigationEntranceLead:NAVIGATION_ENTRANCE_LEAD_MS,
       coverSeatedAt:activeDive.coverSeatedAt || 0,
       readyAt:activeDive.readyAt || 0,
       swappedAt:activeDive.swappedAt || 0,

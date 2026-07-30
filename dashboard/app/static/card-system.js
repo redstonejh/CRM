@@ -2785,12 +2785,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const zoneHMetrics = { view:0, content:0, bar:0 };
   let zoneHThumbWidth = -1;
   let zoneHLeftOpacity = "", zoneHRightOpacity = "";
-  // Keep advancing raster tiles inside Chromium's prepaint runway at 100 Hz.
-  // A wider step can expose a fresh compositor tile before its paint is
-  // ready, producing one doubled refresh even though the rail has no DOM work.
+  // Keep advancing raster tiles inside Chromium's prepaint runway at 100 Hz,
+  // but do not let repeated wheel events build a long inertial queue. The rail
+  // should remain attached to the user's hand and stop shortly after it does.
   const ZONE_RAIL_MAX_FRAME_STEP = 20;
-  const ZONE_RAIL_MIN_FRAME_STEP = 3;
-  const ZONE_RAIL_WHEEL_MULTIPLIER = 2.35;
+  const ZONE_RAIL_MIN_FRAME_STEP = 5;
+  const ZONE_RAIL_EASE = .42;
+  const ZONE_RAIL_MAX_TARGET_LEAD = 360;
+  const ZONE_RAIL_WHEEL_MULTIPLIER = 2.7;
+  const ZONE_RAIL_WHEEL_RELEASE_MS = 48;
   const zoneHScroll = { x:0, target:0, raf:0, wheeling:false, releaseT:0 };
   let zoneHPrimeAnimation = null;
   let zoneHPrimeSignature = "";
@@ -3235,7 +3238,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const tick = () => {
       const minimum = zoneHMin(), goal = zoneHScroll.wheeling ? zoneHScroll.target : clamp(zoneHScroll.target, minimum, 0);
       const remaining = goal - zoneHScroll.x;
-      const easedStep = remaining * .22;
+      const easedStep = remaining * ZONE_RAIL_EASE;
       const minimumStep = Math.sign(remaining) * Math.min(Math.abs(remaining), ZONE_RAIL_MIN_FRAME_STEP);
       const step = Math.abs(easedStep) < Math.abs(minimumStep) ? minimumStep : easedStep;
       zoneHScroll.x += clamp(step, -ZONE_RAIL_MAX_FRAME_STEP, ZONE_RAIL_MAX_FRAME_STEP);
@@ -3250,14 +3253,35 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // is reconciled once, after motion, and never changes paint visibility.
       positionZoneRail(false); zoneHScroll.raf = requestAnimationFrame(tick);
     };
-    zoneHScroll.raf = requestAnimationFrame(tick);
+    // Apply the first bounded step in the wheel task. It reaches the very next
+    // paint instead of waiting one extra refresh before the rail responds.
+    tick();
   };
-  const scrollZoneRailBy = (delta, immediate = false) => {
+  const scrollZoneRailBy = (delta, immediate = false, coalesceInput = false) => {
     if (!horizontalZones) return false; const minimum = zoneHMin(); if (minimum >= 0) return false;
     if (immediate) { zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x - delta, minimum, 0); positionZoneRail(); return true; }
     if (!zoneHScroll.raf) zoneHScroll.target = zoneHScroll.x;
-    zoneHScroll.target = damp(zoneHScroll.target - delta, minimum); zoneHScroll.wheeling = true;
-    clearTimeout(zoneHScroll.releaseT); zoneHScroll.releaseT = setTimeout(() => { zoneHScroll.wheeling = false; runZoneRailScroll(); }, 90); runZoneRailScroll(); return true;
+    if (coalesceInput) {
+      const inputDirection = Math.sign(-delta);
+      const queuedDirection = Math.sign(zoneHScroll.target - zoneHScroll.x);
+      if (queuedDirection && inputDirection && queuedDirection !== inputDirection) zoneHScroll.target = zoneHScroll.x;
+    }
+    const requestedTarget = damp(zoneHScroll.target - delta, minimum);
+    zoneHScroll.target = coalesceInput
+      ? clamp(
+        requestedTarget,
+        zoneHScroll.x - ZONE_RAIL_MAX_TARGET_LEAD,
+        zoneHScroll.x + ZONE_RAIL_MAX_TARGET_LEAD,
+      )
+      : requestedTarget;
+    zoneHScroll.wheeling = true;
+    clearTimeout(zoneHScroll.releaseT);
+    zoneHScroll.releaseT = setTimeout(() => {
+      zoneHScroll.wheeling = false;
+      runZoneRailScroll();
+    }, ZONE_RAIL_WHEEL_RELEASE_MS);
+    runZoneRailScroll();
+    return true;
   };
   const revealZoneHorizontally = (stage) => {
     const panel = zoneBody[stage]?.parentElement; if (!horizontalZones || !zoneHClip || !panel) return false;
@@ -3273,7 +3297,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (!raw) return false;
     const pixels = (event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * zoneHClip.clientWidth : raw)
       * ZONE_RAIL_WHEEL_MULTIPLIER;
-    if (!scrollZoneRailBy(pixels)) return false;
+    if (!scrollZoneRailBy(pixels, false, true)) return false;
     event.preventDefault();
     return true;
   };

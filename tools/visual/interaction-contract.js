@@ -402,6 +402,40 @@ async function main() {
     return window.__homeEndpointAcrylicGate?.phase === 'endpoint-material-blend-mid'
       && opacity > .08 && opacity < .98;
   }, { timeout:5000 });
+  await check('Viewport navigation rises into place before the tile finishes landing', () => {
+    const navigation = document.querySelector('.crm-module-switch');
+    const style = navigation && getComputedStyle(navigation);
+    const rect = navigation?.getBoundingClientRect();
+    const animation = navigation?.getAnimations?.().find((candidate) =>
+      (candidate.effect?.getKeyframes?.() || []).some((keyframe) => keyframe.transform));
+    const keyframes = animation?.effect?.getKeyframes?.() || [];
+    const duration = Number(animation?.effect?.getComputedTiming?.().duration);
+    const cover = window.crmDeskTransit?.coverState?.();
+    const startLead = Number(cover?.motionEndedAt) - Number(cover?.navigationEntranceStartedAt);
+    return {
+      ok:navigation?.hidden === true
+        && navigation.inert === true
+        && navigation.hasAttribute('data-crm-transit-nav-entering')
+        && style?.display === 'grid'
+        && Number(style?.opacity) > .99
+        && !!rect && rect.top < innerHeight && rect.bottom <= innerHeight + 1
+        && duration === 210
+        && keyframes.length >= 2
+        && keyframes[0]?.transform !== keyframes.at(-1)?.transform
+        && cover?.navigationEntranceLead === 180
+        && startLead >= 100 && startLead <= 260,
+      detail:JSON.stringify({
+        hidden:navigation?.hidden,
+        inert:navigation?.inert,
+        entering:navigation?.hasAttribute('data-crm-transit-nav-entering'),
+        rect:[rect?.x,rect?.y,rect?.width,rect?.height],
+        opacity:Number(style?.opacity),
+        duration,
+        startLead,
+        keyframes:keyframes.map((keyframe) => keyframe.transform),
+      }),
+    };
+  });
   await check('The seated tile surface dissolves gradually into one complete destination acrylic composition', () => {
     const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
     const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
@@ -1198,7 +1232,9 @@ async function main() {
   await check('The company world scrolls from below its scrollbar with its thumb and adaptive edge shadows', ({ before, point }) => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const thumb=theater?.querySelector('.tk-zone-hth'); const state=window.peopleCards.zoneScrollState();
     const left=rail.querySelector('.tk-zone-hshade-left'),right=rail.querySelector('.tk-zone-hshade-right'); const leftShadow=Number(getComputedStyle(left).opacity); const rightShadow=Number(getComputedStyle(right).opacity); const shadeRects=[left,right].map((shade)=>shade.getBoundingClientRect());
-    return { ok:point.y>point.barBottom&&point.y>point.clipBottom&&state.min<0&&state.x<before.state.x-200&&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2
+    return { ok:point.y>point.barBottom&&point.y>point.clipBottom&&state.min<0&&state.x<before.state.x-200
+      &&Math.abs(state.target-state.x)<1&&before.state.x-state.x<=450
+      &&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2
       && shadeRects.every((rect)=>Math.abs(rect.top)<=.5&&Math.abs(rect.bottom-innerHeight)<=.5),
       detail:JSON.stringify({before,state,point,shadows:[leftShadow,rightShadow],shadeRects,thumb:thumb?.getBoundingClientRect().left}) };
   }, { before:companyRailBefore, point:companyGutterPoint });

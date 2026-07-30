@@ -49,10 +49,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     { id:"task", label:"Task card" },
   ];
   const PLANNER_CARD_ACCENT_RGB = "98,112,134";
+  const HORIZONTAL_WHEEL_MULTIPLIER = 2.35;
 
   let root = null;
   let camera = null;
   let wired = false;
+  let projectGalleryWheelWired = false;
   let active = false;
   let dirty = true;
   let renderPending = true;
@@ -175,7 +177,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const style = document.createElement("style"); style.id = "crm-planner-styles"; style.textContent = `
       .crm-planner-surface{position:fixed;inset:0;z-index:836;color:#fff;overflow:hidden}.crm-planner-surface[hidden]{display:none}
       .crm-planner-level{position:absolute;inset:0;transform-origin:0 0}.crm-planner-warm,.crm-planner-warm *{pointer-events:none!important}.crm-planner-contracting{pointer-events:none!important}
-      .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{--crm-project-shadow-left:0;--crm-project-shadow-right:0;--crm-project-rail-inset:clamp(18px,2vw,28px);position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;min-width:0;min-height:0;overflow:hidden;-webkit-app-region:no-drag}.crm-project-gallery-shell:before,.crm-project-gallery-shell:after{content:"";position:absolute;z-index:5;top:0;bottom:20px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-project-gallery-shell:before{left:0;opacity:var(--crm-project-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-shell:after{right:0;opacity:var(--crm-project-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-scroll{position:absolute;inset:0 0 20px;min-width:0;min-height:0;overflow-x:auto;overflow-y:hidden;padding:0;box-sizing:border-box;scrollbar-width:none;overscroll-behavior-inline:contain;outline:0}.crm-project-gallery-scroll::-webkit-scrollbar{display:none}.crm-project-gallery-scroll:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}.crm-project-gallery-canvas{position:relative;height:100%;min-width:100%}
+      .crm-project-gallery-level{pointer-events:auto;-webkit-app-region:no-drag}.crm-project-gallery-shell{--crm-project-shadow-left:0;--crm-project-shadow-right:0;--crm-project-rail-inset:clamp(18px,2vw,28px);position:absolute;inset:var(--crm-canvas-top,78px) var(--crm-canvas-x,64px) var(--crm-canvas-bottom,78px);max-width:1480px;margin:auto;min-width:0;min-height:0;overflow:visible;-webkit-app-region:no-drag}.crm-project-gallery-shell:before,.crm-project-gallery-shell:after{content:"";position:fixed;z-index:5;top:0;bottom:0;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-project-gallery-shell:before{left:0;opacity:var(--crm-project-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-shell:after{right:0;opacity:var(--crm-project-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-project-gallery-scroll{position:absolute;inset:0 0 20px;min-width:0;min-height:0;overflow-x:auto;overflow-y:hidden;padding:0;box-sizing:border-box;scrollbar-width:none;overscroll-behavior-inline:contain;outline:0}.crm-project-gallery-scroll::-webkit-scrollbar{display:none}.crm-project-gallery-scroll:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}.crm-project-gallery-canvas{position:relative;height:100%;min-width:100%}
       .crm-project-tile-grid,.crm-project-title-grid{position:absolute;display:grid;grid-auto-flow:column;gap:var(--crm-object-gap,18px);contain:layout style}.crm-project-tile-grid{z-index:1;pointer-events:auto;will-change:transform}.crm-project-title-grid{z-index:4;pointer-events:none}.crm-project-bucket{content-visibility:auto;contain-intrinsic-size:auto 320px}.crm-project-bucket>.crm-home-preview{border-radius:inherit}.crm-project-create>.crm-home-preview{display:grid;place-items:center}.crm-project-create-glyph{font:200 clamp(28px,3vw,42px)/1 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:rgba(238,245,254,.38);transform:translateY(-2px)}.crm-project-gallery-hsb{position:absolute;z-index:6;left:var(--crm-project-rail-inset);right:var(--crm-project-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none;-webkit-app-region:no-drag}.crm-project-gallery-hsb.is-on{opacity:1;pointer-events:auto}.crm-project-gallery-hth{position:absolute;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease}.crm-project-gallery-hth:hover{background:rgba(255,255,255,.88)}.crm-project-gallery-hth:active{cursor:grabbing;background:#fff}
       .crm-planner-project-live{position:absolute;inset:0;z-index:1}
       .crm-project-transition-preview{position:absolute;inset:0;z-index:20;display:block;width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;backface-visibility:hidden;visibility:hidden;opacity:0}
@@ -210,7 +212,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-planner-project-back{flex:0 0 auto}.crm-planner-world-spacer{flex:1 1 auto;min-width:0}.crm-planner-world-map{flex:0 1 130px;display:flex;height:3px;gap:2px}.crm-planner-world-map i{flex:1 1 0;border-radius:2px;background:rgba(214,229,248,.12)}.crm-planner-world-map i[data-occupied="true"]{background:rgba(160,193,234,.32)}.crm-planner-world-map i[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.38)}
       .crm-planner-project.crm-menu-action{position:relative;flex:0 0 auto;width:clamp(88px,12vw,176px);height:34px;padding:5px 10px 4px!important;text-align:left;font-size:var(--crm-type-body,12px)!important;display:grid;grid-template-rows:minmax(0,1fr) 3px;gap:4px;overflow:hidden;color:rgba(255,255,255,.5)!important}.crm-planner-project.is-selected{color:rgba(255,255,255,.96)!important}.crm-planner-project.is-selected:after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px;background:rgba(175,211,255,.78);box-shadow:0 0 10px rgba(115,177,252,.22)}.crm-planner-project-name{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-project-map{display:flex;align-items:stretch;gap:2px;min-width:0;height:3px}.crm-planner-project-segment{flex:1 1 0;min-width:3px;border-radius:2px;background:rgba(214,229,248,.09);box-shadow:inset 0 0 0 1px rgba(225,237,251,.045)}.crm-planner-project-segment[data-occupied="true"]{background:rgba(160,193,234,.28)}.crm-planner-project-segment[data-kind="done"][data-occupied="true"]{background:rgba(159,208,184,.34)}.crm-planner-project.is-selected .crm-planner-project-segment{box-shadow:inset 0 0 0 1px rgba(226,238,252,.08)}
       .crm-planner-new-project.crm-menu-action{flex:0 0 auto;width:auto;height:30px;padding:0 9px!important;font-size:var(--crm-type-caption,11px)!important;white-space:nowrap;color:rgba(255,255,255,.7)!important}.crm-planner-head-actions{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding-left:6px;border-left:1px solid rgba(255,255,255,.1)}.crm-planner-text-action.crm-menu-action{height:30px;font-size:var(--crm-type-caption,11px)!important;padding:0 8px!important}.crm-planner-project-menu{width:30px!important;padding:0!important;font-size:14px!important;text-align:center}
-      .crm-planner-stage{--crm-scroll-shadow-left:0;--crm-scroll-shadow-right:0;position:relative;min-width:0;min-height:0;margin-inline:calc(0px - var(--crm-canvas-x,64px));overflow:hidden}.crm-planner-stage:before,.crm-planner-stage:after{content:"";position:absolute;z-index:4;top:0;bottom:14px;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-planner-stage:before{left:0;opacity:var(--crm-scroll-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-planner-stage:after{right:0;opacity:var(--crm-scroll-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
+      .crm-planner-stage{--crm-scroll-shadow-left:0;--crm-scroll-shadow-right:0;position:relative;min-width:0;min-height:0;margin-inline:calc(0px - var(--crm-canvas-x,64px));overflow:visible}.crm-planner-stage:before,.crm-planner-stage:after{content:"";position:fixed;z-index:4;top:0;bottom:0;width:clamp(34px,4.5vw,68px);pointer-events:none;transition:opacity .12s linear}.crm-planner-stage:before{left:0;opacity:var(--crm-scroll-shadow-left);background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.crm-planner-stage:after{right:0;opacity:var(--crm-scroll-shadow-right);background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .crm-planner-buckets{width:100%;height:100%;min-width:0;min-height:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:var(--crm-object-gap,18px);overflow-x:auto;overflow-y:hidden;padding:clamp(12px,2.5vh,22px) 0 28px var(--crm-canvas-x,64px);box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent;scroll-padding-inline:0;-webkit-app-region:no-drag}
       .crm-planner-bucket.tk-zone{position:relative;inset:auto;z-index:auto;flex:0 0 226px;width:226px;height:min(500px,calc(100vh - 210px));min-height:342px;box-sizing:border-box;padding:12px 14px;overflow:hidden;transition:width .16s ease,flex-basis .16s ease,height .16s ease}
       .crm-planner-bucket.is-drop-target{border-color:rgba(137,188,255,.72)!important;box-shadow:inset 0 1px rgba(255,255,255,.24),0 0 34px rgba(71,139,231,.24)!important}.crm-planner-bucket .tk-zone-hd{flex:0 0 30px}.crm-planner-bucket .tk-zone-title{max-width:84px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crm-planner-bucket .tk-zone-hd-r{right:0;top:1px;gap:1px;pointer-events:auto;opacity:.72}.crm-planner-stage-progress{width:48px;margin-right:3px;justify-content:flex-end;gap:2px}.crm-planner-stage-progress .tk-seg,.crm-planner-card-progress .tk-seg{flex:1 1 0;min-width:2px;max-width:9px;height:4px;border-radius:2px;background:rgba(255,255,255,.2);box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}.crm-planner-stage-progress .tk-seg.g,.crm-planner-card-progress .tk-seg.g{background:#2fd16b}
@@ -927,12 +929,24 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const { shell, scroller, canvas, bar, thumb } = projectGalleryElements(scope); if (!shell || !scroller || !canvas || !bar || !thumb || shell.dataset.projectGalleryWired === "true") return;
     shell.dataset.projectGalleryWired = "true";
     scroller.addEventListener("scroll", () => updateProjectGalleryScroll(scope), { passive:true });
-    shell.addEventListener("wheel", (event) => {
-      if (event.defaultPrevented || event.target.closest?.("button,a,input,select,textarea,[contenteditable],.crm-menu-surface")) return;
-      const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY; if (!raw) return;
-      const pixels = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * scroller.clientWidth : raw;
-      if (scrollProjectGalleryBy(pixels, scope)) event.preventDefault();
-    }, { passive:false });
+    if (!projectGalleryWheelWired && root) {
+      projectGalleryWheelWired = true;
+      root.addEventListener("wheel", (event) => {
+        if (!active || camera?.level?.() !== 0 || event.defaultPrevented
+          || event.target.closest?.("button,a,input,select,textarea,[contenteditable],.crm-menu-surface")) return;
+        const live = projectGalleryElements();
+        const bounds = live.scroller?.getBoundingClientRect();
+        if (!live.scroller || !bounds
+          || event.clientX < bounds.left || event.clientX > bounds.right
+          || event.clientY < bounds.bottom || event.clientY > innerHeight) return;
+        const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        if (!raw) return;
+        const pixels = (event.deltaMode === 1 ? raw * 16
+          : event.deltaMode === 2 ? raw * live.scroller.clientWidth : raw)
+          * HORIZONTAL_WHEEL_MULTIPLIER;
+        if (scrollProjectGalleryBy(pixels)) event.preventDefault();
+      }, { passive:false });
+    }
     scroller.addEventListener("keydown", (event) => {
       if (event.target !== scroller) return;
       const amount = event.key === "ArrowLeft" ? -72 : event.key === "ArrowRight" ? 72 : event.key === "PageUp" ? -scroller.clientWidth * .82 : event.key === "PageDown" ? scroller.clientWidth * .82 : event.key === "Home" ? -scroller.scrollWidth : event.key === "End" ? scroller.scrollWidth : 0;
@@ -1235,7 +1249,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (!scroller || !bounds || event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.bottom || event.clientY > innerHeight) return;
       const maximum = Math.max(0, scroller.scrollWidth - scroller.clientWidth); if (maximum <= 1) return;
       const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY; if (!raw) return;
-      const pixels = event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * scroller.clientWidth : raw;
+      const pixels = (event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * scroller.clientWidth : raw)
+        * HORIZONTAL_WHEEL_MULTIPLIER;
       const next = Math.max(0, Math.min(maximum, scroller.scrollLeft + pixels)); if (Math.abs(next - scroller.scrollLeft) < .5) return;
       scroller.scrollLeft = next; updatePlannerScrollEdges(); event.preventDefault();
     }, { passive:false });

@@ -863,11 +863,36 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('.fc-year-btn').length === 2);
     await sleep(200);
     const calendarControls = await secondaryControlAudit();
-    await check('Calendar year controls inherit the complete secondary-control contract', () => {
-      const summary = assertSecondaryControlContract(calendarControls, bucketAcrylic, 3);
-      invariant(calendarControls.some(({ label }) => label === 'Previous year'), 'Calendar Previous year control was not found');
-      invariant(calendarControls.some(({ label }) => label === 'Next year'), 'Calendar Next year control was not found');
-      return summary;
+    await check('Calendar keeps its viewport-history controls on the shared secondary-control contract', () => {
+      return assertSecondaryControlContract(calendarControls, bucketAcrylic, 3);
+    });
+    await check('Calendar year navigation reuses the top-center date-face language', async () => {
+      const state = await page.evaluate(() => {
+        const strip = document.querySelector('[data-crm-theater="calendar"]:not([hidden]) .fc-year-strip');
+        const face = strip?.querySelector('.fc-year-face');
+        const reference = document.querySelector('.window-control-cluster .window-glass-control');
+        const rect = face?.getBoundingClientRect();
+        const style = face && getComputedStyle(face);
+        const referenceStyle = reference && getComputedStyle(reference);
+        const arrows = [...(strip?.querySelectorAll('.fc-year-btn') || [])];
+        return {
+          stripClass:String(strip?.className || ''),
+          stripBackground:strip ? getComputedStyle(strip).backgroundImage : '',
+          rect:rect ? { top:rect.top, width:rect.width, height:rect.height } : null,
+          matchingGlass:!!style && !!referenceStyle && ['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow']
+            .every((property) => style[property] === referenceStyle[property]),
+          arrows:arrows.map((arrow) => ({
+            windowGlass:arrow.classList.contains('window-glass-control'),
+            secondary:arrow.classList.contains('crm-secondary-control'),
+            opacity:Number(getComputedStyle(arrow).opacity),
+          })),
+        };
+      });
+      invariant(!state.stripClass.includes('crm-menu-surface') && state.stripBackground === 'none', 'Calendar retained the old dark year pill');
+      invariant(state.rect && state.rect.top >= 11 && state.rect.top <= 13 && Math.abs(state.rect.width - 46) <= .5 && Math.abs(state.rect.height - 46) <= .5, 'Calendar year face does not occupy the global date control geometry');
+      invariant(state.matchingGlass, 'Calendar year face differs from the top glass controls');
+      invariant(state.arrows.length === 2 && state.arrows.every((arrow) => arrow.windowGlass && !arrow.secondary && arrow.opacity === 0), 'Calendar year arrows are not quiet matching glass controls');
+      return state;
     });
     await check('Calendar year navigation has no overlapping global date tile or legacy company strip', async () => {
       const state = await page.evaluate(() => {

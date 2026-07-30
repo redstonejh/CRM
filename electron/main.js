@@ -1052,7 +1052,10 @@ function isPreviewSender(e) {
 // main derives and validates the exact region from the authenticated main
 // window before and after capture so this cannot become a generic screenshot
 // bridge.
-const CALENDAR_STRIP_CAPTURE_PADDING = 0;
+// Keep the top-control shadow in the compositor texture. The bound remains
+// deliberately small and main-process-owned, so this cannot become a generic
+// renderer-selected screenshot region.
+const CALENDAR_STRIP_CAPTURE_PADDING = 24;
 let calendarStripCapturePending = 0;
 let calendarStripCaptureLastError = '';
 let calendarStripCaptureWorkerCreatedCount = 0;
@@ -1064,8 +1067,8 @@ const calendarStripRectIsValid = (rect, contentWidth, contentHeight) => {
     && rect.width <= 240
     && rect.height >= 40
     && rect.height <= 90
-    && rect.y >= 48
-    && rect.y <= 104
+    && rect.y >= 8
+    && rect.y <= 24
     && rect.x >= 0
     && rect.x + rect.width <= contentWidth
     && rect.y + rect.height <= contentHeight
@@ -1090,7 +1093,7 @@ const calendarStripState = async (win, { requireVisible = false } = {}) => {
       : [];
     if (!request || strips.length !== 1) return null;
     const strip = strips[0];
-    const label = strip.querySelector(':scope > .fc-year-label');
+    const label = strip.querySelector(':scope > .fc-year-face > .fc-year-label');
     const rect = strip.getBoundingClientRect();
     const style = getComputedStyle(strip);
     const viewport = camera.expRect?.();

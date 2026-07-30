@@ -791,46 +791,6 @@ function compareScreenshotRegion(firstPath, secondPath, region, viewport) {
   };
 }
 
-function measureControlSymbols(imagePath, patches, viewport) {
-  const image = PNG.sync.read(fs.readFileSync(imagePath));
-  const scaleX = image.width / viewport.width;
-  const scaleY = image.height / viewport.height;
-  return patches.map((patch) => {
-    const left = Math.max(0, Math.floor(patch.left * scaleX));
-    const right = Math.min(image.width, Math.ceil(patch.right * scaleX));
-    const top = Math.max(0, Math.floor(patch.top * scaleY));
-    const bottom = Math.min(image.height, Math.ceil(patch.bottom * scaleY));
-    let brightPixels = 0;
-    let xTotal = 0;
-    let yTotal = 0;
-    for (let y = top; y < bottom; y += 1) {
-      for (let x = left; x < right; x += 1) {
-        const offset = (y * image.width + x) * 4;
-        const red = image.data[offset];
-        const green = image.data[offset + 1];
-        const blue = image.data[offset + 2];
-        const alpha = image.data[offset + 3];
-        const luminance = (red * .2126) + (green * .7152) + (blue * .0722);
-        if (alpha >= 192 && luminance >= 165) {
-          brightPixels += 1;
-          xTotal += x;
-          yTotal += y;
-        }
-      }
-    }
-    const centerX = ((left + right - 1) / 2);
-    const centerY = ((top + bottom - 1) / 2);
-    const centroidX = brightPixels ? xTotal / brightPixels : null;
-    const centroidY = brightPixels ? yTotal / brightPixels : null;
-    return {
-      brightPixels,
-      centroidOffset:brightPixels
-        ? Number(Math.hypot(centroidX - centerX, centroidY - centerY).toFixed(3))
-        : null,
-    };
-  });
-}
-
 async function captureTransitionVisuals(page) {
   const outputDir = CALENDAR_OUTPUT_DIR;
   fs.mkdirSync(outputDir, { recursive:true });
@@ -884,7 +844,7 @@ async function captureTransitionVisuals(page) {
       const stripShadow = stripTexture?.querySelector(':scope > .fc-year-strip-texture-shadow');
       const stripShadowRect = stripShadow?.getBoundingClientRect();
       const stripShadowStyle = stripShadow ? getComputedStyle(stripShadow) : null;
-      const stripControls = [...(strip?.querySelectorAll('.crm-secondary-control') || [])];
+      const stripControls = [...(strip?.querySelectorAll('.window-glass-control') || [])];
       const capturedStripRect = String(stripTexture?.dataset.stripRect || '')
         .split(',').map(Number);
       const keyFor = (node) => (
@@ -939,13 +899,19 @@ async function captureTransitionVisuals(page) {
         stripCaptureBounded:!!stripTextureRect
           && capturedStripRect.length === 4
           && capturedStripRect.every(Number.isFinite)
-          && stripTextureRect.width - capturedStripRect[2] <= 2.1
-          && stripTextureRect.height - capturedStripRect[3] <= 2.1
+          && stripTextureRect.width - capturedStripRect[2] >= -.1
+          && stripTextureRect.width - capturedStripRect[2] <= 48.1
+          && stripTextureRect.height - capturedStripRect[3] >= -.1
+          && stripTextureRect.height - capturedStripRect[3] <= 48.1
           && capturedStripRect[0] - stripTextureRect.left >= -.1
-          && capturedStripRect[0] - stripTextureRect.left <= 1.1
+          && capturedStripRect[0] - stripTextureRect.left <= 24.1
           && capturedStripRect[1] - stripTextureRect.top >= -.1
-          && capturedStripRect[1] - stripTextureRect.top <= 1.1,
-        stripOuterShadowExact:!!stripShadowRect
+          && capturedStripRect[1] - stripTextureRect.top <= 24.1
+          && stripTextureRect.right - (capturedStripRect[0] + capturedStripRect[2]) >= -.1
+          && stripTextureRect.right - (capturedStripRect[0] + capturedStripRect[2]) <= 24.1
+          && stripTextureRect.bottom - (capturedStripRect[1] + capturedStripRect[3]) >= -.1
+          && stripTextureRect.bottom - (capturedStripRect[1] + capturedStripRect[3]) <= 24.1,
+        stripShadowExact:!!stripShadowRect
           && capturedStripRect.length === 4
           && capturedStripRect.every((value, index) => (
             Number.isFinite(value)
@@ -954,7 +920,7 @@ async function captureTransitionVisuals(page) {
               stripShadowRect.width, stripShadowRect.height,
             ][index]) <= .1
           ))
-          && stripShadowStyle?.boxShadow !== 'none',
+          && stripShadow?.dataset.stripOuterShadow === stripShadowStyle?.boxShadow,
         stripCompositorTexture:stripTexture?.dataset.snapshotReady === 'true'
           && stripTexture.dataset.snapshotFormat === 'png'
           && stripTexture.dataset.snapshotForcedOpaque === 'true'
@@ -1043,7 +1009,7 @@ async function captureTransitionVisuals(page) {
       const stripTexture = surface.querySelector(':scope > .fc-year-strip-texture.is-active');
       const stripStyle = strip ? getComputedStyle(strip) : null;
       const stripTextureStyle = stripTexture ? getComputedStyle(stripTexture) : null;
-      const stripControls = [...(strip?.querySelectorAll('.crm-secondary-control') || [])];
+      const stripControls = [...(strip?.querySelectorAll('.window-glass-control') || [])];
       const keyFor = (node) => (
         node?.dataset?.month
           ? `month:${node.dataset.month}`
@@ -1155,18 +1121,10 @@ async function captureTransitionVisuals(page) {
     const strip = document.querySelector('.fc-level > .fc-year-strip');
     window.__calendarYearStripSource = strip;
     const stripRect = strip?.getBoundingClientRect();
-    const patches = [...(strip?.querySelectorAll('.fc-year-btn') || [])].map((button) => {
-      const rect = button.getBoundingClientRect();
-      const half = 11;
-      const centerX = rect.left + (rect.width / 2);
-      const centerY = rect.top + (rect.height / 2);
-      return {
-        left:centerX - half,
-        right:centerX + half,
-        top:centerY - half,
-        bottom:centerY + half,
-      };
-    });
+    const face = strip?.querySelector('.fc-year-face');
+    const faceRect = face?.getBoundingClientRect();
+    const arrows = [...(strip?.querySelectorAll('.fc-year-btn') || [])];
+    const captureMargin = 24;
     return {
       viewport:{ width:innerWidth, height:innerHeight },
       strip:stripRect ? {
@@ -1175,7 +1133,25 @@ async function captureTransitionVisuals(page) {
         top:stripRect.top,
         bottom:stripRect.bottom,
       } : null,
-      patches,
+      capture:stripRect ? {
+        left:Math.max(0, stripRect.left - captureMargin),
+        right:Math.min(innerWidth, stripRect.right + captureMargin),
+        top:Math.max(0, stripRect.top - captureMargin),
+        bottom:Math.min(innerHeight, stripRect.bottom + captureMargin),
+      } : null,
+      design:{
+        menuSurface:strip?.classList.contains('crm-menu-surface') === true,
+        faceGlass:face?.classList.contains('window-glass-control') === true,
+        faceRect:faceRect
+          ? [faceRect.x, faceRect.y, faceRect.width, faceRect.height]
+            .map((value) => Number(value.toFixed(2)))
+          : null,
+        arrows:arrows.map((arrow) => ({
+          glass:arrow.classList.contains('window-glass-control'),
+          secondary:arrow.classList.contains('crm-secondary-control'),
+          opacity:Number(getComputedStyle(arrow).opacity),
+        })),
+      },
     };
   });
   const warmMonth = async () => {
@@ -1332,33 +1308,16 @@ async function captureTransitionVisuals(page) {
     rootEntryMaterialDiff:compareMaterialBands(paths['year-source'], paths['month-in-midpoint']),
     rootReturnMaterialDiff:compareMaterialBands(paths['year-returned'], paths['month-out-midpoint']),
     dayOutMaterialDiff:compareMaterialBands(paths['month-settled'], paths['day-out-midpoint']),
-    topStripSymbols:{
-      yearSource:measureControlSymbols(
-        paths['year-source'],
-        rootControlGeometry.patches,
-        rootControlGeometry.viewport,
-      ),
-      monthIn:measureControlSymbols(
-        paths['month-in-midpoint'],
-        rootControlGeometry.patches,
-        rootControlGeometry.viewport,
-      ),
-      monthOut:measureControlSymbols(
-        paths['month-out-midpoint'],
-        rootControlGeometry.patches,
-        rootControlGeometry.viewport,
-      ),
-    },
     topStripEntryDiff:compareScreenshotRegion(
       paths['year-source'],
       paths['month-in-midpoint'],
-      rootControlGeometry.strip,
+      rootControlGeometry.capture,
       rootControlGeometry.viewport,
     ),
     topStripReturnDiff:compareScreenshotRegion(
       paths['year-returned'],
       paths['month-out-midpoint'],
-      rootControlGeometry.strip,
+      rootControlGeometry.capture,
       rootControlGeometry.viewport,
     ),
   };
@@ -2415,7 +2374,7 @@ async function main() {
           || structure.stripCompositorTexture !== true
           || structure.stripNativePaintSuspended !== true
           || structure.stripCaptureBounded !== true
-          || structure.stripOuterShadowExact !== true
+          || structure.stripShadowExact !== true
           || structure.stripInteractionLocked !== true
           || Math.abs(Number(structure.stripOpacity) - 1) > .01
           || !geometryExact) {
@@ -2510,17 +2469,22 @@ async function main() {
         );
       }
     });
-    Object.entries(evidence.visuals.topStripSymbols).forEach(([name, symbols]) => {
-      if (symbols.length !== 2
-        || symbols.some((symbol) => symbol.brightPixels < 10
-          || symbol.centroidOffset == null
-          || symbol.centroidOffset > 4)) {
-        visualFailures.push(
-          `${name} did not retain two bright, optically centered year-arrow glyphs `
-          + `(${JSON.stringify(symbols)})`,
-        );
-      }
-    });
+    const rootDesign = evidence.visuals.rootControlGeometry?.design;
+    if (rootDesign?.menuSurface !== false
+      || rootDesign?.faceGlass !== true
+      || !Array.isArray(rootDesign?.faceRect)
+      || Math.abs(rootDesign.faceRect[1] - 12) > .5
+      || Math.abs(rootDesign.faceRect[2] - 46) > .5
+      || Math.abs(rootDesign.faceRect[3] - 46) > .5
+      || rootDesign?.arrows?.length !== 2
+      || rootDesign.arrows.some((arrow) => (
+        arrow.glass !== true || arrow.secondary !== false || arrow.opacity !== 0
+      ))) {
+      visualFailures.push(
+        `root year control did not retain the quiet top-date design `
+        + `(${JSON.stringify(rootDesign)})`,
+      );
+    }
     ['topStripEntryDiff', 'topStripReturnDiff'].forEach((name) => {
       const comparison = evidence.visuals[name];
       if (comparison.ratio > .01 || comparison.meanChannelDelta > 2) {

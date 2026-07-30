@@ -624,10 +624,9 @@
     document.head.appendChild(style);
   };
 
-  const fanControlSvg = (dir) => {
-    const mirror = dir === "left" ? ' transform="translate(24 0) scale(-1 1)"' : "";
-    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g${mirror}><path class="tk-fan-back" d="M6.5 6h7.2a2 2 0 0 1 2 2v7.5"/><rect x="4" y="8" width="11.5" height="10" rx="2.2"/><path class="tk-fan-motion" d="M15.2 13h4.7m-1.8-1.8 1.8 1.8-1.8 1.8"/></g></svg>`;
-  };
+  const fanControlSvg = () => (
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="tk-fan-card tk-fan-card-back" d="m8 6 7.1-1.45a2 2 0 0 1 2.36 1.56l2.05 10.15"/><path class="tk-fan-card tk-fan-card-middle" d="m5.85 8.15 8.18-2.08a2 2 0 0 1 2.42 1.45l2.42 9.54"/><rect class="tk-fan-card tk-fan-card-front" x="4" y="8.25" width="12.6" height="11.5" rx="2.1"/></svg>`
+  );
   const PLUS_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
   // Recycle symbol (three chasing arrows) — the trash stack is a recycle bin you can dig back through.
   const RECYCLE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/></svg>`;
@@ -2168,6 +2167,22 @@
     const colW = (r.width - gap * (cols - 1)) / cols;
     return { left: r.left, colW, gap, cols };
   };
+  const centerZoneScrollbar = (stage) => {
+    const body = zoneBody[stage], panel = body?.parentElement;
+    const scrollbar = body?.querySelector(".tk-zsb");
+    if (!body || !panel || !scrollbar) return;
+    const bodyRect = body.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const cardRect = body.querySelector(".tk-zcard")?.getBoundingClientRect();
+    const fallbackCardWidth = Math.min(CARD_W, Math.max(0, bodyRect.width - 4));
+    const cardRight = cardRect?.width
+      ? cardRect.right
+      : panelRect.left + panelRect.width / 2 + fallbackCardWidth / 2;
+    const scrollbarWidth = scrollbar.offsetWidth || 8;
+    const scrollbarCenter = (Math.min(cardRight, panelRect.right) + panelRect.right) / 2;
+    const right = bodyRect.right - (scrollbarCenter + scrollbarWidth / 2);
+    scrollbar.style.right = `${Math.round(right * 10) / 10}px`;
+  };
   // Compact buckets — each just large enough for one full ticket card — spread across the
   // dashboard grid's extent with equal space between them. Height follows the ticket's own
   // proportions instead of stretching to fill the screen.
@@ -2224,10 +2239,7 @@
           headerBars.style.translate = "";
         }
       }
-      // Keep the scrollbar attached to the bucket's right edge. It must not
-      // drift with the width of whichever ticket happens to be visible.
-      const sb = zoneBody[s.key].querySelector(".tk-zsb");
-      if (sb) sb.style.right = "4px";
+      centerZoneScrollbar(s.key);
       nextLeft += width + gap;
     });
     // Recompute every bucket's scroll edges AND re-clamp its scroll for the new geometry — the deck does

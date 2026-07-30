@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-07-28T19:25:26.191Z",
+  "generatedAt": "2026-07-30T19:19:30.064Z",
   "viewport": {
     "width": 1600,
     "height": 1000
   },
-  "passed": 28,
+  "passed": 29,
   "failed": 0,
   "pageErrors": [],
   "consoleErrors": [
@@ -334,18 +334,42 @@
       }
     },
     {
-      "name": "Calendar year controls inherit the complete secondary-control contract",
+      "name": "Calendar keeps its viewport-history controls on the shared secondary-control contract",
       "ok": true,
       "detail": {
-        "controls": 5,
+        "controls": 3,
         "labels": [
-          "Previous year",
-          "Next year",
           "Back",
           "Return Home",
           "Forward"
         ],
         "iconSize": "18px"
+      }
+    },
+    {
+      "name": "Calendar year navigation reuses the top-center date-face language",
+      "ok": true,
+      "detail": {
+        "stripClass": "fc-year-strip",
+        "stripBackground": "none",
+        "rect": {
+          "top": 12,
+          "width": 46,
+          "height": 46
+        },
+        "matchingGlass": true,
+        "arrows": [
+          {
+            "windowGlass": true,
+            "secondary": false,
+            "opacity": 0
+          },
+          {
+            "windowGlass": true,
+            "secondary": false,
+            "opacity": 0
+          }
+        ]
       }
     },
     {

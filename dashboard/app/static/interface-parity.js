@@ -25,7 +25,6 @@
     ".crm-overview-pocket",
     ".record-world",
     ".crm-person-history",
-    ".fc-year-strip",
     ".fc-bucket",
     ".crm-company-account",
     ".crm-company-bucket",

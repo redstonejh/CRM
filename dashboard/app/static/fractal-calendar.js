@@ -11,7 +11,7 @@
   const ENDPOINT_RELEASE_MS = 64;
   const EXP_M = 48;
   const EXP_TOP = 132;
-  const YEAR_STRIP_TOP = 66;
+  const YEAR_STRIP_TOP = 12;
   const RADIUS_F = 16 / 245;
   const MONTHS = ["January", "February", "March", "April", "May", "June",
                   "July", "August", "September", "October", "November", "December"];
@@ -113,19 +113,35 @@
     style.textContent = `
       .fc-surface { position: fixed; inset: 0; z-index: 800; pointer-events: none; overflow: hidden; }
       .fc-surface[hidden] { display: none; }
+      body[data-crm-module="calendar"] .app-window-drag-region { z-index: 790; }
       .fc-level { position: absolute; inset: 0; transform-origin: 0 0; }
       .fc-grid { position: absolute; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
         grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); gap: 14px; }
       .fc-frost { position: absolute; inset: 0; pointer-events: none;
         -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%); }
-      .fc-year-strip { position: fixed; left: 50%; top: 58px; z-index: 11; transform: translateX(-50%);
-        display: inline-flex; align-items: center; gap: 8px; pointer-events: auto; -webkit-app-region: no-drag;
-        padding: 4px 7px; border-radius: 999px; color: #fff;
-        background: linear-gradient(180deg, rgba(22,26,36,0.62), rgba(12,16,24,0.55));
-        border: 1px solid rgba(255,255,255,0.18);
-        -webkit-backdrop-filter: blur(22px) saturate(135%); backdrop-filter: blur(22px) saturate(135%);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 12px 28px rgba(0,0,0,0.28); }
-      .fc-year-label { min-width: 4.5ch; text-align: center; font-size: var(--crm-type-body,12px); font-weight: 800; letter-spacing: .02em; }
+      .fc-year-strip { position: fixed; left: 50%; top: 12px; z-index: 11; transform: translateX(-50%);
+        display: inline-flex; align-items: center; gap: 7px; pointer-events: auto; -webkit-app-region: no-drag;
+        padding: 0; color: rgba(245,249,255,.84); background: transparent; border: 0;
+        -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+      .fc-year-strip .fc-year-btn,
+      .fc-year-strip .fc-year-face { flex: 0 0 46px; width: 46px; height: 46px; min-width: 46px; min-height: 46px; padding: 0; }
+      .fc-year-strip .fc-year-btn::before,
+      .fc-year-strip .fc-year-face::before { display: none; }
+      .fc-year-strip .fc-year-btn { opacity: 0; pointer-events: none; transform: scale(.82);
+        transition: opacity .16s ease, transform .2s cubic-bezier(.19,1,.22,1), color .18s ease, box-shadow .18s ease; }
+      .fc-year-strip:hover .fc-year-btn,
+      .fc-year-strip:focus-within .fc-year-btn { opacity: 1; pointer-events: auto; transform: none; }
+      .fc-year-strip .fc-year-btn svg { display: block; width: 18px; height: 18px; }
+      .fc-year-face { appearance: none; box-sizing: border-box; display: grid; grid-template-rows: 9px 1fr;
+        place-items: center; padding: 6px 0 3px !important; font-family: "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+        font-variant-numeric: tabular-nums; -webkit-app-region: no-drag; }
+      .fc-year-kicker { align-self: end; text-transform: uppercase; font-size: 7px; line-height: 1;
+        font-weight: 700; letter-spacing: .08em; opacity: .62; }
+      .fc-year-label { align-self: start; min-width: 0; text-align: center; font-size: 14px;
+        line-height: 1; font-weight: 650; letter-spacing: -.035em; }
+      @media (hover:none) {
+        .fc-year-strip .fc-year-btn { opacity: .72; pointer-events: auto; transform: none; }
+      }
       .fc-bucket { position: relative; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
         overflow: hidden; color: #fff; border: 0; container-type: size;
         border-radius: calc(var(--mon-r, 16px) * var(--kx, 1)) / calc(var(--mon-r, 16px) * var(--ky, 1));
@@ -356,7 +372,7 @@
          acrylic, icons and wallpaper sample as one cheap texture, avoiding six
          simultaneous live backdrop owners at 100 Hz. */
       .fc-year-strip.fc-year-strip-portal,
-      .fc-year-strip.fc-year-strip-portal .crm-secondary-control {
+      .fc-year-strip.fc-year-strip-portal .window-glass-control {
         visibility: hidden !important; pointer-events: none !important;
         filter: none !important;
         -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
@@ -445,10 +461,10 @@
   const buildYear = () => {
     const el = document.createElement("div");
     el.className = "fc-level";
-    el.innerHTML = `<div class="fc-year-strip crm-menu-surface">
-      <button type="button" class="fc-year-btn crm-secondary-control" data-year-step="-1" aria-label="Previous year"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6-6 6 6 6"></path></svg></button>
-      <span class="fc-year-label">${currentYear}</span>
-      <button type="button" class="fc-year-btn crm-secondary-control" data-year-step="1" aria-label="Next year"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"></path></svg></button>
+    el.innerHTML = `<div class="fc-year-strip">
+      <button type="button" class="fc-year-btn window-glass-control" data-year-step="-1" aria-label="Previous year"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6-6 6 6 6"></path></svg></button>
+      <button type="button" class="fc-year-face window-glass-control" data-year-current aria-label="Return to the current year"><span class="fc-year-kicker" aria-hidden="true">Year</span><span class="fc-year-label">${currentYear}</span></button>
+      <button type="button" class="fc-year-btn window-glass-control" data-year-step="1" aria-label="Next year"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 6 6 6-6 6"></path></svg></button>
     </div>`;
     const frost = document.createElement("div");
     frost.className = "fc-frost";
@@ -633,6 +649,12 @@
           && destination.querySelector?.(':scope > [data-fc-snapshot-pseudo="before"]')) {
           controlPseudoCount += 1;
         }
+      }
+      // Calendar arrows now carry their glyph as ordinary inline SVG so they
+      // match the global date control instead of the secondary acrylic icon
+      // system. Count those concrete glyphs in the same readiness slot.
+      if (source.matches?.(".fc-year-btn") && source.querySelector?.(":scope > svg")) {
+        controlPseudoCount += 1;
       }
     });
     const hiddenIndex = hiddenSource ? sourceNodes.indexOf(hiddenSource) : -1;
@@ -2270,7 +2292,7 @@
   });
   let deferredNavigationSequence = 0;
   const rawTargetFromEvent = (event, context) => {
-    if (event.target?.closest?.(".fc-year-btn")) return null;
+    if (event.target?.closest?.(".fc-year-btn,.fc-year-face")) return null;
     const selector = context.level === 0 ? ".fc-month" : ".fc-day";
     const target = event.target?.closest?.(selector);
     const live = context.level === 0
@@ -2590,13 +2612,14 @@
 
   const wireYearControls = () => {
     document.addEventListener("click", (event) => {
-      const button = event.target?.closest?.(".fc-year-btn");
+      const button = event.target?.closest?.(".fc-year-btn,.fc-year-face");
       const surface = camera?.surface?.();
       if (!button || !surface?.contains(button)) return;
       event.preventDefault();
       event.stopPropagation();
       if (camera?.isTransitioning?.() || surface.classList.contains("fc-camera-moving")) return;
-      shiftYear(Number(button.dataset.yearStep) || 0);
+      if (button.matches(".fc-year-face")) setYear(crmNow().getFullYear());
+      else shiftYear(Number(button.dataset.yearStep) || 0);
     }, true);
   };
 

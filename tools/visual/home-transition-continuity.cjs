@@ -388,11 +388,17 @@ function validateCadence(probe) {
       // Chromium exposes this covered interval on a 0.1 ms clock while its
       // component waits land on native 10 ms frames. Round away representational
       // noise; visible cadence retains the exact max/dropped-frame gates above.
-      // The endpoint stays visually covered while the destination acrylic is
-      // deliberately rasterized for eight native paints, then released over a
-      // 120 ms crossfade. Budget that protected work without weakening the
-      // visible-motion cadence gates above.
-      || Math.round(maintenanceMs) > 520
+      // The seated tile now spends 180 ms blending its double-acrylic source
+      // into the complete single-acrylic endpoint. The endpoint then remains
+      // covered while destination acrylic is rasterized for eight native
+      // paints and released over a 120 ms crossfade. Budget that deliberate,
+      // visually protected work without weakening the cadence gates above.
+      || Math.round(maintenanceMs) > 740
+      || Number(probe.transitTiming.endpointMaterialBlendDuration) !== 180
+      || Number(probe.transitTiming.endpointMaterialBlendMs) < 165
+      || Number(probe.transitTiming.endpointMaterialBlendMs) > 230
+      || probe.transitTiming.endpointAcrylicRetired !== true
+      || probe.transitTiming.endpointAcrylicRetiredAfterBlend !== true
       || probe.transitTiming.sourceRetiredBeforeRelease !== true
       || probe.transitTiming.acrylicUnderpaintExposed !== true
       || probe.transitTiming.acrylicStable !== true

@@ -8,6 +8,9 @@
 (() => {
   const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
+  const ENDPOINT_BRIDGE_Z = "4501"; // above the moving Home surface, still below native chrome
+  const ENDPOINT_MATERIAL_BLEND_MS = 180;
+  const ENDPOINT_MATERIAL_BLEND_EASE = "cubic-bezier(.4, 0, .2, 1)";
   const STATIC_CROSSFADE_MS = 120;
   const ENDPOINT_UNOCCLUDE_OPACITY = .99;
   const ENDPOINT_PARKED_OPACITY = .001;
@@ -94,7 +97,7 @@
          its real inactive z-order while these unchanged pixels continue to
          cover the destination's backdrop-filter warm-up. */
       .crm-home-endpoint-bridge{
-        position:fixed;inset:0;z-index:${TRANSIT_Z};display:block;overflow:hidden;
+        position:fixed;inset:0;z-index:${ENDPOINT_BRIDGE_Z};display:block;overflow:hidden;
         width:100vw;height:100vh;pointer-events:none;opacity:${ENDPOINT_PARKED_OPACITY};
         background:var(--page-background);transform:translateZ(0);
         backface-visibility:hidden;will-change:opacity}
@@ -573,7 +576,10 @@
       bridgeRaster = raster.cloneNode(true);
       bridgeRaster.querySelectorAll?.("[id]")?.forEach?.((node) => node.removeAttribute("id"));
       bridgeRaster.removeAttribute?.("id");
+      bridgeRaster.removeAttribute?.("hidden");
       bridgeRaster.classList.add("crm-home-endpoint-bridge-raster");
+      bridgeRaster.style.visibility = "visible";
+      bridgeRaster.style.opacity = "1";
       bridge.replaceChildren(bridgeRaster);
     }
     if (!bridgeRaster) return false;
@@ -581,18 +587,90 @@
     stage.coverHost = bridge;
     stage.coverRaster = bridgeRaster;
     // The bridge and its raster node were already compositor residents at rest.
-    // Load a new decoded texture while parked, close two paints, and only then
-    // let it take ownership over the still-identical expanded Home endpoint.
+    // Load the new decoded texture while parked and close two paints. A separate
+    // endpoint blend gives it ownership gradually; never switch it to opaque
+    // in the same paint that removes the selected tile's outer acrylic.
     await paint(2);
     if (stage.sequence !== activeDive?.sequence || !bridge.isConnected || !bridgeRaster.isConnected) return false;
-    bridge.style.opacity = "1";
-    await paint(2);
     return stage.sequence === activeDive?.sequence
       && bridge.isConnected
       && bridgeRaster.isConnected;
   };
 
+  const blendEndpointMaterial = async (stage) => {
+    const bridge = stage?.coverBridge;
+    if (!bridge?.isConnected || stage.sequence !== activeDive?.sequence) return false;
+    bridge.getAnimations?.().forEach((animation) => animation.cancel());
+    bridge.style.transition = "none";
+    bridge.style.opacity = String(ENDPOINT_PARKED_OPACITY);
+    stage.endpointBlendStartedAt = performance.now();
+    stage.phase = "endpoint-material-blend";
+    const animation = bridge.animate(
+      [{ opacity:ENDPOINT_PARKED_OPACITY }, { opacity:1 }],
+      {
+        duration:ENDPOINT_MATERIAL_BLEND_MS,
+        easing:ENDPOINT_MATERIAL_BLEND_EASE,
+        fill:"both",
+      },
+    );
+    stage.endpointBlendAnimation = animation;
+    document.dispatchEvent(new CustomEvent("crm:desk-material-blend", {
+      detail:{
+        phase:"start",
+        key:stage.key,
+        startedAt:stage.endpointBlendStartedAt,
+        duration:ENDPOINT_MATERIAL_BLEND_MS,
+      },
+    }));
+
+    // Visual tests can pause the already-composited fade at its midpoint. In
+    // production this branch adds no sampling work to the animation.
+    if (typeof window.__crmDeskTransitProbe?.hold === "function") {
+      await new Promise((resolve) => {
+        const sample = async () => {
+          const current = Number(animation.currentTime) || 0;
+          if (current >= ENDPOINT_MATERIAL_BLEND_MS / 2 || animation.playState === "finished") {
+            animation.pause();
+            stage.phase = "endpoint-material-blend-mid";
+            await holdProbePhase(stage, "endpoint-material-blend-mid");
+            stage.phase = "endpoint-material-blend";
+            animation.play();
+            resolve();
+            return;
+          }
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+    }
+
+    try { await animation.finished; } catch {}
+    if (stage.sequence !== activeDive?.sequence || stage.endpointBlendAnimation !== animation) return false;
+    bridge.style.opacity = "1";
+    animation.cancel();
+    stage.endpointBlendAnimation = null;
+    stage.endpointBlendFinishedAt = performance.now();
+    stage.phase = "endpoint-material-blended";
+    document.dispatchEvent(new CustomEvent("crm:desk-material-blend", {
+      detail:{
+        phase:"end",
+        key:stage.key,
+        startedAt:stage.endpointBlendStartedAt,
+        endedAt:stage.endpointBlendFinishedAt,
+        duration:ENDPOINT_MATERIAL_BLEND_MS,
+      },
+    }));
+    // Two fully opaque paints make the bridge authoritative before any source
+    // acrylic or camera child is changed beneath it.
+    await paint(2);
+    return stage.sequence === activeDive?.sequence
+      && bridge.isConnected
+      && Number(getComputedStyle(bridge).opacity) >= .999;
+  };
+
   const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
+    stage?.endpointBlendAnimation?.cancel?.();
+    if (stage) stage.endpointBlendAnimation = null;
     document.documentElement.classList.remove(
       "crm-transit-materializing",
       "crm-transit-revealing",
@@ -629,6 +707,7 @@
     // beneath it, so cold sessions receive an explicit opaque backdrop cover.
     const imageRaster = exact?.complete && exact.naturalWidth > 0 ? exact : null;
     const fallback = imageRaster ? null : buildFallbackCover(host);
+    if (fallback) fallback.style.visibility = "hidden";
     const raster = imageRaster || fallback;
     const coverMode = imageRaster ? "exact" : "fallback";
     const coverHost = host;
@@ -646,28 +725,30 @@
     if (stage.sequence !== activeDive?.sequence) return false;
     coverHost.style.transition = "none";
     coverHost.style.opacity = "1";
-    cam?.surface?.()?.setAttribute?.("data-crm-transit-cover", coverMode);
     document.documentElement.classList.add("crm-transit-endpoint-covered");
-    lid.dataset.crmEndpointCover = coverMode;
-    lid.classList.add("crm-home-endpoint-cover");
-    stage.phase = "seating-cover";
-    // Prefer the decoded exact room capture. Until one exists, the duplicated
-    // unchanged backdrop plus neutral acrylic owns every endpoint pixel.
-    await paint(2);
-    if (stage.sequence !== activeDive?.sequence) return false;
-    // Transfer the already-decoded endpoint into an independent screen-space
-    // bridge before changing the source camera's layer ownership. The clone
-    // shares the decoded image resource; two covered paints seat its compositor
-    // surface without changing a visible pixel.
+    stage.phase = "preparing-endpoint-material";
+    // Decode and seat the final room while the expanded tile still owns the
+    // viewport. The bridge begins almost transparent, then blends the complete
+    // single-acrylic room over the complete double-acrylic source. That makes
+    // the outer tile coat recede smoothly without ever weakening either real
+    // acrylic composition into a translucent approximation.
     if (!await buildEndpointBridge(stage, raster)) return false;
     if (stage.sequence !== activeDive?.sequence) return false;
+    if (!await blendEndpointMaterial(stage)) return false;
+    if (stage.sequence !== activeDive?.sequence) return false;
+
+    // Only after the independent bridge has held two opaque paints may the
+    // camera's internal exact raster and retirement state change beneath it.
+    cam?.surface?.()?.setAttribute?.("data-crm-transit-cover", coverMode);
+    lid.dataset.crmEndpointCover = coverMode;
+    lid.classList.add("crm-home-endpoint-cover");
     stage.coverStart = inspectRasterCover(stage);
     stage.coverSeatedAt = performance.now();
     stage.coverInvariant = stage.coverStart.ready;
     stage.phase = "covered";
     await holdProbePhase(stage, "covered");
-    // The two seating paints above already close a clean raster-owned refresh
-    // interval before live-room ownership work begins.
+    // The blend's final opaque paints already close a clean raster-owned
+    // refresh interval before live-room ownership work begins.
     if (stage.sequence !== activeDive?.sequence) return false;
     // The camera's full-viewport acrylic stayed fully composited until this
     // independent raster had owned completed opaque paints. Retire it only
@@ -1147,6 +1228,12 @@
       coveredSwapMs:(stage.revealedAt || doneAt) - (stage.liveReadyAt || stage.readyAt || doneAt),
       crossfadeMs:(stage.swappedAt || doneAt) - (stage.releaseAt || doneAt),
       crossfadeDuration:STATIC_CROSSFADE_MS,
+      endpointMaterialBlendMs:(stage.endpointBlendFinishedAt || doneAt)
+        - (stage.endpointBlendStartedAt || stage.endpointBlendFinishedAt || doneAt),
+      endpointMaterialBlendDuration:ENDPOINT_MATERIAL_BLEND_MS,
+      endpointAcrylicRetired:stage.endpointAcrylicRetired === true,
+      endpointAcrylicRetiredAfterBlend:stage.endpointAcrylicRetired === true
+        && Number(stage.endpointAcrylicRetiredAt) >= Number(stage.endpointBlendFinishedAt),
       commitMs:(stage.committedAt || stage.commitAt || doneAt) - (stage.commitAt || stage.startedAt),
       readyMs:(stage.readyAt || doneAt) - stage.startedAt,
       frameWaitMs:Math.max(0, (stage.releaseAt || doneAt) - (stage.readyAt || doneAt)),
@@ -1441,6 +1528,9 @@
       liveReady:activeDive.liveReady === true,
       motionEndedAt:activeDive.motionEndedAt || 0,
       maintenanceStartedAt:activeDive.maintenanceStartedAt || 0,
+      endpointBlendStartedAt:activeDive.endpointBlendStartedAt || 0,
+      endpointBlendFinishedAt:activeDive.endpointBlendFinishedAt || 0,
+      endpointBlendDuration:ENDPOINT_MATERIAL_BLEND_MS,
       coverSeatedAt:activeDive.coverSeatedAt || 0,
       readyAt:activeDive.readyAt || 0,
       swappedAt:activeDive.swappedAt || 0,

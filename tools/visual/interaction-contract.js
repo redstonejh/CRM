@@ -284,7 +284,7 @@ async function main() {
     window.__homeEndpointAcrylicGate = {};
     window.__crmDeskTransitProbe = {
       hold(phase, detail) {
-        if (phase !== 'covered') return undefined;
+        if (!['endpoint-material-blend-mid', 'covered'].includes(phase)) return undefined;
         return new Promise((resolve) => {
           window.__homeEndpointAcrylicGate = { phase, detail, resolve };
         });
@@ -395,6 +395,69 @@ async function main() {
     return getComputedStyle(strip).webkitAppRegion === 'drag'
       && getComputedStyle(lid).webkitAppRegion !== 'no-drag'
       && exclusions.length === 0;
+  });
+  await page.waitForFunction(() => {
+    const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
+    const opacity = bridge ? Number(getComputedStyle(bridge).opacity) : 0;
+    return window.__homeEndpointAcrylicGate?.phase === 'endpoint-material-blend-mid'
+      && opacity > .08 && opacity < .98;
+  }, { timeout:5000 });
+  await check('The seated tile surface dissolves gradually into one complete destination acrylic composition', () => {
+    const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+    const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
+    const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
+    const surface = expander?.closest('.crm-home-surface');
+    const exact = expander?.querySelector('.crm-home-preview-exact');
+    const fallback = expander?.querySelector('.crm-home-endpoint-fallback');
+    const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
+    const rect = expander?.getBoundingClientRect();
+    const acrylicStyle = acrylic && getComputedStyle(acrylic);
+    const frameStyle = frame && getComputedStyle(frame);
+    const bridgeStyle = bridge && getComputedStyle(bridge);
+    const animation = bridge?.getAnimations?.().find((candidate) =>
+      (candidate.effect?.getKeyframes?.() || []).some((keyframe) => keyframe.opacity != null));
+    const keyframes = animation?.effect?.getKeyframes?.() || [];
+    const duration = Number(animation?.effect?.getComputedTiming?.().duration);
+    const bridgeOpacity = Number(bridgeStyle?.opacity);
+    const bridgeZ = Number(bridgeStyle?.zIndex);
+    const surfaceZ = Number(surface ? getComputedStyle(surface).zIndex : NaN);
+    const material = acrylicStyle?.webkitBackdropFilter || acrylicStyle?.backdropFilter || '';
+    const sourceRasterParked = exact
+      ? getComputedStyle(exact).display === 'none'
+      : !!fallback && getComputedStyle(fallback).visibility === 'hidden';
+    return {
+      ok:!!rect
+        && Math.abs(rect.left) <= .5 && Math.abs(rect.top) <= .5
+        && Math.abs(rect.width - innerWidth) <= .5 && Math.abs(rect.height - innerHeight) <= .5
+        && window.crmDeskTransit?.motionState?.().active === false
+        && window.crmHome?.acrylicState?.().phase === 'endpoint-held'
+        && Number(acrylicStyle?.opacity) > .99 && Number(frameStyle?.opacity) > .99
+        && material.includes('blur(') && material.includes('saturate(')
+        && bridgeOpacity > .08 && bridgeOpacity < .98
+        && bridgeZ > surfaceZ
+        && duration === 180
+        && Number(keyframes[0]?.opacity) <= .001
+        && Number(keyframes.at(-1)?.opacity) === 1
+        && sourceRasterParked,
+      detail:JSON.stringify({
+        rect:[rect?.x,rect?.y,rect?.width,rect?.height],
+        bridgeOpacity,
+        zOrder:[surfaceZ,bridgeZ],
+        duration,
+        keyframes:keyframes.map((keyframe) => ({ offset:keyframe.computedOffset, opacity:keyframe.opacity })),
+        acrylicOpacity:Number(acrylicStyle?.opacity),
+        frameOpacity:Number(frameStyle?.opacity),
+        material,
+        sourceRaster:exact
+          ? { mode:'exact', display:getComputedStyle(exact).display }
+          : { mode:'fallback', visibility:fallback ? getComputedStyle(fallback).visibility : '' },
+      }),
+    };
+  });
+  await page.evaluate(() => {
+    const gate = window.__homeEndpointAcrylicGate;
+    window.__homeEndpointAcrylicGate = {};
+    gate?.resolve?.();
   });
   await page.waitForFunction(() => {
     const lens = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');

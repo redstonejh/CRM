@@ -305,6 +305,13 @@ async function takeProbe(page) {
     const releaseOpacity = probe.acrylicRelease.map((sample) => sample.opacity).filter(Number.isFinite);
     const releaseIntermediate = releaseOpacity.filter((value) => value > .05 && value < .95);
     const releaseSteps = releaseOpacity.slice(1).map((value, index) => value - releaseOpacity[index]);
+    const releaseMaterialFrames = probe.acrylicRelease.filter((sample) =>
+      sample.backdrop.includes('blur(')
+      && sample.backdrop.includes('saturate(')
+      && sample.clip.startsWith('inset(')
+      && Number.isFinite(sample.frameOpacity));
+    const releaseOwnerAlignment = Math.max(0, ...probe.acrylicRelease.map((sample) =>
+      Math.abs(Number(sample.opacity) - Number(sample.frameOpacity))).filter(Number.isFinite));
     const endpointOpacity = probe.acrylicEndpointHold.map((sample) => sample.opacity).filter(Number.isFinite);
     const endpointMaterialFrames = probe.acrylicEndpointHold.filter((sample) =>
       sample.opacity >= .99
@@ -340,6 +347,8 @@ async function takeProbe(page) {
       releaseIntermediateFrames:releaseIntermediate.length,
       releaseMaxOpacityStep:Math.max(0, ...releaseSteps.map(Math.abs)),
       releaseMonotonic:releaseSteps.every((step) => step <= .035),
+      releaseMaterialFrames:releaseMaterialFrames.length,
+      releaseOwnerAlignment,
       endpointHoldFrames:endpointOpacity.length,
       endpointHoldMinOpacity:Math.min(1, ...endpointOpacity),
       endpointHoldMaterialFrames:endpointMaterialFrames.length,
@@ -420,7 +429,16 @@ function validateCadence(probe) {
 }
 
 function validateVisual(probe) {
-  const releaseValid = probe.releaseFrames === 0;
+  const releaseValid = probe.direction === 'expand'
+    ? probe.releaseFrames === 0
+    : probe.releaseFrames >= 10
+      && probe.releaseFirst >= .9
+      && probe.releaseLast <= .1
+      && probe.releaseIntermediateFrames >= 8
+      && probe.releaseMaxOpacityStep <= .2
+      && probe.releaseMonotonic
+      && probe.releaseMaterialFrames === probe.releaseFrames
+      && probe.releaseOwnerAlignment <= .03;
   const endpointHoldValid = probe.direction === 'expand'
     ? probe.endpointHoldFrames >= 4
       && probe.endpointHoldMinOpacity >= .99
@@ -497,6 +515,8 @@ const summary = (probe) => ({
   releaseIntermediateFrames:probe.releaseIntermediateFrames,
   releaseMaxOpacityStep:probe.releaseMaxOpacityStep,
   releaseMonotonic:probe.releaseMonotonic,
+  releaseMaterialFrames:probe.releaseMaterialFrames,
+  releaseOwnerAlignment:probe.releaseOwnerAlignment,
   endpointHoldFrames:probe.endpointHoldFrames,
   endpointHoldMinOpacity:probe.endpointHoldMinOpacity,
   endpointHoldMaterialFrames:probe.endpointHoldMaterialFrames,
@@ -535,6 +555,8 @@ const compactProbe = (probe) => ({
     releaseIntermediateFrames:probe.releaseIntermediateFrames,
     releaseMaxStep:probe.releaseMaxOpacityStep,
     releaseMonotonic:probe.releaseMonotonic,
+    releaseMaterialFrames:probe.releaseMaterialFrames,
+    releaseOwnerAlignment:probe.releaseOwnerAlignment,
     endpointHoldFrames:probe.endpointHoldFrames,
     endpointHoldMinOpacity:probe.endpointHoldMinOpacity,
     endpointHoldMaterialFrames:probe.endpointHoldMaterialFrames,

@@ -24,6 +24,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   }));
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   const HOME_PREVIEW_VERSION = "filtered-home-v46";
+  const HOME_RETURN_HANDOFF_MS = 180;
+  const HOME_RETURN_HANDOFF_EASE = "cubic-bezier(.4, 0, .2, 1)";
   const DAY_MS = 86400000;
   const HOME_HAND_WINDOW_DAYS = 7;
   const HAND_LIMIT = 7;
@@ -262,15 +264,37 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface.crm-home-camera-moving.crm-home-bitmap-motion .crm-home-level>:is(.crm-home-grid,.crm-home-title-layer,.crm-home-priority-hand){
         visibility:hidden!important}
       /* Home geometry remains resident throughout the return. At the endpoint
-         the motion texture and the covered live objects swap in one style
-         update; there is no full-screen snapshot crossfade. */
+         every visual owner dissolves on one shared curve: the motion cut-out,
+         sharp selected lid and screen-space lenses leave while the resting
+         previews, titles and hand arrive. This makes the resting preview blur
+         and the real per-tile acrylic appear continuously instead of in two
+         consecutive replacement frames. */
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid{z-index:3;opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket,
       .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand>.crm-home-hand-card{
         animation:none!important;transition:none!important}
-      .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket:not(.is-camera-target),
+      .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket,
       .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand{
         visibility:visible;opacity:.001!important;transition:none!important}
+      .crm-home-surface.crm-home-camera-handoff .crm-home-title-layer{
+        visibility:visible;opacity:.001;transition:none!important}
+      .crm-home-surface.crm-home-camera-handoff .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant,
+      .crm-home-surface.crm-home-camera-handoff>.crm-home-expander:not(.crm-home-warm){
+        transition:none!important}
+      .crm-home-surface.crm-home-camera-handoff>.crm-home-expander:not(.crm-home-warm) .crm-home-preview-foreground{
+        filter:none;transition:none!important}
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-grid>.crm-home-bucket,
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-priority-hand,
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-title-layer{
+        opacity:1!important;
+        transition:opacity ${HOME_RETURN_HANDOFF_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant,
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing>.crm-home-expander:not(.crm-home-warm){
+        opacity:.001!important;
+        transition:opacity ${HOME_RETURN_HANDOFF_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing>.crm-home-expander:not(.crm-home-warm) .crm-home-preview-foreground{
+        filter:blur(.65px) saturate(.95) brightness(.88);
+        transition:filter ${HOME_RETURN_HANDOFF_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
       /* The expander owns the selected room during travel. One precomposed
          variant carries every other Home object with the selected tile cut
          transparent and remains the covered owner while Home prepares for the
@@ -1144,7 +1168,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     frameSelector:":scope > .crm-home-transition-acrylic",
     lensClass:"crm-home-screen-acrylic",
     holdThroughMotion:true,
-    releaseMs:140,
+    releaseMs:HOME_RETURN_HANDOFF_MS,
+    releaseEase:HOME_RETURN_HANDOFF_EASE,
   });
   const createPeripheralAcrylic = () => {
     let clipHost = null;
@@ -1152,10 +1177,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     let surface = null;
     let state = null;
     let clipAnimation = null;
+    let releaseAnimation = null;
 
     const stop = () => {
       clipAnimation?.cancel?.();
+      releaseAnimation?.cancel?.();
       clipAnimation = null;
+      releaseAnimation = null;
     };
     const finish = () => {
       stop();
@@ -1341,15 +1369,38 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       lens.dataset.crmPeripheralAcrylicPhase = "prewarm";
       return lens;
     };
+    const release = () => {
+      if (!lens || !state) return Promise.resolve(false);
+      const releaseLens = lens;
+      const endpointPath = state.direction === "contract" ? state.sourcePath : state.destinationPath;
+      stop();
+      clipHost.style.clipPath = endpointPath;
+      clipHost.style.webkitClipPath = endpointPath;
+      releaseLens.style.opacity = "1";
+      releaseLens.dataset.crmPeripheralAcrylicPhase = "release";
+      const animation = releaseLens.animate(
+        [{ opacity:1 }, { opacity:0 }],
+        { duration:HOME_RETURN_HANDOFF_MS, easing:HOME_RETURN_HANDOFF_EASE, fill:"forwards" },
+      );
+      releaseAnimation = animation;
+      return animation.finished.then(() => {
+        if (lens !== releaseLens || releaseAnimation !== animation) return false;
+        releaseLens.style.opacity = "0";
+        animation.cancel();
+        releaseAnimation = null;
+        releaseLens.dataset.crmPeripheralAcrylicPhase = "released";
+        return true;
+      }).catch(() => false);
+    };
     const status = () => ({
-      active:!!lens && lens.dataset.crmPeripheralAcrylicPhase === "motion",
+      active:!!lens && ["motion", "release"].includes(lens.dataset.crmPeripheralAcrylicPhase || ""),
       phase:lens?.dataset?.crmPeripheralAcrylicPhase || "",
       direction:lens?.dataset?.crmPeripheralAcrylicDirection || state?.direction || "",
       neighborCount:state?.neighborCount || 0,
       backdropFilter:state?.backdrop || "",
       screenSpace:!!lens && getComputedStyle(lens).transform !== "",
     });
-    return { prepare, setEnabled, start, sync, prime, finish, element:() => lens, status };
+    return { prepare, setEnabled, start, sync, prime, release, finish, element:() => lens, status };
   };
   const homePeripheralAcrylic = createPeripheralAcrylic();
   const buildExpander = (target) => {
@@ -1491,7 +1542,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     }, delay);
   };
   const finishHandoff = (clearTarget = true, deferMaintenance = true) => {
-    camera?.surface?.()?.classList.remove("crm-home-camera-handoff");
+    camera?.surface?.()?.classList.remove("crm-home-camera-handoff", "crm-home-camera-releasing");
     if (clearTarget) clearCameraTarget();
     const resolve = handoffResolve;
     handoffResolve = null;
@@ -1573,20 +1624,34 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     handoffPromise = new Promise((resolve) => { handoffResolve = resolve; });
     surface.classList.add("crm-home-camera-handoff");
     // The selected live tile is already composited beneath its geometrically
-    // identical expander. Keep the cut-out motion variant over the other tiles
-    // while their real acrylic layers paint underneath, then exchange all
-    // remaining owners atomically.
+    // identical expander. Keep every moving owner intact while the resting
+    // Home tree settles, then release all of them on one shared curve. The
+    // sharp expander consequently blends into the resting filtered preview
+    // while both real screen-space acrylic planes remain continuous.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       void (async () => {
         try { await settle?.(); } catch {}
+        if (sequence !== handoffSequence) {
+          handoffResolve?.();
+          return;
+        }
+        surface.classList.add("crm-home-camera-releasing");
+        await Promise.allSettled([
+          homeAcrylicLens.release(),
+          homePeripheralAcrylic.release(),
+        ]);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        if (sequence !== handoffSequence) {
+          handoffResolve?.();
+          return;
+        }
+        // The now-filtered lid, cut-out texture, edges and both acrylic lenses
+        // have reached zero together. Their resting counterparts are already
+        // fully composited, so removing the obsolete nodes changes no pixels.
+        context.retireOutgoingLayer?.();
         homeAcrylicLens.finish();
         homePeripheralAcrylic.finish();
-        // The selected full-screen expander is itself the final covered owner.
-        // Retire it while the cut-out motion texture still owns every other Home
-        // pixel, then release that companion texture in the same task.
-        context.retireOutgoingLayer?.();
-        if (sequence === handoffSequence) finishHandoff();
-        else handoffResolve?.();
+        finishHandoff();
       })();
     }));
     return handoffPromise;
@@ -1619,7 +1684,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       finishHandoff(false, false);
       handoffSequence += 1;
       factoryPrewarmAfter = Number.POSITIVE_INFINITY;
-      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff");
+      context.surface?.classList.remove("crm-home-motion-priming","crm-home-camera-handoff","crm-home-camera-releasing");
       const ownsBitmapMotion = syncBitmapMotion(context);
       homePeripheralAcrylic.setEnabled(ownsBitmapMotion);
       // Snapshot validity is maintained on data/layout changes. Recomputing its

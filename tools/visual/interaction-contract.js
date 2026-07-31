@@ -411,7 +411,7 @@ async function main() {
     const keyframes = animation?.effect?.getKeyframes?.() || [];
     const duration = Number(animation?.effect?.getComputedTiming?.().duration);
     const cover = window.crmDeskTransit?.coverState?.();
-    const startLead = Number(cover?.motionEndedAt) - Number(cover?.navigationEntranceStartedAt);
+    const startLead = Number(cover?.expectedMotionEndAt) - Number(cover?.navigationEntranceStartedAt);
     return {
       ok:navigation?.hidden === true
         && navigation.inert === true
@@ -423,7 +423,7 @@ async function main() {
         && keyframes.length >= 2
         && keyframes[0]?.transform !== keyframes.at(-1)?.transform
         && cover?.navigationEntranceLead === 180
-        && startLead >= 100 && startLead <= 260,
+        && startLead >= 40 && startLead <= 260,
       detail:JSON.stringify({
         hidden:navigation?.hidden,
         inert:navigation?.inert,
@@ -456,7 +456,9 @@ async function main() {
     const bridgeZ = Number(bridgeStyle?.zIndex);
     const surfaceZ = Number(surface ? getComputedStyle(surface).zIndex : NaN);
     const cover = window.crmDeskTransit?.coverState?.();
-    const blendLead = Number(cover?.motionEndedAt) - Number(cover?.endpointBlendStartedAt);
+    const blendLead = Number(cover?.expectedMotionEndAt) - Number(cover?.endpointBlendStartedAt);
+    const motion = window.crmDeskTransit?.motionState?.();
+    const acrylicState = window.crmHome?.acrylicState?.();
     const material = acrylicStyle?.webkitBackdropFilter || acrylicStyle?.backdropFilter || '';
     const sourceRasterParked = exact
       ? getComputedStyle(exact).display === 'none'
@@ -465,8 +467,8 @@ async function main() {
       ok:!!rect
         && Math.abs(rect.left) <= .5 && Math.abs(rect.top) <= .5
         && Math.abs(rect.width - innerWidth) <= .5 && Math.abs(rect.height - innerHeight) <= .5
-        && window.crmDeskTransit?.motionState?.().active === false
-        && window.crmHome?.acrylicState?.().phase === 'endpoint-held'
+        && ((motion?.active === true && acrylicState?.phase === 'motion')
+          || (motion?.active === false && acrylicState?.phase === 'endpoint-held'))
         && Number(acrylicStyle?.opacity) > .99 && Number(frameStyle?.opacity) > .99
         && material.includes('blur(') && material.includes('saturate(')
         && bridgeOpacity > .08 && bridgeOpacity < .98
@@ -474,9 +476,9 @@ async function main() {
         && duration === 180
         && Number(keyframes[0]?.opacity) <= .001
         && Number(keyframes.at(-1)?.opacity) === 1
-        && cover?.endpointMaterialLead === 52
-        && cover?.endpointBlendStartedBeforeMotionEnd === true
-        && blendLead >= 0 && blendLead <= 100
+        && cover?.endpointMaterialLead === 140
+        && Number(cover?.endpointBlendStartedAt) < Number(cover?.expectedMotionEndAt)
+        && blendLead >= 40 && blendLead <= 200
         && sourceRasterParked,
       detail:JSON.stringify({
         rect:[rect?.x,rect?.y,rect?.width,rect?.height],
@@ -488,6 +490,8 @@ async function main() {
         acrylicOpacity:Number(acrylicStyle?.opacity),
         frameOpacity:Number(frameStyle?.opacity),
         material,
+        motion,
+        acrylicState,
         sourceRaster:exact
           ? { mode:'exact', display:getComputedStyle(exact).display }
           : { mode:'fallback', visibility:fallback ? getComputedStyle(fallback).visibility : '' },
@@ -529,6 +533,38 @@ async function main() {
         bridgeOpacity:Number(bridgeStyle?.opacity), material, motion, acrylicState }) };
   });
   await page.evaluate(() => {
+    window.peopleCards.scrollZonesBy(-100000, true);
+    window.__bufferedEntryWheel = { events:[], ready:null };
+    window.addEventListener('wheel', (event) => queueMicrotask(() => {
+      window.__bufferedEntryWheel.events.push({
+        prevented:event.defaultPrevented,
+        module:document.body.dataset.crmModule,
+        x:window.peopleCards.zoneScrollState().x,
+      });
+    }), { once:true });
+    document.addEventListener('crm:desk-interaction-ready', (event) => {
+      window.__bufferedEntryWheel.ready = {
+        key:event.detail?.key,
+        x:window.peopleCards.zoneScrollState().x,
+      };
+    }, { once:true });
+  });
+  const bufferedEntryPoint = await page.evaluate(() => ({ x:innerWidth - 30, y:innerHeight - 10 }));
+  await page.mouse.move(bufferedEntryPoint.x, bufferedEntryPoint.y);
+  await page.mouse.wheel({ deltaY:100 });
+  await sleep(30);
+  await check('The lower gutter accepts and buffers horizontal input while the destination is still covered', () => {
+    const state = window.peopleCards.zoneScrollState();
+    const event = window.__bufferedEntryWheel?.events?.[0];
+    return {
+      ok:document.body.dataset.crmModule === 'home'
+        && window.crmDeskTransit?.pendingDestination?.('people') === true
+        && event?.prevented === true
+        && Math.abs(state.x) < 1 && Math.abs(state.target) < 1,
+      detail:JSON.stringify({ event, state, cover:window.crmDeskTransit?.coverState?.()?.phase }),
+    };
+  });
+  await page.evaluate(() => {
     const gate = window.__homeEndpointAcrylicGate;
     delete window.__homeEndpointAcrylicGate;
     delete window.__crmDeskTransitProbe;
@@ -549,6 +585,24 @@ async function main() {
     throw new Error(`People transition did not settle: ${JSON.stringify(state)} (${error.message})`);
   }
   await check('Home camera lands directly on the destination', () => document.body.dataset.crmModule === 'people' && !document.querySelector('.crm-transit-veil'));
+  await check('Buffered entry input moves the rail on the first interaction-ready frame', () => {
+    const state = window.peopleCards.zoneScrollState();
+    const probe = window.__bufferedEntryWheel;
+    const timing = window.crmDeskTransit?.performanceTimings?.().at(-1);
+    return {
+      ok:probe?.ready?.key === 'people'
+        && probe.ready.x < 0
+        && state.x <= -299 && Math.abs(state.target - state.x) < 1
+        && Number(timing?.interactionReadyAfterMotionMs) > 0
+        && Number(timing?.interactionReadyAfterMotionMs) <= 600
+        && (window.__deskTransitionErrors || []).length === 0,
+      detail:JSON.stringify({ probe, state, timing:{
+        interactionReadyAfterMotionMs:timing?.interactionReadyAfterMotionMs,
+        totalMs:timing?.totalMs,
+      }, errors:window.__deskTransitionErrors || [] }),
+    };
+  });
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-100000, true));
   await check('Tile room does not exclude the title-bar drag region', () => {
     const room = document.querySelector('[data-crm-theater="people"]:not([hidden])');
     return !!room && getComputedStyle(room).webkitAppRegion !== 'no-drag';

@@ -458,7 +458,7 @@ function validateCadence(probe) {
       // component waits land on native 10 ms frames. Round away representational
       // noise; visible cadence retains the exact max/dropped-frame gates above.
       // The seated tile spends 180 ms blending its double-acrylic source into
-      // the complete single-acrylic endpoint. Its first 52 ms overlap the end
+      // the complete single-acrylic endpoint. Its first 140 ms overlap the end
       // of camera motion, eliminating the post-motion hold without shortening
       // the dissolve. The endpoint then remains covered while destination
       // acrylic is rasterized for eight native paints and released over a
@@ -468,9 +468,9 @@ function validateCadence(probe) {
       || Number(probe.transitTiming.endpointMaterialBlendDuration) !== 180
       || Number(probe.transitTiming.endpointMaterialBlendMs) < 165
       || Number(probe.transitTiming.endpointMaterialBlendMs) > 230
-      || Number(probe.transitTiming.endpointMaterialLead) !== 52
+      || Number(probe.transitTiming.endpointMaterialLead) !== 140
       || Number(probe.transitTiming.endpointBlendStartDeltaMs) > 0
-      || Number(probe.transitTiming.endpointBlendStartDeltaMs) < -100
+      || Number(probe.transitTiming.endpointBlendStartDeltaMs) < -200
       || probe.transitTiming.endpointBlendStartedBeforeMotionEnd !== true
       || probe.transitTiming.endpointAcrylicRetired !== true
       || probe.transitTiming.endpointAcrylicRetiredAfterBlend !== true

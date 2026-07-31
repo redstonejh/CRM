@@ -10,7 +10,7 @@
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
   const ENDPOINT_BRIDGE_Z = "4501"; // above the moving Home surface, still below native chrome
   const ENDPOINT_MATERIAL_BLEND_MS = 180;
-  const ENDPOINT_MATERIAL_LEAD_MS = 52;
+  const ENDPOINT_MATERIAL_LEAD_MS = 140;
   const ENDPOINT_MATERIAL_BLEND_EASE = "cubic-bezier(.4, 0, .2, 1)";
   const NAVIGATION_ENTRANCE_MS = 210;
   const NAVIGATION_ENTRANCE_LEAD_MS = 180;
@@ -1012,6 +1012,10 @@
         throw new Error("Destination compositor was not opaque before endpoint release");
       }
 
+      stage.interactionReadyAt = performance.now();
+      document.dispatchEvent(new CustomEvent("crm:desk-interaction-ready", {
+        detail:{ key:stage.key, sequence:stage.sequence, phase:stage.phase },
+      }));
       const host = stage.coverHost;
       if (!host) throw new Error("Exact endpoint raster host is unavailable");
       stage.releaseAt = performance.now();
@@ -1098,8 +1102,10 @@
 
     if (retainedPrecompose) {
       // Keep the completed room painted, but park its compositor group one
-      // viewport offstage during the camera move. This avoids sharing the
-      // visible GPU pass while preserving the exact texture for the endpoint.
+      // viewport offstage during the camera move. A native-size People room
+      // sharing the visible GPU pass costs camera frames even at .001 opacity.
+      // The covered acrylic warm-up below reacquires it without exposing that
+      // upload to the user.
       theater.setAttribute("data-crm-transit-retained", "");
       stage.settledState = { stable:true, signature:"retained-precompose" };
     } else {
@@ -1124,10 +1130,9 @@
     document.documentElement.classList.remove("crm-transit-revealing");
     document.documentElement.classList.add("crm-transit-materializing");
     stageDestinationLayers(stage.key, destinationRoot);
-    // The exact raster remains the sole visible owner while the retained room
-    // reacquires its compositor surface at .001. These are two unchanged
-    // live-ready paints, not part of the camera's exposed motion cadence.
-    await paint(2);
+    // This retained room was already painted at native size during Home idle.
+    // Do not spend another frame painting the temporary .001 grouping; the
+    // final-topology acrylic warm-up below supplies every required closed paint.
     if (stage.sequence !== activeDive?.sequence) return;
     stage.readyAt = performance.now();
     stage.ready = true;
@@ -1167,15 +1172,17 @@
     document.documentElement.classList.add("crm-transit-revealing");
     stage.phase = "live-opaque-covered";
     stage.liveOpaqueAt = performance.now();
-    // One committed paint seats the promoted compositor; the natural resting
-    // tree is then independently required to remain unchanged for three more.
-    await paint(1);
-    if (stage.sequence !== activeDive?.sequence) return false;
-
+    // The natural tree is now final. Do not insert a second full-room paint
+    // barrier here: geometry stability and acrylic warm-up immediately below
+    // already require repeated covered paints in this exact topology.
     stage.finalDestinationLayers = [...destinationLayers];
     document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
     clearDestinationLayers();
     stage.phase = "settling-covered";
+    // The room now owns its final natural layer topology under the opaque
+    // endpoint. Warm its acrylic while geometry stability is sampled instead
+    // of paying those two independent frame waits back-to-back.
+    stage.sourceRetirementPromise ||= retireDiveSource(stage).catch(() => false);
     let geometryState = null;
     let moduleState = null;
     const destinationApi = destinationFor(stage.key);
@@ -1349,7 +1356,7 @@
       if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
       try { await settleDiveDestination(stage); } catch {}
       let sourceRetired = false;
-      try { sourceRetired = await retireDiveSource(stage); } catch {}
+      try { sourceRetired = await (stage.sourceRetirementPromise || retireDiveSource(stage)); } catch {}
       if (!sourceRetired) {
         stage.revealError = "Destination acrylic did not stabilize in its final layer topology";
         stage.resolveReveal?.();
@@ -1474,6 +1481,9 @@
       acrylicOwners:stage.acrylicState?.ownerCount || 0,
       acrylicWarmFrames:stage.acrylicState?.frames || 0,
       acrylicWarmMs:(stage.acrylicReadyAt || doneAt) - (stage.sourceRetiredAt || doneAt),
+      interactionReadyMs:(stage.interactionReadyAt || doneAt) - stage.startedAt,
+      interactionReadyAfterMotionMs:(stage.interactionReadyAt || doneAt)
+        - (stage.motionEndedAt || doneAt),
       coverStart:stage.coverStart || null,
       coverBeforeSwap:stage.coverBeforeSwap || null,
       coverAfterSwap:stage.coverAfterSwap || null,
@@ -1758,7 +1768,12 @@
       rasterOpaque:activeDive.coverStart?.ready === true
         && !["crossfading", "crossfade-mid", "swapped", "live"].includes(activeDive.phase),
       liveReady:activeDive.liveReady === true,
+      motionStartedAt:Number.isFinite(activeDive.motionStartedAt) ? activeDive.motionStartedAt : 0,
       motionEndedAt:activeDive.motionEndedAt || 0,
+      motionDuration:activeDive.morphMs || 0,
+      expectedMotionEndAt:Number.isFinite(activeDive.motionStartedAt)
+        ? activeDive.motionStartedAt + activeDive.morphMs
+        : 0,
       maintenanceStartedAt:activeDive.maintenanceStartedAt || 0,
       endpointBlendStartedAt:activeDive.endpointBlendStartedAt || 0,
       endpointBlendFinishedAt:activeDive.endpointBlendFinishedAt || 0,
@@ -1776,6 +1791,7 @@
       coverSeatedAt:activeDive.coverSeatedAt || 0,
       readyAt:activeDive.readyAt || 0,
       swappedAt:activeDive.swappedAt || 0,
+      interactionReadyAt:activeDive.interactionReadyAt || 0,
       sourceRetired:activeDive.sourceRetired === true,
       sourceRetiredAt:activeDive.sourceRetiredAt || 0,
       acrylicUnderpaintExposed:activeDive.acrylicUnderpaintExposed === true,
@@ -1791,6 +1807,17 @@
     noteViewportArrival,
     zoomOutToCalendar,
     temporalModules: () => [...TEMPORAL_MODULES],
+    pendingDestination: (key = "") => {
+      const target = String(key) === "tickets" ? "cases" : String(key);
+      return !!activeDive && activeDive.key === target;
+    },
+    canInteractWith: (key = "") => {
+      const target = String(key) === "tickets" ? "cases" : String(key);
+      if (!activeDive) return !busy && !navigationRestoring;
+      return activeDive.key === target
+        && activeDive.liveReady === true
+        && ["crossfade-ready", "crossfading", "swapped", "live"].includes(activeDive.phase);
+    },
     canSettleGeometry: (key = "") => {
       const target = String(key) === "tickets" ? "cases" : String(key);
       return !!activeDive

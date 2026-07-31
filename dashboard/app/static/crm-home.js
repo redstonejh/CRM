@@ -1,4 +1,8 @@
-import { applyAdaptiveTileGrid, normalizeTileRecord } from "./modules/tile-system.js";
+import {
+  applyAdaptiveTileGrid,
+  createTileElement,
+  normalizeTileRecord,
+} from "./modules/tile-system.js";
 import { changed as contextAddChanged, register as registerContextAddProvider } from "./modules/context-add-registry.js";
 
 // crm-home.js — adaptive inert screenshot LODs hosted by the original camera.
@@ -1101,12 +1105,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const titleLayer = document.createElement("div"); titleLayer.className = "crm-home-title-layer";
     titleLayer.innerHTML = homeTileRecords.map(titleHTML).join("");
     homeTileRecords.forEach((module) => {
-      const bucket = document.createElement("button"); bucket.type = "button"; bucket.className = "crm-home-bucket";
+      const bucket = createTileElement(module.tile, { ariaLabel:`Open ${module.label}` });
       bucket.dataset.module = module.key;
       bucket.dataset.viewportModule = module.key;
-      bucket.dataset.tileId = module.tile.id;
-      bucket.dataset.crmTile = module.tile.id;
-      bucket.dataset.tileKind = module.tile.kind;
       bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
       // Do not activate merely because a tile finishes loading beneath an
       // already-stationary pointer. Actual pointer movement arms the reveal.

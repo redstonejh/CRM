@@ -264,4 +264,28 @@
   -webkit-box-orient: vertical;
 }
 
+/* Shared tile collections keep tile identity/layout in their real DOM nodes
+   while one static screen-space material plane supplies acrylic to the union
+   of those tiles. Collections with dozens or hundreds of tiles therefore do
+   not allocate one backdrop-filter surface per tile. */
+.crm-tile-material-plane {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: var(--bucket-acrylic-filter);
+  backdrop-filter: var(--bucket-acrylic-filter);
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.crm-tile-material-plane[data-crm-tile-material-muted="true"] {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 

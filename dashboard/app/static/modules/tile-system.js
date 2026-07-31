@@ -49,6 +49,145 @@ export function normalizeTileCollection(records = [], defaults = {}) {
   });
 }
 
+export function bindTileElement(element, source = {}, options = {}) {
+  if (!element) return null;
+  const tile = normalizeTileRecord(source, options.defaults || {});
+  if (options.canonicalClass !== false) element.classList.add("crm-home-bucket");
+  element.dataset.crmTile = tile.id;
+  element.dataset.tileId = tile.id;
+  element.dataset.tileKey = tile.key;
+  element.dataset.tileKind = tile.kind;
+  element.dataset.tileSchemaVersion = String(tile.schemaVersion);
+  if (options.targetType !== false) element.dataset.tileTargetType = tile.target.type;
+  if (options.targetId !== false) element.dataset.tileTargetId = tile.target.id;
+  if (options.ariaLabel !== false) {
+    element.setAttribute("aria-label", text(options.ariaLabel, tile.label, tile.title));
+  }
+  return tile;
+}
+
+export function createTileElement(source = {}, options = {}) {
+  const tagName = text(options.tagName, "button").toLowerCase();
+  const element = document.createElement(tagName);
+  if (tagName === "button") element.type = text(options.type, "button");
+  text(options.className).split(/\s+/).filter(Boolean).forEach((name) => element.classList.add(name));
+  bindTileElement(element, source, options);
+  if (options.tabIndex != null) element.tabIndex = Number(options.tabIndex);
+  return element;
+}
+
+function roundedTilePath(box) {
+  const x = number(box?.x);
+  const y = number(box?.y);
+  const width = Math.max(0, number(box?.width));
+  const height = Math.max(0, number(box?.height));
+  const radius = Math.min(width / 2, height / 2, Math.max(0, number(box?.radius)));
+  const fixed = (value) => Number(value).toFixed(2);
+  return [
+    `M ${fixed(x + radius)} ${fixed(y)}`,
+    `L ${fixed(x + width - radius)} ${fixed(y)}`,
+    `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(x + width)} ${fixed(y + radius)}`,
+    `L ${fixed(x + width)} ${fixed(y + height - radius)}`,
+    `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(x + width - radius)} ${fixed(y + height)}`,
+    `L ${fixed(x + radius)} ${fixed(y + height)}`,
+    `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(x)} ${fixed(y + height - radius)}`,
+    `L ${fixed(x)} ${fixed(y + radius)}`,
+    `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(x + radius)} ${fixed(y)} Z`,
+  ].join(" ");
+}
+
+function localTileBox(tile, root, options = {}) {
+  if (!tile || !root) return null;
+  const rootRect = root.getBoundingClientRect();
+  const scaleX = root.offsetWidth ? rootRect.width / root.offsetWidth : 1;
+  const scaleY = root.offsetHeight ? rootRect.height / root.offsetHeight : 1;
+  let x = 0;
+  let y = 0;
+  let width = tile.offsetWidth;
+  let height = tile.offsetHeight;
+  if (options.precise === true) {
+    const tileRect = tile.getBoundingClientRect();
+    x = (tileRect.left - rootRect.left) / Math.max(.0001, scaleX);
+    y = (tileRect.top - rootRect.top) / Math.max(.0001, scaleY);
+    width = tileRect.width / Math.max(.0001, scaleX);
+    height = tileRect.height / Math.max(.0001, scaleY);
+  } else {
+    let cursor = tile;
+    while (cursor && cursor !== root) {
+      x += cursor.offsetLeft || 0;
+      y += cursor.offsetTop || 0;
+      cursor = cursor.offsetParent;
+    }
+    if (cursor !== root) {
+      const tileRect = tile.getBoundingClientRect();
+      x = (tileRect.left - rootRect.left) / Math.max(.0001, scaleX);
+      y = (tileRect.top - rootRect.top) / Math.max(.0001, scaleY);
+      width = tileRect.width / Math.max(.0001, scaleX);
+      height = tileRect.height / Math.max(.0001, scaleY);
+    }
+  }
+  const measuredRadius = parseFloat(getComputedStyle(tile).borderTopLeftRadius) || 0;
+  const configuredRadius = typeof options.radius === "function"
+    ? options.radius(tile, measuredRadius)
+    : options.radius;
+  return {
+    x,
+    y,
+    width,
+    height,
+    radius:Number.isFinite(Number(configuredRadius)) ? Number(configuredRadius) : measuredRadius,
+  };
+}
+
+export function tileUnionPath(tiles = [], root, options = {}) {
+  const parts = [...tiles]
+    .map((tile) => localTileBox(tile, root, options))
+    .filter((box) => box && box.width > 0 && box.height > 0)
+    .map(roundedTilePath);
+  return parts.length ? `path('${parts.join(" ")}')` : "none";
+}
+
+const materialPlanes = new WeakMap();
+
+export function syncTileMaterialPlane(planeOrHost, options = {}) {
+  const plane = planeOrHost?.classList?.contains("crm-tile-material-plane")
+    ? planeOrHost
+    : planeOrHost?.querySelector?.(":scope > .crm-tile-material-plane");
+  if (!plane) return null;
+  const state = materialPlanes.get(plane) || {};
+  const host = state.host || plane.parentElement;
+  const selector = options.tileSelector || state.tileSelector || ":scope [data-crm-tile]";
+  const excluded = new Set(options.exclude || state.exclude || []);
+  const tiles = [...(host?.querySelectorAll?.(selector) || [])]
+    .filter((tile) => !excluded.has(tile));
+  const value = tileUnionPath(tiles, host);
+  plane.style.clipPath = value;
+  plane.style.webkitClipPath = value;
+  plane.dataset.crmTileMaterialCount = String(tiles.length);
+  plane.dataset.crmTileMaterialReady = String(value !== "none");
+  materialPlanes.set(plane, { ...state, host, tileSelector:selector, exclude:excluded });
+  return plane;
+}
+
+export function ensureTileMaterialPlane(host, options = {}) {
+  if (!host) return null;
+  let plane = host.querySelector?.(":scope > .crm-tile-material-plane") || null;
+  if (!plane) {
+    plane = document.createElement("span");
+    plane.className = "crm-tile-material-plane";
+    plane.setAttribute("aria-hidden", "true");
+    host.prepend(plane);
+  }
+  text(options.className).split(/\s+/).filter(Boolean).forEach((name) => plane.classList.add(name));
+  materialPlanes.set(plane, {
+    host,
+    tileSelector:options.tileSelector || ":scope [data-crm-tile]",
+    exclude:new Set(options.exclude || []),
+  });
+  syncTileMaterialPlane(plane);
+  return plane;
+}
+
 function candidateScore(candidate, count, width, height) {
   const occupied = candidate.cellWidth * candidate.cellHeight * count;
   const coverage = occupied / Math.max(1, width * height);
@@ -212,6 +351,11 @@ export const crmTileSystem = {
   schemaVersion:TILE_SCHEMA_VERSION,
   normalize:normalizeTileRecord,
   normalizeAll:normalizeTileCollection,
+  bind:bindTileElement,
+  create:createTileElement,
+  tileUnionPath,
+  ensureMaterial:ensureTileMaterialPlane,
+  syncMaterial:syncTileMaterialPlane,
   calculate:calculateAdaptiveTileGrid,
   apply:applyAdaptiveTileGrid,
   observe:observeAdaptiveTileContainer,

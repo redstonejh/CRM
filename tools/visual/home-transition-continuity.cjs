@@ -468,7 +468,7 @@ function validateCadence(probe) {
       || Number(probe.transitTiming.endpointMaterialBlendDuration) !== 180
       || Number(probe.transitTiming.endpointMaterialBlendMs) < 165
       || Number(probe.transitTiming.endpointMaterialBlendMs) > 230
-      || Number(probe.transitTiming.endpointMaterialLead) !== 140
+      || Number(probe.transitTiming.endpointMaterialLead) !== 220
       || Number(probe.transitTiming.endpointBlendStartDeltaMs) > 0
       || Number(probe.transitTiming.endpointBlendStartDeltaMs) < -200
       || probe.transitTiming.endpointBlendStartedBeforeMotionEnd !== true

@@ -969,8 +969,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     requestAnimationFrame(() => updateProjectGalleryScroll(scope));
   }
 
-  function updatePlannerScrollEdges() {
-    const scroller = root?.querySelector(".crm-planner-buckets"); const stage = scroller?.closest(".crm-planner-stage"); if (!stage) return;
+  function updatePlannerScrollEdges(scope = root) {
+    const scroller = scope?.matches?.(".crm-planner-buckets")
+      ? scope
+      : scope?.querySelector?.(".crm-planner-buckets");
+    const stage = scroller?.closest(".crm-planner-stage"); if (!stage) return;
     const maximum = Math.max(0, (scroller.scrollWidth || 0) - scroller.clientWidth); const position = Math.max(0, Math.min(maximum, scroller.scrollLeft)); const fadeDistance = Math.min(72, Math.max(42, scroller.clientWidth * .06));
     stage.style.setProperty("--crm-scroll-shadow-left", String(maximum > 1 ? Math.min(1, position / fadeDistance) : 0));
     stage.style.setProperty("--crm-scroll-shadow-right", String(maximum > 1 ? Math.min(1, (maximum - position) / fadeDistance) : 0));
@@ -980,9 +983,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const scroller = scope?.querySelector(".crm-planner-buckets"); if (!scroller) return;
     const restore = Math.max(0, Number(plannerScrollPositions.get(String(projectId || ""))) || 0);
     scroller.scrollLeft = Math.min(restore, Math.max(0, scroller.scrollWidth - scroller.clientWidth));
-    scroller.addEventListener("scroll", updatePlannerScrollEdges, { passive:true });
-    plannerResizeObserver = new ResizeObserver(updatePlannerScrollEdges); plannerResizeObserver.observe(scroller); scroller.querySelectorAll(".crm-planner-bucket").forEach((bucket) => plannerResizeObserver.observe(bucket));
-    requestAnimationFrame(updatePlannerScrollEdges);
+    const updateEdges = () => updatePlannerScrollEdges(scroller);
+    scroller.addEventListener("scroll", updateEdges, { passive:true });
+    plannerResizeObserver = new ResizeObserver(updateEdges); plannerResizeObserver.observe(scroller); scroller.querySelectorAll(".crm-planner-bucket").forEach((bucket) => plannerResizeObserver.observe(bucket));
+    requestAnimationFrame(updateEdges);
   }
 
   const closeFloating = () => { floating?.remove(); floating = null; };
@@ -1252,7 +1256,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       const pixels = (event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * scroller.clientWidth : raw)
         * HORIZONTAL_WHEEL_MULTIPLIER;
       const next = Math.max(0, Math.min(maximum, scroller.scrollLeft + pixels)); if (Math.abs(next - scroller.scrollLeft) < .5) return;
-      scroller.scrollLeft = next; updatePlannerScrollEdges(); event.preventDefault();
+      scroller.scrollLeft = next; updatePlannerScrollEdges(scroller); event.preventDefault();
     }, { passive:false });
     root.addEventListener("keydown", (event) => {
       const current = event.target.closest(".crm-project-bucket"); if (!current || !["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(event.key)) return;

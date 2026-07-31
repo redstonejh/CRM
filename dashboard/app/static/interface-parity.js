@@ -20,7 +20,7 @@
     ".ticket-detail",
     ".tk-menu",
     ".tk-zone",
-    ".crm-home-bucket",
+    ".crm-home-bucket:not(.fc-day)",
     ".crm-home-window",
     ".crm-overview-pocket",
     ".record-world",

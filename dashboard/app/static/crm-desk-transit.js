@@ -10,10 +10,10 @@
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
   const ENDPOINT_BRIDGE_Z = "4501"; // above the moving Home surface, still below native chrome
   const ENDPOINT_MATERIAL_BLEND_MS = 180;
-  const ENDPOINT_MATERIAL_LEAD_MS = 140;
+  const ENDPOINT_MATERIAL_LEAD_MS = 220;
   const ENDPOINT_MATERIAL_BLEND_EASE = "cubic-bezier(.4, 0, .2, 1)";
   const NAVIGATION_ENTRANCE_MS = 210;
-  const NAVIGATION_ENTRANCE_LEAD_MS = 180;
+  const NAVIGATION_ENTRANCE_LEAD_MS = 260;
   const NAVIGATION_ENTRANCE_EASE = "cubic-bezier(.16, 1, .3, 1)";
   const STATIC_CROSSFADE_MS = 120;
   const ENDPOINT_UNOCCLUDE_OPACITY = .99;

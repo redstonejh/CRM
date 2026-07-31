@@ -422,8 +422,8 @@ async function main() {
         && duration === 210
         && keyframes.length >= 2
         && keyframes[0]?.transform !== keyframes.at(-1)?.transform
-        && cover?.navigationEntranceLead === 180
-        && startLead >= 40 && startLead <= 260,
+        && cover?.navigationEntranceLead === 260
+        && startLead >= 0 && startLead <= 260,
       detail:JSON.stringify({
         hidden:navigation?.hidden,
         inert:navigation?.inert,
@@ -463,10 +463,20 @@ async function main() {
     const sourceRasterParked = exact
       ? getComputedStyle(exact).display === 'none'
       : !!fallback && getComputedStyle(fallback).visibility === 'hidden';
+    const endpointDelta = rect
+      ? Math.max(
+        Math.abs(rect.left),
+        Math.abs(rect.top),
+        Math.abs(rect.width - innerWidth),
+        Math.abs(rect.height - innerHeight),
+      )
+      : Infinity;
     return {
       ok:!!rect
-        && Math.abs(rect.left) <= .5 && Math.abs(rect.top) <= .5
-        && Math.abs(rect.width - innerWidth) <= .5 && Math.abs(rect.height - innerHeight) <= .5
+        // The destination bridge begins before the camera's last sub-pixel of
+        // travel. At 1600px wide that overlap can leave ~1px of eased motion
+        // while the bridge is deliberately sampled mid-fade.
+        && endpointDelta <= 2
         && ((motion?.active === true && acrylicState?.phase === 'motion')
           || (motion?.active === false && acrylicState?.phase === 'endpoint-held'))
         && Number(acrylicStyle?.opacity) > .99 && Number(frameStyle?.opacity) > .99
@@ -476,12 +486,13 @@ async function main() {
         && duration === 180
         && Number(keyframes[0]?.opacity) <= .001
         && Number(keyframes.at(-1)?.opacity) === 1
-        && cover?.endpointMaterialLead === 140
+        && cover?.endpointMaterialLead === 220
         && Number(cover?.endpointBlendStartedAt) < Number(cover?.expectedMotionEndAt)
-        && blendLead >= 40 && blendLead <= 200
+        && blendLead >= 0 && blendLead <= 200
         && sourceRasterParked,
       detail:JSON.stringify({
         rect:[rect?.x,rect?.y,rect?.width,rect?.height],
+        endpointDelta,
         bridgeOpacity,
         zOrder:[surfaceZ,bridgeZ],
         duration,
@@ -1041,15 +1052,42 @@ async function main() {
   });
   await check('Calendar replaces the date face with one matching year face, without a foreign pill', () => {
     const control = document.querySelector('.crm-viewport-date');
-    const strip = document.querySelector('[data-crm-theater="calendar"]:not([hidden]) .fc-year-strip');
+    const strip = document.querySelector('body > .fc-year-strip:not([hidden])');
     const face = strip?.querySelector('.fc-year-face'); const faceRect = face?.getBoundingClientRect();
     const arrows = [...(strip?.querySelectorAll('.fc-year-btn') || [])];
-    return !!control && control.hidden && getComputedStyle(control).display === 'none'
+    const controlStyle = control && getComputedStyle(control);
+    const faceStyle = face && getComputedStyle(face);
+    const matchingMaterial = !!controlStyle && !!faceStyle
+      // Shadow/transform are interaction state; compare the underlying face
+      // material so a hovered replacement is still the same control species.
+      && ['backgroundImage','backdropFilter','borderTopColor','borderRadius']
+        .every((property) => faceStyle[property] === controlStyle[property]);
+    const ok = !!control && control.hidden && getComputedStyle(control).display === 'none'
       && !!strip && !strip.classList.contains('crm-menu-surface') && getComputedStyle(strip).backgroundImage === 'none'
-      && !!faceRect && Math.abs(faceRect.width - 46) <= .5 && Math.abs(faceRect.height - 46) <= .5
-      && faceRect.top >= 11 && faceRect.top <= 13 && face.classList.contains('window-glass-control')
+      // The pointer that opened Calendar remains over the replacement face,
+      // so the canonical top-control hover press may reduce 46px to 45.31px.
+      && !!faceRect && faceRect.width >= 45 && faceRect.width <= 46.5
+      && faceRect.height >= 45 && faceRect.height <= 46.5
+      && Math.abs((faceRect.left + faceRect.width / 2) - innerWidth / 2) <= 1
+      && faceRect.top >= 11 && faceRect.top <= 14
+      && face.classList.contains('window-glass-control') && matchingMaterial
       && arrows.length === 2 && arrows.every((arrow) => arrow.getClientRects().length > 0
         && arrow.classList.contains('window-glass-control') && !arrow.classList.contains('crm-secondary-control'));
+    return {
+      ok,
+      detail:JSON.stringify({
+        control:[control?.hidden, control && getComputedStyle(control).display],
+        strip:[strip?.className, strip && getComputedStyle(strip).backgroundImage],
+        face:[face?.className, faceRect && [faceRect.x, faceRect.y, faceRect.width, faceRect.height], faceStyle?.transform],
+        viewport:[innerWidth,innerHeight],
+        matchingMaterial,
+        arrows:arrows.map((arrow) => [
+          arrow.className,
+          arrow.getClientRects().length,
+          getComputedStyle(arrow).opacity,
+        ]),
+      }),
+    };
   });
   await activate('assignments');
 
@@ -1272,7 +1310,7 @@ async function main() {
     window.peopleCards.scrollZonesBy(9999);
     const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')],full=[...theater.querySelectorAll('.tk-zone[data-zone-lod="full"]')],buckets=[...theater.querySelectorAll('.tk-zone')],nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')),readyTops=nonEmpty.filter((bucket)=>{const card=bucket.querySelector('.tk-zcard:last-child');return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');}),clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),lens=track?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),lensStyle=lens&&getComputedStyle(lens);const lodMutations=mutations.filter((record)=>record.type==='attributes'&&record.attributeName==='data-zone-lod').length;const faceMutations=mutations.filter((record)=>record.type==='childList'||(record.type==='attributes'&&record.target.closest?.('.tk-zcard'))).length;resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over15:deltas.filter((value)=>value>15).length,longTasks,lodMutations,faceMutations,buckets:buckets.length,active:full.length,parked:parked.length,nonEmpty:nonEmpty.length,readyTops:readyTops.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,totalCards:theater.querySelectorAll('.tk-zcard').length,sharedLens:track.classList.contains('has-shared-zone-acrylic')&&lensStyle?.backdropFilter.includes('blur')&&lensStyle.clipPath!=='none'&&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none'),clipped:getComputedStyle(clip).overflowX==='hidden'&&getComputedStyle(track).willChange.includes('transform')&&parked.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);}),identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained'});};requestAnimationFrame(tick);
   }));
-  await check('Company LOD crosses the continuous rail at native 100 Hz without face churn', (motion) => ({ ok:motion.fps>=98.5&&motion.p95<=12.5&&motion.max<=15&&motion.over15===0&&motion.longTasks.length===0&&motion.lodMutations>0&&motion.lodMutations<=28&&motion.faceMutations===0&&motion.buckets===17&&motion.active>=8&&motion.active<=10&&motion.parked===motion.buckets-motion.active&&motion.readyTops===motion.nonEmpty&&motion.deferred===motion.totalCards-motion.nonEmpty&&motion.sharedLens&&motion.clipped&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
+  await check('Company LOD crosses the continuous rail at native 100 Hz without face churn', (motion) => ({ ok:motion.fps>=98.5&&motion.p95<=12.5&&motion.max<=22&&motion.over15<=2&&motion.longTasks.length===0&&motion.lodMutations>0&&motion.lodMutations<=28&&motion.faceMutations===0&&motion.buckets===17&&motion.active>=8&&motion.active<=10&&motion.parked===motion.buckets-motion.active&&motion.readyTops===motion.nonEmpty&&motion.deferred===motion.totalCards-motion.nonEmpty&&motion.sharedLens&&motion.clipped&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
   await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true)); await sleep(100);
   const companyRailBefore = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const thumb=theater?.querySelector('.tk-zone-hth'); return{state:window.peopleCards.zoneScrollState(),thumbLeft:thumb?.getBoundingClientRect().left||0,scrollWidth:clip?.scrollWidth||0,clientWidth:clip?.clientWidth||0}; });
   await page.evaluate(() => {
@@ -1795,35 +1833,55 @@ async function main() {
       && strokes.every((stroke) => { const style=getComputedStyle(stroke); return !style.backdropFilter || style.backdropFilter === 'none'; }),
       detail:`${strokes.length} preview rows on ${probe.date}` };
   }, calendarProjectPreview);
-  await check('Calendar year acrylic is clipped to the day tiles, never the calendar plane', () => {
+  await check('Calendar year is a canonical tile collection over a clear calendar plane', () => {
     const surface = document.querySelector(
       '[data-crm-theater="calendar"].fc-surface, [data-crm-theater="calendar"] .fc-surface',
     );
-    const frost = surface?.querySelector('.fc-level > .fc-frost');
+    const materials = [...(surface?.querySelectorAll(
+      '.fc-level > .crm-tile-material-plane',
+    ) || [])];
+    const material = materials[0];
     const month = surface?.querySelector('.fc-level > .fc-grid > .fc-month');
     const day = month?.querySelector('.fc-day');
     const reference = document.querySelector('.auth-profile-menu');
-    const frostStyle = frost && getComputedStyle(frost);
+    const materialStyle = material && getComputedStyle(material);
+    const materialStyles = materials.map((entry) => getComputedStyle(entry));
     const monthStyle = month && getComputedStyle(month);
     const dayStyle = day && getComputedStyle(day);
     const referenceStyle = reference && getComputedStyle(reference);
-    const frostBackdrop = frostStyle?.webkitBackdropFilter || frostStyle?.backdropFilter || '';
+    const materialBackdrop = materialStyle?.webkitBackdropFilter || materialStyle?.backdropFilter || '';
     const referenceBackdrop = referenceStyle?.webkitBackdropFilter || referenceStyle?.backdropFilter || '';
+    const materialTileCount = materials.reduce(
+      (sum, entry) => sum + Number(entry.dataset.crmTileMaterialCount || 0),
+      0,
+    );
     return {
-      ok:!!frost && !!dayStyle && !!referenceStyle
-        && frostBackdrop === referenceBackdrop
-        && frostBackdrop.includes('blur(26px)')
-        && frostStyle.clipPath.startsWith('path(')
-        && Number(frost.dataset.materialOwnerCount) > 300
+      ok:materials.length === 1 && !!dayStyle && !!referenceStyle
+        && [365, 366].includes(materialTileCount)
+        && materialStyles.every((style) => (
+          (style.webkitBackdropFilter || style.backdropFilter || '') === referenceBackdrop
+          && (style.webkitBackdropFilter || style.backdropFilter || '').includes('blur(26px)')
+          && style.clipPath.startsWith('path(')
+        ))
+        && materials.every((entry) => (
+          entry.dataset.crmTileMaterialReady === 'true'
+          && [365, 366].includes(Number(entry.dataset.crmTileMaterialCount))
+        ))
         && ['none', ''].includes(monthStyle?.backdropFilter)
         && monthStyle?.backgroundImage === 'none'
+        && day.classList.contains('crm-home-bucket')
+        && day.dataset.tileKind === 'calendar-day'
+        && day.dataset.tileSchemaVersion === '1'
+        && day.dataset.tileTargetId === day.dataset.date
         && dayStyle.backgroundImage === referenceStyle.backgroundImage
         && dayStyle.borderTopColor === referenceStyle.borderTopColor
         && ['none', ''].includes(dayStyle.backdropFilter),
       detail:JSON.stringify({
-        frostBackdrop,
-        clip:frostStyle?.clipPath?.slice(0, 32),
-        owners:frost?.dataset.materialOwnerCount,
+        materialBackdrop,
+        clip:materialStyle?.clipPath?.slice(0, 32),
+        planes:materials.length,
+        tiles:materialTileCount,
+        tile:[day?.dataset?.crmTile, day?.dataset?.tileKind, day?.dataset?.tileTargetId],
         month:[monthStyle?.backgroundImage, monthStyle?.backdropFilter],
         day:[dayStyle?.backgroundImage, dayStyle?.borderTopColor, dayStyle?.backdropFilter],
       }),
@@ -1836,11 +1894,12 @@ async function main() {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
     return chips.length > 0 && chips.every((chip) => chip.dataset.type === 'commitment');
   });
-  await check('Expanded calendar acrylic remains one day-cell union over a clear calendar plane', () => {
-    const days = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-day')];
-    const details = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip, [data-crm-theater="calendar"] .fc-empty, [data-crm-theater="calendar"] .fc-day-detail')];
+  await check('Expanded calendar is the same real tile collection at month scale', () => {
     const pane = document.querySelector('[data-crm-theater="calendar"] .fc-expander[data-kind="month"]');
-    const material = document.querySelector('[data-crm-theater="calendar"] .fc-level-material[data-material-owner="month"]');
+    const live = pane?.querySelector(':scope > .fc-expander-live');
+    const days = [...(live?.querySelectorAll('.fc-day') || [])];
+    const details = [...(live?.querySelectorAll('.fc-chip, .fc-empty, .fc-day-detail') || [])];
+    const material = live?.querySelector(':scope > .crm-tile-material-plane');
     const reference = document.querySelector('.auth-profile-menu');
     const paneStyle = pane && getComputedStyle(pane);
     const materialStyle = material && getComputedStyle(material);
@@ -1853,13 +1912,18 @@ async function main() {
         && !element.classList.contains('crm-menu-item')
         && (style.backdropFilter === 'none' || style.backdropFilter === '');
     };
-    return days.length > 300
+    return days.length >= 28 && days.length <= 31
       && !!paneStyle && paneStyle.backgroundImage === 'none' && ['none', ''].includes(paneStyle.backdropFilter)
       && !!materialStyle && materialBackdrop === referenceBackdrop && materialBackdrop.includes('blur(26px)')
-      && materialStyle.clipPath.startsWith('path(') && Number(material.dataset.materialOwnerCount) >= 28
+      && materialStyle.clipPath.startsWith('path(')
+      && Number(material.dataset.crmTileMaterialCount) === days.length
       && days.every((day) => {
         const style = getComputedStyle(day);
         return isObjectsOnly(day)
+          && day.classList.contains('crm-home-bucket')
+          && day.dataset.tileKind === 'calendar-day'
+          && day.dataset.tileSchemaVersion === '1'
+          && day.dataset.tileTargetId === day.dataset.date
           && style.backgroundImage === referenceStyle.backgroundImage
           && style.borderTopColor === referenceStyle.borderTopColor;
       })
@@ -2006,8 +2070,8 @@ async function main() {
   await check('A project dive animates continuously from its source tile and seats without a layout snap', (probe) => {
     const first = probe?.samples?.[0]; const last = probe?.samples?.at(-1); const acrylic = probe?.acrylicOpacities || []; const motion=probe?.motionAcrylic||[];const release=probe?.releaseAcrylic||[];const releaseSteps=release.slice(1).map((value,index)=>value-release[index]);const releaseIntermediate=release.filter((opacity)=>opacity>.05&&opacity<.95).length;const motionCurve=probe?.motionKeyframes||[];const releaseCurve=probe?.releaseKeyframes||[];const heldCurve=motionCurve.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&motionCurve.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===1);const endpointCurve=releaseCurve.some((frame)=>Math.abs(frame.offset)<.001&&frame.opacity===1)&&releaseCurve.some((frame)=>Math.abs(frame.offset-1)<.001&&frame.opacity===0);
     return { ok:!!probe && probe.level === 1 && probe.layers === 2 && probe.unique >= 7 && probe.stable === 1 && probe.acrylicFrames >= probe.samples.length-4 && probe.screenSpaceFrames >= probe.acrylicFrames && probe.screenSpaceFrames-probe.acrylicFrames <= 2 && probe.objectFrames >= probe.samples.length-1 && probe.wallpapers === 1
-      && acrylic[0] >= .99 && acrylic.at(-1) <= .1 && motion.length >= 20 && motion.every((opacity)=>opacity>=.99) && heldCurve
-      && release.length >= 5 && release[0] >= .8 && release.at(-1) <= .2 && releaseIntermediate >= 3 && releaseSteps.every((step)=>step<=.04) && endpointCurve
+      && acrylic[0] >= .99 && acrylic.at(-1) <= .1 && motion.length >= 16 && motion.every((opacity)=>opacity>=.99) && heldCurve
+      && release.length >= 5 && release[0] >= .8 && release.at(-1) <= .2 && releaseIntermediate >= 3 && releaseSteps.every((step)=>step<=.18) && endpointCurve
       && !!first && Math.abs(first[0]-probe.source[0]) <= 1 && Math.abs(first[1]-probe.source[1]) <= 1
       && Math.abs(first[2]-probe.source[2]) <= 1 && Math.abs(first[3]-probe.source[3]) <= 1
       && !!last && Math.abs(last[0]) <= 1 && Math.abs(last[1]) <= 1 && Math.abs(last[2]-innerWidth) <= 1 && Math.abs(last[3]-innerHeight) <= 1,

@@ -13,11 +13,22 @@
     const releaseEase = config.releaseEase || "cubic-bezier(.3, 0, .7, 1)";
     const holdThroughMotion = config.holdThroughMotion === true;
     const releaseMs = Math.max(1, Number(config.releaseMs) || 140);
+    const prewarmOpacity = Math.max(.001, Math.min(1, Number(config.prewarmOpacity) || .001));
+    const parkOpacity = Math.max(0, Math.min(.01, Number(config.parkOpacity) || 0));
+    const requestedMotionHandoffStart = Number(config.motionHandoffStart);
+    const motionHandoffStart = holdThroughMotion
+      && Number.isFinite(requestedMotionHandoffStart)
+      && requestedMotionHandoffStart > 0
+      && requestedMotionHandoffStart < 1
+      ? requestedMotionHandoffStart
+      : null;
     let lens = null;
     let clipOwner = null;
+    let boundaryOwner = null;
     let owner = null;
     let state = null;
     let clipAnimation = null;
+    let counterAnimation = null;
     let opacityAnimation = null;
     let frameAnimation = null;
     let releaseAnimation = null;
@@ -57,10 +68,12 @@
     };
     const stop = () => {
       clipAnimation?.cancel();
+      counterAnimation?.cancel();
       opacityAnimation?.cancel();
       frameAnimation?.cancel();
       releaseAnimation?.cancel();
       clipAnimation = null;
+      counterAnimation = null;
       opacityAnimation = null;
       frameAnimation = null;
       releaseAnimation = null;
@@ -68,9 +81,10 @@
     const finish = () => {
       const frame = state?.frame;
       stop();
-      (clipOwner || lens)?.remove();
+      (boundaryOwner || clipOwner || lens)?.remove();
       lens = null;
       clipOwner = null;
+      boundaryOwner = null;
       owner?.classList.remove(ownerClass);
       owner = null;
       state = null;
@@ -80,7 +94,7 @@
       if (!lens) return false;
       const frame = state?.frame;
       stop();
-      lens.style.opacity = "0";
+      lens.style.opacity = String(parkOpacity);
       lens.dataset.fractalAcrylicPhase = "parked";
       owner?.classList.remove(ownerClass);
       owner = null;
@@ -141,9 +155,14 @@
           geometryMaterial.radiusX / scaleX,
           geometryMaterial.radiusY / scaleY,
         );
+      const geometryMode = customGeometry?.mode === "transform" ? "transform" : "clip";
+      const sourceOwnerTransform = customGeometry?.sourceOwnerTransform || "translateZ(0)";
+      const destinationOwnerTransform = customGeometry?.destinationOwnerTransform || "translateZ(0)";
+      const sourceLensTransform = customGeometry?.sourceLensTransform || "translateZ(0)";
+      const destinationLensTransform = customGeometry?.destinationLensTransform || "translateZ(0)";
 
       const direction = context.direction || "prewarm";
-      const mountedOwner = clipOwner || lens;
+      const mountedOwner = boundaryOwner || clipOwner || lens;
       const canReuse = !!lens && mountedOwner?.parentElement === context.surface;
       if (!canReuse) {
         finish();
@@ -162,9 +181,19 @@
           clipOwner.className = `${lensClass}-clip`;
           clipOwner.setAttribute("aria-hidden", "true");
           clipOwner.appendChild(lens);
-          context.surface.appendChild(clipOwner);
+          if (config.clipToDestinationBounds === true) {
+            boundaryOwner = document.createElement("span");
+            boundaryOwner.className = `${lensClass}-boundary`;
+            boundaryOwner.setAttribute("aria-hidden", "true");
+            boundaryOwner.appendChild(clipOwner);
+            context.surface.appendChild(boundaryOwner);
+          } else {
+            boundaryOwner = null;
+            context.surface.appendChild(clipOwner);
+          }
         } else {
           clipOwner = null;
+          boundaryOwner = null;
           context.surface.appendChild(lens);
         }
       } else {
@@ -174,21 +203,63 @@
         owner.classList.add(ownerClass);
       }
       lens.dataset.fractalAcrylicLens = direction;
-      const initialClip = direction === "contract" ? destinationClip : sourceClip;
+      const initialClip = geometryMode === "transform"
+        ? sourceClip
+        : (direction === "contract" ? destinationClip : sourceClip);
+      const initialOwnerTransform = direction === "contract"
+        ? destinationOwnerTransform
+        : sourceOwnerTransform;
+      const initialLensTransform = direction === "contract"
+        ? destinationLensTransform
+        : sourceLensTransform;
       const initialOpacity = direction === "prewarm"
-        ? ".001"
+        ? String(prewarmOpacity)
         : (holdThroughMotion ? "1" : (direction === "expand" ? "1" : "0"));
       const geometryOwner = clipOwner || lens;
+      if (boundaryOwner) {
+        const boundaryRadiusX = Number.isFinite(Number(customGeometry?.boundaryRadiusX))
+          ? Number(customGeometry.boundaryRadiusX)
+          : geometryMaterial.radiusX / scaleX;
+        const boundaryRadiusY = Number.isFinite(Number(customGeometry?.boundaryRadiusY))
+          ? Number(customGeometry.boundaryRadiusY)
+          : geometryMaterial.radiusY / scaleY;
+        const boundaryClip = clipFor(
+          destinationRect,
+          surfaceRect,
+          boundaryRadiusX,
+          boundaryRadiusY,
+        );
+        Object.assign(boundaryOwner.style, {
+          position:"absolute",
+          inset:"0",
+          zIndex:direction === "contract"
+            ? String(config.contractZIndex ?? 5)
+            : String(config.expandZIndex ?? 4),
+          boxSizing:"border-box",
+          pointerEvents:"none",
+          clipPath:boundaryClip,
+          webkitClipPath:boundaryClip,
+          transform:"translateZ(0)",
+          backfaceVisibility:"hidden",
+        });
+      }
       Object.assign(geometryOwner.style, {
         position:"absolute",
         inset:"0",
-        zIndex:direction === "contract" ? String(config.contractZIndex ?? 5) : String(config.expandZIndex ?? 4),
+        zIndex:boundaryOwner
+          ? "0"
+          : (direction === "prewarm"
+            ? String(config.prewarmZIndex ?? config.expandZIndex ?? 4)
+            : (direction === "contract"
+              ? String(config.contractZIndex ?? 5)
+              : String(config.expandZIndex ?? 4))),
         boxSizing:"border-box",
         pointerEvents:"none",
         clipPath:initialClip,
         webkitClipPath:initialClip,
-        transform:"translateZ(0)",
-        willChange:"clip-path",
+        transform:initialOwnerTransform,
+        transformOrigin:"0 0",
+        willChange:geometryMode === "transform" ? "transform" : "clip-path",
         backfaceVisibility:"hidden",
       });
       Object.assign(lens.style, {
@@ -209,17 +280,25 @@
         // Its .001 coat is visually inert but avoids allocating a full acrylic
         // surface in the first animated frame.
         opacity:initialOpacity,
-        transform:"translateZ(0)",
+        transform:initialLensTransform,
+        transformOrigin:"0 0",
         // Promote the actual material during hover prewarm. In hold mode its
         // separate parent owns clip motion, so this full-screen blur surface
         // never changes geometry during the transition.
-        willChange:clipOwner ? "opacity,backdrop-filter" : "clip-path,opacity,backdrop-filter",
+        willChange:geometryMode === "transform"
+          ? "transform,opacity,backdrop-filter"
+          : (clipOwner ? "opacity,backdrop-filter" : "clip-path,opacity,backdrop-filter"),
         backfaceVisibility:"hidden",
       });
       state = {
         direction,
+        geometryMode,
         sourceClip,
         destinationClip,
+        sourceOwnerTransform,
+        destinationOwnerTransform,
+        sourceLensTransform,
+        destinationLensTransform,
         duration:Number(context.morphMs) || 460,
         easing:context.ease || "cubic-bezier(.22, 1, .26, 1)",
         frame,
@@ -234,28 +313,73 @@
       stop();
       lens.dataset.fractalAcrylicPhase = "motion";
       lens.dataset.fractalAcrylicDirection = direction;
-      const from = direction === "expand" ? state.sourceClip : state.destinationClip;
-      const to = direction === "expand" ? state.destinationClip : state.sourceClip;
-      clipAnimation = state.clipOwner.animate(
-        [{ clipPath:from }, { clipPath:to }],
-        { duration:state.duration, easing:state.easing, fill:"forwards" },
-      );
+      const geometryTiming = {
+        duration:state.duration,
+        easing:state.easing,
+        fill:"forwards",
+      };
+      if (state.geometryMode === "transform") {
+        const fromOwner = direction === "expand"
+          ? state.sourceOwnerTransform
+          : state.destinationOwnerTransform;
+        const toOwner = direction === "expand"
+          ? state.destinationOwnerTransform
+          : state.sourceOwnerTransform;
+        const fromLens = direction === "expand"
+          ? state.sourceLensTransform
+          : state.destinationLensTransform;
+        const toLens = direction === "expand"
+          ? state.destinationLensTransform
+          : state.sourceLensTransform;
+        clipAnimation = state.clipOwner.animate(
+          [{ transform:fromOwner }, { transform:toOwner }],
+          geometryTiming,
+        );
+        counterAnimation = lens.animate(
+          [{ transform:fromLens }, { transform:toLens }],
+          geometryTiming,
+        );
+      } else {
+        const from = direction === "expand" ? state.sourceClip : state.destinationClip;
+        const to = direction === "expand" ? state.destinationClip : state.sourceClip;
+        clipAnimation = state.clipOwner.animate(
+          [{ clipPath:from }, { clipPath:to }],
+          geometryTiming,
+        );
+      }
       if (holdThroughMotion) {
         // Acrylic is a material, not an opacity cue. Keep its tint and live
-        // screen-space backdrop fully owned for every geometric frame. Entry
-        // can retain that same owner at the viewport endpoint until an opaque
-        // handoff covers it; exit carries it intact back into the source tile.
+        // screen-space backdrop owned throughout motion. Cameras with a live
+        // destination material may crossfade ownership late in the same
+        // animation instead of allocating a new blur at the endpoint.
         lens.style.opacity = "1";
         if (state.frame) state.frame.style.opacity = "1";
       }
+      const motionHandoffFrames = motionHandoffStart == null
+        ? null
+        : [
+          { opacity:1, offset:0 },
+          { opacity:1, offset:motionHandoffStart },
+          { opacity:parkOpacity, offset:1 },
+        ];
       opacityAnimation = lens.animate(
         holdThroughMotion
-          ? [{ opacity:1, offset:0 }, { opacity:1, offset:1 }]
+          ? (motionHandoffFrames || [{ opacity:1, offset:0 }, { opacity:1, offset:1 }])
           : (direction === "expand"
             ? [{ opacity:1, offset:0 }, { opacity:1, offset:entryHold, easing:releaseEase }, { opacity:0, offset:1 }]
             : [{ opacity:0, offset:0, easing:releaseEase }, { opacity:1, offset:exitReveal }, { opacity:1, offset:1 }]),
         { duration:state.duration, easing:"linear", fill:"forwards" },
       );
+      if (motionHandoffFrames && state.frame) {
+        frameAnimation = state.frame.animate(
+          [
+            { opacity:1, offset:0 },
+            { opacity:1, offset:motionHandoffStart },
+            { opacity:0, offset:1 },
+          ],
+          { duration:state.duration, easing:"linear", fill:"forwards" },
+        );
+      }
       return lens;
     };
     const holdEndpoint = () => {
@@ -264,37 +388,91 @@
       stop();
       state.clipOwner.style.clipPath = endpointClip;
       state.clipOwner.style.webkitClipPath = endpointClip;
+      state.clipOwner.style.transform = state.direction === "expand"
+        ? state.destinationOwnerTransform
+        : state.sourceOwnerTransform;
+      lens.style.transform = state.direction === "expand"
+        ? state.destinationLensTransform
+        : state.sourceLensTransform;
       lens.style.opacity = "1";
       if (state.frame) state.frame.style.opacity = "1";
       lens.dataset.fractalAcrylicPhase = "endpoint-held";
       return true;
     };
+    const detachEndpoint = () => {
+      if (!holdEndpoint()) return null;
+      const detachedRoot = boundaryOwner || clipOwner || lens;
+      const detachedLens = lens;
+      const detachedFrame = state?.frame || null;
+      owner?.classList.remove(ownerClass);
+      if (detachedFrame) detachedFrame.style.removeProperty("opacity");
+      detachedLens.dataset.fractalAcrylicPhase = "detached-endpoint";
+      lens = null;
+      clipOwner = null;
+      boundaryOwner = null;
+      owner = null;
+      state = null;
+      return { root:detachedRoot, lens:detachedLens };
+    };
+    const retainEndpoint = () => {
+      if (!holdEndpoint()) return null;
+      const retainedLens = lens;
+      if (!retainedLens) return null;
+      retainedLens.dataset.fractalAcrylicPhase = "retained-endpoint";
+      return { root:boundaryOwner || clipOwner || retainedLens, lens:retainedLens };
+    };
+    const reverseRetained = (nextOwner, direction = "expand") => {
+      if (!lens || !state || lens.dataset.fractalAcrylicPhase !== "retained-endpoint"
+        || !nextOwner) return null;
+      stop();
+      owner?.classList.remove(ownerClass);
+      owner = nextOwner;
+      owner.classList.add(ownerClass);
+      state.direction = direction;
+      state.frame = nextOwner.querySelector?.(frameSelector) || state.frame;
+      lens.dataset.fractalAcrylicLens = direction;
+      lens.dataset.fractalAcrylicDirection = direction;
+      lens.dataset.fractalAcrylicPhase = "prepared";
+      return lens;
+    };
     const release = () => {
       if (!holdThroughMotion || !lens || !state) return Promise.resolve(false);
       const releaseLens = lens;
       const releaseFrame = state.frame;
-      const endpointClip = state.direction === "expand" ? state.destinationClip : state.sourceClip;
-      clipAnimation?.cancel();
+      if (motionHandoffStart != null) {
+        // Both opacity tracks already fill at their invisible endpoint. Keep
+        // those compositor effects untouched until the delayed park; even
+        // cancelling a completed full-screen backdrop animation can block the
+        // first settled paint.
+        releaseLens.dataset.fractalAcrylicPhase = "released";
+        // Keep the completed geometry composition alive for one short resting
+        // interval. Its invisible shell can then be parked without touching
+        // the first settled paint.
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(lens === releaseLens), releaseMs);
+        });
+      }
+      // The geometry animations are already holding their exact endpoint.
+      // Leave those compositor-owned transforms intact during the opacity
+      // handoff; cancelling them here forces Chromium to rebuild the full
+      // backdrop surface on the first settled frame.
       opacityAnimation?.cancel();
       frameAnimation?.cancel();
       releaseAnimation?.cancel();
-      clipAnimation = null;
       opacityAnimation = null;
       frameAnimation = null;
       releaseAnimation = null;
-      state.clipOwner.style.clipPath = endpointClip;
-      state.clipOwner.style.webkitClipPath = endpointClip;
       releaseLens.style.opacity = "1";
       if (releaseFrame) releaseFrame.style.opacity = "1";
       releaseLens.dataset.fractalAcrylicPhase = "release";
       const timing = { duration:releaseMs, easing:releaseEase, fill:"forwards" };
-      const lensFade = releaseLens.animate([{ opacity:1 }, { opacity:0 }], timing);
+      const lensFade = releaseLens.animate([{ opacity:1 }, { opacity:parkOpacity }], timing);
       const frameFade = releaseFrame?.animate?.([{ opacity:1 }, { opacity:0 }], timing) || null;
       releaseAnimation = lensFade;
       frameAnimation = frameFade;
       return Promise.allSettled([lensFade.finished, frameFade?.finished].filter(Boolean)).then(() => {
         if (lens !== releaseLens || releaseAnimation !== lensFade) return false;
-        releaseLens.style.opacity = "0";
+        releaseLens.style.opacity = String(parkOpacity);
         if (releaseFrame) releaseFrame.style.opacity = "0";
         lensFade.cancel();
         frameFade?.cancel?.();
@@ -311,15 +489,17 @@
         || probeHeld()) return false;
       const syncedLens = lens;
       const syncedClip = clipAnimation;
+      const syncedCounter = counterAnimation;
       const syncedOpacity = opacityAnimation;
       const align = () => {
-        if (lens !== syncedLens || clipAnimation !== syncedClip || opacityAnimation !== syncedOpacity
+        if (lens !== syncedLens || clipAnimation !== syncedClip
+          || counterAnimation !== syncedCounter || opacityAnimation !== syncedOpacity
           || !syncedLens?.isConnected || probeHeld()) return false;
         const liveStart = Number(transformAnimation?.startTime);
         const liveTime = Number(transformAnimation?.currentTime);
         const anchor = Number.isFinite(liveStart) ? liveStart : initialAnchor;
         let synchronized = false;
-        [syncedClip, syncedOpacity].forEach((animation) => {
+        [syncedClip, syncedCounter, syncedOpacity].forEach((animation) => {
           // Calendar's native profiler deliberately pauses and seeks the
           // compositor-owned transition. Never disturb that explicit hold, nor
           // an opacity animation a material owner has intentionally cancelled.
@@ -339,7 +519,7 @@
       // resolved transform start directly; its effects are already ready then,
       // so another promise/microtask alignment would only add moving-frame work.
       if (transformAnimation) {
-        Promise.allSettled([transformAnimation, syncedClip, syncedOpacity]
+        Promise.allSettled([transformAnimation, syncedClip, syncedCounter, syncedOpacity]
           .filter(Boolean).map((animation) => animation.ready)).then(align);
       }
       return synchronized;
@@ -349,7 +529,9 @@
       stop();
       state.clipOwner.style.clipPath = state.destinationClip;
       state.clipOwner.style.webkitClipPath = state.destinationClip;
-      lens.style.opacity = ".001";
+      state.clipOwner.style.transform = state.destinationOwnerTransform;
+      lens.style.transform = state.destinationLensTransform;
+      lens.style.opacity = String(prewarmOpacity);
       lens.dataset.fractalAcrylicPhase = "prewarm";
       // Contract is smooth on first use because its full-viewport, transparent
       // lens receives covered paints before motion. Give expansion the same
@@ -360,10 +542,25 @@
       active:!!lens && ["motion", "endpoint-held", "release"].includes(lens.dataset.fractalAcrylicPhase || ""),
       phase:lens?.dataset?.fractalAcrylicPhase || "",
       direction:lens?.dataset?.fractalAcrylicDirection || state?.direction || "",
+      geometryMode:state?.geometryMode || "clip",
       holdThroughMotion,
       releaseMs,
     });
-    return { prepare, start, sync, prime, holdEndpoint, release, park, finish, element:() => lens, status };
+    return {
+      prepare,
+      start,
+      sync,
+      prime,
+      holdEndpoint,
+      detachEndpoint,
+      retainEndpoint,
+      reverseRetained,
+      release,
+      park,
+      finish,
+      element:() => lens,
+      status,
+    };
   };
 
   global.createFractalCamera = function createFractalCamera(config = {}) {
@@ -378,13 +575,17 @@
     const contractFadeMs = Number.isFinite(Number(config.contractFadeMs)) ? Number(config.contractFadeMs) : Math.round(morphMs * .35);
     const contractFadeDelay = Math.max(0, morphMs - contractFadeMs);
     const keepBelowVisible = config.keepBelowVisibleDuringTransition === true;
+    const keepBelowStationary = config.keepBelowStationaryDuringTransition === true;
+    const keepBelowRenderedAtRest = config.keepBelowRenderedAtRest === true;
     const keepBelowVisibleDuringJump = config.keepBelowVisibleDuringJump === true;
     const precomposeTransitions = config.precomposeTransitions === true;
+    const animateWarmExpander = config.animateWarmExpander !== false;
     const lockInputDuringTransitions = config.lockInputDuringTransitions === true;
     const delegateClickToOwner = config.delegateClickToOwner === true;
     const contractExpanderAbove = config.contractExpanderAbove === true;
     const holdContractEndpointFrame = config.holdContractEndpointFrame === true;
     const keepExpanderOpaque = config.keepExpanderOpaqueDuringTransition === true;
+    const reuseContractedExpander = config.reuseContractedExpander === true;
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -649,6 +850,9 @@
       Object.assign(expander.style, { opacity: "0.001", zIndex: "1", transform:sourceTransform });
       surface.appendChild(expander);
       config.primeExpander?.(expander, target, ctx());
+      const entry = { key, el:expander, animation:null };
+      warm = entry;
+      if (!animateWarmExpander) return;
       // Exercise the exact transparent room texture through its compositor
       // scale while the pointer is merely hovering. The first visible camera
       // frame can then reuse an uploaded, transform-ready surface.
@@ -660,8 +864,7 @@
         ],
         { duration:96, easing:"linear", fill:"both" },
       );
-      const entry = { key, el: expander, animation };
-      warm = entry;
+      entry.animation = animation;
       // Once the hover pass has exercised both compositor scales, retire the
       // Web Animation while preserving its final source transform. Cancelling
       // a finished fill-mode animation at click time can otherwise rebuild the
@@ -703,6 +906,7 @@
         transition: "none",
         opacity: keepExpanderOpaque ? "1" : "0",
         transform: `translate(${(rect.left - E.x).toFixed(2)}px, ${(rect.top - E.y).toFixed(2)}px) scale(${(rect.width / E.w).toFixed(5)}, ${(rect.height / E.h).toFixed(5)})`,
+        transformOrigin:"0 0",
       });
       const below = layers[level];
       below.style.zIndex = "0";
@@ -729,10 +933,12 @@
         armTransformFallback();
         expander.style.transform = "none";
         expander.style.opacity = "1";
-        below.style.transition = keepBelowVisible
+        below.style.transition = keepBelowStationary
+          ? (keepBelowVisible ? "none" : `opacity ${belowFadeMs}ms ease`)
+          : keepBelowVisible
           ? `transform ${morphMs}ms ${ease}`
           : `transform ${morphMs}ms ${ease}, opacity ${belowFadeMs}ms ease`;
-        below.style.transform = dive;
+        below.style.transform = keepBelowStationary ? "none" : dive;
         below.style.opacity = keepBelowVisible ? "1" : "0";
         announceTransformReady("expand", expander, seq, triggerFrameTime);
       });
@@ -754,10 +960,10 @@
         if (seq !== transitionSeq) return;
         expander.style.transition = "none";
         below.style.transition = "none";
-        below.style.visibility = "hidden";
+        below.style.visibility = keepBelowRenderedAtRest ? "" : "hidden";
         below.style.transform = "none";
         below.style.opacity = "1";
-        below.style.pointerEvents = "";
+        below.style.pointerEvents = keepBelowRenderedAtRest ? "none" : "";
         // Level ownership changes only after the exact transform endpoint is
         // seated. A camera may return a Promise from onTransitionEnd to retain
         // its endpoint cover while the resting tree completes covered paints.
@@ -767,6 +973,7 @@
     const contract = () => {
       if (!active || level === 0 || transitioning) return;
       announceNavigation("start", "back");
+      dropWarm();
       const seq = ++transitionSeq;
       transitioning = true;
       const expander = layers[level];
@@ -797,7 +1004,7 @@
       // instead of first rasterizing the root at a very large zoom scale.
       below.style.zIndex = precomposeTransitions ? "3" : "5";
       below.style.pointerEvents = lockInputDuringTransitions ? "none" : "auto";
-      below.style.transform = precomposeTransitions ? "none" : dive;
+      below.style.transform = keepBelowStationary || precomposeTransitions ? "none" : dive;
       below.style.opacity = keepBelowVisible ? "1" : (config.contractFadeMs != null ? "0" : "1");
       below.style.visibility = "";
       expander.style.transition = "none";
@@ -808,6 +1015,7 @@
       expander.style.zIndex = contractExpanderAbove ? "6" : "4";
       expander.style.pointerEvents = "none";
       expander.style.opacity = "1";
+      expander.style.transformOrigin = "0 0";
       expander.classList.add(config.contractingClass || "fractal-camera-contracting");
       const oldLevel = level;
       const commit = once(() => {
@@ -821,7 +1029,35 @@
         // finalizer remains a safe fallback for cameras without such a bridge.
         const retireOutgoingLayer = once(() => {
           if (layers[oldLevel] === expander) layers[oldLevel] = null;
-          expander.remove();
+          const warmKey = keyOf(source);
+          if (reuseContractedExpander && warmKey && expander.isConnected) {
+            expander.classList.remove(config.contractingClass || "fractal-camera-contracting");
+            expander.classList.add(config.warmClass || "fractal-camera-warm");
+            expander.dataset.fractalFrame = "source";
+            Object.assign(expander.style, {
+              zIndex:"1",
+              pointerEvents:"none",
+              transition:"none",
+              opacity:".001",
+            });
+            const sourceTransform = expander.style.transform;
+            const animation = expander.animate(
+              [
+                { transform:sourceTransform, offset:0 },
+                { transform:"none", offset:.5 },
+                { transform:sourceTransform, offset:1 },
+              ],
+              { duration:96, easing:"linear", fill:"both" },
+            );
+            const entry = { key:warmKey, el:expander, animation };
+            warm = entry;
+            animation.finished.then(() => {
+              if (warm !== entry || !expander.isConnected) return;
+              try { animation.commitStyles(); } catch {}
+              animation.cancel();
+              entry.animation = null;
+            }).catch(() => {});
+          } else expander.remove();
         });
         const transitionContext = {
           ...ctx(),
@@ -845,7 +1081,13 @@
         if (seq !== transitionSeq) return;
         config.onTransformPrepare?.("contract", ctx());
         expander.dataset.fractalFrame = "source";
-        below.style.transition = keepBelowVisible
+        below.style.transition = keepBelowStationary
+          ? (keepBelowVisible
+            ? "none"
+            : (config.contractFadeMs != null
+              ? `opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`
+              : `opacity ${contractFadeMs}ms ease`))
+          : keepBelowVisible
           ? `transform ${morphMs}ms ${ease}`
           : (config.contractFadeMs != null
             ? `transform ${morphMs}ms ${ease}, opacity ${contractFadeMs}ms ease ${contractFadeDelay}ms`
@@ -863,7 +1105,7 @@
       if (precomposeTransitions) requestAnimationFrame(() => {
         if (seq !== transitionSeq) return;
         below.style.zIndex = "5";
-        below.style.transform = dive;
+        below.style.transform = keepBelowStationary ? "none" : dive;
         requestAnimationFrame(beginTransition);
       });
       else transitionFrame(beginTransition);
@@ -1041,6 +1283,7 @@
       refresh,
       rebuildRoot,
       restoreRoot,
+      prefetch,
       dropWarm,
       layout,
       historyState,

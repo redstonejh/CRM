@@ -25,7 +25,9 @@
     ".crm-overview-pocket",
     ".record-world",
     ".crm-person-history",
-    ".fc-bucket",
+    // Calendar months are a clear layout plane whose individual day tiles own
+    // the canonical acrylic. Only the expanded day itself is a menu surface.
+    ".fc-bucket:not(.fc-month):not([data-kind='month'])",
     ".crm-company-account",
     ".crm-company-bucket",
     ".crm-company-world",

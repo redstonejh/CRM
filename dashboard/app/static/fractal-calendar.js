@@ -115,10 +115,20 @@
       .fc-surface[hidden] { display: none; }
       body[data-crm-module="calendar"] .app-window-drag-region { z-index: 790; }
       .fc-level { position: absolute; inset: 0; transform-origin: 0 0; }
-      .fc-grid { position: absolute; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
+      .fc-grid { position: absolute; z-index: 1; display: grid; pointer-events: auto; -webkit-app-region: no-drag;
         grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); gap: 14px; }
-      .fc-frost { position: absolute; inset: 0; pointer-events: none;
-        -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%); }
+      /* One real screen-space acrylic plane is clipped to the union of the
+         day cells. The calendar plane remains clear, while every day samples
+         the same wallpaper with the exact bucket/tile filter. */
+      .fc-frost,
+      .fc-day-frost { position: absolute; inset: 0; box-sizing: border-box; pointer-events: none;
+        background: transparent; border: 0; box-shadow: none;
+        -webkit-backdrop-filter: var(--bucket-acrylic-filter);
+        backdrop-filter: var(--bucket-acrylic-filter);
+        transform: translateZ(0); backface-visibility: hidden; }
+      .fc-day-frost { z-index: 0; will-change: backdrop-filter; }
+      .fc-day-frost.fc-material-externalized {
+        -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
       .fc-year-strip { position: fixed; left: 50%; top: 12px; z-index: 11; transform: translateX(-50%);
         display: inline-flex; align-items: center; gap: 7px; pointer-events: auto; -webkit-app-region: no-drag;
         padding: 0; color: rgba(245,249,255,.84); background: transparent; border: 0;
@@ -150,6 +160,9 @@
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14),
           inset 0 1px 0 rgba(255,255,255,0.18), 0 18px 42px rgba(0,0,0,0.28);
         transition: box-shadow .18s ease, background .18s ease; }
+      .fc-month,
+      .fc-expander[data-kind="month"] { background: transparent; border-color: transparent;
+        box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
       .fc-hd { flex: 0 0 9%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
         padding: 0 1%; font-size: clamp(0.98rem, 8cqh, 1.15rem); font-weight: 700; line-height: 1.05;
         color: rgba(255,255,255,0.85); white-space: nowrap; min-height: 0; }
@@ -164,10 +177,12 @@
       .fc-days { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(7, 1fr);
         grid-template-rows: repeat(6, 1fr); column-gap: 1.6%; row-gap: 2%; }
       .fc-day-spacer { min-height: 0; visibility: hidden; pointer-events: none; }
-      .fc-day { position: relative; min-height: 0; overflow: hidden; border: 0;
+      .fc-day { position: relative; z-index: 1; box-sizing: border-box; min-height: 0; overflow: hidden;
+        border: 1px solid var(--bucket-acrylic-border);
         border-radius: calc(var(--day-r, 3px) * var(--kx, 1)) / calc(var(--day-r, 3px) * var(--ky, 1));
-        background: linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035));
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.08);
+        background: var(--bucket-acrylic-surface);
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+        box-shadow: var(--bucket-acrylic-shadow);
         transition: box-shadow .18s ease, background .18s ease; }
       .fc-day-num { position: absolute; top: 6%; left: 7%; font-size: var(--crm-type-body,12px); font-weight: 700;
         color: rgba(255,255,255,0.78); line-height: 1; }
@@ -212,8 +227,8 @@
         box-shadow: inset 0 0 0 1px rgba(125,180,255,0.4), inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 8px rgba(0,0,0,0.28); }
       /* BLUEPRINT A4: today's cell carries the lid glow — the wall's only
          ambient signal. */
-      .fc-day.fc-today { box-shadow: inset 0 0 0 1px rgba(125,180,255,0.55), inset 0 1px 0 rgba(255,255,255,0.14),
-        0 0 16px rgba(90,150,255,0.38); }
+      .fc-day.fc-today { box-shadow: var(--bucket-acrylic-shadow),
+        inset 0 0 0 1px rgba(125,180,255,0.55), 0 0 16px rgba(90,150,255,0.38); }
       /* The drag-to-day / chip-tap flight: a shrinking glass card that seats
          into the day cell (house ease, opaque body — no backdrop under transform). */
       .fc-fly-card { position: fixed; z-index: 6000; pointer-events: none; box-sizing: border-box;
@@ -473,7 +488,7 @@
     grid.className = "fc-grid";
     for (let month = 0; month < 12; month++) {
       const bucket = document.createElement("div");
-      bucket.className = "fc-bucket fc-month crm-menu-surface";
+      bucket.className = "fc-bucket fc-month";
       bucket.dataset.month = String(month + 1);
       bucket.innerHTML = monthInnerHTML(month);
       grid.appendChild(bucket);
@@ -517,19 +532,12 @@
     const monthR = radiusFor(firstMonth.offsetWidth, firstMonth.offsetHeight);
     surface.style.setProperty("--mon-r", `${monthR.toFixed(1)}px`);
     if (firstDay) surface.style.setProperty("--day-r", `${radiusFor(firstDay.offsetWidth, firstDay.offsetHeight).toFixed(1)}px`);
-    const gx = grid.offsetLeft;
-    const gy = grid.offsetTop;
-    const parts = [...grid.children].map((month) => {
-      const width = month.offsetWidth;
-      const height = month.offsetHeight;
-      const x = gx + month.offsetLeft;
-      const y = gy + month.offsetTop;
-      const r = monthR;
-      return `M ${x + r} ${y} L ${x + width - r} ${y} A ${r} ${r} 0 0 1 ${x + width} ${y + r} ` +
-        `L ${x + width} ${y + height - r} A ${r} ${r} 0 0 1 ${x + width - r} ${y + height} L ${x + r} ${y + height} ` +
-        `A ${r} ${r} 0 0 1 ${x} ${y + height - r} L ${x} ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
-    });
-    frost.style.clipPath = `path('${parts.join(" ")}')`;
+    const days = [...grid.querySelectorAll(".fc-day")];
+    const dayPath = `path('${days.map((day) => roundedRectMaterialPath(day, surface)).join(" ")}')`;
+    frost.style.clipPath = dayPath;
+    frost.style.webkitClipPath = dayPath;
+    frost.dataset.materialOwnerCount = String(days.length);
+    frost.dataset.materialRole = "calendar-days";
 
     // Expanded-level acrylic is a fixed screen-space sibling, so it does not
     // inherit the camera layer's resized geometry. Keep it seated on the
@@ -1409,30 +1417,113 @@
       height:`${rect.height.toFixed(2)}px`,
     });
   };
+  const roundedBoxMaterialPath = ({ x, y, width, height, radius }) => {
+    const r = Math.min(width / 2, height / 2, Math.max(0, radius || 0));
+    return [
+      `M ${(x + r).toFixed(2)} ${y.toFixed(2)}`,
+      `L ${(x + width - r).toFixed(2)} ${y.toFixed(2)}`,
+      `A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${(x + width).toFixed(2)} ${(y + r).toFixed(2)}`,
+      `L ${(x + width).toFixed(2)} ${(y + height - r).toFixed(2)}`,
+      `A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${(x + width - r).toFixed(2)} ${(y + height).toFixed(2)}`,
+      `L ${(x + r).toFixed(2)} ${(y + height).toFixed(2)}`,
+      `A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${x.toFixed(2)} ${(y + height - r).toFixed(2)}`,
+      `L ${x.toFixed(2)} ${(y + r).toFixed(2)}`,
+      `A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${(x + r).toFixed(2)} ${y.toFixed(2)} Z`,
+    ].join(" ");
+  };
   const roundedRectMaterialPath = (source, surface) => {
     const rect = source.getBoundingClientRect();
     const surfaceRect = surface.getBoundingClientRect();
-    const style = getComputedStyle(source);
-    const x = rect.left - surfaceRect.left;
-    const y = rect.top - surfaceRect.top;
-    const width = rect.width;
-    const height = rect.height;
-    const radius = Math.min(
-      width / 2,
-      height / 2,
-      Math.max(0, parseFloat(style.borderTopLeftRadius) || 0),
-    );
-    return [
-      `M ${(x + radius).toFixed(2)} ${y.toFixed(2)}`,
-      `L ${(x + width - radius).toFixed(2)} ${y.toFixed(2)}`,
-      `A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 0 1 ${(x + width).toFixed(2)} ${(y + radius).toFixed(2)}`,
-      `L ${(x + width).toFixed(2)} ${(y + height - radius).toFixed(2)}`,
-      `A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 0 1 ${(x + width - radius).toFixed(2)} ${(y + height).toFixed(2)}`,
-      `L ${(x + radius).toFixed(2)} ${(y + height).toFixed(2)}`,
-      `A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 0 1 ${x.toFixed(2)} ${(y + height - radius).toFixed(2)}`,
-      `L ${x.toFixed(2)} ${(y + radius).toFixed(2)}`,
-      `A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 0 1 ${(x + radius).toFixed(2)} ${y.toFixed(2)} Z`,
-    ].join(" ");
+    return roundedBoxMaterialPath({
+      x:rect.left - surfaceRect.left,
+      y:rect.top - surfaceRect.top,
+      width:rect.width,
+      height:rect.height,
+      radius:parseFloat(getComputedStyle(source).borderTopLeftRadius) || 0,
+    });
+  };
+  const localMaterialBox = (source, root) => {
+    if (!source || !root) return null;
+    let x = 0;
+    let y = 0;
+    let cursor = source;
+    while (cursor && cursor !== root) {
+      x += cursor.offsetLeft || 0;
+      y += cursor.offsetTop || 0;
+      cursor = cursor.offsetParent;
+    }
+    if (cursor !== root) {
+      const sourceRect = source.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      const scaleX = root.offsetWidth ? rootRect.width / root.offsetWidth : 1;
+      const scaleY = root.offsetHeight ? rootRect.height / root.offsetHeight : 1;
+      x = (sourceRect.left - rootRect.left) / Math.max(.0001, scaleX);
+      y = (sourceRect.top - rootRect.top) / Math.max(.0001, scaleY);
+    }
+    return {
+      x,
+      y,
+      width:source.offsetWidth,
+      height:source.offsetHeight,
+      radius:parseFloat(getComputedStyle(source).borderTopLeftRadius) || 0,
+    };
+  };
+  const localRoundedMaterialPath = (source, root) => (
+    roundedBoxMaterialPath(localMaterialBox(source, root))
+  );
+  const syncMonthDayMaterial = (owner) => {
+    if (owner?.dataset?.kind !== "month") return null;
+    const live = owner.querySelector(":scope > .fc-expander-live");
+    const frost = live?.querySelector(":scope > .fc-day-frost");
+    const days = [...(live?.querySelectorAll?.(".fc-day") || [])];
+    if (!live || !frost || !days.length || !live.offsetWidth || !live.offsetHeight) return frost || null;
+    const value = `path('${days.map((day) => localRoundedMaterialPath(day, live)).join(" ")}')`;
+    frost.style.clipPath = value;
+    frost.style.webkitClipPath = value;
+    frost.dataset.materialOwnerCount = String(days.length);
+    frost.dataset.materialRole = "calendar-days";
+    return frost;
+  };
+  const calendarAcrylicMaterialTarget = (_expander, target, context) => {
+    if (target?.matches?.(".fc-month")) {
+      return context.layers?.[0]?.querySelector?.(":scope > .fc-frost")
+        || context.surface?.querySelector?.(".fc-frost")
+        || target;
+    }
+    if (target?.matches?.(".fc-day")) {
+      const month = target.closest?.(".fc-expander[data-kind='month']");
+      return levelMaterialByOwner.get(month)
+        || month?.querySelector?.(":scope > .fc-expander-live > .fc-day-frost")
+        || context.surface?.querySelector?.(".fc-frost")
+        || target;
+    }
+    return target;
+  };
+  const calendarAcrylicClipGeometry = (expander, target, context) => {
+    if (!target?.matches?.(".fc-month")) return null;
+    const sourceDays = [...target.querySelectorAll(".fc-day")];
+    const live = expander?.querySelector?.(":scope > .fc-expander-live");
+    const destinationDays = [...(live?.querySelectorAll?.(".fc-day") || [])];
+    if (!live?.offsetWidth || !live?.offsetHeight
+      || !sourceDays.length || sourceDays.length !== destinationDays.length) return null;
+    const surface = context.surface;
+    const surfaceRect = context.surfaceRect || surface?.getBoundingClientRect?.();
+    const destination = context.destinationRect;
+    if (!surface || !surfaceRect || !destination) return null;
+    const originX = destination.left - surfaceRect.left;
+    const originY = destination.top - surfaceRect.top;
+    const sourceClip = `path('${sourceDays.map((day) => (
+      roundedRectMaterialPath(day, surface)
+    )).join(" ")}')`;
+    const destinationClip = `path('${destinationDays.map((day) => {
+      const box = localMaterialBox(day, live);
+      return roundedBoxMaterialPath({
+        ...box,
+        x:originX + box.x,
+        y:originY + box.y,
+      });
+    }).join(" ")}')`;
+    return { sourceClip, destinationClip };
   };
   const appendBackdropUnion = (scene, owners, surface) => {
     if (!scene || !owners?.length || !surface) return null;
@@ -1478,6 +1569,8 @@
     material?.remove?.();
     levelMaterialByOwner.delete(owner);
     owner?.classList?.remove?.("fc-material-externalized");
+    owner?.querySelector?.(":scope > .fc-expander-live > .fc-day-frost")
+      ?.classList?.remove?.("fc-material-externalized");
   };
   const ensureMaterialCleanupObserver = (surface) => {
     if (materialCleanupObserver || !surface) return;
@@ -1497,10 +1590,13 @@
     if (!owner || !surface || !owner.isConnected) return null;
     ensureMaterialCleanupObserver(surface);
     let material = levelMaterialByOwner.get(owner);
-    // Read the canonical crm-menu-surface before making its moving DOM
-    // objects-only. This is an exact computed-material transfer, not a
-    // hand-matched tint.
+    // A day dive copies its canonical tile material. A month dive instead
+    // copies the one day-cell union lens, leaving the calendar plane clear.
+    // Both become fixed screen-space siblings before camera motion.
+    const dayFrost = syncMonthDayMaterial(owner);
     owner.classList.remove("fc-material-externalized");
+    dayFrost?.classList.remove("fc-material-externalized");
+    const materialSource = dayFrost || owner;
     if (!material?.isConnected) {
       material = document.createElement("span");
       material.className = "fc-level-material";
@@ -1509,13 +1605,16 @@
       surface.appendChild(material);
       levelMaterialByOwner.set(owner, material);
     }
-    copyExactMaterial(material, owner);
+    copyExactMaterial(material, materialSource);
+    material.dataset.materialOwnerCount = dayFrost?.dataset.materialOwnerCount || "1";
+    material.dataset.materialRole = dayFrost?.dataset.materialRole || "calendar-day";
     placeViewportMaterial(material, context);
     if (!material.dataset.compositeWarm) {
       material.style.opacity = ".001";
       precomposeOpacity(material, .001);
     }
     owner.classList.add("fc-material-externalized");
+    dayFrost?.classList.add("fc-material-externalized");
     return material;
   };
   const materialSceneOwners = (source) => {
@@ -1548,10 +1647,9 @@
       const frostOwners = owners.filter((owner) => owner.matches?.(".fc-frost"));
       const canonicalOwners = owners.filter((owner) => !frostOwners.includes(owner));
       scene.dataset.materialOwnerCount = String(owners.length);
-      // Frost remains its exact 28px recipe. The eleven unselected month
-      // surfaces share one canonical 26px union. The year strip is excluded:
-      // its exact nested acrylic is supplied by the compositor capture, so
-      // root motion owns two resting filters plus one transition lens.
+      // Root owns one canonical 26px backdrop plane clipped only to the day
+      // cells. There is deliberately no month/calendar background material.
+      // The year strip remains supplied by its compositor capture.
       frostOwners.forEach((owner) => {
         const piece = document.createElement("span");
         piece.className = "fc-below-material-piece";
@@ -1769,6 +1867,8 @@
     levelMaterialByOwner.forEach((material, owner) => {
       material.remove();
       owner?.classList?.remove?.("fc-material-externalized");
+      owner?.querySelector?.(":scope > .fc-expander-live > .fc-day-frost")
+        ?.classList?.remove?.("fc-material-externalized");
     });
     levelMaterialByOwner.clear();
     belowMaterialCache.forEach((scene) => scene.remove());
@@ -1821,7 +1921,9 @@
   const buildExpander = (target, context) => {
     const isMonth = context.level === 0;
     const expander = document.createElement("div");
-    expander.className = "fc-bucket fc-expander crm-menu-surface";
+    expander.className = isMonth
+      ? "fc-bucket fc-expander"
+      : "fc-bucket fc-expander crm-menu-surface";
     expander.dataset.kind = isMonth ? "month" : "day";
     expander.appendChild(transitionPreview(target, context));
     const live = document.createElement("div");
@@ -1829,6 +1931,10 @@
     if (isMonth) {
       expander.dataset.month = target.dataset.month;
       live.innerHTML = monthInnerHTML(Number(target.dataset.month) - 1);
+      live.insertAdjacentHTML(
+        "afterbegin",
+        '<span class="fc-day-frost" aria-hidden="true"></span>',
+      );
     } else {
       expander.dataset.date = target.dataset.date;
       live.innerHTML = dayInnerHTML(target.dataset.date);
@@ -2627,6 +2733,8 @@
     frameSelector:":scope > .fc-transition-acrylic",
     ownerClass:"fc-source-acrylic-owner",
     lensClass:"fc-source-screen-acrylic",
+    materialTarget:calendarAcrylicMaterialTarget,
+    clipGeometry:calendarAcrylicClipGeometry,
     entryHold:.78,
     exitReveal:.22,
     expandZIndex:4,

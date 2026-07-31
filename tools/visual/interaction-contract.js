@@ -547,6 +547,9 @@ async function main() {
         key:event.detail?.key,
         x:window.peopleCards.zoneScrollState().x,
       };
+      requestAnimationFrame(() => {
+        window.__bufferedEntryWheel.ready.nextPaintX = window.peopleCards.zoneScrollState().x;
+      });
     }, { once:true });
   });
   const bufferedEntryPoint = await page.evaluate(() => ({ x:innerWidth - 30, y:innerHeight - 10 }));
@@ -585,14 +588,15 @@ async function main() {
     throw new Error(`People transition did not settle: ${JSON.stringify(state)} (${error.message})`);
   }
   await check('Home camera lands directly on the destination', () => document.body.dataset.crmModule === 'people' && !document.querySelector('.crm-transit-veil'));
-  await check('Buffered entry input moves the rail on the first interaction-ready frame', () => {
+  await check('Buffered entry input moves the rail on the first painted interaction-ready frame', () => {
     const state = window.peopleCards.zoneScrollState();
     const probe = window.__bufferedEntryWheel;
     const timing = window.crmDeskTransit?.performanceTimings?.().at(-1);
     return {
       ok:probe?.ready?.key === 'people'
-        && probe.ready.x < 0
-        && state.x <= -299 && Math.abs(state.target - state.x) < 1
+        && probe.ready.nextPaintX < 0
+        && state.x <= -90 && state.x >= -101
+        && Math.abs(state.target + 100) < 1 && Math.abs(state.target - state.x) < 5
         && Number(timing?.interactionReadyAfterMotionMs) > 0
         && Number(timing?.interactionReadyAfterMotionMs) <= 600
         && (window.__deskTransitionErrors || []).length === 0,
@@ -1286,8 +1290,8 @@ async function main() {
   await check('The company world scrolls from below its scrollbar with its thumb and adaptive edge shadows', ({ before, point }) => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const thumb=theater?.querySelector('.tk-zone-hth'); const state=window.peopleCards.zoneScrollState();
     const left=rail.querySelector('.tk-zone-hshade-left'),right=rail.querySelector('.tk-zone-hshade-right'); const leftShadow=Number(getComputedStyle(left).opacity); const rightShadow=Number(getComputedStyle(right).opacity); const shadeRects=[left,right].map((shade)=>shade.getBoundingClientRect());
-    return { ok:point.y>point.barBottom&&point.y>point.clipBottom&&state.min<0&&state.x<before.state.x-200
-      &&Math.abs(state.target-state.x)<1&&before.state.x-state.x<=450
+    return { ok:point.y>point.barBottom&&point.y>point.clipBottom&&state.min<0&&state.x<before.state.x-600
+      &&Math.abs(state.target-state.x)<1&&before.state.x-state.x<=700
       &&before.scrollWidth>before.clientWidth&&thumb.getBoundingClientRect().left>before.thumbLeft+2&&leftShadow>.2&&rightShadow>.2
       && shadeRects.every((rect)=>Math.abs(rect.top)<=.5&&Math.abs(rect.bottom-innerHeight)<=.5),
       detail:JSON.stringify({before,state,point,shadows:[leftShadow,rightShadow],shadeRects,thumb:thumb?.getBoundingClientRect().left}) };
@@ -1791,6 +1795,40 @@ async function main() {
       && strokes.every((stroke) => { const style=getComputedStyle(stroke); return !style.backdropFilter || style.backdropFilter === 'none'; }),
       detail:`${strokes.length} preview rows on ${probe.date}` };
   }, calendarProjectPreview);
+  await check('Calendar year acrylic is clipped to the day tiles, never the calendar plane', () => {
+    const surface = document.querySelector(
+      '[data-crm-theater="calendar"].fc-surface, [data-crm-theater="calendar"] .fc-surface',
+    );
+    const frost = surface?.querySelector('.fc-level > .fc-frost');
+    const month = surface?.querySelector('.fc-level > .fc-grid > .fc-month');
+    const day = month?.querySelector('.fc-day');
+    const reference = document.querySelector('.auth-profile-menu');
+    const frostStyle = frost && getComputedStyle(frost);
+    const monthStyle = month && getComputedStyle(month);
+    const dayStyle = day && getComputedStyle(day);
+    const referenceStyle = reference && getComputedStyle(reference);
+    const frostBackdrop = frostStyle?.webkitBackdropFilter || frostStyle?.backdropFilter || '';
+    const referenceBackdrop = referenceStyle?.webkitBackdropFilter || referenceStyle?.backdropFilter || '';
+    return {
+      ok:!!frost && !!dayStyle && !!referenceStyle
+        && frostBackdrop === referenceBackdrop
+        && frostBackdrop.includes('blur(26px)')
+        && frostStyle.clipPath.startsWith('path(')
+        && Number(frost.dataset.materialOwnerCount) > 300
+        && ['none', ''].includes(monthStyle?.backdropFilter)
+        && monthStyle?.backgroundImage === 'none'
+        && dayStyle.backgroundImage === referenceStyle.backgroundImage
+        && dayStyle.borderTopColor === referenceStyle.borderTopColor
+        && ['none', ''].includes(dayStyle.backdropFilter),
+      detail:JSON.stringify({
+        frostBackdrop,
+        clip:frostStyle?.clipPath?.slice(0, 32),
+        owners:frost?.dataset.materialOwnerCount,
+        month:[monthStyle?.backgroundImage, monthStyle?.backdropFilter],
+        day:[dayStyle?.backgroundImage, dayStyle?.borderTopColor, dayStyle?.backdropFilter],
+      }),
+    };
+  });
   await page.evaluate((month) => document.querySelector(`.fc-month[data-month="${month}"]`)?.click(), calendarProjectPreview.month);
   await page.waitForFunction(() => window.fractalCalendar.level() === 1
     && !window.fractalCalendarCamera?.isTransitioning?.(), { timeout:5000 });
@@ -1798,16 +1836,34 @@ async function main() {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
     return chips.length > 0 && chips.every((chip) => chip.dataset.type === 'commitment');
   });
-  await check('Calendar day cells and chips retain their lightweight native renderer', () => {
+  await check('Expanded calendar acrylic remains one day-cell union over a clear calendar plane', () => {
     const days = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-day')];
     const details = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip, [data-crm-theater="calendar"] .fc-empty, [data-crm-theater="calendar"] .fc-day-detail')];
-    const isLightweight = (element) => {
+    const pane = document.querySelector('[data-crm-theater="calendar"] .fc-expander[data-kind="month"]');
+    const material = document.querySelector('[data-crm-theater="calendar"] .fc-level-material[data-material-owner="month"]');
+    const reference = document.querySelector('.auth-profile-menu');
+    const paneStyle = pane && getComputedStyle(pane);
+    const materialStyle = material && getComputedStyle(material);
+    const referenceStyle = reference && getComputedStyle(reference);
+    const materialBackdrop = materialStyle?.webkitBackdropFilter || materialStyle?.backdropFilter || '';
+    const referenceBackdrop = referenceStyle?.webkitBackdropFilter || referenceStyle?.backdropFilter || '';
+    const isObjectsOnly = (element) => {
       const style = getComputedStyle(element);
       return !element.classList.contains('crm-menu-surface')
         && !element.classList.contains('crm-menu-item')
         && (style.backdropFilter === 'none' || style.backdropFilter === '');
     };
-    return days.length > 300 && days.every(isLightweight) && details.every(isLightweight);
+    return days.length > 300
+      && !!paneStyle && paneStyle.backgroundImage === 'none' && ['none', ''].includes(paneStyle.backdropFilter)
+      && !!materialStyle && materialBackdrop === referenceBackdrop && materialBackdrop.includes('blur(26px)')
+      && materialStyle.clipPath.startsWith('path(') && Number(material.dataset.materialOwnerCount) >= 28
+      && days.every((day) => {
+        const style = getComputedStyle(day);
+        return isObjectsOnly(day)
+          && style.backgroundImage === referenceStyle.backgroundImage
+          && style.borderTopColor === referenceStyle.borderTopColor;
+      })
+      && details.every(isObjectsOnly);
   });
   await check('Project work on a calendar day carries its automatic pipeline preview', (probe) => {
     const day = document.querySelector(`.fc-expander[data-kind="month"] .fc-day[data-date="${CSS.escape(probe.date)}"]`);

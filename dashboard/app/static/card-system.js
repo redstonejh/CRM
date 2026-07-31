@@ -2786,22 +2786,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   const zoneHMetrics = { view:0, content:0, bar:0 };
   let zoneHThumbWidth = -1;
   let zoneHLeftOpacity = "", zoneHRightOpacity = "";
-  // Keep advancing raster tiles inside Chromium's prepaint runway at 100 Hz,
-  // but do not let repeated wheel events build a long inertial queue. The rail
-  // should remain attached to the user's hand and stop shortly after it does.
-  const ZONE_RAIL_MAX_FRAME_STEP = 20;
-  const ZONE_RAIL_MAX_INPUT_FRAME_STEP = 48;
-  const ZONE_RAIL_MIN_FRAME_STEP = 10;
-  const ZONE_RAIL_EASE = .65;
-  const ZONE_RAIL_MAX_TARGET_LEAD = 420;
-  const ZONE_RAIL_WHEEL_MULTIPLIER = 3;
-  const ZONE_RAIL_WHEEL_RELEASE_MS = 24;
+  // The outer rail and the buckets are the same physical scrolling surface in
+  // different axes. Keep one literal motion recipe so their feel cannot drift
+  // apart again: 22% target easing with a 90ms wheel release.
+  const ZONE_SCROLL_EASE = .22;
+  const ZONE_SCROLL_WHEEL_RELEASE_MS = 90;
+  const ZONE_RAIL_PENDING_LIMIT = 420;
   const zoneHScroll = {
     x:0,
     target:0,
     raf:0,
     wheeling:false,
-    inputDriven:false,
     pendingWheel:0,
     releaseT:0,
   };
@@ -2980,7 +2975,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const st = zoneScroll[s]; if (!st || st.raf) return;
     const tick = () => {
       const min = zMin(s), goal = st.wheeling ? st.ty : clamp(st.ty, min, 0);
-      st.sy += (goal - st.sy) * 0.22;
+      st.sy += (goal - st.sy) * ZONE_SCROLL_EASE;
       if (!st.wheeling && Math.abs(goal - st.sy) < 0.4) { st.sy = goal; st.ty = goal; positionZone(s); st.raf = 0; return; }
       positionZone(s); st.raf = requestAnimationFrame(tick);
     };
@@ -3028,7 +3023,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     st.ty = damp(st.ty - px, min);
     st.wheeling = true;
     clearTimeout(st.releaseT);
-    st.releaseT = setTimeout(() => { st.wheeling = false; runZoneScroll(s); }, 90);
+    st.releaseT = setTimeout(() => {
+      st.wheeling = false;
+      runZoneScroll(s);
+    }, ZONE_SCROLL_WHEEL_RELEASE_MS);
     runZoneScroll(s);
   };
   // While a ticket is dragged, the dragged element stays in the DECK's DOM subtree, so wheel events
@@ -3247,17 +3245,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     holdZoneRailInteraction();
     const tick = () => {
       const minimum = zoneHMin(), goal = zoneHScroll.wheeling ? zoneHScroll.target : clamp(zoneHScroll.target, minimum, 0);
-      const remaining = goal - zoneHScroll.x;
-      const easedStep = remaining * ZONE_RAIL_EASE;
-      const minimumStep = Math.sign(remaining) * Math.min(Math.abs(remaining), ZONE_RAIL_MIN_FRAME_STEP);
-      const step = Math.abs(easedStep) < Math.abs(minimumStep) ? minimumStep : easedStep;
-      const maximumStep = zoneHScroll.inputDriven
-        ? ZONE_RAIL_MAX_INPUT_FRAME_STEP
-        : ZONE_RAIL_MAX_FRAME_STEP;
-      zoneHScroll.x += clamp(step, -maximumStep, maximumStep);
+      zoneHScroll.x += (goal - zoneHScroll.x) * ZONE_SCROLL_EASE;
       if (!zoneHScroll.wheeling && Math.abs(goal - zoneHScroll.x) < .4) {
         zoneHScroll.x = zoneHScroll.target = goal;
-        zoneHScroll.inputDriven = false;
         positionZoneRail(true);
         zoneHScroll.raf = 0;
         releaseZoneRailInteraction();
@@ -3267,39 +3257,23 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       // is reconciled once, after motion, and never changes paint visibility.
       positionZoneRail(false); zoneHScroll.raf = requestAnimationFrame(tick);
     };
-    // Apply the first bounded step in the wheel task. It reaches the very next
-    // paint instead of waiting one extra refresh before the rail responds.
-    tick();
+    zoneHScroll.raf = requestAnimationFrame(tick);
   };
-  const scrollZoneRailBy = (delta, immediate = false, coalesceInput = false) => {
+  const scrollZoneRailBy = (delta, immediate = false) => {
     if (!horizontalZones) return false; const minimum = zoneHMin(); if (minimum >= 0) return false;
     if (immediate) {
       zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x - delta, minimum, 0);
-      zoneHScroll.inputDriven = false;
       positionZoneRail();
       return true;
     }
     if (!zoneHScroll.raf) zoneHScroll.target = zoneHScroll.x;
-    if (coalesceInput) {
-      const inputDirection = Math.sign(-delta);
-      const queuedDirection = Math.sign(zoneHScroll.target - zoneHScroll.x);
-      if (queuedDirection && inputDirection && queuedDirection !== inputDirection) zoneHScroll.target = zoneHScroll.x;
-    }
-    const requestedTarget = damp(zoneHScroll.target - delta, minimum);
-    zoneHScroll.target = coalesceInput
-      ? clamp(
-        requestedTarget,
-        zoneHScroll.x - ZONE_RAIL_MAX_TARGET_LEAD,
-        zoneHScroll.x + ZONE_RAIL_MAX_TARGET_LEAD,
-      )
-      : requestedTarget;
-    zoneHScroll.inputDriven = coalesceInput;
+    zoneHScroll.target = damp(zoneHScroll.target - delta, minimum);
     zoneHScroll.wheeling = true;
     clearTimeout(zoneHScroll.releaseT);
     zoneHScroll.releaseT = setTimeout(() => {
       zoneHScroll.wheeling = false;
       runZoneRailScroll();
-    }, ZONE_RAIL_WHEEL_RELEASE_MS);
+    }, ZONE_SCROLL_WHEEL_RELEASE_MS);
     runZoneRailScroll();
     return true;
   };
@@ -3308,20 +3282,22 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const view = zoneHClip.getBoundingClientRect(), bounds = panel.getBoundingClientRect(), barBounds = zoneHBar?.getBoundingClientRect(); const inset = barBounds ? Math.max(0, barBounds.left - view.left) : 24; let shift = 0;
     if (bounds.left < view.left + inset) shift = view.left + inset - bounds.left;
     else if (bounds.right > view.right - inset) shift = view.right - inset - bounds.right;
-    if (!shift) return true; zoneHScroll.target = clamp(zoneHScroll.x + shift, zoneHMin(), 0); zoneHScroll.wheeling = false; zoneHScroll.inputDriven = false; runZoneRailScroll(); return true;
+    if (!shift) return true; zoneHScroll.target = clamp(zoneHScroll.x + shift, zoneHMin(), 0); zoneHScroll.wheeling = false; runZoneRailScroll(); return true;
   };
   const zoneRailWheelPixels = (event) => {
-    const horizontal = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
-    const raw = horizontal ? (Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY) : event.deltaY;
+    const raw = event.deltaY + event.deltaX;
     if (!raw) return 0;
-    return (event.deltaMode === 1 ? raw * 16 : event.deltaMode === 2 ? raw * (zoneHClip.clientWidth || innerWidth) : raw)
-      * ZONE_RAIL_WHEEL_MULTIPLIER;
+    return event.deltaMode === 1
+      ? raw * 16
+      : event.deltaMode === 2
+        ? raw * (zoneHClip.clientWidth || innerWidth)
+        : raw;
   };
   const routeZoneRailWheel = (event) => {
     if (!active || !horizontalZones || !zoneHClip || event.defaultPrevented) return false;
     const pixels = zoneRailWheelPixels(event);
     if (!pixels) return false;
-    if (!scrollZoneRailBy(pixels, false, true)) return false;
+    if (!scrollZoneRailBy(pixels)) return false;
     event.preventDefault();
     return true;
   };
@@ -3329,7 +3305,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const pixels = zoneRailWheelPixels(event);
     if (!pixels) return false;
     const next = zoneHScroll.pendingWheel + pixels;
-    zoneHScroll.pendingWheel = clamp(next, -ZONE_RAIL_MAX_TARGET_LEAD, ZONE_RAIL_MAX_TARGET_LEAD);
+    zoneHScroll.pendingWheel = clamp(next, -ZONE_RAIL_PENDING_LIMIT, ZONE_RAIL_PENDING_LIMIT);
     event.preventDefault();
     return true;
   };
@@ -3337,7 +3313,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const pixels = zoneHScroll.pendingWheel;
     zoneHScroll.pendingWheel = 0;
     if (!active || !pixels) return false;
-    return scrollZoneRailBy(pixels, false, true);
+    return scrollZoneRailBy(pixels);
   };
   const routeZoneRailLowerGutter = (event) => {
     if (!horizontalZones || !zoneHClip || !zoneHBar || event.defaultPrevented) return;
@@ -3379,7 +3355,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     let dragging = false, startX = 0, startScroll = 0, pointerId = null;
     const move = (event) => { if (!dragging) return; const minimum = zoneHMin(), view = zoneHClip.clientWidth, content = view - minimum, trackW = zoneHBar.clientWidth, thumbW = Math.max(28, trackW * (view / content)), fraction = (event.clientX - startX) / Math.max(1, trackW - thumbW); zoneHScroll.x = damp(startScroll + fraction * minimum, minimum); zoneHScroll.target = zoneHScroll.x; positionZoneRail(false); };
     const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && zoneHThumb.hasPointerCapture?.(pointerId)) zoneHThumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); zoneHScroll.wheeling = false; zoneHScroll.target = zoneHScroll.x; runZoneRailScroll(); };
-    zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; holdZoneRailInteraction(); pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; zoneHScroll.inputDriven = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
+    zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; holdZoneRailInteraction(); pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
     zoneHResizeObserver?.disconnect(); zoneHResizeObserver = new ResizeObserver(() => {
       if (zoneGeometryBlocked()) { scheduleZoneGeometryRefresh(); return; }
       cacheZoneRailMetrics(); zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail();
@@ -4689,7 +4665,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       clearTimeout(zoneHScroll.releaseT);
       zoneHScroll.raf = 0;
       zoneHScroll.wheeling = false;
-      zoneHScroll.inputDriven = false;
       zoneHScroll.pendingWheel = 0;
       releaseZoneRailInteraction(true);
       zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null; zoneHPrimeSignature = "";
@@ -4966,7 +4941,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       clearTimeout(zoneHScroll.releaseT);
       zoneHScroll.raf = 0;
       zoneHScroll.wheeling = false;
-      zoneHScroll.inputDriven = false;
       zoneHScroll.pendingWheel = 0;
       zoneHScroll.target = zoneHScroll.x;
       releaseZoneRailInteraction(true);

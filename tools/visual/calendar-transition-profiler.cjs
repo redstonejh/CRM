@@ -181,6 +181,7 @@ async function beginProbe(page, label) {
               opacity:effectiveOpacity(node),
               suspended:node.dataset.materialBackdropSuspended || 'false',
               ownership:node.dataset.materialOwnership || '',
+              clip:style.clipPath || style.webkitClipPath || 'none',
               rect:[rect.left, rect.top, rect.width, rect.height]
                 .map((value) => Number(value.toFixed(2))),
             };
@@ -569,12 +570,11 @@ async function waitForWarmTextures(page, kind, belowKeyPrefix) {
             const pieces = [...belowMaterial.querySelectorAll(':scope > .fc-below-material-piece')];
             const frost = pieces.find((node) => node.dataset.materialSourceClass === 'fc-frost');
             const baseUnion = pieces.find((node) => node.dataset.materialRole === 'base');
-            return Number(belowMaterial.dataset.materialOwnerCount || 0) === 12
-              && pieces.length === 2
-              && Number(baseUnion?.dataset.materialOwnerCount || 0) === 11
+            return Number(belowMaterial.dataset.materialOwnerCount || 0) === 1
+              && pieces.length === 1
+              && !baseUnion
               && Number(frost?.dataset.materialOwnerCount || 0) === 1
-              && frost?.dataset.materialBackdrop === 'blur(28px) saturate(1.4)'
-              && baseUnion?.dataset.materialBackdrop === 'blur(26px) saturate(1.4)';
+              && frost?.dataset.materialBackdrop === 'blur(26px) saturate(1.4)';
           })()
           : belowMaterial.dataset.materialBackdrop !== 'none')
         && destinationMaterial.dataset.materialBackdrop !== 'none'
@@ -1933,19 +1933,16 @@ async function main() {
           && below?.dataset.snapshotControlPseudoCount === '2'
           && below?.dataset.snapshotYearStripHiddenCount === '1'
           && destinationMaterial?.dataset.materialBackdrop !== 'none'
-          && Number(belowMaterial?.dataset.materialOwnerCount || 0) === 12
-          && Number(belowMaterial?.dataset.materialPieceCount || 0) === 2
-          && Number(belowMaterial?.querySelector('.fc-below-material-base-union')
-            ?.dataset.materialOwnerCount || 0) === 11
+          && Number(belowMaterial?.dataset.materialOwnerCount || 0) === 1
+          && Number(belowMaterial?.dataset.materialPieceCount || 0) === 1
+          && !belowMaterial?.querySelector('.fc-below-material-base-union')
           && !belowMaterial?.querySelector('.fc-below-material-control-union')
           && Number(belowMaterial?.querySelector(
             '.fc-below-material-piece[data-material-source-class="fc-frost"]',
           )?.dataset.materialOwnerCount || 0) === 1
           && belowMaterial?.querySelector(
             '.fc-below-material-piece[data-material-source-class="fc-frost"]',
-          )?.dataset.materialBackdrop === 'blur(28px) saturate(1.4)'
-          && belowMaterial?.querySelector('.fc-below-material-base-union')
-            ?.dataset.materialBackdrop === 'blur(26px) saturate(1.4)',
+          )?.dataset.materialBackdrop === 'blur(26px) saturate(1.4)',
         belowSnapshotHiddenCount:Number(below?.dataset.snapshotHiddenCount || 0),
         belowSnapshotControlPseudoCount:Number(below?.dataset.snapshotControlPseudoCount || 0),
         belowSnapshotYearStripHiddenCount:Number(
@@ -2250,31 +2247,32 @@ async function main() {
         );
       }
       if (probe.label.startsWith('month-')
-        && (probe.rootFilterLayerCount !== 2 || probe.rootMaterialOwnerCount !== 12)) {
+        && (probe.rootFilterLayerCount !== 1 || probe.rootMaterialOwnerCount !== 1)) {
         failures.push(
           `${probe.label} root material used ${probe.rootFilterLayerCount} GPU filters `
           + `for ${probe.rootMaterialOwnerCount} audited owners`,
         );
       }
       if (probe.label.startsWith('month-')
-        && (probe.motionFilterAudit?.allocatedBackdropOwnerCount !== 3
+        && (probe.motionFilterAudit?.allocatedBackdropOwnerCount !== 2
           || probe.motionFilterAudit?.activeTransitionOwnerCount !== 1
+          || !probe.motionFilterAudit?.owners?.find((owner) => (
+            owner.role === 'transition-lens'
+          ))?.clip?.startsWith('path(')
           || probe.motionFilterAudit?.redundantZeroOpacityBackdropOwners?.length
           || probe.motionFilterAudit?.suspendedDestinationBackdropOwners?.length)) {
         failures.push(
-          `${probe.label} active motion did not retain exact 3-filter/1-transition ownership `
+          `${probe.label} active motion did not retain exact 2-filter/1-transition day-union ownership `
           + `(${JSON.stringify(probe.motionFilterAudit)})`,
         );
       }
       if (probe.label.startsWith('month-')) {
         const rootOwners = probe.fixedMaterialOwners.filter((owner) => owner.rootMaterialScene);
         const frost = rootOwners.find((owner) => owner.materialSource === 'fc-frost');
-        const baseUnion = rootOwners.find((owner) => owner.materialOwnerCount === 11);
-        if (rootOwners.length !== 2
+        if (rootOwners.length !== 1
           || frost?.materialOwnerCount !== 1
-          || !frost?.values.includes('blur(28px) saturate(1.4)')
-          || !baseUnion?.values.includes('blur(26px) saturate(1.4)')) {
-          failures.push(`${probe.label} root material did not retain the exact two-layer recipe`);
+          || !frost?.values.includes('blur(26px) saturate(1.4)')) {
+          failures.push(`${probe.label} root material did not retain the day-only acrylic recipe`);
         }
       }
       if (probe.acrylicRange < .65) failures.push(`${probe.label} acrylic did not perform its controlled fade`);

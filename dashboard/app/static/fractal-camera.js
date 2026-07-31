@@ -96,9 +96,13 @@
       return `inset(${top.toFixed(2)}px ${right.toFixed(2)}px ${bottom.toFixed(2)}px ${left.toFixed(2)}px round ${Math.max(0, radiusX).toFixed(2)}px / ${Math.max(0, radiusY).toFixed(2)}px)`;
     };
     const prepare = (expander, target, context = {}) => {
-      const sourceMaterial = material(target);
+      const frameMaterial = material(target);
+      const materialTarget = typeof config.materialTarget === "function"
+        ? config.materialTarget(expander, target, context)
+        : target;
+      const sourceMaterial = material(materialTarget || target);
       const frame = expander?.querySelector?.(frameSelector);
-      copyFrameMaterial(frame, sourceMaterial);
+      copyFrameMaterial(frame, frameMaterial || sourceMaterial);
       if (!expander || !target || !context.surface || !sourceMaterial) {
         expander?.classList.remove(ownerClass);
         return null;
@@ -117,8 +121,26 @@
       };
       const scaleX = Math.max(.0001, sourceRect.width / Math.max(1, destinationRect.width));
       const scaleY = Math.max(.0001, sourceRect.height / Math.max(1, destinationRect.height));
-      const sourceClip = clipFor(sourceRect, surfaceRect, sourceMaterial.radiusX, sourceMaterial.radiusY);
-      const destinationClip = clipFor(destinationRect, surfaceRect, sourceMaterial.radiusX / scaleX, sourceMaterial.radiusY / scaleY);
+      const geometryMaterial = frameMaterial || sourceMaterial;
+      const customGeometry = typeof config.clipGeometry === "function"
+        ? config.clipGeometry(expander, target, {
+          ...context,
+          sourceRect,
+          destinationRect,
+          surfaceRect,
+          sourceMaterial,
+          frameMaterial,
+        })
+        : null;
+      const sourceClip = customGeometry?.sourceClip
+        || clipFor(sourceRect, surfaceRect, geometryMaterial.radiusX, geometryMaterial.radiusY);
+      const destinationClip = customGeometry?.destinationClip
+        || clipFor(
+          destinationRect,
+          surfaceRect,
+          geometryMaterial.radiusX / scaleX,
+          geometryMaterial.radiusY / scaleY,
+        );
 
       const direction = context.direction || "prewarm";
       const mountedOwner = clipOwner || lens;

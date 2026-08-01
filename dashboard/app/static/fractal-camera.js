@@ -12,6 +12,7 @@
     const exitReveal = Number.isFinite(Number(config.exitReveal)) ? Number(config.exitReveal) : .14;
     const releaseEase = config.releaseEase || "cubic-bezier(.3, 0, .7, 1)";
     const holdThroughMotion = config.holdThroughMotion === true;
+    const hideWhenParked = config.hideWhenParked === true;
     const releaseMs = Math.max(1, Number(config.releaseMs) || 140);
     const prewarmOpacity = Math.max(.001, Math.min(1, Number(config.prewarmOpacity) || .001));
     const parkOpacity = Math.max(0, Math.min(.01, Number(config.parkOpacity) || 0));
@@ -93,7 +94,15 @@
     const park = () => {
       if (!lens) return false;
       const frame = state?.frame;
-      stop();
+      // Some Chromium builds synchronously rebuild a full-screen backdrop
+      // composition when completed animations are cancelled. Calendar can
+      // hide the already-transparent lens first and leave those filled effects
+      // intact until the next (hidden) prepare, avoiding a settled-frame hitch.
+      if (hideWhenParked) {
+        lens.style.visibility = "hidden";
+      } else {
+        stop();
+      }
       lens.style.opacity = String(parkOpacity);
       lens.dataset.fractalAcrylicPhase = "parked";
       owner?.classList.remove(ownerClass);
@@ -280,6 +289,7 @@
         // Its .001 coat is visually inert but avoids allocating a full acrylic
         // surface in the first animated frame.
         opacity:initialOpacity,
+        visibility:"visible",
         transform:initialLensTransform,
         transformOrigin:"0 0",
         // Promote the actual material during hover prewarm. In hold mode its
@@ -595,6 +605,8 @@
     let layers = [];
     let srcSel = [];
     let transitioning = false;
+    let preparing = false;
+    let preparationSeq = 0;
     let transitionSeq = 0;
     let transitionWaiters = [];
     let warm = null;
@@ -675,7 +687,9 @@
       transitionWaiters = [];
       waiters.forEach((resolve) => resolve(ctx()));
     };
-    const whenSettled = () => transitioning ? new Promise((resolve) => transitionWaiters.push(resolve)) : Promise.resolve(ctx());
+    const whenSettled = () => (transitioning || preparing)
+      ? new Promise((resolve) => transitionWaiters.push(resolve))
+      : Promise.resolve(ctx());
     const afterTransform = (el, fn) => {
       let done = false;
       let fallback = 0;
@@ -814,11 +828,11 @@
       document.dispatchEvent(new CustomEvent("crm:camera-navigation", { detail:navigationDetail(phase, direction) }));
     };
     const targetFromEvent = (event) => {
-      if (!active || transitioning || level >= maxLevel) return null;
+      if (!active || transitioning || preparing || level >= maxLevel) return null;
       return config.targetFromEvent?.(event, ctx()) || null;
     };
     const targetAtPoint = (x, y) => {
-      if (!active || transitioning || level >= maxLevel) return null;
+      if (!active || transitioning || preparing || level >= maxLevel) return null;
       return config.targetAtPoint?.(x, y, ctx()) || null;
     };
     const dropWarm = () => {
@@ -876,8 +890,8 @@
         entry.animation = null;
       }).catch(() => {});
     };
-    const expand = (target) => {
-      if (!target || !active || transitioning || level >= maxLevel) return;
+    const expandNow = (target) => {
+      if (!target?.isConnected || !active || transitioning || level >= maxLevel) return;
       announceNavigation("start", "forward");
       config.prepareTarget?.(target, ctx());
       const seq = ++transitionSeq;
@@ -970,7 +984,35 @@
         commit();
       });
     };
-    const contract = () => {
+    const prepareThen = (direction, target, run) => {
+      let pending = null;
+      try {
+        pending = config.prepareTransition?.(direction, target, ctx()) || null;
+      } catch (error) {
+        console.error(error);
+      }
+      if (!pending || typeof pending.then !== "function") {
+        run();
+        return;
+      }
+      const seq = ++preparationSeq;
+      preparing = true;
+      Promise.resolve(pending).then(() => {
+        if (!preparing || seq !== preparationSeq || !active) return;
+        preparing = false;
+        run();
+      }, (error) => {
+        if (seq !== preparationSeq) return;
+        console.error(error);
+        preparing = false;
+        settleWaiters();
+      });
+    };
+    const expand = (target) => {
+      if (!target || !active || transitioning || preparing || level >= maxLevel) return;
+      prepareThen("expand", target, () => expandNow(target));
+    };
+    const contractNow = () => {
       if (!active || level === 0 || transitioning) return;
       announceNavigation("start", "back");
       dropWarm();
@@ -1125,15 +1167,19 @@
         else finish();
       });
     };
+    const contract = () => {
+      if (!active || level === 0 || transitioning || preparing) return;
+      prepareThen("contract", null, contractNow);
+    };
     const backToRoot = () => {
-      while (level > 0 && !transitioning) contract();
+      while (level > 0 && !transitioning && !preparing) contract();
     };
     // Seat a target's expander at FULL size with no animation — the end state
     // expand() would have reached. contract() then plays the reverse dive from
     // here, which is how the desk transit (BLUEPRINT A1) re-enters Home: the
     // module's own bucket lid appears over the stage and flies back to its slot.
     const jumpTo = (target) => {
-      if (!target || !active || transitioning || level >= maxLevel) return false;
+      if (!target || !active || transitioning || preparing || level >= maxLevel) return false;
       ensure();
       dropWarm();
       const expander = buildExpander(target);
@@ -1159,6 +1205,8 @@
     const rebuildRoot = () => {
       ensure();
       dropWarm();
+      preparationSeq += 1;
+      preparing = false;
       layers.slice(1).forEach((el) => el?.remove?.());
       layers = [config.buildRoot?.(ctx()) || document.createElement("div")];
       srcSel = [];
@@ -1175,6 +1223,8 @@
     const restoreRoot = () => {
       ensure();
       dropWarm();
+      preparationSeq += 1;
+      preparing = false;
       transitionSeq += 1;
       const root = layers[0];
       layers.slice(1).forEach((el) => el?.remove?.());
@@ -1225,8 +1275,12 @@
       ensure();
       surface.hidden = !active;
       if (!active) {
+        const wasPreparing = preparing;
+        preparationSeq += 1;
+        preparing = false;
         dropWarm();
         try { global.crmHomePreviews?.setInteraction?.(false, hoverInteractionSource); } catch {}
+        if (wasPreparing && !transitioning) settleWaiters();
       }
       else layout();
       config.onActiveChange?.(active, ctx());
@@ -1278,7 +1332,7 @@
       back: contract,
       backToRoot,
       jumpTo,
-      isTransitioning: () => transitioning,
+      isTransitioning: () => transitioning || preparing,
       whenSettled,
       refresh,
       rebuildRoot,

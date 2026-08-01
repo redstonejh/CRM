@@ -44,6 +44,9 @@ import {
   let reloadTimer = 0;
   let materialPrewarmFrame = 0;
   let materialPrewarmTimer = 0;
+  let materialModeTimer = 0;
+  let materialPreparation = null;
+  let materialPreviewTimer = 0;
   let dropHighlight = null;
   let renderRevision = 0;
   let layoutGeometrySignature = "";
@@ -113,7 +116,7 @@ import {
       .fc-surface[hidden]{display:none}
       body[data-crm-module="calendar"] .app-window-drag-region{z-index:790}
       .fc-level{position:absolute;inset:0;transform-origin:0 0;will-change:transform;
-        contain:layout paint style;backface-visibility:hidden}
+        contain:layout style;backface-visibility:hidden}
       .fc-live-backdrop-cover{position:absolute;z-index:3;overflow:hidden;pointer-events:none;
         will-change:opacity;contain:strict;backface-visibility:hidden}
       .fc-live-backdrop-cover[hidden]{display:none}
@@ -176,29 +179,73 @@ import {
         grid-template-rows:repeat(6,1fr);column-gap:1.6%;row-gap:2%}
       .fc-day-spacer{min-height:0;visibility:hidden;pointer-events:none}
 
-      /* A day is a canonical shared tile instance. Its DOM identity, tile
-         record, focus/interaction contract and material layers are the same
-         architecture used by Home/Projects; Calendar only places it. */
+      /* A resting day is a canonical tile with an owned acrylic material
+         layer. Tint and backdrop-filter must be painted by the SAME element:
+         placing the tint on the parent makes Chromium sample that tint as part
+         of the backdrop and visually flattens the frost into transparency. */
       .fc-day.crm-home-bucket{position:relative;z-index:1;box-sizing:border-box;display:block;
         min-width:0;min-height:0;width:auto;height:auto;overflow:hidden;padding:0;appearance:none;
+        --fc-day-surface:var(--bucket-acrylic-surface);
+        --fc-day-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),
+          0 14px 26px -16px rgba(0,0,0,.72);
         color:#fff;cursor:pointer;border:1px solid var(--bucket-acrylic-border)!important;
         border-radius:calc(var(--day-r,3px) * var(--kx,1)) /
           calc(var(--day-r,3px) * var(--ky,1))!important;
-        background:var(--bucket-acrylic-surface)!important;
+        background:transparent!important;
         -webkit-backdrop-filter:none!important;backdrop-filter:none!important;
-        box-shadow:var(--bucket-acrylic-shadow)!important;
-        transition:box-shadow .18s ease,background .18s ease}
+        box-shadow:var(--fc-day-shadow)!important;
+        transition:box-shadow .18s ease}
+      .fc-day>.crm-tile-acrylic{position:absolute;inset:0;z-index:0;display:block;
+        box-sizing:border-box;pointer-events:none;border-radius:inherit;
+        background:var(--fc-day-surface);
+        -webkit-backdrop-filter:var(--bucket-acrylic-filter);
+        backdrop-filter:var(--bucket-acrylic-filter);
+        opacity:1;backface-visibility:hidden;transition:background .18s ease}
+      /* The transparent material planes are warm motion-only equivalents of
+         those filters. During motion, each real button retains its tint, edge,
+         content and identity while the shared plane supplies only the frost. */
+      .fc-calendar-tile-material{opacity:.001;
+        background:transparent;
+        -webkit-backdrop-filter:var(--bucket-acrylic-filter);
+        backdrop-filter:var(--bucket-acrylic-filter);
+        transition:opacity ${MATERIAL_HANDOFF_MS}ms linear}
+      .fc-surface[data-calendar-material-mode="motion"] .fc-calendar-tile-material{opacity:.999}
+      /* The year is completely behind the live wallpaper cover during day
+         travel. Do not composite its hidden motion plane there; a contraction
+         from month to year keeps it active for the reveal. */
+      .fc-surface[data-calendar-material-mode="motion"][data-level="2"]
+        >.fc-level[data-kind="year"] .fc-year-grid-tile-material,
+      .fc-surface[data-calendar-material-mode="motion"][data-level="1"][data-calendar-material-direction="expand"]
+        >.fc-level[data-kind="year"] .fc-year-grid-tile-material{display:none}
+      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket{
+        background:var(--fc-day-surface)!important}
+      .fc-surface[data-calendar-material-mode="motion"] .fc-day>.crm-tile-acrylic,
+      .fc-transition-copy .fc-day>.crm-tile-acrylic,
+      .fc-surface[data-level="1"]>.fc-level[data-kind="year"] .fc-day>.crm-tile-acrylic,
+      .fc-surface[data-level="2"]>.fc-level[data-kind="year"] .fc-day>.crm-tile-acrylic,
+      .fc-surface[data-level="2"]>.fc-expander[data-kind="month"] .fc-day>.crm-tile-acrylic{
+        display:none}
+      .fc-transition-copy>.crm-tile-material-plane{display:none}
       .fc-day.crm-home-bucket:hover,.fc-day.crm-home-bucket:focus-visible,
       .fc-day.crm-home-bucket.is-drop-target,
       .fc-day-detail.is-drop-target,.fc-empty.is-drop-target,
       .fc-surface[data-level="0"] .fc-month:is(:hover,:focus-visible) .fc-day{
-        background:linear-gradient(180deg,rgba(70,110,190,.34),rgba(40,70,130,.26))!important;
-        box-shadow:inset 0 0 0 1px rgba(125,180,255,.5),0 0 30px rgba(90,150,255,.42)!important}
-      .fc-day.fc-today{box-shadow:var(--bucket-acrylic-shadow),
+        --fc-day-surface:linear-gradient(180deg,rgba(40,55,76,.27),rgba(18,26,38,.23));
+        background:transparent!important;
+        box-shadow:inset 0 0 0 1px rgba(166,196,236,.27),
+          inset 0 1px rgba(255,255,255,.15),
+          0 14px 26px -16px rgba(0,0,0,.72)!important}
+      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket:hover,
+      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket:focus-visible,
+      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket.is-drop-target,
+      .fc-surface[data-calendar-material-mode="motion"][data-level="0"]
+        .fc-month:is(:hover,:focus-visible) .fc-day{
+        background:var(--fc-day-surface)!important}
+      .fc-day.fc-today{box-shadow:var(--fc-day-shadow),
         inset 0 0 0 1px rgba(125,180,255,.55),0 0 16px rgba(90,150,255,.38)!important}
-      .fc-day-num{position:absolute;top:6%;left:7%;font-size:var(--crm-type-body,12px);
+      .fc-day-num{position:absolute;z-index:1;top:6%;left:7%;font-size:var(--crm-type-body,12px);
         font-weight:700;color:rgba(255,255,255,.78);line-height:1}
-      .fc-day-body{position:absolute;inset:24% 5% 5%;display:flex;flex-direction:column;
+      .fc-day-body{position:absolute;z-index:1;inset:24% 5% 5%;display:flex;flex-direction:column;
         gap:3px;min-height:0}
       .fc-scheduled-list{display:flex;flex-direction:column;gap:0;min-height:0;overflow:hidden}
       .fc-day-preview{display:none;width:100%;height:100%;flex-direction:column;justify-content:center;
@@ -256,7 +303,7 @@ import {
       .fc-surface[data-level="0"]>.fc-level .fc-day{pointer-events:none}
 
       .fc-expander{position:absolute;z-index:5;pointer-events:auto;-webkit-app-region:no-drag;
-        transform-origin:0 0;padding:0;contain:layout paint style;will-change:transform;
+        transform-origin:0 0;padding:0;contain:layout style;will-change:transform;
         backface-visibility:hidden;overflow:hidden}
       .fc-expander[data-kind="month"]{background:transparent;border:0;box-shadow:none;
         -webkit-backdrop-filter:none;backdrop-filter:none}
@@ -300,10 +347,9 @@ import {
 
       .fc-source-screen-acrylic,.fc-source-screen-acrylic-clip{
         position:absolute;inset:0;box-sizing:border-box;pointer-events:none;backface-visibility:hidden}
-      /* Destination planes ride the existing live-content crossfade beneath
-         the moving material. Keeping them fully compositor-active avoids
-         allocating a new blur surface on the first settled frame. */
-      .fc-source-acrylic-owner[data-kind="month"] .crm-tile-material-plane,
+      /* The day-detail destination rides the existing live-content crossfade
+         beneath the moving material. Month destinations are already composed
+         from their own true-acrylic day tiles. */
       .fc-source-acrylic-owner[data-kind="day"]>.fc-day-detail-material{
         opacity:.999}
       .fc-camera-target{opacity:0!important}
@@ -380,7 +426,8 @@ import {
     });
     tile.dataset.date = date;
     tile.dataset.calendarTile = "day";
-    tile.innerHTML = `<span class="fc-day-num">${day}</span><div class="fc-day-body">${
+    tile.innerHTML = `<span class="crm-tile-acrylic" aria-hidden="true"></span>` +
+      `<span class="fc-day-num">${day}</span><div class="fc-day-body">${
       scheduledPreviewHTML(date)
     }${scheduledHTML(date)}</div>`;
     return tile;
@@ -388,6 +435,7 @@ import {
   const mountMonthContents = (host, month, {
     interactiveDays = false,
     material = false,
+    materialClass = "",
   } = {}) => {
     const existingMaterial = material
       ? host.querySelector?.(":scope > .crm-tile-material-plane")
@@ -422,7 +470,7 @@ import {
     if (material) {
       if (existingMaterial) host.prepend(existingMaterial);
       ensureTileMaterialPlane(host, {
-        className:"fc-calendar-tile-material",
+        className:`fc-calendar-tile-material ${materialClass}`,
         tileSelector:":scope > .fc-days > .fc-day",
       });
     }
@@ -452,14 +500,14 @@ import {
       bucket.setAttribute("role", "button");
       bucket.setAttribute("aria-label", `Open ${MONTHS[month]} ${currentYear}`);
       bucket.tabIndex = 0;
-      mountMonthContents(bucket, month, { interactiveDays:false, material:false });
+      mountMonthContents(bucket, month, { interactiveDays:false });
       grid.appendChild(bucket);
     }
-    root.appendChild(grid);
-    ensureTileMaterialPlane(root, {
-      className:"fc-calendar-tile-material fc-year-tile-material",
-      tileSelector:":scope > .fc-grid > .fc-month > .fc-days > .fc-day",
+    ensureTileMaterialPlane(grid, {
+      className:"fc-calendar-tile-material fc-year-grid-tile-material",
+      tileSelector:":scope > .fc-month > .fc-days > .fc-day",
     });
+    root.appendChild(grid);
     return root;
   };
 
@@ -515,7 +563,10 @@ import {
   const stopBackdropCoverMotion = () => {
     clearTimeout(backdropCoverSettleTimer);
     backdropCoverSettleTimer = 0;
-    backdropCoverMotion?.animation?.cancel?.();
+    const animation = backdropCoverMotion?.animation;
+    if (animation && animation.playState !== "finished" && animation.playState !== "idle") {
+      animation.cancel?.();
+    }
     backdropCoverMotion = null;
   };
   const rebuildBackdropWallpaper = (wallpaper) => {
@@ -661,7 +712,10 @@ import {
     const motion = backdropCoverMotion;
     if (!motion || motion.direction !== direction) return;
     motion.cover.style.opacity = String(motion.opacityTo);
-    motion.animation?.cancel?.();
+    // A finished full-viewport opacity effect is cheap to retain but expensive
+    // to cancel on the first settled frame. Leave it filled; a later cover
+    // animation replaces it, or hideBackdropCover disposes it only after the
+    // cover is no longer paint-visible.
     backdropCoverMotion = null;
     clearTimeout(backdropCoverSettleTimer);
     if (context.level > 0) {
@@ -674,6 +728,10 @@ import {
       if (!motion.cover.isConnected) return;
       motion.cover.hidden = true;
       motion.cover.style.opacity = "0";
+      requestAnimationFrame(() => {
+        if (!motion.cover.hidden) return;
+        motion.cover.getAnimations?.().forEach?.((animation) => animation.cancel());
+      });
     }, MATERIAL_HANDOFF_MS + 28);
   };
   const seatBackdropCover = (context) => {
@@ -687,17 +745,90 @@ import {
     if (!backdropCover) return;
     backdropCover.hidden = true;
     backdropCover.style.opacity = "0";
+    requestAnimationFrame(() => {
+      if (!backdropCover?.hidden) return;
+      backdropCover.getAnimations?.().forEach?.((animation) => animation.cancel());
+    });
   };
   const radiusFor = (width, height) => clampN(RADIUS_F * Math.min(width, height), 2, 64);
   const syncCalendarMaterial = (host) => {
     if (!host) return null;
-    const direct = host.querySelector?.(":scope > .crm-tile-material-plane");
+    const direct = host.querySelector?.(":scope > .crm-tile-material-plane")
+      || host.querySelector?.(":scope > .fc-grid > .crm-tile-material-plane");
     if (direct) return syncTileMaterialPlane(direct);
     const planes = [...(host.querySelectorAll?.(
       ":scope > .fc-grid > .fc-month > .crm-tile-material-plane",
     ) || [])];
     planes.forEach((plane) => syncTileMaterialPlane(plane));
     return planes;
+  };
+  const activateMotionMaterial = (surface = camera?.surface?.(), direction = "") => {
+    clearTimeout(materialModeTimer);
+    materialModeTimer = 0;
+    if (!surface) return;
+    surface.dataset.calendarMaterialMode = "motion";
+    if (direction) surface.dataset.calendarMaterialDirection = direction;
+  };
+  const prepareTransitionMaterial = (direction, _target, context, { preview = false } = {}) => {
+    const surface = context?.surface || camera?.surface?.();
+    if (!surface) return Promise.resolve();
+    if (!preview) {
+      clearTimeout(materialPreviewTimer);
+      materialPreviewTimer = 0;
+    }
+    if (materialPreparation) return materialPreparation;
+    if (surface.dataset.calendarMaterialMode === "motion") {
+      surface.dataset.calendarMaterialDirection = direction;
+      return Promise.resolve();
+    }
+    activateMotionMaterial(surface, direction);
+    // Turning off hundreds of independent backdrop-filter owners is an
+    // asynchronous compositor operation. Wait through its expensive paints
+    // while the scene is stationary, then begin the camera only after native
+    // frame delivery has stabilized.
+    const minimumMs = context?.level === 0 ? 440 : 260;
+    const maximumMs = minimumMs + 300;
+    materialPreparation = new Promise((resolve) => {
+      const startedAt = performance.now();
+      let previousAt = startedAt;
+      let stableFrames = 0;
+      const sample = (now) => {
+        if (!surface.isConnected || surface.dataset.calendarMaterialMode !== "motion") {
+          resolve();
+          return;
+        }
+        const delta = now - previousAt;
+        previousAt = now;
+        stableFrames = delta <= 24 ? stableFrames + 1 : 0;
+        const elapsed = now - startedAt;
+        if ((elapsed >= minimumMs && stableFrames >= 3) || elapsed >= maximumMs) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }).finally(() => {
+      materialPreparation = null;
+      if (!preview || !surface.isConnected) return;
+      clearTimeout(materialPreviewTimer);
+      materialPreviewTimer = setTimeout(() => {
+        materialPreviewTimer = 0;
+        if (surface.classList.contains("fc-camera-moving")) return;
+        releaseMotionMaterial(surface);
+      }, 2400);
+    });
+    return materialPreparation;
+  };
+  const releaseMotionMaterial = (surface = camera?.surface?.()) => {
+    clearTimeout(materialModeTimer);
+    if (surface) surface.dataset.calendarMaterialMode = "handoff";
+    materialModeTimer = setTimeout(() => {
+      materialModeTimer = 0;
+      if (!surface?.isConnected || surface.classList.contains("fc-camera-moving")) return;
+      delete surface.dataset.calendarMaterialMode;
+      delete surface.dataset.calendarMaterialDirection;
+    }, MATERIAL_HANDOFF_MS + 108);
   };
   const layoutCalendar = ({ surface, layers, expRect }) => {
     const root = layers[0];
@@ -828,20 +959,6 @@ import {
     return expander;
   };
 
-  const materialPlaneForTarget = (target) => {
-    if (!target) return null;
-    if (target.matches?.(".fc-month")) {
-      return target.querySelector(":scope > .crm-tile-material-plane")
-        || target.closest(".fc-level")
-          ?.querySelector?.(":scope > .crm-tile-material-plane")
-        || null;
-    }
-    if (target.matches?.(".fc-day")) {
-      return target.closest(".fc-expander-live,.fc-level")
-        ?.querySelector?.(":scope > .crm-tile-material-plane") || null;
-    }
-    return null;
-  };
   const materialTilesForTarget = (target) => (
     target?.matches?.(".fc-month")
       ? [...target.querySelectorAll(".fc-day")]
@@ -850,7 +967,20 @@ import {
   const lensForTarget = (target) => (
     target?.matches?.(".fc-month") ? monthAcrylicLens : dayAcrylicLens
   );
-  const sourceMaterialTarget = (_expander, target) => materialPlaneForTarget(target) || target;
+  const sourceMaterialTarget = (_expander, target) => {
+    if (target?.matches?.(".fc-month")) {
+      return target.querySelector(":scope > .crm-tile-material-plane")
+        || target.closest(".fc-grid")
+          ?.querySelector?.(":scope > .crm-tile-material-plane")
+        || target.closest(".fc-level")
+          ?.querySelector?.(":scope > .crm-tile-material-plane")
+        || target;
+    }
+    if (!target?.matches?.(".fc-day")) return target;
+    return target.closest(".fc-expander-live,.fc-month")
+      ?.querySelector?.(":scope > .crm-tile-material-plane")
+      || target;
+  };
   const acrylicTransformGeometry = (expander, target, context) => {
     const tiles = materialTilesForTarget(target);
     if (!tiles.length || !context.surface || !context.sourceRect || !context.destinationRect) return null;
@@ -979,8 +1109,7 @@ import {
     }
     if (context.direction) {
       expander.querySelectorAll?.(
-        ":scope > .fc-day-detail-material," +
-        ":scope > .fc-expander-live > .crm-tile-material-plane",
+        ":scope > .fc-day-detail-material",
       ).forEach((plane) => plane.style.removeProperty("opacity"));
     }
     lens?.prepare?.(expander, target, context);
@@ -1011,6 +1140,10 @@ import {
     target.dataset.month ? "calendar-month-shell" : "calendar-day-shell"
   );
   const markCameraTarget = (target, context) => {
+    // Expand performs its geometry flush before onTransitionStart. Move the
+    // material handoff ahead of that flush so Chromium retires the resting
+    // per-day filters before the first transform frame is composed.
+    activateMotionMaterial(context.surface);
     context.layers?.forEach?.((layer) => {
       layer?.querySelectorAll?.(".fc-camera-target")?.forEach?.((node) => {
         node.classList.remove("fc-camera-target");
@@ -1047,37 +1180,17 @@ import {
     delete plane.dataset.crmTileMaterialExcluded;
     delete plane.dataset.crmTileMaterialMuted;
   };
-  const excludeTransitionTiles = () => {
-    const target = activeTransition?.target;
-    const tiles = materialTilesForTarget(target);
-    if (!tiles.length) return;
-    const plane = materialPlaneForTarget(target);
-    if (!plane) return;
-    // The live wallpaper cover occludes the source region from the first
-    // transform frame. Mutating a backdrop mask here would force the full
-    // 365-day plane to reraster on click.
-    activeTransition.sourcePlane = plane;
-    activeTransition.sourceTiles = tiles;
-  };
   const endpointMaterial = (context) => {
     const layer = context.layers?.[context.level];
-    if (!layer) return null;
-    if (context.level === 0) {
-      return layer.querySelector(":scope > .crm-tile-material-plane");
-    }
-    if (layer.dataset.kind === "month") {
-      return layer.querySelector(":scope > .fc-expander-live > .crm-tile-material-plane");
-    }
-    return layer.querySelector(":scope > .fc-day-detail-material");
+    return layer?.dataset?.kind === "day"
+      ? layer.querySelector(":scope > .fc-day-detail-material")
+      : null;
   };
   const settleTransitionMaterial = (direction, context) => {
     const transition = activeTransition;
     const lens = transition?.lens;
     if (!transition || !lens) return;
     const destination = endpointMaterial(context);
-    if (transition.sourcePlane?.isConnected) {
-      clearMaterialExclusion(transition.sourcePlane);
-    }
     let destinationAnimation = null;
     if (destination?.isConnected && direction === "expand") {
       clearMaterialExclusion(destination);
@@ -1098,6 +1211,16 @@ import {
     ].filter(Boolean)).then(() => finishMaterialHandoff(lens, token));
   };
   const resetTransitionMaterials = () => {
+    clearTimeout(materialModeTimer);
+    materialModeTimer = 0;
+    clearTimeout(materialPreviewTimer);
+    materialPreviewTimer = 0;
+    materialPreparation = null;
+    const surface = camera?.surface?.();
+    if (surface) {
+      delete surface.dataset.calendarMaterialMode;
+      delete surface.dataset.calendarMaterialDirection;
+    }
     camera?.surface?.()?.querySelectorAll?.(".crm-tile-material-plane")?.forEach?.(
       (plane) => {
         clearMaterialExclusion(plane);
@@ -1211,12 +1334,11 @@ import {
       [...grid.querySelectorAll(":scope > .fc-month")].forEach((month) => {
         mountMonthContents(month, Number(month.dataset.month) - 1, {
           interactiveDays:false,
-          material:false,
         });
       });
-      ensureTileMaterialPlane(root, {
-        className:"fc-calendar-tile-material fc-year-tile-material",
-        tileSelector:":scope > .fc-grid > .fc-month > .fc-days > .fc-day",
+      ensureTileMaterialPlane(grid, {
+        className:"fc-calendar-tile-material fc-year-grid-tile-material",
+        tileSelector:":scope > .fc-month > .fc-days > .fc-day",
       });
     }
     layers.slice(1).forEach((layer) => {
@@ -1423,6 +1545,7 @@ import {
     materialTarget:sourceMaterialTarget,
     clipGeometry:acrylicTransformGeometry,
     holdThroughMotion:true,
+    hideWhenParked:true,
     motionHandoffStart:.54,
     clipToDestinationBounds:options.clipToDestinationBounds === true,
     prewarmOpacity:options.prewarmOpacity ?? MATERIAL_PRIME_OPACITY,
@@ -1466,17 +1589,20 @@ import {
     layout:layoutCalendar,
     buildExpander,
     configureExpander,
-    primeExpander:() => {
+    primeExpander:(_expander, target, context) => {
       monthAcrylicLens?.prime?.();
       dayAcrylicLens?.prime?.();
     },
+    prepareTransition:prepareTransitionMaterial,
     prepareTarget:markCameraTarget,
     targetFromEvent,
     targetAtPoint:targetFromPoint,
     sourceSelector,
     keyOf,
     onTransitionStart:(direction, context) => {
-      excludeTransitionTiles();
+      // Expands enter motion material in prepareTarget, before their geometry
+      // flush. Contracts have no prepareTarget hook and switch here instead.
+      if (direction === "contract") activateMotionMaterial(context.surface);
       const belowIndex = direction === "expand" ? context.level : context.level - 1;
       context.layers?.[belowIndex]?.classList?.add?.("fc-calendar-below");
       prepareBackdropCover(direction, context);
@@ -1502,6 +1628,7 @@ import {
         "fc-camera-expanding",
         "fc-camera-contracting",
       );
+      releaseMotionMaterial(context.surface);
       activeTransition = null;
       if (context.level < 2) {
         // Do not upload the next zoom shell during the live material

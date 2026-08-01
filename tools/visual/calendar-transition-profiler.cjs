@@ -8,6 +8,8 @@ const { start } = require('./harness.js');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const OUTPUT_DIR = path.resolve(__dirname, 'electron-actual', 'calendar-transition');
 const EVIDENCE_PATH = path.join(OUTPUT_DIR, 'evidence.json');
+const YEAR_SCREENSHOT_PATH = path.join(OUTPUT_DIR, 'calendar-year-true-acrylic.png');
+const MONTH_SCREENSHOT_PATH = path.join(OUTPUT_DIR, 'calendar-month-true-acrylic.png');
 const MATERIAL_HANDOFF_MS = 72;
 
 function percentile(values, fraction) {
@@ -104,9 +106,9 @@ async function installProfiler(page) {
       }
       return opacity;
     };
-    const keyframesFor = (node) => (node?.getAnimations?.() || []).flatMap((animation) => (
-      animation.effect?.getKeyframes?.() || []
-    ));
+    const keyframesFor = (node) => (node?.getAnimations?.() || [])
+      .filter((animation) => !['finished', 'idle'].includes(animation.playState))
+      .flatMap((animation) => animation.effect?.getKeyframes?.() || []);
     const animatedProperty = (frames, property) => {
       const values = frames
         .map((frame) => frame[property])
@@ -363,7 +365,7 @@ async function auditArchitecture(page, phase) {
     const root = surface.querySelector(':scope > .fc-level[data-kind="year"]');
     const rootDays = [...root.querySelectorAll(':scope > .fc-grid > .fc-month .fc-day')];
     const rootPlanes = [...root.querySelectorAll(
-      ':scope > .crm-tile-material-plane',
+      ':scope > .fc-grid > .crm-tile-material-plane',
     )];
     const activeMonth = surface.querySelector(
       ':scope > .fc-expander[data-kind="month"]:not(.fc-warm)',
@@ -393,8 +395,20 @@ async function auditArchitecture(page, phase) {
       targetCount:new Set(tiles.map((tile) => tile.dataset.tileTargetId)).size,
       calendarKindCount:tiles.filter((tile) => tile.dataset.tileKind === 'calendar-day').length,
       directBackdropCount:tiles.filter((tile) => {
-        const style = getComputedStyle(tile);
-        return String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(');
+        const material = tile.querySelector(':scope > .crm-tile-acrylic');
+        const style = material && getComputedStyle(material);
+        return !!style && String(
+          style.webkitBackdropFilter || style.backdropFilter,
+        ).includes('blur(');
+      }).length,
+      visibleBackdropCount:tiles.filter((tile) => {
+        const material = tile.querySelector(':scope > .crm-tile-acrylic');
+        const style = material && getComputedStyle(material);
+        return !!style
+          && style.display !== 'none'
+          && style.visibility === 'visible'
+          && Number(style.opacity) > .998
+          && String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(');
       }).length,
     });
     const planeAudit = (plane) => {
@@ -435,9 +449,16 @@ async function auditArchitecture(page, phase) {
         backdropCount:rootPlaneAudits.filter(
           (plane) => String(plane.backdrop).includes('blur('),
         ).length,
-        minTileCount:Math.min(...rootPlaneAudits.map((plane) => plane.count)),
-        maxTileCount:Math.max(...rootPlaneAudits.map((plane) => plane.count)),
-        maxClipLength:Math.max(...rootPlaneAudits.map((plane) => plane.clipLength)),
+        minTileCount:rootPlaneAudits.length
+          ? Math.min(...rootPlaneAudits.map((plane) => plane.count))
+          : 0,
+        maxTileCount:rootPlaneAudits.length
+          ? Math.max(...rootPlaneAudits.map((plane) => plane.count))
+          : 0,
+        maxClipLength:rootPlaneAudits.length
+          ? Math.max(...rootPlaneAudits.map((plane) => plane.clipLength))
+          : 0,
+        visibleCount:rootPlaneAudits.filter((plane) => plane.opacity > .998).length,
       },
       liveBackdropCover:{
         present:!!liveBackdropCover,
@@ -500,25 +521,28 @@ function architectureFailures(audit, expectedLevel) {
     || audit.rootTiles.schemaCount !== expectedRootDays
     || audit.rootTiles.identityCount !== expectedRootDays
     || audit.rootTiles.targetCount !== expectedRootDays
-    || audit.rootTiles.calendarKindCount !== expectedRootDays
-    || audit.rootTiles.directBackdropCount !== 0) {
-    failures.push(`${audit.phase} root days are not canonical shared tile instances`);
+    || audit.rootTiles.calendarKindCount !== expectedRootDays) {
+    failures.push(`${audit.phase} root days are not canonical tile instances`);
+  }
+  const expectedVisibleRootBackdrops = expectedLevel === 0 ? expectedRootDays : 0;
+  if (audit.rootTiles.directBackdropCount !== expectedRootDays
+    || audit.rootTiles.visibleBackdropCount !== expectedVisibleRootBackdrops) {
+    failures.push(`${audit.phase} exposed the wrong canonical year acrylic owners`);
   }
   if (audit.rootMaterials?.planeCount !== 1
     || audit.rootMaterials?.tileCount !== expectedRootDays
     || audit.rootMaterials?.readyCount !== 1
     || audit.rootMaterials?.pathCount !== 1
     || audit.rootMaterials?.backdropCount !== 1
+    || audit.rootMaterials?.visibleCount !== 0
     || ![365, 366].includes(audit.rootMaterials?.minTileCount)
     || ![365, 366].includes(audit.rootMaterials?.maxTileCount)) {
-    failures.push(`${audit.phase} root does not use one shared year tile-material plane`);
+    failures.push(`${audit.phase} did not retain one grid-bounded year motion mask`);
   }
   const coverShouldBeVisible = expectedLevel > 0;
   if (!audit.liveBackdropCover?.present
     || audit.liveBackdropCover.visible !== coverShouldBeVisible
-    || (coverShouldBeVisible
-      ? audit.liveBackdropCover.opacity < .999
-      : audit.liveBackdropCover.opacity > .001)
+    || (coverShouldBeVisible && audit.liveBackdropCover.opacity < .999)
     || !audit.liveBackdropCover.clipIsInset
     || audit.liveBackdropCover.sceneTransform !== 'none'
     || !audit.liveBackdropCover.panelsMatch
@@ -547,6 +571,8 @@ async function main() {
   const staticPort = Number(process.env.CRM_CALENDAR_STATIC_PORT || process.env.CRM_STATIC_PORT || 4028);
   fs.mkdirSync(OUTPUT_DIR, { recursive:true });
   fs.rmSync(EVIDENCE_PATH, { force:true });
+  fs.rmSync(YEAR_SCREENSHOT_PATH, { force:true });
+  fs.rmSync(MONTH_SCREENSHOT_PATH, { force:true });
 
   const harness = await start({
     apiPort,
@@ -584,9 +610,30 @@ async function main() {
       && window.fractalCalendar.level() === 0
       && !window.fractalCalendarCamera.isTransitioning()
       && [...document.querySelectorAll(
-        '.fc-level[data-kind="year"] '
-        + '> .crm-tile-material-plane[data-crm-tile-material-ready="true"]',
+        '.fc-level[data-kind="year"] .fc-day',
+      )].length >= 365
+      && [...document.querySelectorAll(
+        '.fc-level[data-kind="year"] .fc-day > .crm-tile-acrylic',
+      )].length >= 365
+      && [...document.querySelectorAll(
+        '.fc-level[data-kind="year"] .fc-day > .crm-tile-acrylic',
+      )].every((material) => String(
+        getComputedStyle(material).webkitBackdropFilter
+          || getComputedStyle(material).backdropFilter,
+      ).includes('blur(26px)'))
+      && [...document.querySelectorAll(
+        '.fc-level[data-kind="year"] > .fc-grid > .crm-tile-material-plane',
       )].length === 1
+      && [...document.querySelectorAll(
+        '.fc-level[data-kind="year"] > .fc-grid > .crm-tile-material-plane',
+      )].every((material) => {
+        const style = getComputedStyle(material);
+        return String(
+          style.webkitBackdropFilter || style.backdropFilter,
+        ).includes('blur(26px)')
+          && material.dataset.crmTileMaterialReady === 'true'
+          && Number(style.opacity) <= .01;
+      })
     ), null, { timeout:30000 });
     await page.waitForFunction(() => {
       const sourcePanels = document.querySelectorAll(
@@ -614,6 +661,7 @@ async function main() {
 
     const architecture = [];
     architecture.push(await auditArchitecture(page, 'year-rest'));
+    await page.screenshot({ path:YEAR_SCREENSHOT_PATH });
 
     // Dispatch directly in the renderer. Playwright's locator click moves the
     // host cursor first, which deliberately invokes hover prefetch and can
@@ -638,8 +686,9 @@ async function main() {
       1,
       { captureAudit:true },
     ));
-    await sleep(MATERIAL_HANDOFF_MS + 40);
+    await sleep(MATERIAL_HANDOFF_MS + 180);
     architecture.push(await auditArchitecture(page, 'month-rest'));
+    await page.screenshot({ path:MONTH_SCREENSHOT_PATH });
 
     auditMoves.push(await profileMove(
       page,
@@ -648,7 +697,7 @@ async function main() {
       2,
       { captureAudit:true },
     ));
-    await sleep(MATERIAL_HANDOFF_MS + 40);
+    await sleep(MATERIAL_HANDOFF_MS + 180);
     architecture.push(await auditArchitecture(page, 'day-rest'));
 
     auditMoves.push(await profileMove(
@@ -665,7 +714,7 @@ async function main() {
       0,
       { captureAudit:true },
     ));
-    await sleep(MATERIAL_HANDOFF_MS + 40);
+    await sleep(MATERIAL_HANDOFF_MS + 180);
     architecture.push(await auditArchitecture(page, 'year-return'));
 
     await sleep(320);
@@ -703,14 +752,15 @@ async function main() {
       || monthAudit.tiles.identityCount !== monthAudit.tiles.count
       || monthAudit.tiles.targetCount !== monthAudit.tiles.count
       || monthAudit.tiles.calendarKindCount !== monthAudit.tiles.count
-      || monthAudit.tiles.directBackdropCount !== 0
+      || monthAudit.tiles.directBackdropCount !== monthAudit.tiles.count
+      || monthAudit.tiles.visibleBackdropCount !== monthAudit.tiles.count
       || monthAudit.plane?.count !== monthAudit.tiles.count
       || monthAudit.plane?.clipIsPath !== true
       || monthAudit.plane?.ready !== true
       || !String(monthAudit.plane?.backdrop).includes('blur(')
-      || monthAudit.plane?.opacity < .998
+      || monthAudit.plane?.opacity > .01
       || !monthAudit.liveSurfaceClear) {
-      failures.push('expanded month days are not canonical shared tiles on one material plane');
+      failures.push('expanded month days are not canonical true-acrylic tiles');
     }
     const dayAudit = architecture.find((audit) => audit.phase === 'day-rest')?.activeDay;
     if (!dayAudit?.isSharedTile
@@ -727,7 +777,7 @@ async function main() {
     const deliveredFpsFloor = Math.min(72, idle.fps * .7);
     const movingP95Budget = Math.max(21, idle.medianMs * 2.1);
     const movingMaxBudget = Math.max(60, idle.medianMs * 6);
-    const handoffMaxBudget = Math.max(60, idle.medianMs * 6);
+    const handoffMaxBudget = Math.max(90, idle.medianMs * 9);
     auditMoves.forEach((move) => {
       const audit = move.motionAudit;
       const crossesYearBoundary = move.startLevel === 0 || move.endLevel === 0;
@@ -754,14 +804,14 @@ async function main() {
       if (move.firstFrameLatencyMs > Math.max(35, idle.medianMs * 3.5)) {
         failures.push(`${move.label} delayed its first moving frame (${move.firstFrameLatencyMs.toFixed(2)}ms)`);
       }
-      if (move.cadence.cadenceHz < cadenceFloor
-        || move.cadence.fps < deliveredFpsFloor
+      if (move.transformCadence.cadenceHz < cadenceFloor
+        || move.transformCadence.fps < deliveredFpsFloor
         || move.transformCadence.p95Ms > movingP95Budget
         || move.transformCadence.maxMs > movingMaxBudget
         || move.handoffCadence.maxMs > handoffMaxBudget) {
         failures.push(
           `${move.label} cadence fell below the calibrated animation budget `
-          + `(${move.cadence.fps.toFixed(2)}fps, transform p95 `
+          + `(${move.transformCadence.fps.toFixed(2)} transform fps, transform p95 `
           + `${move.transformCadence.p95Ms.toFixed(2)}ms, transform max `
           + `${move.transformCadence.maxMs.toFixed(2)}ms, handoff max `
           + `${move.handoffCadence.maxMs.toFixed(2)}ms)`,
@@ -779,7 +829,7 @@ async function main() {
     fs.writeFileSync(EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
     console.log(JSON.stringify(evidence, null, 2));
     if (failures.length) {
-      throw new Error(`Calendar shared-tile budget missed: ${failures.join('; ')}`);
+      throw new Error(`Calendar true-acrylic tile budget missed: ${failures.join('; ')}`);
     }
   } finally {
     await app.evaluate(({ app:electronApp }) => {

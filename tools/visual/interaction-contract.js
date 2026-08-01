@@ -1833,78 +1833,116 @@ async function main() {
       && strokes.every((stroke) => { const style=getComputedStyle(stroke); return !style.backdropFilter || style.backdropFilter === 'none'; }),
       detail:`${strokes.length} preview rows on ${probe.date}` };
   }, calendarProjectPreview);
-  await check('Calendar year is a canonical tile collection over a clear calendar plane', () => {
+  await check('Calendar year is a canonical collection of true-acrylic tiles on a clear plane', () => {
     const surface = document.querySelector(
       '[data-crm-theater="calendar"].fc-surface, [data-crm-theater="calendar"] .fc-surface',
     );
-    const materials = [...(surface?.querySelectorAll(
-      '.fc-level > .crm-tile-material-plane',
+    const days = [...(surface?.querySelectorAll(
+      '.fc-level[data-kind="year"] > .fc-grid > .fc-month .fc-day',
     ) || [])];
-    const material = materials[0];
-    const month = surface?.querySelector('.fc-level > .fc-grid > .fc-month');
-    const day = month?.querySelector('.fc-day');
-    const reference = document.querySelector('.auth-profile-menu');
-    const materialStyle = material && getComputedStyle(material);
-    const materialStyles = materials.map((entry) => getComputedStyle(entry));
+    const months = [...(surface?.querySelectorAll(
+      '.fc-level[data-kind="year"] > .fc-grid > .fc-month',
+    ) || [])];
+    const month = months[0];
+    const materials = [...(surface?.querySelectorAll(
+      '.fc-level[data-kind="year"] > .fc-grid > .crm-tile-material-plane',
+    ) || [])];
+    const day = days[0];
+    const reference = document.querySelector('.crm-home-grid > .crm-home-bucket');
     const monthStyle = month && getComputedStyle(month);
     const dayStyle = day && getComputedStyle(day);
+    const dayMaterial = day?.querySelector(':scope > .crm-tile-acrylic');
+    const dayMaterialStyle = dayMaterial && getComputedStyle(dayMaterial);
     const referenceStyle = reference && getComputedStyle(reference);
-    const materialBackdrop = materialStyle?.webkitBackdropFilter || materialStyle?.backdropFilter || '';
-    const referenceBackdrop = referenceStyle?.webkitBackdropFilter || referenceStyle?.backdropFilter || '';
-    const materialTileCount = materials.reduce(
-      (sum, entry) => sum + Number(entry.dataset.crmTileMaterialCount || 0),
-      0,
-    );
+    const referenceBackdrop = referenceStyle?.webkitBackdropFilter
+      || referenceStyle?.backdropFilter || '';
+    const canonicalDays = days.filter((entry) => {
+      const tileStyle = getComputedStyle(entry);
+      const material = entry.querySelector(':scope > .crm-tile-acrylic');
+      const materialStyle = material && getComputedStyle(material);
+      const backdrop = materialStyle?.webkitBackdropFilter
+        || materialStyle?.backdropFilter || '';
+      return backdrop === referenceBackdrop
+        && backdrop.includes('blur(26px)')
+        && ['none', ''].includes(tileStyle.backgroundImage)
+        && materialStyle?.backgroundImage === referenceStyle?.backgroundImage
+        && materialStyle?.display !== 'none';
+    });
+    const motionMasks = materials.filter((material) => {
+      const style = getComputedStyle(material);
+      const count = Number(material.dataset.crmTileMaterialCount);
+      const ownerDays = material.parentElement?.querySelectorAll('.fc-day').length || 0;
+      return material.dataset.crmTileMaterialReady === 'true'
+        && count === ownerDays
+        && String(style.clipPath).startsWith('path(')
+        && Number(style.opacity) <= .01
+        && (style.webkitBackdropFilter || style.backdropFilter) === referenceBackdrop;
+    });
     return {
-      ok:materials.length === 1 && !!dayStyle && !!referenceStyle
-        && [365, 366].includes(materialTileCount)
-        && materialStyles.every((style) => (
-          (style.webkitBackdropFilter || style.backdropFilter || '') === referenceBackdrop
-          && (style.webkitBackdropFilter || style.backdropFilter || '').includes('blur(26px)')
-          && style.clipPath.startsWith('path(')
-        ))
-        && materials.every((entry) => (
-          entry.dataset.crmTileMaterialReady === 'true'
-          && [365, 366].includes(Number(entry.dataset.crmTileMaterialCount))
-        ))
+      ok:[365, 366].includes(days.length)
+        && canonicalDays.length === days.length
+        && months.length === 12
+        && motionMasks.length === 1
+        && materials.reduce(
+          (sum, material) => sum + Number(material.dataset.crmTileMaterialCount || 0),
+          0,
+        ) === days.length
+        && referenceBackdrop.includes('blur(26px)')
+        && !!dayStyle && !!dayMaterialStyle && !!referenceStyle
+        && dayMaterialStyle.display !== 'none'
+        && dayMaterialStyle.visibility === 'visible'
+        && Number(dayMaterialStyle.opacity) > .998
         && ['none', ''].includes(monthStyle?.backdropFilter)
         && monthStyle?.backgroundImage === 'none'
         && day.classList.contains('crm-home-bucket')
         && day.dataset.tileKind === 'calendar-day'
         && day.dataset.tileSchemaVersion === '1'
         && day.dataset.tileTargetId === day.dataset.date
-        && dayStyle.backgroundImage === referenceStyle.backgroundImage
-        && dayStyle.borderTopColor === referenceStyle.borderTopColor
-        && ['none', ''].includes(dayStyle.backdropFilter),
+        && ['none', ''].includes(dayStyle.backgroundImage)
+        && dayMaterialStyle.backgroundImage === referenceStyle.backgroundImage
+        && ['none', ''].includes(dayStyle.webkitBackdropFilter || dayStyle.backdropFilter)
+        && (dayMaterialStyle.webkitBackdropFilter || dayMaterialStyle.backdropFilter)
+          === referenceBackdrop,
       detail:JSON.stringify({
-        materialBackdrop,
-        clip:materialStyle?.clipPath?.slice(0, 32),
-        planes:materials.length,
-        tiles:materialTileCount,
+        acrylic:dayMaterialStyle?.webkitBackdropFilter || dayMaterialStyle?.backdropFilter,
+        canonicalDays:canonicalDays.length,
+        motionMasks:motionMasks.length,
+        materialBackdrop:materials[0]
+          ? (getComputedStyle(materials[0]).webkitBackdropFilter
+            || getComputedStyle(materials[0]).backdropFilter)
+          : '',
+        tiles:days.length,
         tile:[day?.dataset?.crmTile, day?.dataset?.tileKind, day?.dataset?.tileTargetId],
         month:[monthStyle?.backgroundImage, monthStyle?.backdropFilter],
-        day:[dayStyle?.backgroundImage, dayStyle?.borderTopColor, dayStyle?.backdropFilter],
+        day:[
+          dayStyle?.backgroundImage,
+          dayStyle?.boxShadow,
+          dayMaterialStyle?.backgroundImage,
+          dayMaterialStyle?.backdropFilter,
+        ],
       }),
     };
   });
   await page.evaluate((month) => document.querySelector(`.fc-month[data-month="${month}"]`)?.click(), calendarProjectPreview.month);
   await page.waitForFunction(() => window.fractalCalendar.level() === 1
     && !window.fractalCalendarCamera?.isTransitioning?.(), { timeout:5000 });
+  await page.waitForFunction(() => (
+    !window.fractalCalendarCamera?.surface?.()?.dataset?.calendarMaterialMode
+  ), { timeout:5000 });
   await check('Calendar is fed only by commitments', () => {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
     return chips.length > 0 && chips.every((chip) => chip.dataset.type === 'commitment');
   });
-  await check('Expanded calendar is the same real tile collection at month scale', () => {
+  await check('Expanded calendar is the same true-acrylic tile collection at month scale', () => {
     const pane = document.querySelector('[data-crm-theater="calendar"] .fc-expander[data-kind="month"]');
     const live = pane?.querySelector(':scope > .fc-expander-live');
     const days = [...(live?.querySelectorAll('.fc-day') || [])];
     const details = [...(live?.querySelectorAll('.fc-chip, .fc-empty, .fc-day-detail') || [])];
-    const material = live?.querySelector(':scope > .crm-tile-material-plane');
-    const reference = document.querySelector('.auth-profile-menu');
+    const motionMaterial = live?.querySelector(':scope > .crm-tile-material-plane');
+    const reference = document.querySelector('.crm-home-grid > .crm-home-bucket');
     const paneStyle = pane && getComputedStyle(pane);
-    const materialStyle = material && getComputedStyle(material);
     const referenceStyle = reference && getComputedStyle(reference);
-    const materialBackdrop = materialStyle?.webkitBackdropFilter || materialStyle?.backdropFilter || '';
+    const motionMaterialStyle = motionMaterial && getComputedStyle(motionMaterial);
     const referenceBackdrop = referenceStyle?.webkitBackdropFilter || referenceStyle?.backdropFilter || '';
     const isObjectsOnly = (element) => {
       const style = getComputedStyle(element);
@@ -1914,18 +1952,28 @@ async function main() {
     };
     return days.length >= 28 && days.length <= 31
       && !!paneStyle && paneStyle.backgroundImage === 'none' && ['none', ''].includes(paneStyle.backdropFilter)
-      && !!materialStyle && materialBackdrop === referenceBackdrop && materialBackdrop.includes('blur(26px)')
-      && materialStyle.clipPath.startsWith('path(')
-      && Number(material.dataset.crmTileMaterialCount) === days.length
+      && motionMaterial?.dataset.crmTileMaterialReady === 'true'
+      && Number(motionMaterial.dataset.crmTileMaterialCount) === days.length
+      && Number(motionMaterialStyle?.opacity) <= .01
+      && (motionMaterialStyle?.webkitBackdropFilter || motionMaterialStyle?.backdropFilter)
+        ?.includes('blur(26px)')
+      && !!referenceStyle && referenceBackdrop.includes('blur(26px)')
       && days.every((day) => {
-        const style = getComputedStyle(day);
-        return isObjectsOnly(day)
-          && day.classList.contains('crm-home-bucket')
+        const tileStyle = getComputedStyle(day);
+        const material = day.querySelector(':scope > .crm-tile-acrylic');
+        const style = material && getComputedStyle(material);
+        const backdrop = style?.webkitBackdropFilter || style?.backdropFilter || '';
+        return day.classList.contains('crm-home-bucket')
           && day.dataset.tileKind === 'calendar-day'
           && day.dataset.tileSchemaVersion === '1'
           && day.dataset.tileTargetId === day.dataset.date
-          && style.backgroundImage === referenceStyle.backgroundImage
-          && style.borderTopColor === referenceStyle.borderTopColor;
+          && !!style
+          && style?.display !== 'none'
+          && style.visibility === 'visible'
+          && Number(style.opacity) > .998
+          && backdrop === referenceBackdrop
+          && ['none', ''].includes(tileStyle.backgroundImage)
+          && style.backgroundImage === referenceStyle.backgroundImage;
       })
       && details.every(isObjectsOnly);
   });

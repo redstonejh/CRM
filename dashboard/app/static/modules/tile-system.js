@@ -97,26 +97,43 @@ const tileRecordOf = (object) => (
   object?.tile && typeof object.tile === "object" ? object.tile : object
 );
 
-// Every interactive viewport object uses this one semantic shape. Domain
-// modules may add their own payload fields, but a Home room, Calendar month,
-// and Calendar day are all the same canonical tile object with the same tile
-// record and child collection.
+// Every interactive viewport object has this exact shape. Domain state belongs
+// in `data`; it must never be spread onto the node itself, because doing so
+// quietly creates module-specific look-alike records.
 export function createTileObject(source = {}, options = {}) {
   const input = source && typeof source === "object" ? source : {};
-  const object = input.objectKind === TILE_OBJECT_KIND ? input : { ...input };
-  object.objectKind = TILE_OBJECT_KIND;
-  object.tile = normalizeTileRecord(tileRecordOf(input), options.defaults || {});
-  if (!Array.isArray(object.children)) {
-    object.children = Array.isArray(options.children) ? options.children : [];
-  }
-  if (!Number.isFinite(Number(object.revision))) object.revision = 0;
+  return {
+    objectKind:TILE_OBJECT_KIND,
+    tile:normalizeTileRecord(tileRecordOf(input), options.defaults || {}),
+    data:input.data && typeof input.data === "object" ? input.data : {},
+    children:Array.isArray(input.children)
+      ? input.children
+      : (Array.isArray(options.children) ? options.children : []),
+    revision:number(input.revision, 0),
+    preview:input.preview || null,
+  };
+}
+
+export function createTileTree(source = {}, options = {}) {
+  const input = source && typeof source === "object" ? source : {};
+  const children = Array.isArray(input.children) ? input.children : [];
+  const object = createTileObject({ ...input, children:[] }, options);
+  object.children = children.map((child) => (
+    isTileObject(child) ? child : createTileTree(child, options)
+  ));
   return object;
+}
+
+export function tileDataOf(object) {
+  return isTileObject(object) ? object.data : null;
 }
 
 export function isTileObject(object) {
   return !!object
     && object.objectKind === TILE_OBJECT_KIND
     && object.tile?.schemaVersion === TILE_SCHEMA_VERSION
+    && !!object.data
+    && typeof object.data === "object"
     && Array.isArray(object.children);
 }
 
@@ -187,6 +204,40 @@ export function tilePreviewHostFor(element) {
 
 export function tileObjectForElement(element) {
   return element ? tileObjectByElement.get(element) || null : null;
+}
+
+// A collection is always the `children` array of a canonical tile object.
+// Home tiles, year/month tiles, and month/day tiles all enter the DOM through
+// this function; there is no module-owned parallel collection representation.
+export function mountTileChildren(host, parent, options = {}) {
+  if (!host || !isTileObject(parent)) return [];
+  const selector = options.selector || ':scope > [data-crm-tile-instance="viewport"]';
+  const existing = new Map(
+    [...host.querySelectorAll(selector)].map((element) => [
+      element.dataset.tileObjectId || element.dataset.tileId || "",
+      element,
+    ]),
+  );
+  const fragment = document.createDocumentFragment();
+  const elements = parent.children.map((object, index) => {
+    let element = existing.get(object.tile.id) || null;
+    const created = !element || tileObjectForElement(element) !== object;
+    if (created) {
+      element = createTileInstance(
+        object,
+        typeof options.elementOptions === "function"
+          ? options.elementOptions(object, index)
+          : (options.elementOptions || {}),
+      );
+    }
+    options.update?.(element, object, index, { created, parent });
+    fragment.appendChild(element);
+    return element;
+  });
+  host.replaceChildren(fragment);
+  host.dataset.crmTileCollection = parent.tile.id;
+  host.dataset.crmTileChildCount = String(parent.children.length);
+  return elements;
 }
 
 function roundedTilePath(box) {
@@ -466,13 +517,16 @@ export const crmTileSystem = {
   normalize:normalizeTileRecord,
   normalizeAll:normalizeTileCollection,
   createObjectRecord:createTileObject,
+  createTree:createTileTree,
   isObject:isTileObject,
+  dataOf:tileDataOf,
   kindOf:tileKindOf,
   bind:bindTileElement,
   create:createTileElement,
   bindObject:bindTileObject,
   createObject:createTileObjectElement,
   createInstance:createTileInstance,
+  mountChildren:mountTileChildren,
   previewHostFor:tilePreviewHostFor,
   objectFor:tileObjectForElement,
   tileUnionPath,

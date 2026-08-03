@@ -417,6 +417,7 @@ async function auditArchitecture(page, phase) {
       ':scope > .fc-expander[data-kind="month"]:not(.fc-warm)',
     );
     const monthLive = activeMonth?.querySelector(':scope > .fc-expander-live');
+    const monthCollection = monthLive?.querySelector(':scope > .fc-days');
     const monthDays = [...(monthLive?.querySelectorAll(':scope > .fc-days > .fc-day') || [])];
     const monthDayPreviews = monthDays.map((day) => (
       day.querySelector(':scope > .fc-day-tile-preview')
@@ -431,6 +432,11 @@ async function auditArchitecture(page, phase) {
     const activeDayLive = activeDay?.querySelector(':scope > .fc-expander-live');
     const objectFor = window.fractalCalendar._objectForElement;
     const objectGraph = window.fractalCalendar._objectGraph();
+    const graphDays = objectGraph.children.flatMap((month) => month.children || []);
+    const homeTile = document.querySelector(
+      '.crm-home-level > .crm-home-grid > [data-crm-tile-instance="viewport"]',
+    );
+    const objectShape = (object) => Object.keys(object || {}).sort().join('|');
     const liveBackdropCover = surface.querySelector(':scope > .fc-live-backdrop-cover');
     const legacySelector = [
       '.fc-frost',
@@ -511,6 +517,11 @@ async function auditArchitecture(page, phase) {
       phase:auditPhase,
       level:window.fractalCalendar.level(),
       rootTiles:tileAudit(rootMonths, 'calendar-month'),
+      rootCollection:{
+        owner:root.querySelector(':scope > .fc-grid')?.dataset.crmTileCollection || '',
+        expected:objectGraph.tile.id,
+        count:Number(root.querySelector(':scope > .fc-grid')?.dataset.crmTileChildCount || 0),
+      },
       rootPreview:{
         count:rootPreviews.length,
         imageCount:rootPreviewImages.length,
@@ -593,8 +604,21 @@ async function auditArchitecture(page, phase) {
           (month) => month.dataset.month === activeMonth.dataset.month,
         )),
         dayObjectsSharedWithGraph:monthDays.filter(
-          (day) => objectFor(day) === objectGraph.daysByDate.get(day.dataset.date),
+          (day) => objectFor(day) === graphDays.find(
+            (object) => window.crmTileSystem.dataOf(object)?.date === day.dataset.date,
+          ),
         ).length,
+        oneNodeShape:objectShape(objectFor(homeTile)) === objectShape(objectFor(activeMonth))
+          && objectShape(objectFor(activeMonth)) === objectShape(objectFor(monthDays[0])),
+        collection:{
+          owner:monthCollection?.dataset.crmTileCollection || '',
+          expected:objectFor(activeMonth)?.tile?.id || '',
+          declared:Number(monthCollection?.dataset.crmTileChildCount || 0),
+          direct:monthCollection?.children?.length || 0,
+          nonTiles:monthCollection?.querySelectorAll(
+            ':scope > :not([data-crm-tile-instance="viewport"])',
+          ).length || 0,
+        },
         previewViewCount:monthDays.filter(
           (day) => day.dataset.tileObjectView === 'preview',
         ).length,
@@ -671,6 +695,10 @@ function architectureFailures(audit, expectedLevel) {
     || audit.rootTiles.directBackdropCount !== expectedRootMonths
     || audit.rootTiles.visibleBackdropCount !== expectedVisibleRootMonths) {
     failures.push(`${audit.phase} root months are not canonical Home-style tile instances`);
+  }
+  if (audit.rootCollection?.owner !== audit.rootCollection?.expected
+    || audit.rootCollection?.count !== expectedRootMonths) {
+    failures.push(`${audit.phase} root months did not come from the canonical child collection`);
   }
   if (audit.rootPreview?.count !== expectedRootMonths
     || audit.rootPreview?.imageCount !== expectedRootMonths
@@ -955,6 +983,11 @@ async function main() {
       || monthAudit.tiles.objectIdentityCount !== monthAudit.tiles.count
       || monthAudit.dayObjectsSharedWithGraph !== monthAudit.tiles.count
       || monthAudit.shellSharesRootObject !== true
+      || monthAudit.oneNodeShape !== true
+      || monthAudit.collection?.owner !== monthAudit.collection?.expected
+      || monthAudit.collection?.declared !== monthAudit.tiles.count
+      || monthAudit.collection?.direct !== monthAudit.tiles.count
+      || monthAudit.collection?.nonTiles !== 0
       || monthAudit.previewViewCount !== monthAudit.tiles.count
       || monthAudit.previews?.count !== monthAudit.tiles.count
       || monthAudit.previews?.imageCount !== monthAudit.tiles.count

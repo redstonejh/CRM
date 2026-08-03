@@ -1,9 +1,10 @@
 import {
   applyAdaptiveTileGrid,
   bindTileObject,
-  createTileInstance,
   createTileObject,
+  mountTileChildren,
   normalizeTileRecord,
+  tileDataOf,
 } from "./modules/tile-system.js";
 import { changed as contextAddChanged, register as registerContextAddProvider } from "./modules/context-add-registry.js";
 
@@ -15,19 +16,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const MODULES = [
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
-  ].map((module, rank) => createTileObject({
-    ...module,
-    tile:normalizeTileRecord(module, {
-      id:module.key,
-      key:module.key,
-      title:module.label,
-      label:module.label,
-      kind:"home-viewport",
-      targetType:"workspace",
-      targetId:module.key,
-      rank,
-    }),
-  }));
+  ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   const HOME_PREVIEW_VERSION = "filtered-home-v46";
   const HOME_RETURN_INGRESS_MS = 110;
@@ -77,16 +66,28 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const FACTORY_PREWARM_APIS = ["peopleCards", "ticketStacks", "crmPlanner", "crmAssignments"];
   const FACTORY_API_BY_MODULE = { people:"peopleCards", cases:"ticketStacks", planner:"crmPlanner", assignments:"crmAssignments" };
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  const homeTileData = (tile) => tileDataOf(tile) || {};
+  const homeTileModuleKey = (tile) => String(homeTileData(tile).moduleKey || "");
+  const homeTileLabel = (tile) => String(homeTileData(tile).label || tile?.tile?.label || "");
   const normalizeHomeTile = (source = {}, rank = 0) => {
-    const moduleKey = String(source.moduleKey || source.key || source.tile?.target?.id || "");
+    const sourceData = source.data && typeof source.data === "object" ? source.data : {};
+    const moduleKey = String(
+      sourceData.moduleKey || source.moduleKey || source.key || source.tile?.target?.id || "",
+    );
     const module = MODULES.find((candidate) => candidate.key === moduleKey);
     if (!module) return null;
     const tileId = String(source.tile?.id || source.id || module.key);
-    const label = [source.label, source.tile?.title, module.label].map((value) => String(value ?? "").trim()).find(Boolean) || module.label;
+    const label = [sourceData.label, source.label, source.tile?.title, module.label]
+      .map((value) => String(value ?? "").trim())
+      .find(Boolean) || module.label;
     return createTileObject({
-      moduleKey:module.key,
-      key:module.key,
-      label,
+      data:{
+        domain:"home",
+        unit:"workspace",
+        moduleKey:module.key,
+        key:module.key,
+        label,
+      },
       tile:normalizeTileRecord({ ...source, id:tileId, key:tileId, title:label, label, tile:{ ...source.tile, id:tileId, key:tileId, title:label, label } }, {
         id:tileId,
         key:tileId,
@@ -111,7 +112,25 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       return true;
     });
   };
-  let homeTileRecords = readHomeTiles();
+  const homeRootObject = createTileObject({
+    data:{ domain:"home", unit:"root", moduleKey:"", key:"home", label:"Home" },
+    tile:normalizeTileRecord({
+      id:"home-root",
+      key:"home",
+      title:"Home",
+      label:"Home",
+      tileKind:"home-root",
+      targetType:"home-root",
+      targetId:"home",
+    }),
+    children:readHomeTiles(),
+  });
+  let homeTileRecords = homeRootObject.children;
+  const replaceHomeTileRecords = (records) => {
+    homeRootObject.children = records;
+    homeTileRecords = homeRootObject.children;
+    return homeTileRecords;
+  };
   // A workspace may be represented by several independently placed Home
   // tiles. Remember the exact physical tile that opened it: desk transit still
   // resolves its return lid through data-module, while data-viewport-module
@@ -121,8 +140,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const returnTileFor = (moduleKey) => {
     const key = String(moduleKey || "");
     const remembered = returnTileByModule.get(key);
-    const tile = homeTileRecords.find((candidate) => candidate.key === key && candidate.tile.id === remembered)
-      || homeTileRecords.find((candidate) => candidate.key === key)
+    const tile = homeTileRecords.find((candidate) => homeTileModuleKey(candidate) === key && candidate.tile.id === remembered)
+      || homeTileRecords.find((candidate) => homeTileModuleKey(candidate) === key)
       || null;
     if (tile) returnTileByModule.set(key, tile.tile.id);
     else returnTileByModule.delete(key);
@@ -189,7 +208,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (homeTileRecords.some((tile) => tile.tile.id === id)) return null;
     const tile = normalizeHomeTile({ id, moduleKey:module.key, label:firstText(options.label, module.label) }, homeTileRecords.length);
     if (!tile) return null;
-    homeTileRecords = [...homeTileRecords, tile];
+    replaceHomeTileRecords([...homeTileRecords, tile]);
     writeHomeTiles(); rebuildHomeTiles(module.key);
     return clone(tile);
   };
@@ -198,13 +217,16 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const removed = homeTileRecords.find((tile) => tile.tile.id === removedId);
     const next = homeTileRecords.filter((tile) => tile.tile.id !== removedId);
     if (next.length === homeTileRecords.length) return false;
-    homeTileRecords = next.map((tile, rank) => normalizeHomeTile(tile, rank));
-    if (removed && returnTileByModule.get(removed.key) === removedId) returnTileByModule.delete(removed.key);
-    writeHomeTiles(); rebuildHomeTiles(removed?.key);
+    replaceHomeTileRecords(next.map((tile, rank) => normalizeHomeTile(tile, rank)));
+    const removedModuleKey = homeTileModuleKey(removed);
+    if (removed && returnTileByModule.get(removedModuleKey) === removedId) {
+      returnTileByModule.delete(removedModuleKey);
+    }
+    writeHomeTiles(); rebuildHomeTiles(removedModuleKey);
     return true;
   };
   const resetHomeTiles = () => {
-    homeTileRecords = defaultHomeTiles();
+    replaceHomeTileRecords(defaultHomeTiles());
     returnTileByModule.clear();
     writeHomeTiles(); rebuildHomeTiles();
     return clone(homeTileRecords);
@@ -449,9 +471,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
 
   const previewStateHTML = () => `<div class="crm-home-preview-state" role="status" aria-live="polite">
     <i class="crm-home-preview-state-mark" aria-hidden="true"></i><span>Preparing view</span></div>`;
-  const bucketHTML = (module) => `<div class="crm-home-preview" data-preview-key="${esc(module.key)}" data-preview-state="waiting" aria-label="Loading preview">${previewStateHTML()}</div>`;
-  const titleHTML = (module) => `<div class="crm-home-title-slot" data-module="${esc(module.key)}" data-tile-id="${esc(module.tile?.id || module.key)}">
-    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(module.label)}</div></div></div>`;
+  const bucketHTML = (module) => `<div class="crm-home-preview" data-preview-key="${esc(homeTileModuleKey(module))}" data-preview-state="waiting" aria-label="Loading preview">${previewStateHTML()}</div>`;
+  const titleHTML = (module) => `<div class="crm-home-title-slot" data-module="${esc(homeTileModuleKey(module))}" data-tile-id="${esc(module.tile?.id || homeTileModuleKey(module))}">
+    <div class="crm-home-title-glass"><div class="crm-home-title">${esc(homeTileLabel(module))}</div></div></div>`;
 
   const imageNode = (className, src, decoding = "async") => {
     const image = document.createElement("img");
@@ -1106,31 +1128,34 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const grid = document.createElement("div"); grid.className = "crm-home-grid"; grid.dataset.crmAdaptiveTiles = "manual";
     const titleLayer = document.createElement("div"); titleLayer.className = "crm-home-title-layer";
     titleLayer.innerHTML = homeTileRecords.map(titleHTML).join("");
-    homeTileRecords.forEach((module) => {
-      const bucket = createTileInstance(module, {
-        ariaLabel:`Open ${module.label}`,
+    mountTileChildren(grid, homeRootObject, {
+      elementOptions:(module) => ({
+        ariaLabel:`Open ${homeTileLabel(module)}`,
         view:"preview",
-        previewKey:module.key,
+        previewKey:homeTileModuleKey(module),
         previewState:"waiting",
         previewAriaLabel:"Loading preview",
         previewHTML:previewStateHTML(),
-      });
-      bucket.dataset.module = module.key;
-      bucket.dataset.viewportModule = module.key;
-      bucket.dataset.enabled = "true";
-      // Do not activate merely because a tile finishes loading beneath an
-      // already-stationary pointer. Actual pointer movement arms the reveal.
-      bucket.addEventListener("pointermove", () => {
-        focusPrecomposedModule(module.key);
-        if (!bucket.dataset.previewReady || bucket.classList.contains("is-preview-hovered")) return;
-        revealSharpPreview(bucket);
-      });
-      bucket.addEventListener("pointerleave", () => {
-        restSharpPreview(bucket);
-      });
-      bucket.addEventListener("focus", () => revealSharpPreview(bucket));
-      bucket.addEventListener("blur", () => restSharpPreview(bucket));
-      grid.appendChild(bucket);
+      }),
+      update:(bucket, module, _index, { created }) => {
+        const key = homeTileModuleKey(module);
+        bucket.dataset.module = key;
+        bucket.dataset.viewportModule = key;
+        bucket.dataset.enabled = "true";
+        if (!created) return;
+        // Do not activate merely because a tile finishes loading beneath an
+        // already-stationary pointer. Actual pointer movement arms the reveal.
+        bucket.addEventListener("pointermove", () => {
+          focusPrecomposedModule(key);
+          if (!bucket.dataset.previewReady || bucket.classList.contains("is-preview-hovered")) return;
+          revealSharpPreview(bucket);
+        });
+        bucket.addEventListener("pointerleave", () => {
+          restSharpPreview(bucket);
+        });
+        bucket.addEventListener("focus", () => revealSharpPreview(bucket));
+        bucket.addEventListener("blur", () => restSharpPreview(bucket));
+      },
     });
     const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important linked work due today");
     fillPriorityHand(hand); root.append(grid, titleLayer, hand);
@@ -1154,7 +1179,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // Every tile is a geometrically faithful viewport of the room it opens.
     // Artificially widening the 2x2 cells made the cached room look stretched
     // and guaranteed a scale change at the camera endpoint.
-    const captured = homeTileRecords.map(({ key }) => previews.get(key)).find((preview) => Number(preview?.width) > 0 && Number(preview?.height) > 0);
+    const captured = homeTileRecords
+      .map((tile) => previews.get(homeTileModuleKey(tile)))
+      .find((preview) => Number(preview?.width) > 0 && Number(preview?.height) > 0);
     const aspect = captured ? captured.width / captured.height : innerWidth / innerHeight;
     const titleLayer = surface?.querySelector(".crm-home-title-layer");
     const geometry = applyAdaptiveTileGrid({
@@ -1425,19 +1452,22 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   const homePeripheralAcrylic = createPeripheralAcrylic();
   const buildExpander = (target) => {
-    const tile = homeTileRecords.find((candidate) => candidate.tile.id === target?.dataset?.tileId);
-    const module = MODULES.find(({ key }) => key === (tile?.key || moduleKeyOf(target))) || MODULES[0];
+    const targetModuleKey = moduleKeyOf(target);
+    const tile = homeTileRecords.find((candidate) => candidate.tile.id === target?.dataset?.tileId)
+      || homeTileRecords.find((candidate) => homeTileModuleKey(candidate) === targetModuleKey)
+      || homeTileRecords[0];
+    const module = MODULES.find(({ key }) => key === homeTileModuleKey(tile)) || MODULES[0];
     const bucket = recycledExpanders.get(module.key) || document.createElement("div");
     recycledExpanders.delete(module.key);
     bucket.className = "crm-home-bucket crm-home-expander";
-    bindTileObject(bucket, tile || module, {
-      ariaLabel:`Open ${tile?.label || module.label}`,
+    bindTileObject(bucket, tile, {
+      ariaLabel:`Open ${homeTileLabel(tile) || module.label}`,
       view:"expanded-preview",
     });
     bucket.dataset.module = module.key;
     bucket.dataset.viewportModule = module.key;
-    bucket.dataset.tileId = tile?.tile?.id || target?.dataset?.tileId || module.tile.id;
-    if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(module);
+    bucket.dataset.tileId = tile?.tile?.id || target?.dataset?.tileId || module.key;
+    if (!bucket.querySelector(".crm-home-preview")) bucket.innerHTML = bucketHTML(tile);
     if (!bucket.querySelector(":scope > .crm-home-transition-acrylic")) {
       const acrylic = document.createElement("span");
       acrylic.className = "crm-home-transition-acrylic";
@@ -1513,7 +1543,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const moduleKey = routedModule || String(document.body.dataset.crmModule || "");
     const routedTileId = String(root?.dataset?.returnTileId || "");
     const tile = homeTileRecords.find((candidate) =>
-      candidate.key === moduleKey && candidate.tile.id === routedTileId)
+      homeTileModuleKey(candidate) === moduleKey && candidate.tile.id === routedTileId)
       || returnTileFor(moduleKey);
     const key = tile?.tile?.id || routedTileId || moduleKey;
     if (tile) routeModuleReturnTo(root, moduleKey, key);
@@ -2031,7 +2061,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       return true;
     },
     peripheralAcrylicState:()=>homePeripheralAcrylic.status(),
-    tiles:()=>clone(homeTileRecords),createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
+    tiles:()=>clone(homeTileRecords),_objectGraph:()=>homeRootObject,
+    createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||"",materialMode:motionSnapshot?.materialMode||""}),

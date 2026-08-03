@@ -390,7 +390,7 @@ async function prepareCapture(win, matte = null, options = {}) {
   await waitForHomePreviewInteraction();
   const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
   const homeMotionObjectsOnly = options.homeMotionObjectsOnly === true;
-  const calendarDayObjectsOnly = options.calendarDayObjectsOnly === true;
+  const tileForegroundOnly = options.tileForegroundOnly === true;
   const settleMs = Math.max(0, Number.isFinite(Number(options.settleMs))
     ? Number(options.settleMs)
     : 60);
@@ -401,7 +401,7 @@ async function prepareCapture(win, matte = null, options = {}) {
     .crm-home-title-glass { display:none !important; }
     ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
     ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }' : ''}
-    ${calendarDayObjectsOnly ? `.fc-expander[data-kind="day"] > .fc-day-expander-tint,
+    ${tileForegroundOnly ? `.fc-expander[data-kind="day"] > .fc-day-expander-tint,
       .fc-expander[data-kind="day"] > .fc-day-detail-material { display:none !important; }` : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
@@ -637,52 +637,49 @@ function publishCanonicalTilePreview({
   return preview;
 }
 
-function normalizeCalendarTilePreviewBatch(kind, scope = {}, tiles = []) {
-  const requestedYear = Number(scope?.year);
-  if (!Number.isInteger(requestedYear)
-    || requestedYear < 1901
-    || requestedYear > 2200
-    || !['calendar-month', 'calendar-day'].includes(kind)) return null;
-  const year = requestedYear;
-  const requestedMonth = Number(scope?.month);
-  const month = kind === 'calendar-day' && Number.isInteger(requestedMonth)
-    && requestedMonth >= 1 && requestedMonth <= 12
-    ? requestedMonth
-    : 0;
-  if (kind === 'calendar-day' && !month) return null;
+function normalizeCanonicalTilePreviewBatch(kind, scope = {}, tiles = []) {
+  const requestedKind = String(kind || '');
+  if (!/^[a-z0-9][a-z0-9-]{1,80}$/i.test(requestedKind)) return null;
+  const scopeYear = Number(scope?.year) || 0;
+  const scopeMonth = Number(scope?.month) || 0;
   const seen = new Set();
   const requests = [];
   for (const tile of Array.isArray(tiles) ? tiles : []) {
-    if (requests.length >= (kind === 'calendar-month' ? 12 : 31)) break;
+    if (requests.length >= 64) break;
     const key = String(tile?.key || '');
+    const tileKind = String(tile?.kind || '');
+    const path = (Array.isArray(tile?.path) ? tile.path : [])
+      .map((value) => String(value || ''))
+      .filter(Boolean)
+      .slice(0, 8);
+    const viewState = tile?.viewState && typeof tile.viewState === 'object'
+      ? { ...tile.viewState }
+      : {};
+    if (!key || key.length > 240 || tileKind !== requestedKind
+      || path.length < 1 || path[path.length - 1] !== key
+      || path.some((id) => id.length > 240)
+      || (scopeYear && Number(viewState.year) !== scopeYear)
+      || (scopeMonth && Number(viewState.month) !== scopeMonth)) continue;
     const revision = Number(tile?.revision) || 0;
     const dataSignature = String(tile?.dataSignature || '');
-    let viewState = null;
-    if (kind === 'calendar-month') {
-      const tileMonth = Math.max(1, Math.min(12, Number(tile?.month) || 0));
-      if (key !== `calendar-month-${year}-${String(tileMonth).padStart(2, '0')}`) continue;
-      viewState = { year, month:tileMonth };
-    } else {
-      const date = String(tile?.date || '');
-      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-      if (!month || !match
-        || Number(match[1]) !== year
-        || Number(match[2]) !== month
-        || key !== `calendar-day-${date}`) continue;
-      const day = Number(match[3]);
-      const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-      if (day < 1 || day > lastDay) continue;
-      viewState = { year, month, day, date };
-    }
     if (seen.has(key)) continue;
     seen.add(key);
-    requests.push({ key, revision, dataSignature, viewState });
+    requests.push({
+      key,
+      kind:tileKind,
+      path,
+      revision,
+      dataSignature,
+      viewState,
+      captureMode:tile?.captureMode === 'tile-foreground' ? 'tile-foreground' : 'viewport',
+      settleMs:Math.max(0, Math.min(250, Number(tile?.settleMs) || 0)),
+    });
   }
-  return requests.length ? { kind, year, month, requests } : null;
+  return requests.length ? { kind:requestedKind, requests } : null;
 }
 
-function captureCalendarTilePreviews(kind, scope = {}, tiles = []) {
-  const batch = normalizeCalendarTilePreviewBatch(kind, scope, tiles);
+function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
+  const batch = normalizeCanonicalTilePreviewBatch(kind, scope, tiles);
   if (!batch) return Promise.resolve([]);
   homePreviewActivityGeneration += 1;
   canonicalTilePreviewQueue = canonicalTilePreviewQueue.catch(() => null).then(async () => {
@@ -708,7 +705,7 @@ function captureCalendarTilePreviews(kind, scope = {}, tiles = []) {
       for (const request of batch.requests) {
         canonicalTilePreviewCaptureStatus.key = request.key;
         const cached = canonicalTilePreviewCache.get(
-          canonicalTilePreviewCacheKey(batch.kind, request.key),
+          canonicalTilePreviewCacheKey(request.kind, request.key),
         );
         if (cached
           && cached.version === CANONICAL_TILE_PREVIEW_VERSION
@@ -721,47 +718,42 @@ function captureCalendarTilePreviews(kind, scope = {}, tiles = []) {
         await waitForHomePreviewInteraction();
         canonicalTilePreviewCaptureStatus.stage = 'rendering-tile';
         const prepared = await worker.webContents.executeJavaScript(
-          `window.fractalCalendar.prepareTilePreview(${
-            JSON.stringify(batch.kind)
-          }, ${JSON.stringify(request.viewState)})`,
+          `window.fractalCalendar.prepareTilePreview(${JSON.stringify(request)})`,
           true,
         );
         if (!prepared) throw new Error(`Canonical tile ${request.key} did not prepare`);
         canonicalTilePreviewCaptureStatus.stage = 'settling-tile';
         await worker.webContents.executeJavaScript(
           `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(
-            () => setTimeout(resolve, ${batch.kind === 'calendar-day' ? 0 : 40})
+            () => setTimeout(resolve, ${request.settleMs})
           )))`,
           true,
         );
         canonicalTilePreviewCaptureStatus.stage = 'reading-provenance';
         const captureState = await worker.webContents.executeJavaScript(
-          `window.fractalCalendar.tilePreviewCaptureState(${
-            JSON.stringify(batch.kind)
-          }, ${JSON.stringify(request.key)})`,
+          `window.fractalCalendar.tilePreviewCaptureState(${JSON.stringify(request.key)})`,
           true,
         );
-        const expectedRenderer = `${batch.kind}-full`;
+        const expectedRenderer = `${request.kind}-full`;
         const provenance = captureState?.provenance;
-        const canonical = batch.kind === 'calendar-month'
-          ? provenance?.monthObjectCanonical === true
-            && provenance?.shellSharesRootObject === true
-            && provenance?.monthTileId === request.key
-          : provenance?.dayObjectCanonical === true
-            && provenance?.shellSharesSourceObject === true
-            && provenance?.fullRendererSharesObject === true
-            && provenance?.dayTileId === request.key;
+        const canonical = provenance?.tileObjectCanonical === true
+          && provenance?.shellSharesSourceObject === true
+          && provenance?.fullRendererSharesObject === true
+          && provenance?.tileId === request.key
+          && provenance?.tileKind === request.kind
+          && provenance?.syntheticChildCount === 0
+          && JSON.stringify(provenance?.path || []) === JSON.stringify(request.path);
         if (provenance?.renderer !== expectedRenderer || !canonical) {
           throw new Error(`Canonical tile ${request.key} did not use its full renderer`);
         }
         canonicalTilePreviewCaptureStatus.stage = 'capturing-tile';
         const foreground = await captureForeground(worker, {
           region:captureState.region,
-          settleMs:batch.kind === 'calendar-day' ? 0 : 20,
-          calendarDayObjectsOnly:batch.kind === 'calendar-day',
+          settleMs:request.settleMs,
+          tileForegroundOnly:request.captureMode === 'tile-foreground',
         });
         const preview = publishCanonicalTilePreview({
-          kind:batch.kind,
+          kind:request.kind,
           key:request.key,
           capture:foreground ? {
             foreground:foreground.image,
@@ -1830,7 +1822,7 @@ ipcMain.handle('tile-preview:capture', async (event, {
   tiles = [],
 } = {}) => {
   if (!isMainSender(event)) return { ok:false, error:'Invalid tile preview sender', previews:[] };
-  const previews = await captureCalendarTilePreviews(String(kind || ''), scope || {}, tiles);
+  const previews = await captureCanonicalTilePreviews(String(kind || ''), scope || {}, tiles);
   return previews.length
     ? { ok:true, version:CANONICAL_TILE_PREVIEW_VERSION, previews }
     : { ok:false, version:CANONICAL_TILE_PREVIEW_VERSION, error:'Canonical tile preview capture failed', previews:[] };

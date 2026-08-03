@@ -1,12 +1,13 @@
 import {
   bindTileObject,
-  createTileInstance,
-  createTileObject,
   createTileObjectElement,
+  createTileTree,
   ensureTileMaterialPlane,
   isTileObject,
+  mountTileChildren,
   normalizeTileRecord,
   syncTileMaterialPlane,
+  tileDataOf,
   tileKindOf,
   tileObjectForElement,
   tilePreviewHostFor,
@@ -50,6 +51,7 @@ import {
   let dayAcrylicLens = null;
   const materialHandoffs = new Map();
   let calendarYearObject = null;
+  let calendarIndex = null;
   let subscriptionsReady = false;
   let reloadTimer = 0;
   let materialPrewarmFrame = 0;
@@ -122,64 +124,85 @@ import {
     { type:"invoice", entity:"invoices" },
   ];
 
-  const createCalendarTileObject = ({
+  const calendarData = (object) => tileDataOf(object) || {};
+  const calendarNodeData = ({
     unit,
     year,
     monthIndex = -1,
     day = 0,
-    rank = 0,
-    children = [],
-  }) => {
-    const isMonth = unit === "month";
-    const date = !isMonth ? isoFor(year, monthIndex, day) : "";
-    const key = isMonth
-      ? `${year}-${String(monthIndex + 1).padStart(2, "0")}`
-      : date;
-    const title = isMonth ? MONTHS[monthIndex] : `${MONTHS[monthIndex]} ${day}`;
-    const object = createTileObject({
-      calendarUnit:unit,
-      year,
-      monthIndex,
-      month:monthIndex + 1,
-      day,
-      date,
-      key,
-      revision:0,
-      dataSignature:"",
-      entries:[],
-      children,
-      tile:normalizeTileRecord({
-        id:`calendar-${unit}-${key}`,
-        key,
-        title,
-        label:isMonth ? `${title} ${year}` : `${title}, ${year}`,
-        tileKind:`calendar-${unit}`,
-        targetType:`calendar-${unit}`,
-        targetId:key,
-        rank,
-      }),
-    });
-    if (isMonth) {
-      for (let childDay = 1; childDay <= daysInYearMonth(year, monthIndex); childDay += 1) {
-        object.children.push(createCalendarTileObject({
-          unit:"day",
+    date = "",
+    key = "",
+  }) => ({
+    domain:"calendar",
+    unit,
+    year,
+    monthIndex,
+    month:monthIndex + 1,
+    day,
+    date,
+    key,
+    dataSignature:"",
+    entries:[],
+  });
+  const createCalendarYearObject = (year) => {
+    const months = MONTHS.map((monthTitle, monthIndex) => {
+      const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+      const days = Array.from(
+        { length:daysInYearMonth(year, monthIndex) },
+        (_unused, dayIndex) => {
+          const day = dayIndex + 1;
+          const date = isoFor(year, monthIndex, day);
+          return {
+            data:calendarNodeData({
+              unit:"day",
+              year,
+              monthIndex,
+              day,
+              date,
+              key:date,
+            }),
+            tile:normalizeTileRecord({
+              id:`calendar-day-${date}`,
+              key:date,
+              title:`${monthTitle} ${day}`,
+              label:`${monthTitle} ${day}, ${year}`,
+              tileKind:"calendar-day",
+              targetType:"calendar-day",
+              targetId:date,
+              rank:dayIndex,
+            }),
+            children:[],
+          };
+        },
+      );
+      return {
+        data:calendarNodeData({
+          unit:"month",
           year,
           monthIndex,
-          day:childDay,
-          rank:childDay - 1,
-        }));
-      }
-    }
-    return object;
-  };
-  const createCalendarYearObject = (year) => {
-    const object = createTileObject({
-      year,
+          key:monthKey,
+        }),
+        tile:normalizeTileRecord({
+          id:`calendar-month-${monthKey}`,
+          key:monthKey,
+          title:monthTitle,
+          label:`${monthTitle} ${year}`,
+          tileKind:"calendar-month",
+          targetType:"calendar-month",
+          targetId:monthKey,
+          rank:monthIndex,
+        }),
+        children:days,
+      };
+    });
+    const object = createTileTree({
+      data:calendarNodeData({
+        unit:"year",
+        year,
+        key:String(year),
+      }),
       revision:0,
-      children:[],
-      daysByDate:new Map(),
-      objectsById:new Map(),
-      entriesById:new Map(),
+      children:months,
       tile:normalizeTileRecord({
         id:`calendar-year-${year}`,
         key:String(year),
@@ -190,25 +213,27 @@ import {
         targetId:String(year),
       }),
     });
-    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
-      const month = createCalendarTileObject({
-        unit:"month",
-        year,
-        monthIndex,
-        rank:monthIndex,
-      });
-      object.children.push(month);
-      object.objectsById.set(month.tile.id, month);
-      month.children.forEach((day) => {
-        object.daysByDate.set(day.date, day);
-        object.objectsById.set(day.tile.id, day);
-      });
-    }
-    object.objectsById.set(object.tile.id, object);
+    const objectsById = new Map();
+    const daysByDate = new Map();
+    const parentById = new Map();
+    const visit = (node, parent = null) => {
+      objectsById.set(node.tile.id, node);
+      if (parent) parentById.set(node.tile.id, parent.tile.id);
+      const data = calendarData(node);
+      if (data.unit === "day") daysByDate.set(data.date, node);
+      node.children.forEach((child) => visit(child, node));
+    };
+    visit(object);
+    calendarIndex = {
+      objectsById,
+      daysByDate,
+      parentById,
+      entriesById:new Map(),
+    };
     return object;
   };
   const calendarObject = () => {
-    if (!calendarYearObject || calendarYearObject.year !== currentYear) {
+    if (!calendarYearObject || calendarData(calendarYearObject).year !== currentYear) {
       calendarYearObject = createCalendarYearObject(currentYear);
     }
     return calendarYearObject;
@@ -226,7 +251,7 @@ import {
   const calendarObjectForElement = (element) => {
     if (!element) return null;
     return tileObjectForElement(element)
-      || calendarObject().objectsById.get(element.dataset?.tileObjectId || "")
+      || (calendarObject(), calendarIndex?.objectsById.get(element.dataset?.tileObjectId || ""))
       || null;
   };
   const bindCalendarObjectView = (element, object, view, {
@@ -246,7 +271,8 @@ import {
       ...(root.querySelectorAll?.("[data-tile-object-id]") || []),
     ];
     nodes.forEach((node) => {
-      const object = calendarObject().objectsById.get(node.dataset.tileObjectId);
+      calendarObject();
+      const object = calendarIndex?.objectsById.get(node.dataset.tileObjectId);
       if (object) bindCalendarObjectView(node, object, "transition-copy");
     });
   };
@@ -260,15 +286,17 @@ import {
     (entry.projectStages || []).map((stage) => [stage.id, stage.kind, stage.rank]),
   ]);
   const reconcileCalendarData = (yearObject, nextByDate) => {
+    calendarObject();
     const activeEntryIds = new Set();
-    yearObject.daysByDate.forEach((dayObject, date) => {
+    calendarIndex.daysByDate.forEach((dayObject, date) => {
+      const dayData = calendarData(dayObject);
       const nextEntries = (nextByDate.get(date) || []).map((payload) => {
         const objectId = `${payload.type}:${payload.id}`;
         activeEntryIds.add(objectId);
-        let entry = yearObject.entriesById.get(objectId);
+        let entry = calendarIndex.entriesById.get(objectId);
         if (!entry) {
           entry = { objectKind:"calendar-entry", objectId, revision:0 };
-          yearObject.entriesById.set(objectId, entry);
+          calendarIndex.entriesById.set(objectId, entry);
         }
         const signature = entrySignature(payload);
         if (entry.dataSignature !== signature) entry.revision += 1;
@@ -276,17 +304,19 @@ import {
         return entry;
       });
       const signature = nextEntries.map((entry) => entry.dataSignature).join("|");
-      if (dayObject.dataSignature !== signature) {
-        dayObject.dataSignature = signature;
+      if (dayData.dataSignature !== signature) {
+        dayData.dataSignature = signature;
         dayObject.revision += 1;
       }
-      dayObject.entries.splice(0, dayObject.entries.length, ...nextEntries);
+      dayData.entries.splice(0, dayData.entries.length, ...nextEntries);
     });
-    [...yearObject.entriesById.keys()].forEach((objectId) => {
-      if (!activeEntryIds.has(objectId)) yearObject.entriesById.delete(objectId);
+    [...calendarIndex.entriesById.keys()].forEach((objectId) => {
+      if (!activeEntryIds.has(objectId)) calendarIndex.entriesById.delete(objectId);
     });
     yearObject.children.forEach((month) => {
-      month.dataSignature = month.children.map((day) => day.dataSignature).join("||");
+      calendarData(month).dataSignature = month.children
+        .map((day) => calendarData(day).dataSignature)
+        .join("||");
       month.revision = month.children.reduce((sum, day) => sum + day.revision, 0);
     });
     yearObject.revision += 1;
@@ -389,7 +419,6 @@ import {
         color:rgba(255,255,255,.4);white-space:nowrap;overflow:hidden}
       .fc-days{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:repeat(7,1fr);
         grid-template-rows:repeat(6,1fr);column-gap:1.6%;row-gap:2%}
-      .fc-day-spacer{min-height:0;visibility:hidden;pointer-events:none}
       .fc-day-object-view{position:relative;box-sizing:border-box;min-width:0;min-height:0;
         overflow:hidden;border-radius:calc(var(--day-r,3px) * var(--kx,1)) /
           calc(var(--day-r,3px) * var(--ky,1));
@@ -560,7 +589,7 @@ import {
     document.head.appendChild(style);
   };
 
-  const scheduledFor = (dayObject) => dayObject?.entries || [];
+  const scheduledFor = (dayObject) => calendarData(dayObject).entries || [];
   const visibleScheduledFor = (dayObject, limit) => {
     const all = scheduledFor(dayObject);
     const items = all.slice(0, limit);
@@ -601,7 +630,7 @@ import {
   };
 
   const calendarTileUnit = (object) => String(
-    object?.calendarUnit || tileKindOf(object).replace(/^calendar-/, ""),
+    calendarData(object).unit || tileKindOf(object).replace(/^calendar-/, ""),
   );
   const calendarTilePreviewIsCurrent = (preview, object) => {
     const unit = calendarTileUnit(object);
@@ -610,18 +639,16 @@ import {
       && preview.key === object?.tile?.id
       && preview.version === TILE_PREVIEW_VERSION
       && Number(preview.revision) === Number(object.revision)
-      && String(preview.dataSignature || "") === String(object.dataSignature || "")
+      && String(preview.dataSignature || "") === String(calendarData(object).dataSignature || "")
       && preview.provenance?.renderer === `calendar-${unit}-full`;
     if (!common) return false;
-    if (unit === "month") {
-      return preview.provenance?.monthTileId === object.tile.id
-        && Number(preview.provenance?.canonicalChildCount) === object.children.length
-        && Number(preview.provenance?.syntheticRootNodeCount) === 0;
-    }
-    return preview.provenance?.dayTileId === object.tile.id
-      && preview.provenance?.dayObjectCanonical === true
+    return preview.provenance?.tileId === object.tile.id
+      && preview.provenance?.tileObjectCanonical === true
       && preview.provenance?.shellSharesSourceObject === true
-      && preview.provenance?.fullRendererSharesObject === true;
+      && preview.provenance?.fullRendererSharesObject === true
+      && Number(preview.provenance?.canonicalChildCount) === object.children.length
+      && Number(preview.provenance?.sharedChildCount) === object.children.length
+      && Number(preview.provenance?.syntheticChildCount) === 0;
   };
   const tilePreviewStateHTML = (object) => (
     calendarTileUnit(object) === "month"
@@ -647,6 +674,7 @@ import {
     interactive = false,
   } = {}) => {
     const unit = calendarTileUnit(object);
+    const data = calendarData(object);
     bindCalendarObjectView(element, object, "preview", {
       bindSchema:true,
       ariaLabel:`Open ${object.tile.label}`,
@@ -657,10 +685,10 @@ import {
     element.dataset.calendarObjectRevision = String(object.revision);
     element.tabIndex = interactive ? 0 : -1;
     if (unit === "month") {
-      element.dataset.month = String(object.month);
+      element.dataset.month = String(data.month);
     } else {
-      element.dataset.date = object.date;
-      element.classList.toggle("fc-today", object.date === todayIso());
+      element.dataset.date = data.date;
+      element.classList.toggle("fc-today", data.date === todayIso());
       let acrylic = element.querySelector(":scope > .crm-tile-acrylic");
       if (!acrylic) {
         acrylic = document.createElement("span");
@@ -674,18 +702,16 @@ import {
         dayNumber.className = "fc-day-num";
         element.appendChild(dayNumber);
       }
-      dayNumber.textContent = String(object.day);
+      dayNumber.textContent = String(data.day);
     }
     mountCalendarTilePreview(element, object);
     return element;
   };
-  const createCalendarTileInstance = (object, {
-    interactive = false,
-  } = {}) => {
+  const calendarTileElementOptions = (object, interactive = false) => {
     const unit = calendarTileUnit(object);
     const preview = tilePreviews.get(object.tile.id) || object.preview || null;
     const previewIsCurrent = calendarTilePreviewIsCurrent(preview, object);
-    const element = createTileInstance(object, {
+    return {
       className:`crm-calendar-tile fc-${unit}${
         unit === "day" ? " fc-day-object-view" : ""
       }`,
@@ -696,11 +722,9 @@ import {
       previewKey:object.tile.id,
       previewState:previewIsCurrent ? "ready" : "waiting",
       previewHTML:unit === "day" && previewIsCurrent ? "" : tilePreviewStateHTML(object),
-    });
-    return updateCalendarTileInstance(element, object, { interactive });
+    };
   };
   const createMonthViewStructure = (host, monthObject, {
-    interactiveDays,
     material,
   }) => {
     const existingMaterial = material
@@ -708,31 +732,12 @@ import {
       : null;
     const header = document.createElement("div");
     header.className = "fc-hd";
-    header.innerHTML = `<span>${MONTHS[monthObject.monthIndex]}</span>`;
+    header.innerHTML = `<span>${MONTHS[calendarData(monthObject).monthIndex]}</span>`;
     const weekdays = document.createElement("div");
     weekdays.className = "fc-dowrow";
     weekdays.innerHTML = DOW.map((day) => `<span>${day}</span>`).join("");
     const days = document.createElement("div");
     days.className = "fc-days";
-    const leading = firstDowInYearMonth(monthObject.year, monthObject.monthIndex);
-    const trailing = 42 - leading - monthObject.children.length;
-    for (let index = 0; index < leading; index += 1) {
-      const spacer = document.createElement("div");
-      spacer.className = "fc-day-spacer";
-      spacer.setAttribute("aria-hidden", "true");
-      days.appendChild(spacer);
-    }
-    monthObject.children.forEach((dayObject) => {
-      days.appendChild(createCalendarTileInstance(dayObject, {
-        interactive:interactiveDays,
-      }));
-    });
-    for (let index = 0; index < trailing; index += 1) {
-      const spacer = document.createElement("div");
-      spacer.className = "fc-day-spacer";
-      spacer.setAttribute("aria-hidden", "true");
-      days.appendChild(spacer);
-    }
     host.replaceChildren(header, weekdays, days);
     if (existingMaterial) host.prepend(existingMaterial);
   };
@@ -741,34 +746,30 @@ import {
     material = false,
     materialClass = "",
   } = {}) => {
-    const existingObjectId = host.dataset.tileObjectId || "";
-    const existingView = host.dataset.tileObjectView || "";
+    const data = calendarData(monthObject);
     bindCalendarObjectView(host, monthObject, "full");
-    host.dataset.month = String(monthObject.month);
+    host.dataset.month = String(data.month);
     host.dataset.kind = "month";
     host.dataset.tileRenderer = "calendar-month-full";
     host.dataset.calendarObjectRevision = String(monthObject.revision);
-    let dayViews = [...host.querySelectorAll(":scope > .fc-days > .fc-day-object-view")];
-    const canUpdate = existingObjectId === monthObject.tile.id
-      && existingView === "full"
-      && dayViews.length === monthObject.children.length
-      && dayViews.every(
-        (element, index) => element.dataset.tileObjectId === monthObject.children[index].tile.id,
-      );
-    if (!canUpdate) {
+    let days = host.querySelector(":scope > .fc-days");
+    if (!days) {
       createMonthViewStructure(host, monthObject, {
-        interactiveDays,
         material,
       });
-      dayViews = [...host.querySelectorAll(":scope > .fc-days > .fc-day-object-view")];
-    } else {
-      host.querySelector(":scope > .fc-hd > span").textContent = MONTHS[monthObject.monthIndex];
-      dayViews.forEach((element, index) => {
-        updateCalendarTileInstance(element, monthObject.children[index], {
-          interactive:interactiveDays,
-        });
-      });
+      days = host.querySelector(":scope > .fc-days");
     }
+    host.querySelector(":scope > .fc-hd > span").textContent = MONTHS[data.monthIndex];
+    const dayViews = mountTileChildren(days, monthObject, {
+      elementOptions:(object) => calendarTileElementOptions(object, interactiveDays),
+      update:(element, object) => updateCalendarTileInstance(element, object, {
+        interactive:interactiveDays,
+      }),
+    });
+    const leading = firstDowInYearMonth(data.year, data.monthIndex);
+    dayViews.forEach((element, index) => {
+      element.style.gridColumnStart = index === 0 ? String(leading + 1) : "";
+    });
     if (material) {
       ensureTileMaterialPlane(host, {
         className:`fc-calendar-tile-material ${materialClass}`,
@@ -778,17 +779,19 @@ import {
     return host;
   };
   const dayInnerHTML = (dayObject) => {
-    const parsed = new Date(dayObject.year, dayObject.monthIndex, dayObject.day);
+    const data = calendarData(dayObject);
+    const parsed = new Date(data.year, data.monthIndex, data.day);
     const items = scheduledHTML(dayObject, 40);
-    return `<div class="fc-hd"><span>${DOW_FULL[parsed.getDay()]}, ${MONTHS[dayObject.monthIndex]} ${dayObject.day}</span></div>` +
-      `<div class="fc-day-detail" data-date="${dayObject.date}">${
-        items || `<div class="fc-empty" data-date="${dayObject.date}">No scheduled records yet</div>`
+    return `<div class="fc-hd"><span>${DOW_FULL[parsed.getDay()]}, ${MONTHS[data.monthIndex]} ${data.day}</span></div>` +
+      `<div class="fc-day-detail" data-date="${data.date}">${
+        items || `<div class="fc-empty" data-date="${data.date}">No scheduled records yet</div>`
       }<div class="fc-drop-hint">Drop grid cards here to schedule them</div></div>`;
   };
   const mountCalendarDayViewport = (host, dayObject) => {
+    const data = calendarData(dayObject);
     bindCalendarObjectView(host, dayObject, "full");
     host.dataset.kind = "day";
-    host.dataset.date = dayObject.date;
+    host.dataset.date = data.date;
     host.dataset.tileRenderer = "calendar-day-full";
     host.dataset.calendarObjectRevision = String(dayObject.revision);
     host.innerHTML = dayInnerHTML(dayObject);
@@ -835,7 +838,8 @@ import {
   };
   const acceptTilePreview = (preview) => {
     if (!preview?.key) return false;
-    const object = calendarObject().objectsById.get(String(preview.key));
+    calendarObject();
+    const object = calendarIndex.objectsById.get(String(preview.key));
     if (!object || preview.kind !== tileKindOf(object)) return false;
     tilePreviews.set(String(preview.key), preview);
     object.preview = preview;
@@ -848,32 +852,54 @@ import {
     const layer = camera?.layers?.()[1];
     return layer?.dataset?.kind === "month" ? calendarObjectForElement(layer) : null;
   };
-  const tilePreviewCollection = (parent) => {
-    if (!parent?.children?.length) return null;
-    const kind = tileKindOf(parent.children[0]);
-    if (!["calendar-month", "calendar-day"].includes(kind)) return null;
-    const scope = kind === "calendar-month"
-      ? { year:parent.year }
-      : { year:parent.year, month:parent.month };
+  const tilePreviewKindFor = (parent) => {
+    const kind = tileKindOf(parent?.children?.[0]);
+    return ["calendar-month", "calendar-day"].includes(kind) ? kind : "";
+  };
+  const tilePreviewScopeFor = (parent) => {
+    const data = calendarData(parent);
     return {
-      parent,
-      kind,
-      scope,
-      scopeKey:`${kind}:${scope.year}:${scope.month || 0}`,
-      children:parent.children,
+      year:data.year,
+      ...(data.unit === "month" ? { month:data.month } : {}),
     };
   };
-  const tilePreviewRequestFor = (object) => ({
-    key:object.tile.id,
-    month:object.month,
-    date:object.date,
-    revision:object.revision,
-    dataSignature:object.dataSignature,
-  });
+  const tilePreviewScopeKeyFor = (parent) => {
+    const kind = tilePreviewKindFor(parent);
+    const scope = tilePreviewScopeFor(parent);
+    return kind ? `${kind}:${scope.year}:${scope.month || 0}` : "";
+  };
+  const tilePathFor = (object) => {
+    calendarObject();
+    const path = [];
+    let current = object;
+    while (current && current !== calendarYearObject) {
+      path.unshift(current.tile.id);
+      const parentId = calendarIndex.parentById.get(current.tile.id);
+      current = parentId ? calendarIndex.objectsById.get(parentId) : null;
+    }
+    return path;
+  };
+  const tilePreviewRequestFor = (object) => {
+    const data = calendarData(object);
+    return {
+      key:object.tile.id,
+      kind:tileKindOf(object),
+      path:tilePathFor(object),
+      viewState:{
+        year:data.year,
+        month:data.month,
+        day:data.day,
+        date:data.date,
+      },
+      captureMode:data.unit === "day" ? "tile-foreground" : "viewport",
+      settleMs:data.unit === "day" ? 0 : 20,
+      revision:object.revision,
+      dataSignature:data.dataSignature,
+    };
+  };
   const staleTilePreviewRequests = (parent) => {
-    const collection = tilePreviewCollection(parent);
-    if (!collection) return [];
-    return collection.children
+    if (!tilePreviewKindFor(parent)) return [];
+    return parent.children
       .filter((object) => !calendarTilePreviewIsCurrent(
         tilePreviews.get(object.tile.id) || object.preview,
         object,
@@ -885,27 +911,27 @@ import {
     parent === calendarObject() || activeMonthObject() === parent
   );
   const scheduleTilePreviewCapture = (parent, delay = 80) => {
-    const collection = tilePreviewCollection(parent);
-    if (!collection) return;
-    clearTimeout(tilePreviewTimers.get(collection.scopeKey));
-    tilePreviewTimers.set(collection.scopeKey, setTimeout(() => {
-      tilePreviewTimers.delete(collection.scopeKey);
+    const scopeKey = tilePreviewScopeKeyFor(parent);
+    if (!scopeKey) return;
+    clearTimeout(tilePreviewTimers.get(scopeKey));
+    tilePreviewTimers.set(scopeKey, setTimeout(() => {
+      tilePreviewTimers.delete(scopeKey);
       void captureTilePreviews(parent);
     }, delay));
   };
   const captureTilePreviews = async (parent) => {
-    const collection = tilePreviewCollection(parent);
+    const kind = tilePreviewKindFor(parent);
     if (window.crmHomePreviews?.isCaptureWorker
       || !window.crmTilePreviews?.capture
-      || !collection
+      || !kind
       || scheduledDataReadyYear !== currentYear) return [];
     const requests = staleTilePreviewRequests(parent);
     if (!requests.length) return [];
     requests.forEach((request) => tilePreviewRequests.add(request.key));
     try {
       const result = await window.crmTilePreviews.capture(
-        collection.kind,
-        collection.scope,
+        kind,
+        tilePreviewScopeFor(parent),
         requests,
       );
       if (result?.ok === false) tilePreviewLastError = String(result.error || "Capture failed");
@@ -926,14 +952,16 @@ import {
   const requestTilePreviews = async (parent, {
     capture = true,
   } = {}) => {
-    const collection = tilePreviewCollection(parent);
-    if (window.crmHomePreviews?.isCaptureWorker || !window.crmTilePreviews || !collection) {
+    const kind = tilePreviewKindFor(parent);
+    const scopeKey = tilePreviewScopeKeyFor(parent);
+    const scope = tilePreviewScopeFor(parent);
+    if (window.crmHomePreviews?.isCaptureWorker || !window.crmTilePreviews || !kind) {
       return [];
     }
-    if (!tilePreviewListedScopes.has(collection.scopeKey)) {
-      tilePreviewListedScopes.add(collection.scopeKey);
+    if (!tilePreviewListedScopes.has(scopeKey)) {
+      tilePreviewListedScopes.add(scopeKey);
       try {
-        const result = await window.crmTilePreviews.list(collection.kind, collection.scope);
+        const result = await window.crmTilePreviews.list(kind, scope);
         (result?.previews || []).forEach(acceptTilePreview);
       } catch {}
     }
@@ -946,12 +974,12 @@ import {
     try { tilePreviewSubscription = window.crmTilePreviews.onChanged(acceptTilePreview); } catch {}
   };
   const waitForTileChildren = async (parent, timeoutMs = 90000) => {
-    const collection = tilePreviewCollection(parent);
-    if (!window.crmTilePreviews || !collection) {
+    const kind = tilePreviewKindFor(parent);
+    if (!window.crmTilePreviews || !kind) {
       return {
         supported:!!window.crmTilePreviews,
         ready:0,
-        total:collection?.children?.length || 0,
+        total:parent?.children?.length || 0,
       };
     }
     await requestTilePreviews(parent);
@@ -959,18 +987,18 @@ import {
     let ready = 0;
     let diagnostics = null;
     while (performance.now() - started < timeoutMs) {
-      ready = collection.children.filter((object) => calendarTilePreviewIsCurrent(
+      ready = parent.children.filter((object) => calendarTilePreviewIsCurrent(
         tilePreviews.get(object.tile.id) || object.preview,
         object,
       )).length;
-      const pending = collection.children.filter(
+      const pending = parent.children.filter(
         (object) => tilePreviewRequests.has(object.tile.id),
       ).length;
-      if (ready === collection.children.length && !pending) {
+      if (ready === parent.children.length && !pending) {
         return {
           supported:true,
           ready,
-          total:collection.children.length,
+          total:parent.children.length,
           durationMs:performance.now() - started,
         };
       }
@@ -981,14 +1009,14 @@ import {
     return {
       supported:true,
       ready,
-      total:collection.children.length,
-      pending:collection.children.filter(
+      total:parent.children.length,
+      pending:parent.children.filter(
         (object) => tilePreviewRequests.has(object.tile.id),
       ).length,
       durationMs:performance.now() - started,
       error:tilePreviewLastError || "Calendar tile previews did not settle",
       diagnostics,
-      states:collection.children.map((object) => ({
+      states:parent.children.map((object) => ({
         key:object.tile.id,
         revision:object.revision,
         previewRevision:tilePreviews.get(object.tile.id)?.revision ?? null,
@@ -1003,8 +1031,11 @@ import {
     bindCalendarObjectView(root, yearObject, "year");
     const grid = document.createElement("div");
     grid.className = "fc-grid";
-    yearObject.children.forEach((monthObject) => {
-      grid.appendChild(createCalendarTileInstance(monthObject, { interactive:true }));
+    mountTileChildren(grid, yearObject, {
+      elementOptions:(object) => calendarTileElementOptions(object, true),
+      update:(element, object) => updateCalendarTileInstance(element, object, {
+        interactive:true,
+      }),
     });
     root.appendChild(grid);
     return root;
@@ -1358,6 +1389,7 @@ import {
   };
   const buildExpander = (target, context) => {
     const object = calendarObjectForElement(target);
+    const data = calendarData(object);
     const isMonth = tileKindOf(object) === "calendar-month" || context.level === 0;
     const expander = createTileObjectElement(object, {
       tagName:"div",
@@ -1368,8 +1400,8 @@ import {
     });
     expander.classList.add("fc-bucket", "fc-expander");
     expander.dataset.kind = isMonth ? "month" : "day";
-    if (isMonth) expander.dataset.month = String(object?.month || target.dataset.month);
-    else expander.dataset.date = object?.date || target.dataset.date;
+    if (isMonth) expander.dataset.month = String(data.month || target.dataset.month);
+    else expander.dataset.date = data.date || target.dataset.date;
     if (!isMonth) {
       const tint = document.createElement("span");
       tint.className = "fc-day-expander-tint";
@@ -1480,9 +1512,10 @@ import {
   };
   const configureExpander = (expander, target, context) => {
     const object = calendarObjectForElement(target);
+    const data = calendarData(object);
     const kind = tileKindOf(object) === "calendar-month" ? "month" : "day";
-    const nextMonth = String(object?.month || target.dataset.month || "");
-    const nextDate = object?.date || target.dataset.date || "";
+    const nextMonth = String(data.month || target.dataset.month || "");
+    const nextDate = data.date || target.dataset.date || "";
     const targetChanged = expander.dataset.kind !== kind
       || expander.dataset.tileObjectId !== object?.tile?.id
       || (kind === "month" && expander.dataset.month !== nextMonth)
@@ -1699,7 +1732,7 @@ import {
 
   const loadScheduled = async ({ refresh = false } = {}) => {
     const yearObject = calendarObject();
-    const loadingYear = yearObject.year;
+    const loadingYear = calendarData(yearObject).year;
     const next = new Map();
     let projects = [];
     let workItems = [];
@@ -1908,9 +1941,10 @@ import {
         `:scope > .fc-expander-live .fc-day[data-date="${date}"]`,
       ) || null;
     }
-    const dayObject = calendarObject().daysByDate.get(date);
+    calendarObject();
+    const dayObject = calendarIndex.daysByDate.get(date);
     return dayObject ? layers[0]?.querySelector?.(
-      `:scope > .fc-grid .fc-month[data-month="${dayObject.monthIndex + 1}"]`,
+      `:scope > .fc-grid .fc-month[data-month="${calendarData(dayObject).monthIndex + 1}"]`,
     ) || null : null;
   };
   const flyCardToDay = (fromRect, date, { title = "" } = {}) => {
@@ -2176,8 +2210,12 @@ import {
     await camera.restoreHistoryState?.(state.camera || {});
     return homePreviewState();
   };
-  const prepareTilePreview = async (kind, viewState = {}) => {
-    if (!["calendar-month", "calendar-day"].includes(kind)) return false;
+  const prepareTilePreview = async (request = {}) => {
+    const tileId = String(
+      typeof request === "string" ? request : request?.key || "",
+    );
+    const viewState = typeof request === "object" ? request.viewState || {} : {};
+    if (!tileId) return false;
     const nextYear = Math.max(
       1901,
       Math.min(2200, Number(viewState.year) || currentYear),
@@ -2191,17 +2229,11 @@ import {
     resetTransitionMaterials();
     camera.rebuildRoot();
     const graph = calendarObject();
-    let object = null;
-    if (kind === "calendar-month") {
-      const month = Math.max(1, Math.min(12, Number(viewState.month) || 1));
-      object = graph.children[month - 1] || null;
-    } else {
-      object = graph.daysByDate.get(String(viewState.date || "")) || null;
-    }
-    if (!object || tileKindOf(object) !== kind) return false;
-    const path = kind === "calendar-day"
-      ? [graph.children[object.monthIndex], object]
-      : [object];
+    const object = calendarIndex.objectsById.get(tileId) || null;
+    if (!object || object === graph) return false;
+    const path = tilePathFor(object)
+      .map((id) => calendarIndex.objectsById.get(id))
+      .filter(Boolean);
     for (const pathObject of path) {
       const layer = camera.layers()[camera.level()];
       const target = layer?.querySelector?.(
@@ -2221,69 +2253,54 @@ import {
       height:rectangle.h,
     };
   };
-  const previewCaptureProvenance = (month) => {
-    const rootMonth = camera.layers()[0]?.querySelector(
-      `:scope > .fc-grid > .fc-month[data-month="${Number(month)}"]`,
-    );
-    const activeMonth = camera.layers()[1]?.matches?.(
-      `.fc-expander[data-kind="month"][data-month="${Number(month)}"]`,
-    ) ? camera.layers()[1] : null;
-    const live = activeMonth?.querySelector(":scope > .fc-expander-live");
-    const monthObject = calendarObjectForElement(activeMonth)
-      || calendarObjectForElement(rootMonth);
-    const days = [...(live?.querySelectorAll(":scope > .fc-days > .fc-day") || [])];
-    return {
+  const tilePreviewCaptureState = (key) => {
+    calendarObject();
+    const object = calendarIndex.objectsById.get(String(key || "")) || null;
+    const path = object ? tilePathFor(object) : [];
+    const level = path.length;
+    const sourceLayer = camera.layers()[level - 1] || null;
+    const activeLayer = camera.layers()[level] || null;
+    const source = sourceLayer?.querySelector?.(
+      `.crm-calendar-tile[data-tile-id="${CSS.escape(object?.tile?.id || "")}"]`,
+    ) || null;
+    const live = activeLayer?.querySelector?.(":scope > .fc-expander-live") || null;
+    const children = [...(live?.querySelectorAll?.(
+      ':scope > [data-crm-tile-collection] > [data-crm-tile-instance="viewport"]',
+    ) || [])];
+    const data = calendarData(object);
+    const provenance = {
       renderer:live?.dataset?.tileRenderer || "",
-      monthTileId:monthObject?.tile?.id || "",
-      monthObjectCanonical:isTileObject(monthObject),
-      shellSharesRootObject:calendarObjectForElement(rootMonth) === calendarObjectForElement(activeMonth),
-      canonicalChildCount:days.filter((day) => isTileObject(calendarObjectForElement(day))).length,
-      sharedChildCount:days.filter(
-        (day, index) => calendarObjectForElement(day) === monthObject?.children?.[index],
+      tileId:object?.tile?.id || "",
+      tileKind:tileKindOf(object),
+      tileObjectCanonical:isTileObject(object),
+      shellSharesSourceObject:calendarObjectForElement(source)
+        === calendarObjectForElement(activeLayer),
+      fullRendererSharesObject:calendarObjectForElement(live) === object,
+      sourceView:source?.dataset?.tileObjectView || "",
+      canonicalChildCount:children.filter(
+        (child) => isTileObject(calendarObjectForElement(child)),
       ).length,
-      interactiveChildCount:days.filter((day) => day.matches("button.crm-tile[data-crm-tile]")).length,
-      syntheticRootNodeCount:camera.layers()[0]?.querySelectorAll(
-        ".fc-day-preview-cell,.fc-day",
+      sharedChildCount:children.filter(
+        (child, index) => calendarObjectForElement(child) === object?.children?.[index],
+      ).length,
+      directChildCount:children.length,
+      syntheticChildCount:live?.querySelectorAll?.(
+        ':scope > [data-crm-tile-collection] > :not([data-crm-tile-instance="viewport"])',
       ).length || 0,
-      revision:Number(monthObject?.revision) || 0,
-      dataSignature:String(monthObject?.dataSignature || ""),
+      path,
+      revision:Number(object?.revision) || 0,
+      dataSignature:String(data.dataSignature || ""),
     };
-  };
-  const dayPreviewCaptureProvenance = (date) => {
-    const sourceDay = camera.layers()[1]?.querySelector(
-      `:scope > .fc-expander-live .fc-day[data-date="${CSS.escape(String(date || ""))}"]`,
-    );
-    const activeDay = camera.layers()[2]?.matches?.(
-      `.fc-expander[data-kind="day"][data-date="${CSS.escape(String(date || ""))}"]`,
-    ) ? camera.layers()[2] : null;
-    const live = activeDay?.querySelector(":scope > .fc-expander-live");
-    const dayObject = calendarObjectForElement(activeDay)
-      || calendarObjectForElement(sourceDay);
-    return {
-      renderer:live?.dataset?.tileRenderer || "",
-      dayTileId:dayObject?.tile?.id || "",
-      dayObjectCanonical:isTileObject(dayObject),
-      shellSharesSourceObject:calendarObjectForElement(sourceDay)
-        === calendarObjectForElement(activeDay),
-      fullRendererSharesObject:calendarObjectForElement(live) === dayObject,
-      sourceView:sourceDay?.dataset?.tileObjectView || "",
-      revision:Number(dayObject?.revision) || 0,
-      dataSignature:String(dayObject?.dataSignature || ""),
-    };
-  };
-  const tilePreviewCaptureState = (kind, key) => {
-    const provenance = kind === "calendar-month"
-      ? previewCaptureProvenance(Number(String(key || "").slice(-2)))
-      : dayPreviewCaptureProvenance(String(key || "").replace(/^calendar-day-/, ""));
     return { region:previewCaptureRect(), provenance };
   };
   const tilePreviewStatusFor = (parent) => (parent?.children || []).map((object) => {
+    const data = calendarData(object);
     const preview = tilePreviews.get(object.tile.id) || object.preview || null;
     return {
       key:object.tile.id,
       unit:calendarTileUnit(object),
-      month:object.month,
-      date:object.date,
+      month:data.month,
+      date:data.date,
       state:tilePreviewRequests.has(object.tile.id)
         ? "updating"
         : (calendarTilePreviewIsCurrent(preview, object)
@@ -2297,7 +2314,7 @@ import {
   });
   const tilePreviewParentFor = (parentTileId) => (
     parentTileId
-      ? calendarObject().objectsById.get(String(parentTileId)) || null
+      ? (calendarObject(), calendarIndex.objectsById.get(String(parentTileId)) || null)
       : calendarObject()
   );
 
@@ -2326,7 +2343,6 @@ import {
     prepareTilePreview,
     tilePreviewCaptureState,
     previewCaptureRect,
-    previewCaptureProvenance,
     waitForTilePreviews:(parentTileId, timeoutMs) => waitForTileChildren(
       tilePreviewParentFor(parentTileId),
       timeoutMs,

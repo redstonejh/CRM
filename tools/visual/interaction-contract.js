@@ -1830,14 +1830,17 @@ async function main() {
       `[data-crm-theater="calendar"] .fc-level[data-kind="year"] .fc-month[data-month="${probe.month}"]`,
     );
     const object = window.fractalCalendar._objectForElement(month);
-    const day = object?.children?.find((child) => child.date === probe.date);
+    const day = object?.children?.find(
+      (child) => window.crmTileSystem.dataOf(child)?.date === probe.date,
+    );
+    const entries = window.crmTileSystem.dataOf(day)?.entries || [];
     const host = month?.querySelector(':scope > .fc-month-tile-preview');
     return {
-      ok:!!month && !!host && !!day && day.entries.length > 0
+      ok:!!month && !!host && !!day && entries.length > 0
         && window.crmTileSystem.isObject(object)
         && window.crmTileSystem.isObject(day)
         && !month.querySelector('.fc-day-preview-cell,.fc-day,.fc-chip'),
-      detail:`${day?.entries?.length || 0} scheduled object(s) on ${probe.date}`,
+      detail:`${entries.length} scheduled object(s) on ${probe.date}`,
     };
   }, calendarProjectPreview);
   await check('Calendar year is twelve canonical tiles with inert full-render capture slots', () => {
@@ -1955,11 +1958,17 @@ async function main() {
     const rootMonthObject = objectFor?.(rootMonth);
     const paneObject = objectFor?.(pane);
     const liveObject = objectFor?.(liveDay);
-    const graphObject = graph?.daysByDate?.get?.(probe.date);
+    const graphObject = graph?.children
+      ?.flatMap((month) => month.children || [])
+      ?.find((day) => window.crmTileSystem.dataOf(day)?.date === probe.date);
     const homeTile = document.querySelector(
       '.crm-home-level > .crm-home-grid > .crm-home-bucket[data-crm-tile]',
     );
+    const homeObject = sharedObjectFor?.(homeTile);
     const dayPreview = liveDay?.querySelector(':scope > .fc-day-tile-preview');
+    const dayCollection = pane?.querySelector(':scope > .fc-expander-live > .fc-days');
+    const directChildren = [...(dayCollection?.children || [])];
+    const shape = (value) => Object.keys(value || {}).sort().join('|');
     return {
       ok:!!rootMonthObject
         && rootMonthObject === paneObject
@@ -1974,6 +1983,17 @@ async function main() {
         && rootMonth.dataset.crmTileInstance === 'viewport'
         && liveDay.dataset.crmTileInstance === 'viewport'
         && homeTile?.dataset.crmTileInstance === 'viewport'
+        && shape(homeObject) === shape(rootMonthObject)
+        && shape(rootMonthObject) === shape(liveObject)
+        && Object.getPrototypeOf(homeObject) === Object.getPrototypeOf(rootMonthObject)
+        && Object.getPrototypeOf(rootMonthObject) === Object.getPrototypeOf(liveObject)
+        && dayCollection?.dataset.crmTileCollection === rootMonthObject.tile.id
+        && Number(dayCollection?.dataset.crmTileChildCount) === rootMonthObject.children.length
+        && directChildren.length === rootMonthObject.children.length
+        && directChildren.every((child, index) => (
+          child.dataset.crmTileInstance === 'viewport'
+            && objectFor(child) === rootMonthObject.children[index]
+        ))
         && !!rootMonth.querySelector(':scope > .fc-month-tile-preview')
         && (probe.captureSupported
           ? !!liveDay.querySelector(
@@ -1988,7 +2008,13 @@ async function main() {
         monthObject:rootMonthObject?.tile?.id,
         paneObject:paneObject?.tile?.id,
         liveObject:liveObject?.tile?.id,
-        entries:liveObject?.entries?.length,
+        entries:window.crmTileSystem.dataOf(liveObject)?.entries?.length,
+        objectShape:shape(liveObject),
+        collection:[
+          dayCollection?.dataset.crmTileCollection,
+          dayCollection?.dataset.crmTileChildCount,
+          directChildren.length,
+        ],
         views:[rootMonth?.dataset?.tileObjectView, liveDay?.dataset?.tileObjectView],
         instances:[
           homeTile?.dataset.crmTileInstance,
@@ -2011,7 +2037,7 @@ async function main() {
     const dayPreview = live?.querySelector(':scope > .fc-day-tile-preview');
     const dayPreviewImage = dayPreview?.querySelector(':scope > .fc-day-preview-render');
     const object = objectFor(live);
-    const entries = object?.entries;
+    const entries = window.crmTileSystem.dataOf(object)?.entries;
     await window.fractalCalendar.refresh();
     if (probe.captureSupported) {
       await window.fractalCalendar.waitForTilePreviews(objectFor(month)?.tile?.id);
@@ -2030,7 +2056,7 @@ async function main() {
         && dayPreviewImage === nextDayPreviewImage
         && object === objectFor(nextLive)
         && objectFor(nextMonth)?.children?.includes(object)
-        && entries === object.entries
+        && entries === window.crmTileSystem.dataOf(object).entries
         && (probe.captureSupported
           ? nextDayPreview?.dataset.previewRenderer === 'calendar-day-full'
           : nextDayPreview?.dataset.previewState === 'waiting'
@@ -2042,8 +2068,8 @@ async function main() {
         sameLiveNode:live === nextLive,
         sameDayPreviewNode:dayPreview === nextDayPreview,
         sameDayPreviewImage:dayPreviewImage === nextDayPreviewImage,
-        sameEntries:entries === object?.entries,
-        entries:object?.entries?.length,
+        sameEntries:entries === window.crmTileSystem.dataOf(object)?.entries,
+        entries:window.crmTileSystem.dataOf(object)?.entries?.length,
       }),
     };
   }, {
@@ -2052,14 +2078,18 @@ async function main() {
   });
   await check('Calendar is fed only by commitments', () => {
     const graph = window.fractalCalendar?._objectGraph?.();
-    const dayObjects = [...(graph?.daysByDate?.values?.() || [])];
-    const entries = dayObjects.flatMap((dayObject) => dayObject.entries || []);
+    const dayObjects = graph?.children?.flatMap((month) => month.children || []) || [];
+    const entries = dayObjects.flatMap(
+      (dayObject) => window.crmTileSystem.dataOf(dayObject)?.entries || [],
+    );
     const renderedDays = [...document.querySelectorAll(
       '.fc-expander[data-kind="month"]:not(.fc-warm) .fc-day[data-crm-tile-instance="viewport"]',
     )];
     const renderedEntriesAreOwned = renderedDays.every((day) => {
       const object = window.fractalCalendar?._objectForElement?.(day);
-      const owned = new Set((object?.entries || []).map((entry) => String(entry.id)));
+      const owned = new Set(
+        (window.crmTileSystem.dataOf(object)?.entries || []).map((entry) => String(entry.id)),
+      );
       return [...day.querySelectorAll('.fc-day-live-preview .fc-chip[data-id]')]
         .every((chip) => owned.has(String(chip.dataset.id)));
     });
@@ -2115,7 +2145,7 @@ async function main() {
   await check('Project work on a calendar day carries its automatic pipeline preview', (probe) => {
     const day = document.querySelector(`.fc-expander[data-kind="month"] .fc-day[data-date="${CSS.escape(probe.date)}"]`);
     const dayObject = window.fractalCalendar?._objectForElement?.(day);
-    const entry = dayObject?.entries?.find(
+    const entry = window.crmTileSystem.dataOf(dayObject)?.entries?.find(
       (candidate) => String(candidate.id) === String(probe.commitmentId),
     );
     const reached = entry?.projectStages?.findIndex(

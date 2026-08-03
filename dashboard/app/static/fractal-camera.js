@@ -852,6 +852,7 @@
       return expander;
     };
     const prefetch = (target) => {
+      if (config.shouldPrefetch?.(target, ctx()) === false) return;
       const key = keyOf(target);
       if (!key) return;
       if (warm && warm.key === key) return;

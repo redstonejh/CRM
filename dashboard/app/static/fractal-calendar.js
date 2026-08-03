@@ -44,9 +44,6 @@ import {
   let reloadTimer = 0;
   let materialPrewarmFrame = 0;
   let materialPrewarmTimer = 0;
-  let materialModeTimer = 0;
-  let materialPreparation = null;
-  let materialPreviewTimer = 0;
   let dropHighlight = null;
   let renderRevision = 0;
   let layoutGeometrySignature = "";
@@ -160,12 +157,15 @@ import {
 
       .fc-month-layout{position:relative;box-sizing:border-box;display:flex;flex-direction:column;
         min-height:0;overflow:hidden;color:#fff;container-type:size;
-        padding:calc(8px * var(--ky,1)) calc(10px * var(--kx,1)) calc(10px * var(--ky,1));
-        background:transparent;border:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+        padding:calc(8px * var(--ky,1)) calc(10px * var(--kx,1)) calc(10px * var(--ky,1))}
+      .fc-month.fc-month-layout{display:flex;align-items:stretch;text-align:left}
       .fc-month{cursor:pointer;border-radius:calc(var(--mon-r,16px) * var(--kx,1)) /
         calc(var(--mon-r,16px) * var(--ky,1));outline:none}
-      .fc-month:focus-visible{box-shadow:0 0 0 1px rgba(125,180,255,.54)}
-      .fc-hd,.fc-dowrow,.fc-days{position:relative;z-index:1}
+      /* At year level a month is the real tile. Its miniature days are only
+         inert, data-derived preview marks. The crm-home-bucket class supplies
+         the exact Home material rather than a Calendar-specific approximation. */
+      .fc-month:focus-visible{outline:1px solid rgba(125,180,255,.54)}
+      .fc-hd,.fc-dowrow,.fc-days{position:relative;z-index:1;width:100%;box-sizing:border-box}
       .fc-hd{flex:0 0 9%;display:flex;align-items:center;justify-content:space-between;gap:8px;
         padding:0 1%;font-size:clamp(.98rem,8cqh,1.15rem);font-weight:700;line-height:1.05;
         color:rgba(255,255,255,.85);white-space:nowrap;min-height:0}
@@ -178,6 +178,16 @@ import {
       .fc-days{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:repeat(7,1fr);
         grid-template-rows:repeat(6,1fr);column-gap:1.6%;row-gap:2%}
       .fc-day-spacer{min-height:0;visibility:hidden;pointer-events:none}
+      .fc-day-preview-cell{position:relative;display:block;min-width:0;min-height:0;
+        overflow:hidden;pointer-events:none;border:1px solid rgba(255,255,255,.13);
+        border-radius:calc(var(--day-r,3px) * var(--kx,1)) /
+          calc(var(--day-r,3px) * var(--ky,1));
+        background:linear-gradient(180deg,rgba(36,45,59,.72),rgba(20,27,38,.66));
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.09)}
+      .fc-day-preview-cell.fc-today{
+        box-shadow:inset 0 0 0 1px rgba(125,180,255,.48),
+          inset 0 1px 0 rgba(255,255,255,.12)}
+      .fc-day-preview-cell>.fc-day-preview{position:absolute;inset:13% 10%;display:flex}
 
       /* A resting day is a canonical tile with an owned acrylic material
          layer. Tint and backdrop-filter must be painted by the SAME element:
@@ -201,25 +211,17 @@ import {
         -webkit-backdrop-filter:var(--bucket-acrylic-filter);
         backdrop-filter:var(--bucket-acrylic-filter);
         opacity:1;backface-visibility:hidden;transition:background .18s ease}
-      /* The transparent material planes are warm motion-only equivalents of
-         those filters. During motion, each real button retains its tint, edge,
-         content and identity while the shared plane supplies only the frost. */
-      .fc-calendar-tile-material{opacity:.001;
+      /* Entered days remain independent canonical tile objects, while the
+         collection shares one true backdrop-filter pass clipped to their union.
+         This is the same collection architecture used by other large tile
+         surfaces: identity is per tile; expensive screen-space material is not. */
+      .fc-calendar-tile-material{opacity:.999;
         background:transparent;
         -webkit-backdrop-filter:var(--bucket-acrylic-filter);
-        backdrop-filter:var(--bucket-acrylic-filter);
-        transition:opacity ${MATERIAL_HANDOFF_MS}ms linear}
-      .fc-surface[data-calendar-material-mode="motion"] .fc-calendar-tile-material{opacity:.999}
-      /* The year is completely behind the live wallpaper cover during day
-         travel. Do not composite its hidden motion plane there; a contraction
-         from month to year keeps it active for the reveal. */
-      .fc-surface[data-calendar-material-mode="motion"][data-level="2"]
-        >.fc-level[data-kind="year"] .fc-year-grid-tile-material,
-      .fc-surface[data-calendar-material-mode="motion"][data-level="1"][data-calendar-material-direction="expand"]
-        >.fc-level[data-kind="year"] .fc-year-grid-tile-material{display:none}
-      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket{
+        backdrop-filter:var(--bucket-acrylic-filter)}
+      .fc-expander-live.fc-month-layout .fc-day.crm-home-bucket{
         background:var(--fc-day-surface)!important}
-      .fc-surface[data-calendar-material-mode="motion"] .fc-day>.crm-tile-acrylic,
+      .fc-expander-live.fc-month-layout .fc-day>.crm-tile-acrylic,
       .fc-transition-copy .fc-day>.crm-tile-acrylic,
       .fc-surface[data-level="1"]>.fc-level[data-kind="year"] .fc-day>.crm-tile-acrylic,
       .fc-surface[data-level="2"]>.fc-level[data-kind="year"] .fc-day>.crm-tile-acrylic,
@@ -231,16 +233,10 @@ import {
       .fc-day-detail.is-drop-target,.fc-empty.is-drop-target,
       .fc-surface[data-level="0"] .fc-month:is(:hover,:focus-visible) .fc-day{
         --fc-day-surface:linear-gradient(180deg,rgba(40,55,76,.27),rgba(18,26,38,.23));
-        background:transparent!important;
+        background:var(--fc-day-surface)!important;
         box-shadow:inset 0 0 0 1px rgba(166,196,236,.27),
           inset 0 1px rgba(255,255,255,.15),
           0 14px 26px -16px rgba(0,0,0,.72)!important}
-      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket:hover,
-      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket:focus-visible,
-      .fc-surface[data-calendar-material-mode="motion"] .fc-day.crm-home-bucket.is-drop-target,
-      .fc-surface[data-calendar-material-mode="motion"][data-level="0"]
-        .fc-month:is(:hover,:focus-visible) .fc-day{
-        background:var(--fc-day-surface)!important}
       .fc-day.fc-today{box-shadow:var(--fc-day-shadow),
         inset 0 0 0 1px rgba(125,180,255,.55),0 0 16px rgba(90,150,255,.38)!important}
       .fc-day-num{position:absolute;z-index:1;top:6%;left:7%;font-size:var(--crm-type-body,12px);
@@ -317,7 +313,7 @@ import {
         border-radius:inherit}
       .fc-day-detail-material{z-index:1;clip-path:inset(0 round 14px);
         -webkit-clip-path:inset(0 round 14px)}
-      .fc-transition-acrylic{z-index:4;border-width:1px;border-radius:inherit}
+      .fc-transition-acrylic{z-index:4;border-width:1px;border-radius:inherit;opacity:0}
       .fc-expander-live,.fc-transition-copy{position:absolute;inset:0;box-sizing:border-box;
         min-width:0;min-height:0;backface-visibility:hidden;will-change:opacity}
       .fc-expander-live{z-index:3;opacity:1;pointer-events:auto}
@@ -417,6 +413,19 @@ import {
       rank:day - 1,
     };
   };
+  const monthTileRecord = (month) => {
+    const key = `${currentYear}-${String(month + 1).padStart(2, "0")}`;
+    return {
+      id:`calendar-month-${key}`,
+      key,
+      title:MONTHS[month],
+      label:`${MONTHS[month]} ${currentYear}`,
+      tileKind:"calendar-month",
+      targetType:"calendar-month",
+      targetId:key,
+      rank:month,
+    };
+  };
   const createDayTile = (month, day, { interactive = false } = {}) => {
     const date = iso(month, day);
     const tile = createTileElement(dayTileRecord(month, day), {
@@ -431,6 +440,50 @@ import {
       scheduledPreviewHTML(date)
     }${scheduledHTML(date)}</div>`;
     return tile;
+  };
+  const createDayPreviewCell = (month, day) => {
+    const date = iso(month, day);
+    const cell = document.createElement("span");
+    cell.className = `fc-day-preview-cell${date === todayIso() ? " fc-today" : ""}`;
+    cell.dataset.date = date;
+    cell.dataset.calendarPreview = "day";
+    cell.dataset.previewRecordCount = String(scheduledByDate.get(date)?.length || 0);
+    cell.setAttribute("aria-hidden", "true");
+    cell.innerHTML = scheduledPreviewHTML(date);
+    return cell;
+  };
+  const mountMonthPreview = (host, month) => {
+    host.dataset.month = String(month + 1);
+    host.dataset.kind = "month";
+    host.dataset.previewRevision = String(renderRevision);
+    const header = document.createElement("div");
+    header.className = "fc-hd";
+    header.innerHTML = `<span>${MONTHS[month]}</span>`;
+    const weekdays = document.createElement("div");
+    weekdays.className = "fc-dowrow";
+    weekdays.innerHTML = DOW.map((day) => `<span>${day}</span>`).join("");
+    const days = document.createElement("div");
+    days.className = "fc-days";
+    const leading = firstDow(month);
+    const count = daysIn(month);
+    const trailing = 42 - leading - count;
+    for (let index = 0; index < leading; index += 1) {
+      const spacer = document.createElement("span");
+      spacer.className = "fc-day-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      days.appendChild(spacer);
+    }
+    for (let day = 1; day <= count; day += 1) {
+      days.appendChild(createDayPreviewCell(month, day));
+    }
+    for (let index = 0; index < trailing; index += 1) {
+      const spacer = document.createElement("span");
+      spacer.className = "fc-day-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      days.appendChild(spacer);
+    }
+    host.replaceChildren(header, weekdays, days);
+    return host;
   };
   const mountMonthContents = (host, month, {
     interactiveDays = false,
@@ -493,20 +546,17 @@ import {
     const grid = document.createElement("div");
     grid.className = "fc-grid";
     for (let month = 0; month < 12; month += 1) {
-      const bucket = document.createElement("section");
-      bucket.className = "fc-month fc-month-layout";
+      const bucket = createTileElement(monthTileRecord(month), {
+        className:"fc-month fc-month-layout",
+        ariaLabel:`Open ${MONTHS[month]} ${currentYear}`,
+        tabIndex:0,
+      });
       bucket.dataset.month = String(month + 1);
       bucket.dataset.kind = "month";
-      bucket.setAttribute("role", "button");
-      bucket.setAttribute("aria-label", `Open ${MONTHS[month]} ${currentYear}`);
-      bucket.tabIndex = 0;
-      mountMonthContents(bucket, month, { interactiveDays:false });
+      bucket.dataset.calendarTile = "month";
+      mountMonthPreview(bucket, month);
       grid.appendChild(bucket);
     }
-    ensureTileMaterialPlane(grid, {
-      className:"fc-calendar-tile-material fc-year-grid-tile-material",
-      tileSelector:":scope > .fc-month > .fc-days > .fc-day",
-    });
     root.appendChild(grid);
     return root;
   };
@@ -753,82 +803,9 @@ import {
   const radiusFor = (width, height) => clampN(RADIUS_F * Math.min(width, height), 2, 64);
   const syncCalendarMaterial = (host) => {
     if (!host) return null;
-    const direct = host.querySelector?.(":scope > .crm-tile-material-plane")
-      || host.querySelector?.(":scope > .fc-grid > .crm-tile-material-plane");
+    const direct = host.querySelector?.(":scope > .crm-tile-material-plane");
     if (direct) return syncTileMaterialPlane(direct);
-    const planes = [...(host.querySelectorAll?.(
-      ":scope > .fc-grid > .fc-month > .crm-tile-material-plane",
-    ) || [])];
-    planes.forEach((plane) => syncTileMaterialPlane(plane));
-    return planes;
-  };
-  const activateMotionMaterial = (surface = camera?.surface?.(), direction = "") => {
-    clearTimeout(materialModeTimer);
-    materialModeTimer = 0;
-    if (!surface) return;
-    surface.dataset.calendarMaterialMode = "motion";
-    if (direction) surface.dataset.calendarMaterialDirection = direction;
-  };
-  const prepareTransitionMaterial = (direction, _target, context, { preview = false } = {}) => {
-    const surface = context?.surface || camera?.surface?.();
-    if (!surface) return Promise.resolve();
-    if (!preview) {
-      clearTimeout(materialPreviewTimer);
-      materialPreviewTimer = 0;
-    }
-    if (materialPreparation) return materialPreparation;
-    if (surface.dataset.calendarMaterialMode === "motion") {
-      surface.dataset.calendarMaterialDirection = direction;
-      return Promise.resolve();
-    }
-    activateMotionMaterial(surface, direction);
-    // Turning off hundreds of independent backdrop-filter owners is an
-    // asynchronous compositor operation. Wait through its expensive paints
-    // while the scene is stationary, then begin the camera only after native
-    // frame delivery has stabilized.
-    const minimumMs = context?.level === 0 ? 440 : 260;
-    const maximumMs = minimumMs + 300;
-    materialPreparation = new Promise((resolve) => {
-      const startedAt = performance.now();
-      let previousAt = startedAt;
-      let stableFrames = 0;
-      const sample = (now) => {
-        if (!surface.isConnected || surface.dataset.calendarMaterialMode !== "motion") {
-          resolve();
-          return;
-        }
-        const delta = now - previousAt;
-        previousAt = now;
-        stableFrames = delta <= 24 ? stableFrames + 1 : 0;
-        const elapsed = now - startedAt;
-        if ((elapsed >= minimumMs && stableFrames >= 3) || elapsed >= maximumMs) {
-          resolve();
-          return;
-        }
-        requestAnimationFrame(sample);
-      };
-      requestAnimationFrame(sample);
-    }).finally(() => {
-      materialPreparation = null;
-      if (!preview || !surface.isConnected) return;
-      clearTimeout(materialPreviewTimer);
-      materialPreviewTimer = setTimeout(() => {
-        materialPreviewTimer = 0;
-        if (surface.classList.contains("fc-camera-moving")) return;
-        releaseMotionMaterial(surface);
-      }, 2400);
-    });
-    return materialPreparation;
-  };
-  const releaseMotionMaterial = (surface = camera?.surface?.()) => {
-    clearTimeout(materialModeTimer);
-    if (surface) surface.dataset.calendarMaterialMode = "handoff";
-    materialModeTimer = setTimeout(() => {
-      materialModeTimer = 0;
-      if (!surface?.isConnected || surface.classList.contains("fc-camera-moving")) return;
-      delete surface.dataset.calendarMaterialMode;
-      delete surface.dataset.calendarMaterialDirection;
-    }, MATERIAL_HANDOFF_MS + 108);
+    return null;
   };
   const layoutCalendar = ({ surface, layers, expRect }) => {
     const root = layers[0];
@@ -837,7 +814,7 @@ import {
     ensureYearChrome(surface);
     layoutGrid(grid, expRect);
     const firstMonth = grid.firstElementChild;
-    const firstDay = grid.querySelector(".fc-day");
+    const firstDay = grid.querySelector(".fc-day-preview-cell");
     if (firstMonth) {
       surface.style.setProperty("--mon-r", `${radiusFor(
         firstMonth.offsetWidth,
@@ -960,22 +937,13 @@ import {
   };
 
   const materialTilesForTarget = (target) => (
-    target?.matches?.(".fc-month")
-      ? [...target.querySelectorAll(".fc-day")]
-      : (target?.matches?.(".fc-day") ? [target] : [])
+    target?.matches?.(".fc-month,.fc-day") ? [target] : []
   );
   const lensForTarget = (target) => (
     target?.matches?.(".fc-month") ? monthAcrylicLens : dayAcrylicLens
   );
   const sourceMaterialTarget = (_expander, target) => {
-    if (target?.matches?.(".fc-month")) {
-      return target.querySelector(":scope > .crm-tile-material-plane")
-        || target.closest(".fc-grid")
-          ?.querySelector?.(":scope > .crm-tile-material-plane")
-        || target.closest(".fc-level")
-          ?.querySelector?.(":scope > .crm-tile-material-plane")
-        || target;
-    }
+    if (target?.matches?.(".fc-month")) return target;
     if (!target?.matches?.(".fc-day")) return target;
     return target.closest(".fc-expander-live,.fc-month")
       ?.querySelector?.(":scope > .crm-tile-material-plane")
@@ -1140,10 +1108,6 @@ import {
     target.dataset.month ? "calendar-month-shell" : "calendar-day-shell"
   );
   const markCameraTarget = (target, context) => {
-    // Expand performs its geometry flush before onTransitionStart. Move the
-    // material handoff ahead of that flush so Chromium retires the resting
-    // per-day filters before the first transform frame is composed.
-    activateMotionMaterial(context.surface);
     context.layers?.forEach?.((layer) => {
       layer?.querySelectorAll?.(".fc-camera-target")?.forEach?.((node) => {
         node.classList.remove("fc-camera-target");
@@ -1211,16 +1175,7 @@ import {
     ].filter(Boolean)).then(() => finishMaterialHandoff(lens, token));
   };
   const resetTransitionMaterials = () => {
-    clearTimeout(materialModeTimer);
-    materialModeTimer = 0;
-    clearTimeout(materialPreviewTimer);
-    materialPreviewTimer = 0;
-    materialPreparation = null;
     const surface = camera?.surface?.();
-    if (surface) {
-      delete surface.dataset.calendarMaterialMode;
-      delete surface.dataset.calendarMaterialDirection;
-    }
     camera?.surface?.()?.querySelectorAll?.(".crm-tile-material-plane")?.forEach?.(
       (plane) => {
         clearMaterialExclusion(plane);
@@ -1332,13 +1287,7 @@ import {
     const grid = root?.querySelector?.(":scope > .fc-grid");
     if (grid) {
       [...grid.querySelectorAll(":scope > .fc-month")].forEach((month) => {
-        mountMonthContents(month, Number(month.dataset.month) - 1, {
-          interactiveDays:false,
-        });
-      });
-      ensureTileMaterialPlane(grid, {
-        className:"fc-calendar-tile-material fc-year-grid-tile-material",
-        tileSelector:":scope > .fc-month > .fc-days > .fc-day",
+        mountMonthPreview(month, Number(month.dataset.month) - 1);
       });
     }
     layers.slice(1).forEach((layer) => {
@@ -1362,14 +1311,7 @@ import {
         if (!camera?.isActive?.() || camera.isTransitioning?.()) return;
         const level = camera.level();
         let target = null;
-        if (level === 0) {
-          const preferredMonth = currentYear === crmNow().getFullYear()
-            ? crmNow().getMonth() + 1
-            : 1;
-          target = camera.layers()?.[0]?.querySelector?.(
-            `:scope > .fc-grid > .fc-month[data-month="${preferredMonth}"]`,
-          );
-        } else if (level === 1) {
+        if (level === 1) {
           const monthLayer = camera.layers()?.[1];
           const preferredDate = currentYear === crmNow().getFullYear()
             && Number(monthLayer?.dataset?.month) === crmNow().getMonth() + 1
@@ -1593,16 +1535,13 @@ import {
       monthAcrylicLens?.prime?.();
       dayAcrylicLens?.prime?.();
     },
-    prepareTransition:prepareTransitionMaterial,
     prepareTarget:markCameraTarget,
+    shouldPrefetch:(_target, context) => context.level > 0,
     targetFromEvent,
     targetAtPoint:targetFromPoint,
     sourceSelector,
     keyOf,
     onTransitionStart:(direction, context) => {
-      // Expands enter motion material in prepareTarget, before their geometry
-      // flush. Contracts have no prepareTarget hook and switch here instead.
-      if (direction === "contract") activateMotionMaterial(context.surface);
       const belowIndex = direction === "expand" ? context.level : context.level - 1;
       context.layers?.[belowIndex]?.classList?.add?.("fc-calendar-below");
       prepareBackdropCover(direction, context);
@@ -1628,7 +1567,6 @@ import {
         "fc-camera-expanding",
         "fc-camera-contracting",
       );
-      releaseMotionMaterial(context.surface);
       activeTransition = null;
       if (context.level < 2) {
         // Do not upload the next zoom shell during the live material

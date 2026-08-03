@@ -1951,10 +1951,13 @@ async function main() {
         && rootMonthObject.children.includes(liveObject)
         && liveObject === graphObject
         && liveObject === sharedObjectFor?.(liveDay)
-        && liveDay.dataset.tileObjectView === 'full'
+        && liveDay.dataset.tileObjectView === 'preview'
         && rootMonth.matches('button.crm-tile[data-crm-tile].crm-home-bucket')
         && liveDay.matches('button.crm-tile[data-crm-tile].crm-home-bucket')
         && !!rootMonth.querySelector(':scope > .fc-month-tile-preview')
+        && !!liveDay.querySelector(
+          ':scope > .fc-day-tile-preview[data-preview-state="ready"]',
+        )
         && !rootMonth.querySelector('.fc-day-preview-cell,.fc-day'),
       detail:JSON.stringify({
         monthObject:rootMonthObject?.tile?.id,
@@ -1972,25 +1975,30 @@ async function main() {
     const month = document.querySelector(monthSelector);
     const preview = month?.querySelector(':scope > .fc-month-tile-preview');
     const live = document.querySelector(liveSelector);
+    const dayPreview = live?.querySelector(':scope > .fc-day-tile-preview');
     const object = objectFor(live);
     const entries = object?.entries;
     await window.fractalCalendar.refresh();
     const nextMonth = document.querySelector(monthSelector);
     const nextPreview = nextMonth?.querySelector(':scope > .fc-month-tile-preview');
     const nextLive = document.querySelector(liveSelector);
+    const nextDayPreview = nextLive?.querySelector(':scope > .fc-day-tile-preview');
     return {
       ok:!!object
         && month === nextMonth
         && preview === nextPreview
         && live === nextLive
+        && dayPreview === nextDayPreview
         && object === objectFor(nextLive)
         && objectFor(nextMonth)?.children?.includes(object)
         && entries === object.entries
+        && Number(nextDayPreview?.dataset.previewRecordCount) === object.entries.length
         && !nextMonth.querySelector('.fc-day-preview-cell,.fc-day'),
       detail:JSON.stringify({
         object:object?.tile?.id,
         samePreviewNode:preview === nextPreview,
         sameLiveNode:live === nextLive,
+        sameDayPreviewNode:dayPreview === nextDayPreview,
         sameEntries:entries === object?.entries,
         entries:object?.entries?.length,
       }),

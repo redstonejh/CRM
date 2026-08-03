@@ -403,6 +403,9 @@ import {
         -webkit-backdrop-filter:var(--bucket-acrylic-filter);
         backdrop-filter:var(--bucket-acrylic-filter);
         opacity:1;backface-visibility:hidden;transition:background .18s ease}
+      .fc-day>.fc-day-tile-preview{position:absolute;inset:0;z-index:1;
+        display:block;overflow:hidden;contain:paint;border-radius:inherit;
+        pointer-events:none;user-select:none;color:inherit}
       /* Entered days remain independent canonical tile objects, while the
          collection shares one true backdrop-filter pass clipped to their union.
          This is the same collection architecture used by other large tile
@@ -585,10 +588,41 @@ import {
     )).join("")}${extra > 0 ? `<div class="fc-chip-more">+${extra} more</div>` : ""}</div>`;
   };
 
+  const createDayTilePreviewHost = (dayObject) => {
+    const host = document.createElement("div");
+    host.className = "crm-home-preview fc-day-tile-preview";
+    host.setAttribute("aria-hidden", "true");
+    host.dataset.previewKey = dayObject.tile.id;
+    host.dataset.previewState = "ready";
+    host.dataset.previewRenderer = "calendar-day-object";
+    return host;
+  };
+  const mountDayTilePreview = (element, dayObject) => {
+    let acrylic = element.querySelector(":scope > .crm-tile-acrylic");
+    if (!acrylic) {
+      acrylic = document.createElement("span");
+      acrylic.className = "crm-tile-acrylic";
+      acrylic.setAttribute("aria-hidden", "true");
+      element.prepend(acrylic);
+    }
+    let host = element.querySelector(":scope > .fc-day-tile-preview");
+    if (!host) {
+      host = createDayTilePreviewHost(dayObject);
+      element.appendChild(host);
+    }
+    host.dataset.previewKey = dayObject.tile.id;
+    host.dataset.previewRevision = String(dayObject.revision);
+    host.dataset.previewRecordCount = String(dayObject.entries.length);
+    host.innerHTML = `<span class="fc-day-num">${dayObject.day}</span>` +
+      `<div class="fc-day-body">${scheduledPreviewHTML(dayObject)}${
+        scheduledHTML(dayObject)
+      }</div>`;
+    return host;
+  };
   const updateCalendarDayView = (element, dayObject, {
     interactive = false,
   } = {}) => {
-    bindCalendarObjectView(element, dayObject, "full", {
+    bindCalendarObjectView(element, dayObject, "preview", {
       bindSchema:true,
       ariaLabel:`Open ${dayObject.tile.label}`,
     });
@@ -598,10 +632,7 @@ import {
     element.removeAttribute("aria-hidden");
     element.dataset.calendarTile = "day";
     element.tabIndex = interactive ? 0 : -1;
-    element.innerHTML = `<span class="crm-tile-acrylic" aria-hidden="true"></span>` +
-      `<span class="fc-day-num">${dayObject.day}</span><div class="fc-day-body">${
-      scheduledPreviewHTML(dayObject)
-    }${scheduledHTML(dayObject)}</div>`;
+    mountDayTilePreview(element, dayObject);
     return element;
   };
   const createCalendarDayView = (dayObject, {
@@ -611,7 +642,7 @@ import {
       className:"fc-day fc-day-object-view",
       ariaLabel:`Open ${dayObject.tile.label}`,
       tabIndex:interactive ? 0 : -1,
-      view:"full",
+      view:"preview",
     });
     return updateCalendarDayView(element, dayObject, { interactive });
   };
@@ -700,6 +731,15 @@ import {
       `<div class="fc-day-detail" data-date="${dayObject.date}">${
         items || `<div class="fc-empty" data-date="${dayObject.date}">No scheduled records yet</div>`
       }<div class="fc-drop-hint">Drop grid cards here to schedule them</div></div>`;
+  };
+  const mountCalendarDayViewport = (host, dayObject) => {
+    bindCalendarObjectView(host, dayObject, "full");
+    host.dataset.kind = "day";
+    host.dataset.date = dayObject.date;
+    host.dataset.tileRenderer = "calendar-day-full";
+    host.dataset.calendarObjectRevision = String(dayObject.revision);
+    host.innerHTML = dayInnerHTML(dayObject);
+    return host;
   };
 
   const monthTilePreviewIsCurrent = (preview, monthObject) => (
@@ -1223,8 +1263,7 @@ import {
         material:true,
       });
     } else {
-      bindCalendarObjectView(live, object, "detail");
-      live.innerHTML = dayInnerHTML(object);
+      mountCalendarDayViewport(live, object);
     }
     expander.dataset.renderRevision = String(renderRevision);
     if (expander.isConnected && isMonth) syncCalendarMaterial(live);

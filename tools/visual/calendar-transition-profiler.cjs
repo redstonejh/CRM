@@ -418,10 +418,14 @@ async function auditArchitecture(page, phase) {
     );
     const monthLive = activeMonth?.querySelector(':scope > .fc-expander-live');
     const monthDays = [...(monthLive?.querySelectorAll(':scope > .fc-days > .fc-day') || [])];
+    const monthDayPreviews = monthDays.map((day) => (
+      day.querySelector(':scope > .fc-day-tile-preview')
+    )).filter(Boolean);
     const monthPlane = monthLive?.querySelector(':scope > .crm-tile-material-plane');
     const activeDay = surface.querySelector(
       ':scope > .fc-expander[data-kind="day"]:not(.fc-warm)',
     );
+    const activeDayLive = activeDay?.querySelector(':scope > .fc-expander-live');
     const objectFor = window.fractalCalendar._objectForElement;
     const objectGraph = window.fractalCalendar._objectGraph();
     const liveBackdropCover = surface.querySelector(':scope > .fc-live-backdrop-cover');
@@ -585,6 +589,25 @@ async function auditArchitecture(page, phase) {
         dayObjectsSharedWithGraph:monthDays.filter(
           (day) => objectFor(day) === objectGraph.daysByDate.get(day.dataset.date),
         ).length,
+        previewViewCount:monthDays.filter(
+          (day) => day.dataset.tileObjectView === 'preview',
+        ).length,
+        previews:{
+          count:monthDayPreviews.length,
+          readyCount:monthDayPreviews.filter(
+            (preview) => preview.dataset.previewState === 'ready',
+          ).length,
+          rendererCount:monthDayPreviews.filter(
+            (preview) => preview.dataset.previewRenderer === 'calendar-day-object',
+          ).length,
+          inertCount:monthDayPreviews.filter((preview) => (
+            !preview.matches('button,[data-crm-tile],.crm-tile,.crm-home-bucket')
+            && getComputedStyle(preview).pointerEvents === 'none'
+          )).length,
+          nestedTileCount:monthDayPreviews.filter(
+            (preview) => !!preview.querySelector('[data-crm-tile],.crm-tile,.crm-home-bucket'),
+          ).length,
+        },
         plane:planeAudit(monthPlane),
         transitionFrameOpacity:Number(getComputedStyle(
           activeMonth.querySelector(':scope > .fc-transition-acrylic'),
@@ -601,6 +624,9 @@ async function auditArchitecture(page, phase) {
         sharesMonthDayObject:objectFor(activeDay) === objectFor(monthDays.find(
           (day) => day.dataset.date === activeDay.dataset.date,
         )),
+        fullRendererSharesObject:objectFor(activeDayLive) === objectFor(activeDay),
+        fullRendererView:activeDayLive?.dataset.tileObjectView || '',
+        fullRenderer:activeDayLive?.dataset.tileRenderer || '',
         material:planeAudit(activeDay.querySelector(':scope > .fc-day-detail-material')),
       } : null,
       yearChromeCount:document.querySelectorAll('body > .fc-year-strip').length,
@@ -900,6 +926,12 @@ async function main() {
       || monthAudit.tiles.objectIdentityCount !== monthAudit.tiles.count
       || monthAudit.dayObjectsSharedWithGraph !== monthAudit.tiles.count
       || monthAudit.shellSharesRootObject !== true
+      || monthAudit.previewViewCount !== monthAudit.tiles.count
+      || monthAudit.previews?.count !== monthAudit.tiles.count
+      || monthAudit.previews?.readyCount !== monthAudit.tiles.count
+      || monthAudit.previews?.rendererCount !== monthAudit.tiles.count
+      || monthAudit.previews?.inertCount !== monthAudit.tiles.count
+      || monthAudit.previews?.nestedTileCount !== 0
       || monthAudit.tiles.directBackdropCount !== monthAudit.tiles.count
       || monthAudit.tiles.visibleBackdropCount !== 0
       || monthAudit.plane?.count !== monthAudit.tiles.count
@@ -914,6 +946,9 @@ async function main() {
     const dayAudit = architecture.find((audit) => audit.phase === 'day-rest')?.activeDay;
     if (!dayAudit?.isSharedTile
       || dayAudit.sharesMonthDayObject !== true
+      || dayAudit.fullRendererSharesObject !== true
+      || dayAudit.fullRendererView !== 'full'
+      || dayAudit.fullRenderer !== 'calendar-day-full'
       || dayAudit.material?.ready !== true
       || dayAudit.material?.count !== 1
       || dayAudit.material?.clipIsActive !== true

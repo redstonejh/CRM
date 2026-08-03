@@ -448,6 +448,9 @@ async function auditArchitecture(page, phase) {
         buttonCount:tiles.filter((tile) => tile.tagName === 'BUTTON').length,
         sharedClassCount:tiles.filter((tile) => tile.classList.contains('crm-home-bucket')).length,
         canonicalClassCount:tiles.filter((tile) => tile.classList.contains('crm-tile')).length,
+        viewportInstanceCount:tiles.filter(
+          (tile) => tile.dataset.crmTileInstance === 'viewport',
+        ).length,
         schemaCount:tiles.filter((tile) => tile.dataset.tileSchemaVersion === '1').length,
         identityCount:new Set(tiles.map((tile) => tile.dataset.tileId)).size,
         targetCount:new Set(tiles.map((tile) => tile.dataset.tileTargetId)).size,
@@ -615,7 +618,9 @@ async function auditArchitecture(page, phase) {
             (preview) => !!preview.querySelector('[data-crm-tile],.crm-tile,.crm-home-bucket'),
           ).length,
         },
-        dayTileRenderer:window.fractalCalendar.dayTilePreviewStatus(),
+        dayTileRenderer:window.fractalCalendar.tilePreviewStatus(
+          objectFor(activeMonth)?.tile?.id,
+        ),
         plane:planeAudit(monthPlane),
         transitionFrameOpacity:Number(getComputedStyle(
           activeMonth.querySelector(':scope > .fc-transition-acrylic'),
@@ -655,6 +660,7 @@ function architectureFailures(audit, expectedLevel) {
     || audit.rootTiles.buttonCount !== expectedRootMonths
     || audit.rootTiles.sharedClassCount !== expectedRootMonths
     || audit.rootTiles.canonicalClassCount !== expectedRootMonths
+    || audit.rootTiles.viewportInstanceCount !== expectedRootMonths
     || audit.rootTiles.schemaCount !== expectedRootMonths
     || audit.rootTiles.identityCount !== expectedRootMonths
     || audit.rootTiles.targetCount !== expectedRootMonths
@@ -847,7 +853,13 @@ async function main() {
       { captureAudit:true },
     ));
     const dayTilePreviewResult = await page.evaluate(
-      () => window.fractalCalendar.waitForDayTilePreviews(),
+      () => {
+        const month = document.querySelector(
+          '.fc-expander[data-kind="month"]:not(.fc-warm)',
+        );
+        const object = window.fractalCalendar._objectForElement(month);
+        return window.fractalCalendar.waitForTilePreviews(object?.tile?.id);
+      },
     );
     if (dayTilePreviewResult.ready !== dayTilePreviewResult.total) {
       throw new Error(
@@ -933,6 +945,7 @@ async function main() {
       || monthAudit.tiles.buttonCount !== monthAudit.tiles.count
       || monthAudit.tiles.sharedClassCount !== monthAudit.tiles.count
       || monthAudit.tiles.canonicalClassCount !== monthAudit.tiles.count
+      || monthAudit.tiles.viewportInstanceCount !== monthAudit.tiles.count
       || monthAudit.tiles.schemaCount !== monthAudit.tiles.count
       || monthAudit.tiles.identityCount !== monthAudit.tiles.count
       || monthAudit.tiles.targetCount !== monthAudit.tiles.count

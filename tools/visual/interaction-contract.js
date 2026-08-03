@@ -1927,7 +1927,13 @@ async function main() {
   await page.waitForFunction(() => window.fractalCalendar.level() === 1
     && !window.fractalCalendarCamera?.isTransitioning?.(), { timeout:5000 });
   const dayTilePreviewResult = await page.evaluate(
-    () => window.fractalCalendar.waitForDayTilePreviews(),
+    () => {
+      const month = document.querySelector(
+        '.fc-expander[data-kind="month"]:not(.fc-warm)',
+      );
+      const object = window.fractalCalendar._objectForElement(month);
+      return window.fractalCalendar.waitForTilePreviews(object?.tile?.id);
+    },
   );
   if (dayTilePreviewResult.supported
     && dayTilePreviewResult.ready !== dayTilePreviewResult.total) {
@@ -1950,6 +1956,10 @@ async function main() {
     const paneObject = objectFor?.(pane);
     const liveObject = objectFor?.(liveDay);
     const graphObject = graph?.daysByDate?.get?.(probe.date);
+    const homeTile = document.querySelector(
+      '.crm-home-level > .crm-home-grid > .crm-home-bucket[data-crm-tile]',
+    );
+    const dayPreview = liveDay?.querySelector(':scope > .fc-day-tile-preview');
     return {
       ok:!!rootMonthObject
         && rootMonthObject === paneObject
@@ -1961,18 +1971,18 @@ async function main() {
         && liveDay.dataset.tileObjectView === 'preview'
         && rootMonth.matches('button.crm-tile[data-crm-tile].crm-home-bucket')
         && liveDay.matches('button.crm-tile[data-crm-tile].crm-home-bucket')
+        && rootMonth.dataset.crmTileInstance === 'viewport'
+        && liveDay.dataset.crmTileInstance === 'viewport'
+        && homeTile?.dataset.crmTileInstance === 'viewport'
         && !!rootMonth.querySelector(':scope > .fc-month-tile-preview')
         && (probe.captureSupported
           ? !!liveDay.querySelector(
             ':scope > .fc-day-tile-preview[data-preview-state="ready"] '
               + '> img.fc-day-preview-render',
           )
-            && liveDay.querySelector(
-              ':scope > .fc-day-tile-preview',
-            )?.dataset.previewRenderer === 'calendar-day-full'
-          : !!liveDay.querySelector(
-            ':scope > .fc-day-tile-preview[data-preview-state="waiting"]:empty',
-          ))
+            && dayPreview?.dataset.previewRenderer === 'calendar-day-full'
+          : dayPreview?.dataset.previewState === 'waiting'
+            && !!dayPreview.querySelector(':scope > .fc-day-live-preview'))
         && !rootMonth.querySelector('.fc-day-preview-cell,.fc-day'),
       detail:JSON.stringify({
         monthObject:rootMonthObject?.tile?.id,
@@ -1980,6 +1990,11 @@ async function main() {
         liveObject:liveObject?.tile?.id,
         entries:liveObject?.entries?.length,
         views:[rootMonth?.dataset?.tileObjectView, liveDay?.dataset?.tileObjectView],
+        instances:[
+          homeTile?.dataset.crmTileInstance,
+          rootMonth?.dataset.crmTileInstance,
+          liveDay?.dataset.crmTileInstance,
+        ],
       }),
     };
   }, {
@@ -1998,7 +2013,9 @@ async function main() {
     const object = objectFor(live);
     const entries = object?.entries;
     await window.fractalCalendar.refresh();
-    if (probe.captureSupported) await window.fractalCalendar.waitForDayTilePreviews();
+    if (probe.captureSupported) {
+      await window.fractalCalendar.waitForTilePreviews(objectFor(month)?.tile?.id);
+    }
     const nextMonth = document.querySelector(monthSelector);
     const nextPreview = nextMonth?.querySelector(':scope > .fc-month-tile-preview');
     const nextLive = document.querySelector(liveSelector);
@@ -2017,7 +2034,7 @@ async function main() {
         && (probe.captureSupported
           ? nextDayPreview?.dataset.previewRenderer === 'calendar-day-full'
           : nextDayPreview?.dataset.previewState === 'waiting'
-            && !nextDayPreview.firstElementChild)
+            && !!nextDayPreview.querySelector(':scope > .fc-day-live-preview'))
         && !nextMonth.querySelector('.fc-day-preview-cell,.fc-day'),
       detail:JSON.stringify({
         object:object?.tile?.id,
@@ -2035,11 +2052,23 @@ async function main() {
   });
   await check('Calendar is fed only by commitments', () => {
     const graph = window.fractalCalendar?._objectGraph?.();
-    const entries = [...(graph?.daysByDate?.values?.() || [])]
-      .flatMap((dayObject) => dayObject.entries || []);
+    const dayObjects = [...(graph?.daysByDate?.values?.() || [])];
+    const entries = dayObjects.flatMap((dayObject) => dayObject.entries || []);
+    const renderedDays = [...document.querySelectorAll(
+      '.fc-expander[data-kind="month"]:not(.fc-warm) .fc-day[data-crm-tile-instance="viewport"]',
+    )];
+    const renderedEntriesAreOwned = renderedDays.every((day) => {
+      const object = window.fractalCalendar?._objectForElement?.(day);
+      const owned = new Set((object?.entries || []).map((entry) => String(entry.id)));
+      return [...day.querySelectorAll('.fc-day-live-preview .fc-chip[data-id]')]
+        .every((chip) => owned.has(String(chip.dataset.id)));
+    });
     return entries.length > 0
       && entries.every((entry) => entry.type === 'commitment')
-      && !document.querySelector('.fc-day-tile-preview .fc-chip');
+      && renderedEntriesAreOwned
+      && !document.querySelector(
+        '.fc-day-tile-preview .crm-planner-card,.fc-day-tile-preview .crm-planner-bucket',
+      );
   });
   await check('Expanded calendar is the same true-acrylic tile collection at month scale', () => {
     const pane = document.querySelector('[data-crm-theater="calendar"] .fc-expander[data-kind="month"]');
@@ -2096,7 +2125,8 @@ async function main() {
       && entry.type === 'commitment'
       && entry.projectStages.length === probe.stages
       && reached >= 0
-      && !day.querySelector('.fc-chip,.crm-planner-card,.crm-planner-bucket'),
+      && !!day.querySelector(`.fc-day-live-preview .fc-chip[data-id="${CSS.escape(String(entry.id))}"]`)
+      && !day.querySelector('.crm-planner-card,.crm-planner-bucket'),
       detail:JSON.stringify({
         mappedStages:entry?.projectStages?.length || 0,
         reached,

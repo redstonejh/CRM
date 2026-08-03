@@ -152,6 +152,39 @@ export function createTileObjectElement(object, options = {}) {
   return element;
 }
 
+// This is the concrete viewport-tile primitive. It owns the canonical button
+// and the preview surface together so modules cannot quietly substitute a
+// look-alike component that only carries tile-shaped data attributes.
+export function createTileInstance(object, options = {}) {
+  const element = createTileObjectElement(object, options);
+  element.dataset.crmTileInstance = "viewport";
+  if (options.preview === false) return element;
+
+  const preview = document.createElement("div");
+  preview.className = [
+    "crm-home-preview",
+    text(options.previewClassName),
+  ].filter(Boolean).join(" ");
+  preview.dataset.previewKey = text(
+    options.previewKey,
+    object?.tile?.id,
+    object?.tile?.key,
+  );
+  preview.dataset.previewState = text(options.previewState, "waiting");
+  if (options.previewAriaLabel) {
+    preview.setAttribute("aria-label", text(options.previewAriaLabel));
+  } else if (options.previewAriaHidden !== false) {
+    preview.setAttribute("aria-hidden", "true");
+  }
+  if (options.previewHTML != null) preview.innerHTML = String(options.previewHTML);
+  element.appendChild(preview);
+  return element;
+}
+
+export function tilePreviewHostFor(element) {
+  return element?.querySelector?.(":scope > .crm-home-preview") || null;
+}
+
 export function tileObjectForElement(element) {
   return element ? tileObjectByElement.get(element) || null : null;
 }
@@ -439,6 +472,8 @@ export const crmTileSystem = {
   create:createTileElement,
   bindObject:bindTileObject,
   createObject:createTileObjectElement,
+  createInstance:createTileInstance,
+  previewHostFor:tilePreviewHostFor,
   objectFor:tileObjectForElement,
   tileUnionPath,
   ensureMaterial:ensureTileMaterialPlane,

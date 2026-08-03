@@ -1,8 +1,8 @@
 import {
   applyAdaptiveTileGrid,
   bindTileObject,
+  createTileInstance,
   createTileObject,
-  createTileObjectElement,
   normalizeTileRecord,
 } from "./modules/tile-system.js";
 import { changed as contextAddChanged, register as registerContextAddProvider } from "./modules/context-add-registry.js";
@@ -1107,13 +1107,17 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const titleLayer = document.createElement("div"); titleLayer.className = "crm-home-title-layer";
     titleLayer.innerHTML = homeTileRecords.map(titleHTML).join("");
     homeTileRecords.forEach((module) => {
-      const bucket = createTileObjectElement(module, {
+      const bucket = createTileInstance(module, {
         ariaLabel:`Open ${module.label}`,
         view:"preview",
+        previewKey:module.key,
+        previewState:"waiting",
+        previewAriaLabel:"Loading preview",
+        previewHTML:previewStateHTML(),
       });
       bucket.dataset.module = module.key;
       bucket.dataset.viewportModule = module.key;
-      bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
+      bucket.dataset.enabled = "true";
       // Do not activate merely because a tile finishes loading beneath an
       // already-stationary pointer. Actual pointer movement arms the reveal.
       bucket.addEventListener("pointermove", () => {

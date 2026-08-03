@@ -117,6 +117,8 @@ let homeMotionSnapshotError = null;
 let homePreviewResizeTimer = null;
 let homePreviewBoundsKey = '';
 let homePreviewQueue = Promise.resolve();
+let canonicalTilePreviewQueue = Promise.resolve();
+let canonicalTilePreviewWindow = null;
 let homePreviewRefreshTimer = null;
 let homePreviewStartupTimer = null;
 let projectGalleryHomeRefreshTimer = null;
@@ -136,6 +138,13 @@ function setHomePreviewInteraction(active) {
     // frame while the visible camera owns the GPU, then restore a deliberately
     // modest capture cadence after the handoff.
     try { previewWindow.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
+  }
+  if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
+    try {
+      canonicalTilePreviewWindow.webContents.setFrameRate(
+        homePreviewInteractionActive ? 1 : 60,
+      );
+    } catch {}
   }
   if (!homePreviewInteractionActive) {
     const waiters = homePreviewInteractionWaiters;
@@ -274,6 +283,10 @@ function createMainWindow() {
     homePreviewBoundsKey = '';
     if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
     previewWindow = null;
+    if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
+      canonicalTilePreviewWindow.destroy();
+    }
+    canonicalTilePreviewWindow = null;
     mainWindow = null;
   });
   return mainWindow;
@@ -377,6 +390,7 @@ async function prepareCapture(win, matte = null, options = {}) {
   await waitForHomePreviewInteraction();
   const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
   const homeMotionObjectsOnly = options.homeMotionObjectsOnly === true;
+  const calendarDayObjectsOnly = options.calendarDayObjectsOnly === true;
   const settleMs = Math.max(0, Number.isFinite(Number(options.settleMs))
     ? Number(options.settleMs)
     : 60);
@@ -387,6 +401,8 @@ async function prepareCapture(win, matte = null, options = {}) {
     .crm-home-title-glass { display:none !important; }
     ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
     ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }' : ''}
+    ${calendarDayObjectsOnly ? `.fc-expander[data-kind="day"] > .fc-day-expander-tint,
+      .fc-expander[data-kind="day"] > .fc-day-detail-material { display:none !important; }` : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,
@@ -511,6 +527,51 @@ async function createPreviewWindow() {
   }
 }
 
+async function createCanonicalTilePreviewWindow() {
+  if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
+    return canonicalTilePreviewWindow;
+  }
+  const bounds = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow.getContentBounds()
+    : { width:1280, height:860 };
+  const worker = new BrowserWindow({
+    width:bounds.width,
+    height:bounds.height,
+    show:false,
+    frame:false,
+    backgroundColor:'#10141c',
+    paintWhenInitiallyHidden:true,
+    webPreferences:{
+      preload:path.join(__dirname, 'dashboard-preload.js'),
+      nodeIntegration:false,
+      contextIsolation:true,
+      sandbox:false,
+      offscreen:true,
+      backgroundThrottling:false,
+    },
+  });
+  canonicalTilePreviewWindow = worker;
+  try {
+    worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 60);
+  } catch {}
+  worker.on('closed', () => {
+    if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
+  });
+  try {
+    await worker.loadFile(dashboardIndexPath(), { query:{ crmPreviewWorker:'1' } });
+    await waitForRenderer(
+      worker,
+      `!document.documentElement.hasAttribute('data-dashboard-booting')
+        && !!window.crmWorkspaces`,
+    );
+    return worker;
+  } catch (error) {
+    if (!worker.isDestroyed()) worker.destroy();
+    if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
+    throw error;
+  }
+}
+
 function publishHomePreview(key, capture, layoutSignature, viewState = null) {
   if (!capture?.foreground || !capture?.exact) return null;
   const size = capture.exact.getSize();
@@ -576,41 +637,78 @@ function publishCanonicalTilePreview({
   return preview;
 }
 
-function captureCalendarMonthTilePreviews(year, tiles = []) {
-  const parsedYear = Number(year);
-  const normalizedYear = Number.isFinite(parsedYear)
-    ? Math.max(1901, Math.min(2200, parsedYear))
+function normalizeCalendarTilePreviewBatch(kind, scope = {}, tiles = []) {
+  const requestedYear = Number(scope?.year);
+  if (!Number.isInteger(requestedYear)
+    || requestedYear < 1901
+    || requestedYear > 2200
+    || !['calendar-month', 'calendar-day'].includes(kind)) return null;
+  const year = requestedYear;
+  const requestedMonth = Number(scope?.month);
+  const month = kind === 'calendar-day' && Number.isInteger(requestedMonth)
+    && requestedMonth >= 1 && requestedMonth <= 12
+    ? requestedMonth
     : 0;
-  const requests = (Array.isArray(tiles) ? tiles : []).map((tile) => ({
-    key:String(tile?.key || ''),
-    month:Math.max(1, Math.min(12, Number(tile?.month) || 0)),
-    revision:Number(tile?.revision) || 0,
-    dataSignature:String(tile?.dataSignature || ''),
-  })).filter((tile) => (
-    tile.key === `calendar-month-${normalizedYear}-${String(tile.month).padStart(2, '0')}`
-  ));
-  if (!normalizedYear || !requests.length) return Promise.resolve([]);
+  if (kind === 'calendar-day' && !month) return null;
+  const seen = new Set();
+  const requests = [];
+  for (const tile of Array.isArray(tiles) ? tiles : []) {
+    if (requests.length >= (kind === 'calendar-month' ? 12 : 31)) break;
+    const key = String(tile?.key || '');
+    const revision = Number(tile?.revision) || 0;
+    const dataSignature = String(tile?.dataSignature || '');
+    let viewState = null;
+    if (kind === 'calendar-month') {
+      const tileMonth = Math.max(1, Math.min(12, Number(tile?.month) || 0));
+      if (key !== `calendar-month-${year}-${String(tileMonth).padStart(2, '0')}`) continue;
+      viewState = { year, month:tileMonth };
+    } else {
+      const date = String(tile?.date || '');
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+      if (!month || !match
+        || Number(match[1]) !== year
+        || Number(match[2]) !== month
+        || key !== `calendar-day-${date}`) continue;
+      const day = Number(match[3]);
+      const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      if (day < 1 || day > lastDay) continue;
+      viewState = { year, month, day, date };
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    requests.push({ key, revision, dataSignature, viewState });
+  }
+  return requests.length ? { kind, year, month, requests } : null;
+}
+
+function captureCalendarTilePreviews(kind, scope = {}, tiles = []) {
+  const batch = normalizeCalendarTilePreviewBatch(kind, scope, tiles);
+  if (!batch) return Promise.resolve([]);
   homePreviewActivityGeneration += 1;
-  homePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
+  canonicalTilePreviewQueue = canonicalTilePreviewQueue.catch(() => null).then(async () => {
     let worker;
+    let homeWorkerWasPaused = false;
     const previews = [];
     try {
       canonicalTilePreviewCaptureStatus = {
         active:true, stage:'waiting-for-interaction', key:'', startedAt:Date.now(), error:'',
       };
       await waitForHomePreviewInteraction();
+      if (previewWindow && !previewWindow.isDestroyed()) {
+        homeWorkerWasPaused = true;
+        try { previewWindow.webContents.setFrameRate(1); } catch {}
+      }
       canonicalTilePreviewCaptureStatus.stage = 'creating-worker';
-      worker = await createPreviewWindow();
+      worker = await createCanonicalTilePreviewWindow();
       canonicalTilePreviewCaptureStatus.stage = 'activating-calendar';
       await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('calendar')`, true);
       await waitForRenderer(worker, `document.body.dataset.crmModule === 'calendar'
-        && !!window.fractalCalendar?.prepareMonthTilePreview`);
-      for (const request of requests) {
+        && !!window.fractalCalendar?.prepareTilePreview
+        && !!window.fractalCalendar?.tilePreviewCaptureState`);
+      for (const request of batch.requests) {
         canonicalTilePreviewCaptureStatus.key = request.key;
-        canonicalTilePreviewCaptureStatus.stage = 'waiting-for-tile';
-        await waitForHomePreviewInteraction();
         const cached = canonicalTilePreviewCache.get(
-          canonicalTilePreviewCacheKey('calendar-month', request.key),
+          canonicalTilePreviewCacheKey(batch.kind, request.key),
         );
         if (cached
           && cached.version === CANONICAL_TILE_PREVIEW_VERSION
@@ -619,34 +717,51 @@ function captureCalendarMonthTilePreviews(year, tiles = []) {
           previews.push(cached);
           continue;
         }
+        canonicalTilePreviewCaptureStatus.stage = 'waiting-for-tile';
+        await waitForHomePreviewInteraction();
         canonicalTilePreviewCaptureStatus.stage = 'rendering-tile';
         const prepared = await worker.webContents.executeJavaScript(
-          `window.fractalCalendar.prepareMonthTilePreview(${normalizedYear}, ${request.month})`,
+          `window.fractalCalendar.prepareTilePreview(${
+            JSON.stringify(batch.kind)
+          }, ${JSON.stringify(request.viewState)})`,
           true,
         );
-        if (!prepared) throw new Error(`Calendar month ${request.month} did not prepare`);
+        if (!prepared) throw new Error(`Canonical tile ${request.key} did not prepare`);
         canonicalTilePreviewCaptureStatus.stage = 'settling-tile';
-        await waitForRenderer(worker, `window.fractalCalendar.level() === 1
-          && document.querySelector('.fc-expander[data-kind="month"][data-month="${request.month}"]:not(.fc-warm) .fc-day')`);
         await worker.webContents.executeJavaScript(
-          `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`,
+          `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(
+            () => setTimeout(resolve, ${batch.kind === 'calendar-day' ? 0 : 40})
+          )))`,
           true,
         );
         canonicalTilePreviewCaptureStatus.stage = 'reading-provenance';
-        const captureState = await worker.webContents.executeJavaScript(`(() => ({
-          region:window.fractalCalendar.previewCaptureRect(),
-          provenance:window.fractalCalendar.previewCaptureProvenance(${request.month})
-        }))()`, true);
-        if (captureState?.provenance?.renderer !== 'calendar-month-full') {
-          throw new Error(`Calendar month ${request.month} did not use the canonical full renderer`);
+        const captureState = await worker.webContents.executeJavaScript(
+          `window.fractalCalendar.tilePreviewCaptureState(${
+            JSON.stringify(batch.kind)
+          }, ${JSON.stringify(request.key)})`,
+          true,
+        );
+        const expectedRenderer = `${batch.kind}-full`;
+        const provenance = captureState?.provenance;
+        const canonical = batch.kind === 'calendar-month'
+          ? provenance?.monthObjectCanonical === true
+            && provenance?.shellSharesRootObject === true
+            && provenance?.monthTileId === request.key
+          : provenance?.dayObjectCanonical === true
+            && provenance?.shellSharesSourceObject === true
+            && provenance?.fullRendererSharesObject === true
+            && provenance?.dayTileId === request.key;
+        if (provenance?.renderer !== expectedRenderer || !canonical) {
+          throw new Error(`Canonical tile ${request.key} did not use its full renderer`);
         }
         canonicalTilePreviewCaptureStatus.stage = 'capturing-tile';
         const foreground = await captureForeground(worker, {
           region:captureState.region,
-          settleMs:20,
+          settleMs:batch.kind === 'calendar-day' ? 0 : 20,
+          calendarDayObjectsOnly:batch.kind === 'calendar-day',
         });
         const preview = publishCanonicalTilePreview({
-          kind:'calendar-month',
+          kind:batch.kind,
           key:request.key,
           capture:foreground ? {
             foreground:foreground.image,
@@ -654,8 +769,8 @@ function captureCalendarMonthTilePreviews(year, tiles = []) {
           } : null,
           revision:request.revision,
           dataSignature:request.dataSignature,
-          provenance:captureState.provenance,
-          viewState:{ year:normalizedYear, month:request.month },
+          provenance,
+          viewState:request.viewState,
         });
         if (preview) previews.push(preview);
       }
@@ -664,7 +779,12 @@ function captureCalendarMonthTilePreviews(year, tiles = []) {
       console.error('[tile-preview] calendar capture failed:', error?.message || error);
     } finally {
       if (worker && !worker.isDestroyed()) worker.destroy();
-      if (previewWindow === worker) previewWindow = null;
+      if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
+      if (homeWorkerWasPaused && previewWindow && !previewWindow.isDestroyed()) {
+        try {
+          previewWindow.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30);
+        } catch {}
+      }
       canonicalTilePreviewCaptureStatus = {
         ...canonicalTilePreviewCaptureStatus,
         active:false,
@@ -674,7 +794,7 @@ function captureCalendarMonthTilePreviews(year, tiles = []) {
     }
     return previews;
   });
-  return homePreviewQueue;
+  return canonicalTilePreviewQueue;
 }
 
 function scheduleProjectGalleryHomeRefresh() {
@@ -1206,7 +1326,15 @@ function isMainSender(e) {
   return mainWindow && !mainWindow.isDestroyed() && e.sender === mainWindow.webContents;
 }
 function isPreviewSender(e) {
-  return previewWindow && !previewWindow.isDestroyed() && e.sender === previewWindow.webContents;
+  return (
+    previewWindow
+    && !previewWindow.isDestroyed()
+    && e.sender === previewWindow.webContents
+  ) || (
+    canonicalTilePreviewWindow
+    && !canonicalTilePreviewWindow.isDestroyed()
+    && e.sender === canonicalTilePreviewWindow.webContents
+  );
 }
 
 // Calendar motion only needs one immutable, tightly bounded compositor sample:
@@ -1678,9 +1806,11 @@ ipcMain.handle('tile-preview:list', (event, { kind, scope = null } = {}) => {
   }
   const requestedKind = String(kind || '');
   const year = Number(scope?.year) || 0;
+  const month = Number(scope?.month) || 0;
   const previews = [...canonicalTilePreviewCache.values()].filter((preview) => (
     preview.kind === requestedKind
       && (!year || Number(preview.viewState?.year) === year)
+      && (!month || Number(preview.viewState?.month) === month)
   ));
   return { ok:true, version:CANONICAL_TILE_PREVIEW_VERSION, previews };
 });
@@ -1691,15 +1821,19 @@ ipcMain.handle('tile-preview:diagnostics', (event) => {
     status:{ ...canonicalTilePreviewCaptureStatus },
     cached:canonicalTilePreviewCache.size,
     interactionActive:homePreviewInteractionActive,
-    worker:!!previewWindow && !previewWindow.isDestroyed(),
+    worker:!!canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed(),
   };
 });
-ipcMain.handle('tile-preview:capture-calendar-year', async (event, { year, tiles = [] } = {}) => {
+ipcMain.handle('tile-preview:capture', async (event, {
+  kind,
+  scope = null,
+  tiles = [],
+} = {}) => {
   if (!isMainSender(event)) return { ok:false, error:'Invalid tile preview sender', previews:[] };
-  const previews = await captureCalendarMonthTilePreviews(year, tiles);
+  const previews = await captureCalendarTilePreviews(String(kind || ''), scope || {}, tiles);
   return previews.length
     ? { ok:true, version:CANONICAL_TILE_PREVIEW_VERSION, previews }
-    : { ok:false, version:CANONICAL_TILE_PREVIEW_VERSION, error:'Calendar tile preview capture failed', previews:[] };
+    : { ok:false, version:CANONICAL_TILE_PREVIEW_VERSION, error:'Canonical tile preview capture failed', previews:[] };
 });
 ipcMain.handle('project-preview:capture', async (event, { projectId, viewState = null } = {}) => {
   const key = String(projectId || '').trim();

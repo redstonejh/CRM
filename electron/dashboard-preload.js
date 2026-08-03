@@ -226,9 +226,9 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
 });
 contextBridge.exposeInMainWorld('crmTilePreviews', {
   list: (kind, scope = null) => ipcRenderer.invoke('tile-preview:list', { kind, scope }),
-  captureCalendarYear: (year, tiles = []) => ipcRenderer.invoke(
-    'tile-preview:capture-calendar-year',
-    { year, tiles },
+  capture: (kind, scope = null, tiles = []) => ipcRenderer.invoke(
+    'tile-preview:capture',
+    { kind, scope, tiles },
   ),
   diagnostics: () => ipcRenderer.invoke('tile-preview:diagnostics'),
   onChanged: (cb) => {

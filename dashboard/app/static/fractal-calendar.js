@@ -24,7 +24,7 @@ import {
   const MORPH_MS = 460;
   const MATERIAL_HANDOFF_MS = 72;
   const MATERIAL_PRIME_OPACITY = .02;
-  const MONTH_TILE_PREVIEW_VERSION = "canonical-tile-preview-v1";
+  const TILE_PREVIEW_VERSION = "canonical-tile-preview-v1";
   const EXP_M = 48;
   const EXP_TOP = 132;
   const YEAR_STRIP_TOP = 12;
@@ -65,8 +65,12 @@ import {
   const monthTilePreviewRequests = new Set();
   let monthTilePreviewTimer = 0;
   let monthTilePreviewListRequested = false;
-  let monthTilePreviewSubscription = null;
-  let monthTilePreviewLastError = "";
+  const dayTilePreviews = new Map();
+  const dayTilePreviewRequests = new Set();
+  const dayTilePreviewListedScopes = new Set();
+  let dayTilePreviewTimer = 0;
+  let tilePreviewSubscription = null;
+  let tilePreviewLastError = "";
   let scheduledDataReadyYear = 0;
 
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (character) => ({
@@ -211,6 +215,10 @@ import {
     clearTimeout(monthTilePreviewTimer);
     monthTilePreviewTimer = 0;
     monthTilePreviewRequests.clear();
+    dayTilePreviewListedScopes.clear();
+    clearTimeout(dayTilePreviewTimer);
+    dayTilePreviewTimer = 0;
+    dayTilePreviewRequests.clear();
     return calendarYearObject;
   };
   const calendarObjectForElement = (element) => {
@@ -345,11 +353,13 @@ import {
       .fc-month:focus-visible{outline:1px solid rgba(125,180,255,.54)}
       .fc-month>.fc-month-tile-preview{position:absolute;inset:0;z-index:1;overflow:hidden;
         contain:paint;border-radius:inherit;pointer-events:none;color:rgba(255,255,255,.62)}
-      .fc-month-tile-preview>.fc-month-preview-render{position:absolute;inset:0;display:block;
+      .fc-month-tile-preview>.fc-month-preview-render,
+      .fc-day-tile-preview>.fc-day-preview-render{position:absolute;inset:0;display:block;
         width:100%;height:100%;object-fit:fill;pointer-events:none;user-select:none;
         transform:none;transform-origin:center;backface-visibility:hidden;
         filter:blur(.65px) saturate(.95) brightness(.88);transition:filter .18s ease}
-      .fc-month:is(:hover,:focus-visible)>.fc-month-tile-preview>.fc-month-preview-render{
+      .fc-month:is(:hover,:focus-visible)>.fc-month-tile-preview>.fc-month-preview-render,
+      .fc-day:is(:hover,:focus-visible)>.fc-day-tile-preview>.fc-day-preview-render{
         filter:blur(0) saturate(.96) brightness(.9)}
       .fc-month-tile-preview>.crm-home-preview-state{position:absolute;inset:0;z-index:2;
         display:flex;align-items:center;justify-content:center;gap:9px;pointer-events:none;
@@ -588,13 +598,25 @@ import {
     )).join("")}${extra > 0 ? `<div class="fc-chip-more">+${extra} more</div>` : ""}</div>`;
   };
 
+  const dayTilePreviewIsCurrent = (preview, dayObject) => (
+    !!preview?.foregroundSrc
+    && preview.kind === "calendar-day"
+    && preview.key === dayObject?.tile?.id
+    && preview.version === TILE_PREVIEW_VERSION
+    && Number(preview.revision) === Number(dayObject.revision)
+    && String(preview.dataSignature || "") === String(dayObject.dataSignature || "")
+    && preview.provenance?.renderer === "calendar-day-full"
+    && preview.provenance?.dayTileId === dayObject.tile.id
+    && preview.provenance?.dayObjectCanonical === true
+    && preview.provenance?.shellSharesSourceObject === true
+    && preview.provenance?.fullRendererSharesObject === true
+  );
   const createDayTilePreviewHost = (dayObject) => {
     const host = document.createElement("div");
     host.className = "crm-home-preview fc-day-tile-preview";
     host.setAttribute("aria-hidden", "true");
     host.dataset.previewKey = dayObject.tile.id;
-    host.dataset.previewState = "ready";
-    host.dataset.previewRenderer = "calendar-day-object";
+    host.dataset.previewState = "waiting";
     return host;
   };
   const mountDayTilePreview = (element, dayObject) => {
@@ -605,19 +627,54 @@ import {
       acrylic.setAttribute("aria-hidden", "true");
       element.prepend(acrylic);
     }
+    let dayNumber = element.querySelector(":scope > .fc-day-num");
+    if (!dayNumber) {
+      dayNumber = document.createElement("span");
+      dayNumber.className = "fc-day-num";
+      element.appendChild(dayNumber);
+    }
+    dayNumber.textContent = String(dayObject.day);
     let host = element.querySelector(":scope > .fc-day-tile-preview");
     if (!host) {
       host = createDayTilePreviewHost(dayObject);
-      element.appendChild(host);
+      element.insertBefore(host, dayNumber);
     }
+    const preview = dayTilePreviews.get(dayObject.tile.id) || dayObject.preview || null;
+    const current = dayTilePreviewIsCurrent(preview, dayObject);
     host.dataset.previewKey = dayObject.tile.id;
-    host.dataset.previewRevision = String(dayObject.revision);
-    host.dataset.previewRecordCount = String(dayObject.entries.length);
-    host.innerHTML = `<span class="fc-day-num">${dayObject.day}</span>` +
-      `<div class="fc-day-body">${scheduledPreviewHTML(dayObject)}${
-        scheduledHTML(dayObject)
-      }</div>`;
-    return host;
+    host.dataset.previewState = current ? "ready" : (preview ? "updating" : "waiting");
+    if (!current) {
+      element.removeAttribute("data-preview-ready");
+      // Month captures intentionally contain inert day marks. The visible
+      // month viewport never uses this projection: it waits for a capture of
+      // each day's actual full renderer.
+      if (window.crmHomePreviews?.isCaptureWorker && !host.firstElementChild) {
+        const fallback = document.createElement("div");
+        fallback.className = "fc-day-body fc-day-capture-fallback";
+        fallback.innerHTML = `${scheduledPreviewHTML(dayObject)}${scheduledHTML(dayObject)}`;
+        host.appendChild(fallback);
+      }
+      return false;
+    }
+    dayObject.preview = preview;
+    host.querySelector(":scope > .fc-day-capture-fallback")?.remove();
+    let image = host.querySelector(":scope > .fc-day-preview-render");
+    if (!image) {
+      image = document.createElement("img");
+      image.className = "crm-home-preview-image crm-home-preview-foreground fc-day-preview-render";
+      image.alt = "";
+      image.draggable = false;
+      image.decoding = "async";
+      host.appendChild(image);
+    }
+    if (image.src !== preview.foregroundSrc) image.src = preview.foregroundSrc;
+    host.dataset.previewVersion = preview.version;
+    host.dataset.previewRevision = String(preview.revision);
+    host.dataset.previewDataSignature = String(preview.dataSignature || "");
+    host.dataset.previewRenderer = preview.provenance.renderer;
+    host.dataset.capturedAt = String(preview.capturedAt || 0);
+    element.dataset.previewReady = "true";
+    return true;
   };
   const updateCalendarDayView = (element, dayObject, {
     interactive = false,
@@ -746,7 +803,7 @@ import {
     !!preview?.foregroundSrc
     && preview.kind === "calendar-month"
     && preview.key === monthObject?.tile?.id
-    && preview.version === MONTH_TILE_PREVIEW_VERSION
+    && preview.version === TILE_PREVIEW_VERSION
     && Number(preview.revision) === Number(monthObject.revision)
     && String(preview.dataSignature || "") === String(monthObject.dataSignature || "")
     && preview.provenance?.renderer === "calendar-month-full"
@@ -809,6 +866,22 @@ import {
     if (bucket && monthObject) mountMonthTilePreview(bucket, monthObject);
     return !!monthObject;
   };
+  const acceptDayTilePreview = (preview) => {
+    if (preview?.kind !== "calendar-day" || !preview.key) return false;
+    dayTilePreviews.set(String(preview.key), preview);
+    const dayObject = calendarObject().objectsById.get(String(preview.key));
+    if (dayObject) dayObject.preview = preview;
+    const tile = camera?.layers?.()[1]?.querySelector?.(
+      `:scope > .fc-expander-live .fc-day[data-tile-id="${CSS.escape(String(preview.key))}"]`,
+    );
+    if (tile && dayObject) mountDayTilePreview(tile, dayObject);
+    return !!dayObject;
+  };
+  const acceptTilePreview = (preview) => (
+    preview?.kind === "calendar-month"
+      ? acceptMonthTilePreview(preview)
+      : acceptDayTilePreview(preview)
+  );
   const staleMonthTilePreviewRequests = () => calendarObject().children
     .filter((monthObject) => !monthTilePreviewIsCurrent(
       monthTilePreviews.get(monthObject.tile.id) || monthObject.preview,
@@ -823,19 +896,23 @@ import {
     }));
   const captureMonthTilePreviews = async () => {
     if (window.crmHomePreviews?.isCaptureWorker
-      || !window.crmTilePreviews?.captureCalendarYear
+      || !window.crmTilePreviews?.capture
       || scheduledDataReadyYear !== currentYear) return [];
     const requests = staleMonthTilePreviewRequests();
     if (!requests.length) return [];
     requests.forEach((request) => monthTilePreviewRequests.add(request.key));
     try {
-      const result = await window.crmTilePreviews.captureCalendarYear(currentYear, requests);
-      if (result?.ok === false) monthTilePreviewLastError = String(result.error || "Capture failed");
-      else monthTilePreviewLastError = "";
+      const result = await window.crmTilePreviews.capture(
+        "calendar-month",
+        { year:currentYear },
+        requests,
+      );
+      if (result?.ok === false) tilePreviewLastError = String(result.error || "Capture failed");
+      else tilePreviewLastError = "";
       (result?.previews || []).forEach(acceptMonthTilePreview);
       return result?.previews || [];
     } catch (error) {
-      monthTilePreviewLastError = String(error?.message || error || "Capture failed");
+      tilePreviewLastError = String(error?.message || error || "Capture failed");
       return [];
     } finally {
       requests.forEach((request) => monthTilePreviewRequests.delete(request.key));
@@ -859,9 +936,78 @@ import {
     monthTilePreviewTimer = setTimeout(captureMonthTilePreviews, 80);
     return [];
   };
-  const subscribeMonthTilePreviews = () => {
-    if (monthTilePreviewSubscription || !window.crmTilePreviews?.onChanged) return;
-    try { monthTilePreviewSubscription = window.crmTilePreviews.onChanged(acceptMonthTilePreview); } catch {}
+  const activeMonthObject = () => {
+    const layer = camera?.layers?.()[1];
+    return layer?.dataset?.kind === "month" ? calendarObjectForElement(layer) : null;
+  };
+  const staleDayTilePreviewRequests = (monthObject = activeMonthObject()) => (
+    monthObject?.children || []
+  ).filter((dayObject) => !dayTilePreviewIsCurrent(
+    dayTilePreviews.get(dayObject.tile.id) || dayObject.preview,
+    dayObject,
+  )).filter((dayObject) => !dayTilePreviewRequests.has(dayObject.tile.id))
+    .map((dayObject) => ({
+      key:dayObject.tile.id,
+      date:dayObject.date,
+      revision:dayObject.revision,
+      dataSignature:dayObject.dataSignature,
+    }));
+  const captureDayTilePreviews = async (monthObject = activeMonthObject()) => {
+    if (window.crmHomePreviews?.isCaptureWorker
+      || !window.crmTilePreviews?.capture
+      || !monthObject
+      || scheduledDataReadyYear !== currentYear) return [];
+    const requests = staleDayTilePreviewRequests(monthObject);
+    if (!requests.length) return [];
+    requests.forEach((request) => dayTilePreviewRequests.add(request.key));
+    try {
+      const result = await window.crmTilePreviews.capture(
+        "calendar-day",
+        { year:monthObject.year, month:monthObject.month },
+        requests,
+      );
+      if (result?.ok === false) tilePreviewLastError = String(result.error || "Capture failed");
+      else tilePreviewLastError = "";
+      (result?.previews || []).forEach(acceptDayTilePreview);
+      return result?.previews || [];
+    } catch (error) {
+      tilePreviewLastError = String(error?.message || error || "Capture failed");
+      return [];
+    } finally {
+      requests.forEach((request) => dayTilePreviewRequests.delete(request.key));
+      const active = activeMonthObject();
+      if (camera?.isActive?.() && active === monthObject
+        && staleDayTilePreviewRequests(monthObject).length) {
+        clearTimeout(dayTilePreviewTimer);
+        dayTilePreviewTimer = setTimeout(() => captureDayTilePreviews(monthObject), 180);
+      }
+    }
+  };
+  const requestDayTilePreviews = async (monthObject = activeMonthObject(), {
+    capture = true,
+  } = {}) => {
+    if (window.crmHomePreviews?.isCaptureWorker || !window.crmTilePreviews || !monthObject) {
+      return [];
+    }
+    const scopeKey = `${monthObject.year}-${monthObject.month}`;
+    if (!dayTilePreviewListedScopes.has(scopeKey)) {
+      dayTilePreviewListedScopes.add(scopeKey);
+      try {
+        const result = await window.crmTilePreviews.list("calendar-day", {
+          year:monthObject.year,
+          month:monthObject.month,
+        });
+        (result?.previews || []).forEach(acceptDayTilePreview);
+      } catch {}
+    }
+    if (!capture || !camera?.isActive?.() || scheduledDataReadyYear !== currentYear) return [];
+    clearTimeout(dayTilePreviewTimer);
+    dayTilePreviewTimer = setTimeout(() => captureDayTilePreviews(monthObject), 80);
+    return [];
+  };
+  const subscribeTilePreviews = () => {
+    if (tilePreviewSubscription || !window.crmTilePreviews?.onChanged) return;
+    try { tilePreviewSubscription = window.crmTilePreviews.onChanged(acceptTilePreview); } catch {}
   };
   const waitForMonthTilePreviews = async (timeoutMs = 90000) => {
     if (!window.crmTilePreviews) return { supported:false, ready:0, total:12 };
@@ -878,7 +1024,7 @@ import {
         return { supported:true, ready, total:12 };
       }
       diagnostics = await window.crmTilePreviews.diagnostics?.().catch?.(() => null);
-      if (diagnostics?.status?.error) monthTilePreviewLastError = diagnostics.status.error;
+      if (diagnostics?.status?.error) tilePreviewLastError = diagnostics.status.error;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return {
@@ -886,13 +1032,49 @@ import {
       ready,
       total:12,
       pending:monthTilePreviewRequests.size,
-      error:monthTilePreviewLastError || "Calendar tile previews did not settle",
+      error:tilePreviewLastError || "Calendar tile previews did not settle",
       diagnostics,
       states:calendarObject().children.map((monthObject) => ({
         key:monthObject.tile.id,
         revision:monthObject.revision,
         previewRevision:monthTilePreviews.get(monthObject.tile.id)?.revision ?? null,
       })),
+    };
+  };
+  const waitForDayTilePreviews = async (timeoutMs = 90000) => {
+    const monthObject = activeMonthObject();
+    if (!window.crmTilePreviews || !monthObject) {
+      return { supported:!!window.crmTilePreviews, ready:0, total:monthObject?.children?.length || 0 };
+    }
+    await requestDayTilePreviews(monthObject);
+    const started = performance.now();
+    let ready = 0;
+    let diagnostics = null;
+    while (performance.now() - started < timeoutMs) {
+      ready = monthObject.children.filter((dayObject) => dayTilePreviewIsCurrent(
+        dayTilePreviews.get(dayObject.tile.id) || dayObject.preview,
+        dayObject,
+      )).length;
+      if (ready === monthObject.children.length && !dayTilePreviewRequests.size) {
+        return {
+          supported:true,
+          ready,
+          total:monthObject.children.length,
+          durationMs:performance.now() - started,
+        };
+      }
+      diagnostics = await window.crmTilePreviews.diagnostics?.().catch?.(() => null);
+      if (diagnostics?.status?.error) tilePreviewLastError = diagnostics.status.error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return {
+      supported:true,
+      ready,
+      total:monthObject.children.length,
+      pending:dayTilePreviewRequests.size,
+      durationMs:performance.now() - started,
+      error:tilePreviewLastError || "Day tile previews did not settle",
+      diagnostics,
     };
   };
 
@@ -1689,6 +1871,7 @@ import {
     camera.layout();
     scheduleYearMaterialPrewarm();
     if (camera.isActive?.()) void requestMonthTilePreviews();
+    if (camera.isActive?.() && camera.level?.() >= 1) void requestDayTilePreviews();
   };
   const scheduleYearMaterialPrewarm = ({ delay = 0 } = {}) => {
     clearTimeout(materialPrewarmTimer);
@@ -1965,6 +2148,7 @@ import {
         // has seen a clean endpoint paint.
         scheduleYearMaterialPrewarm({ delay:MATERIAL_HANDOFF_MS + 40 });
       }
+      if (context.level === 1) void requestDayTilePreviews();
     },
     onLevelChange:(context) => {
       ensureYearChrome(context.surface);
@@ -1976,6 +2160,7 @@ import {
         if (context.level > 0) seatBackdropCover(context);
         else hideBackdropCover();
       }
+      if (context.level === 1) void requestDayTilePreviews();
     },
     onActiveChange:(active, context) => {
       const yearChrome = ensureYearChrome(context.surface);
@@ -1987,6 +2172,9 @@ import {
       if (!active) {
         clearTimeout(monthTilePreviewTimer);
         monthTilePreviewTimer = 0;
+        clearTimeout(dayTilePreviewTimer);
+        dayTilePreviewTimer = 0;
+        dayTilePreviewRequests.clear();
         clearTimeout(materialPrewarmTimer);
         materialPrewarmTimer = 0;
         cancelAnimationFrame(materialPrewarmFrame);
@@ -2043,6 +2231,7 @@ import {
         backdropCoverPrewarmTimer = setTimeout(warmBackdropWhenReady, 120);
         scheduleYearMaterialPrewarm();
         void requestMonthTilePreviews();
+        if (context.level === 1) void requestDayTilePreviews();
       }
     },
     onRootBack:() => window.crmDeskTransit?.driveTo?.("home"),
@@ -2052,7 +2241,7 @@ import {
       wireDrops();
       wireDayOpens();
       subscribeScheduled();
-      subscribeMonthTilePreviews();
+      subscribeTilePreviews();
       void loadScheduled({ refresh:true });
     },
   });
@@ -2091,6 +2280,24 @@ import {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return camera.level() === 1;
   };
+  const prepareDayTilePreview = async (year, month, date) => {
+    if (!await prepareMonthTilePreview(year, month)) return false;
+    const day = camera.layers()[1]?.querySelector(
+      `:scope > .fc-expander-live .fc-day[data-date="${CSS.escape(String(date || ""))}"]`,
+    );
+    if (!day || !camera.jumpTo(day)) return false;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return camera.level() === 2;
+  };
+  const prepareTilePreview = async (kind, viewState = {}) => {
+    if (kind === "calendar-month") {
+      return prepareMonthTilePreview(viewState.year, viewState.month);
+    }
+    if (kind === "calendar-day") {
+      return prepareDayTilePreview(viewState.year, viewState.month, viewState.date);
+    }
+    return false;
+  };
   const previewCaptureRect = () => {
     const rectangle = camera.expRect();
     return {
@@ -2128,6 +2335,34 @@ import {
       dataSignature:String(monthObject?.dataSignature || ""),
     };
   };
+  const dayPreviewCaptureProvenance = (date) => {
+    const sourceDay = camera.layers()[1]?.querySelector(
+      `:scope > .fc-expander-live .fc-day[data-date="${CSS.escape(String(date || ""))}"]`,
+    );
+    const activeDay = camera.layers()[2]?.matches?.(
+      `.fc-expander[data-kind="day"][data-date="${CSS.escape(String(date || ""))}"]`,
+    ) ? camera.layers()[2] : null;
+    const live = activeDay?.querySelector(":scope > .fc-expander-live");
+    const dayObject = calendarObjectForElement(activeDay)
+      || calendarObjectForElement(sourceDay);
+    return {
+      renderer:live?.dataset?.tileRenderer || "",
+      dayTileId:dayObject?.tile?.id || "",
+      dayObjectCanonical:isTileObject(dayObject),
+      shellSharesSourceObject:calendarObjectForElement(sourceDay)
+        === calendarObjectForElement(activeDay),
+      fullRendererSharesObject:calendarObjectForElement(live) === dayObject,
+      sourceView:sourceDay?.dataset?.tileObjectView || "",
+      revision:Number(dayObject?.revision) || 0,
+      dataSignature:String(dayObject?.dataSignature || ""),
+    };
+  };
+  const tilePreviewCaptureState = (kind, key) => {
+    const provenance = kind === "calendar-month"
+      ? previewCaptureProvenance(Number(String(key || "").slice(-2)))
+      : dayPreviewCaptureProvenance(String(key || "").replace(/^calendar-day-/, ""));
+    return { region:previewCaptureRect(), provenance };
+  };
 
   window.fractalCalendar = {
     setActive:(active) => camera.setActive(active),
@@ -2151,10 +2386,13 @@ import {
     }),
     _objectForElement:calendarObjectForElement,
     _objectGraph:() => calendarObject(),
+    prepareTilePreview,
+    tilePreviewCaptureState,
     prepareMonthTilePreview,
     previewCaptureRect,
     previewCaptureProvenance,
     waitForTilePreviews:waitForMonthTilePreviews,
+    waitForDayTilePreviews,
     tilePreviewStatus:() => calendarObject().children.map((monthObject) => {
       const preview = monthTilePreviews.get(monthObject.tile.id) || monthObject.preview || null;
       return {
@@ -2166,7 +2404,23 @@ import {
         revision:monthObject.revision,
         capturedAt:preview?.capturedAt || 0,
         renderer:preview?.provenance?.renderer || "",
-        error:monthTilePreviewLastError,
+        error:tilePreviewLastError,
+      };
+    }),
+    dayTilePreviewStatus:() => (activeMonthObject()?.children || []).map((dayObject) => {
+      const preview = dayTilePreviews.get(dayObject.tile.id) || dayObject.preview || null;
+      return {
+        key:dayObject.tile.id,
+        date:dayObject.date,
+        state:dayTilePreviewRequests.has(dayObject.tile.id)
+          ? "updating"
+          : (dayTilePreviewIsCurrent(preview, dayObject)
+            ? "ready"
+            : (preview ? "stale" : "waiting")),
+        revision:dayObject.revision,
+        capturedAt:preview?.capturedAt || 0,
+        renderer:preview?.provenance?.renderer || "",
+        error:tilePreviewLastError,
       };
     }),
     homePreviewState,

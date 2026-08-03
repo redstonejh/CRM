@@ -1,6 +1,7 @@
 // Canonical tile records and adaptive, equal-cell geometry shared by every
 // viewport that presents a collection of tiles.
 const TILE_SCHEMA_VERSION = 1;
+const tileObjectByElement = new WeakMap();
 
 const text = (...values) => values
   .map((value) => String(value ?? "").trim())
@@ -13,9 +14,22 @@ export function normalizeTileRecord(source = {}, defaults = {}) {
   const id = text(nested.id, source.id, source.key, defaults.id, defaults.key);
   const key = text(nested.key, source.key, defaults.key, id);
   const title = text(nested.title, source.title, source.label, defaults.title, defaults.label, "Untitled tile");
-  const kind = text(nested.kind, source.tileKind, defaults.kind, "tile");
-  const targetType = text(nested.target?.type, source.targetType, defaults.targetType, kind);
-  const targetId = text(nested.target?.id, source.targetId, source.module, defaults.targetId, id);
+  const kind = text(nested.kind, source.tileKind, source.kind, defaults.kind, "tile");
+  const targetType = text(
+    nested.target?.type,
+    source.target?.type,
+    source.targetType,
+    defaults.targetType,
+    kind,
+  );
+  const targetId = text(
+    nested.target?.id,
+    source.target?.id,
+    source.targetId,
+    source.module,
+    defaults.targetId,
+    id,
+  );
   return {
     schemaVersion:TILE_SCHEMA_VERSION,
     id,
@@ -74,6 +88,42 @@ export function createTileElement(source = {}, options = {}) {
   bindTileElement(element, source, options);
   if (options.tabIndex != null) element.tabIndex = Number(options.tabIndex);
   return element;
+}
+
+const tileRecordOf = (object) => (
+  object?.tile && typeof object.tile === "object" ? object.tile : object
+);
+
+// A tile object is the persistent semantic object. Any number of visual LODs
+// may be bound to it without promoting an inert preview into an interactive
+// tile. This is how a preview and its entered viewport retain strict object
+// identity while owning different DOM representations.
+export function bindTileObject(element, object, options = {}) {
+  if (!element || !object) return null;
+  const record = tileRecordOf(object);
+  const tile = options.bindSchema === false
+    ? normalizeTileRecord(record, options.defaults || {})
+    : bindTileElement(element, record, options);
+  tileObjectByElement.set(element, object);
+  element.dataset.tileObjectId = tile.id;
+  if (options.view != null) element.dataset.tileObjectView = text(options.view);
+  return object;
+}
+
+export function createTileObjectElement(object, options = {}) {
+  const tagName = text(options.tagName, "button").toLowerCase();
+  const element = document.createElement(tagName);
+  if (tagName === "button") element.type = text(options.type, "button");
+  text(options.className).split(/\s+/).filter(Boolean).forEach((name) => {
+    element.classList.add(name);
+  });
+  bindTileObject(element, object, options);
+  if (options.tabIndex != null) element.tabIndex = Number(options.tabIndex);
+  return element;
+}
+
+export function tileObjectForElement(element) {
+  return element ? tileObjectByElement.get(element) || null : null;
 }
 
 function roundedTilePath(box) {
@@ -353,6 +403,9 @@ export const crmTileSystem = {
   normalizeAll:normalizeTileCollection,
   bind:bindTileElement,
   create:createTileElement,
+  bindObject:bindTileObject,
+  createObject:createTileObjectElement,
+  objectFor:tileObjectForElement,
   tileUnionPath,
   ensureMaterial:ensureTileMaterialPlane,
   syncMaterial:syncTileMaterialPlane,

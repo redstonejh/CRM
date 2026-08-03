@@ -1,6 +1,7 @@
 import {
   applyAdaptiveTileGrid,
-  createTileElement,
+  bindTileObject,
+  createTileObjectElement,
   normalizeTileRecord,
 } from "./modules/tile-system.js";
 import { changed as contextAddChanged, register as registerContextAddProvider } from "./modules/context-add-registry.js";
@@ -1105,7 +1106,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const titleLayer = document.createElement("div"); titleLayer.className = "crm-home-title-layer";
     titleLayer.innerHTML = homeTileRecords.map(titleHTML).join("");
     homeTileRecords.forEach((module) => {
-      const bucket = createTileElement(module.tile, { ariaLabel:`Open ${module.label}` });
+      const bucket = createTileObjectElement(module, {
+        ariaLabel:`Open ${module.label}`,
+        view:"preview",
+      });
       bucket.dataset.module = module.key;
       bucket.dataset.viewportModule = module.key;
       bucket.dataset.enabled = "true"; bucket.innerHTML = bucketHTML(module);
@@ -1421,6 +1425,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const bucket = recycledExpanders.get(module.key) || document.createElement("div");
     recycledExpanders.delete(module.key);
     bucket.className = "crm-home-bucket crm-home-expander";
+    bindTileObject(bucket, tile || module, {
+      ariaLabel:`Open ${tile?.label || module.label}`,
+      view:"expanded-preview",
+    });
     bucket.dataset.module = module.key;
     bucket.dataset.viewportModule = module.key;
     bucket.dataset.tileId = tile?.tile?.id || target?.dataset?.tileId || module.tile.id;

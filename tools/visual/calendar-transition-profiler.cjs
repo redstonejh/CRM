@@ -416,6 +416,8 @@ async function auditArchitecture(page, phase) {
     const activeDay = surface.querySelector(
       ':scope > .fc-expander[data-kind="day"]:not(.fc-warm)',
     );
+    const objectFor = window.fractalCalendar._objectForElement;
+    const objectGraph = window.fractalCalendar._objectGraph();
     const liveBackdropCover = surface.querySelector(':scope > .fc-live-backdrop-cover');
     const legacySelector = [
       '.fc-frost',
@@ -426,31 +428,36 @@ async function auditArchitecture(page, phase) {
       '.fc-below-material-scene',
       '.fc-strip-texture',
     ].join(',');
-    const tileAudit = (tiles, expectedKind = 'calendar-day') => ({
-      count:tiles.length,
-      buttonCount:tiles.filter((tile) => tile.tagName === 'BUTTON').length,
-      sharedClassCount:tiles.filter((tile) => tile.classList.contains('crm-home-bucket')).length,
-      schemaCount:tiles.filter((tile) => tile.dataset.tileSchemaVersion === '1').length,
-      identityCount:new Set(tiles.map((tile) => tile.dataset.tileId)).size,
-      targetCount:new Set(tiles.map((tile) => tile.dataset.tileTargetId)).size,
-      calendarKindCount:tiles.filter((tile) => tile.dataset.tileKind === expectedKind).length,
-      directBackdropCount:tiles.filter((tile) => {
-        const material = tile.querySelector(':scope > .crm-tile-acrylic') || tile;
-        const style = material && getComputedStyle(material);
-        return !!style && String(
-          style.webkitBackdropFilter || style.backdropFilter,
-        ).includes('blur(');
-      }).length,
-      visibleBackdropCount:tiles.filter((tile) => {
-        const material = tile.querySelector(':scope > .crm-tile-acrylic') || tile;
-        const style = material && getComputedStyle(material);
-        return !!style
-          && style.display !== 'none'
-          && style.visibility === 'visible'
-          && Number(style.opacity) > .998
-          && String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(');
-      }).length,
-    });
+    const tileAudit = (tiles, expectedKind = 'calendar-day') => {
+      const objects = tiles.map((tile) => objectFor(tile)).filter(Boolean);
+      return {
+        count:tiles.length,
+        buttonCount:tiles.filter((tile) => tile.tagName === 'BUTTON').length,
+        sharedClassCount:tiles.filter((tile) => tile.classList.contains('crm-home-bucket')).length,
+        schemaCount:tiles.filter((tile) => tile.dataset.tileSchemaVersion === '1').length,
+        identityCount:new Set(tiles.map((tile) => tile.dataset.tileId)).size,
+        targetCount:new Set(tiles.map((tile) => tile.dataset.tileTargetId)).size,
+        calendarKindCount:tiles.filter((tile) => tile.dataset.tileKind === expectedKind).length,
+        objectBoundCount:objects.length,
+        objectIdentityCount:new Set(objects).size,
+        directBackdropCount:tiles.filter((tile) => {
+          const material = tile.querySelector(':scope > .crm-tile-acrylic') || tile;
+          const style = material && getComputedStyle(material);
+          return !!style && String(
+            style.webkitBackdropFilter || style.backdropFilter,
+          ).includes('blur(');
+        }).length,
+        visibleBackdropCount:tiles.filter((tile) => {
+          const material = tile.querySelector(':scope > .crm-tile-acrylic') || tile;
+          const style = material && getComputedStyle(material);
+          return !!style
+            && style.display !== 'none'
+            && style.visibility === 'visible'
+            && Number(style.opacity) > .998
+            && String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(');
+        }).length,
+      };
+    };
     const planeAudit = (plane) => {
       if (!plane) return null;
       const style = getComputedStyle(plane);
@@ -488,6 +495,11 @@ async function auditArchitecture(page, phase) {
       rootTiles:tileAudit(rootMonths, 'calendar-month'),
       rootPreview:{
         count:rootPreviews.length,
+        objectBoundCount:rootPreviews.filter((preview) => !!objectFor(preview)).length,
+        objectIdentityCount:new Set(rootPreviews.map((preview) => objectFor(preview))).size,
+        graphIdentityCount:rootPreviews.filter((preview) => (
+          objectFor(preview) === objectGraph.daysByDate.get(preview.dataset.date)
+        )).length,
         inertCount:rootPreviews.filter((preview) => (
           preview.tagName === 'SPAN'
           && !preview.matches('button,[data-crm-tile],.crm-home-bucket')
@@ -558,6 +570,17 @@ async function auditArchitecture(page, phase) {
       activeMonth:activeMonth ? {
         month:activeMonth.dataset.month,
         tiles:tileAudit(monthDays),
+        shellSharesRootObject:objectFor(activeMonth) === objectFor(rootMonths.find(
+          (month) => month.dataset.month === activeMonth.dataset.month,
+        )),
+        dayObjectsSharedWithPreview:monthDays.filter((day) => {
+          const preview = root.querySelector(
+            `.fc-day-preview-cell[data-date="${CSS.escape(day.dataset.date)}"]`,
+          );
+          return !!preview
+            && objectFor(day) === objectFor(preview)
+            && objectFor(day) === objectGraph.daysByDate.get(day.dataset.date);
+        }).length,
         plane:planeAudit(monthPlane),
         transitionFrameOpacity:Number(getComputedStyle(
           activeMonth.querySelector(':scope > .fc-transition-acrylic'),
@@ -571,6 +594,9 @@ async function auditArchitecture(page, phase) {
       activeDay:activeDay ? {
         date:activeDay.dataset.date,
         isSharedTile:activeDay.matches('[data-crm-tile][data-tile-schema-version="1"]'),
+        sharesMonthDayObject:objectFor(activeDay) === objectFor(monthDays.find(
+          (day) => day.dataset.date === activeDay.dataset.date,
+        )),
         material:planeAudit(activeDay.querySelector(':scope > .fc-day-detail-material')),
       } : null,
       yearChromeCount:document.querySelectorAll('body > .fc-year-strip').length,
@@ -592,11 +618,16 @@ function architectureFailures(audit, expectedLevel) {
     || audit.rootTiles.identityCount !== expectedRootMonths
     || audit.rootTiles.targetCount !== expectedRootMonths
     || audit.rootTiles.calendarKindCount !== expectedRootMonths
+    || audit.rootTiles.objectBoundCount !== expectedRootMonths
+    || audit.rootTiles.objectIdentityCount !== expectedRootMonths
     || audit.rootTiles.directBackdropCount !== expectedRootMonths
     || audit.rootTiles.visibleBackdropCount !== expectedRootMonths) {
     failures.push(`${audit.phase} root months are not canonical Home-style tile instances`);
   }
   if (![365, 366].includes(audit.rootPreview?.count)
+    || audit.rootPreview?.objectBoundCount !== audit.rootPreview?.count
+    || audit.rootPreview?.objectIdentityCount !== audit.rootPreview?.count
+    || audit.rootPreview?.graphIdentityCount !== audit.rootPreview?.count
     || audit.rootPreview?.inertCount !== audit.rootPreview?.count
     || audit.rootPreview?.backdropCount !== 0
     || audit.rootPreview?.realDayCount !== 0
@@ -847,6 +878,10 @@ async function main() {
       || monthAudit.tiles.identityCount !== monthAudit.tiles.count
       || monthAudit.tiles.targetCount !== monthAudit.tiles.count
       || monthAudit.tiles.calendarKindCount !== monthAudit.tiles.count
+      || monthAudit.tiles.objectBoundCount !== monthAudit.tiles.count
+      || monthAudit.tiles.objectIdentityCount !== monthAudit.tiles.count
+      || monthAudit.dayObjectsSharedWithPreview !== monthAudit.tiles.count
+      || monthAudit.shellSharesRootObject !== true
       || monthAudit.tiles.directBackdropCount !== monthAudit.tiles.count
       || monthAudit.tiles.visibleBackdropCount !== 0
       || monthAudit.plane?.count !== monthAudit.tiles.count
@@ -860,6 +895,7 @@ async function main() {
     }
     const dayAudit = architecture.find((audit) => audit.phase === 'day-rest')?.activeDay;
     if (!dayAudit?.isSharedTile
+      || dayAudit.sharesMonthDayObject !== true
       || dayAudit.material?.ready !== true
       || dayAudit.material?.count !== 1
       || dayAudit.material?.clipIsActive !== true

@@ -1,7 +1,10 @@
 import {
-  createTileElement,
+  bindTileObject,
+  createTileObjectElement,
   ensureTileMaterialPlane,
+  normalizeTileRecord,
   syncTileMaterialPlane,
+  tileObjectForElement,
   tileUnionPath,
 } from "./modules/tile-system.js";
 
@@ -39,7 +42,7 @@ import {
   let monthAcrylicLens = null;
   let dayAcrylicLens = null;
   const materialHandoffs = new Map();
-  let scheduledByDate = new Map();
+  let calendarYearObject = null;
   let subscriptionsReady = false;
   let reloadTimer = 0;
   let materialPrewarmFrame = 0;
@@ -67,10 +70,11 @@ import {
     const date = crmNow();
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   };
-  const daysIn = (month) => new Date(currentYear, month + 1, 0).getDate();
-  const firstDow = (month) => new Date(currentYear, month, 1).getDay();
-  const iso = (month, day) => `${currentYear}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  const yearDate = (date) => String(date || "").startsWith(`${currentYear}-`);
+  const daysInYearMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const firstDowInYearMonth = (year, month) => new Date(year, month, 1).getDay();
+  const isoFor = (year, month, day) => (
+    `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+  );
   const recordsFrom = (result) => (
     Array.isArray(result) ? result : ((result && (result.records || result.tickets)) || [])
   );
@@ -78,7 +82,7 @@ import {
     const meta = record?.meta || {};
     const raw = meta.scheduledDate || meta.calendarDate
       || record?.scheduledDate || record?.calendarDate
-      || record?.dueDate || record?.startDate;
+      || record?.dueDate || record?.dueAt || record?.startDate;
     const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(raw || ""));
     if (!match) return "";
     const value = String(raw || "");
@@ -103,6 +107,166 @@ import {
     { type:"bill", entity:"bills" },
     { type:"invoice", entity:"invoices" },
   ];
+
+  const createCalendarDayObject = (year, monthIndex, day) => {
+    const date = isoFor(year, monthIndex, day);
+    return {
+      objectKind:"calendar-day",
+      year,
+      monthIndex,
+      day,
+      date,
+      revision:0,
+      dataSignature:"",
+      entries:[],
+      tile:normalizeTileRecord({
+        id:`calendar-day-${date}`,
+        key:date,
+        title:`${MONTHS[monthIndex]} ${day}`,
+        label:`${MONTHS[monthIndex]} ${day}, ${year}`,
+        tileKind:"calendar-day",
+        targetType:"calendar-day",
+        targetId:date,
+        rank:day - 1,
+      }),
+    };
+  };
+  const createCalendarMonthObject = (year, monthIndex) => {
+    const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+    const month = {
+      objectKind:"calendar-month",
+      year,
+      monthIndex,
+      month:monthIndex + 1,
+      key,
+      revision:0,
+      days:[],
+      tile:normalizeTileRecord({
+        id:`calendar-month-${key}`,
+        key,
+        title:MONTHS[monthIndex],
+        label:`${MONTHS[monthIndex]} ${year}`,
+        tileKind:"calendar-month",
+        targetType:"calendar-month",
+        targetId:key,
+        rank:monthIndex,
+      }),
+    };
+    for (let day = 1; day <= daysInYearMonth(year, monthIndex); day += 1) {
+      month.days.push(createCalendarDayObject(year, monthIndex, day));
+    }
+    return month;
+  };
+  const createCalendarYearObject = (year) => {
+    const object = {
+      objectKind:"calendar-year",
+      year,
+      revision:0,
+      months:[],
+      daysByDate:new Map(),
+      objectsById:new Map(),
+      entriesById:new Map(),
+      tile:normalizeTileRecord({
+        id:`calendar-year-${year}`,
+        key:String(year),
+        title:String(year),
+        label:`Calendar year ${year}`,
+        tileKind:"calendar-year",
+        targetType:"calendar-year",
+        targetId:String(year),
+      }),
+    };
+    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+      const month = createCalendarMonthObject(year, monthIndex);
+      object.months.push(month);
+      object.objectsById.set(month.tile.id, month);
+      month.days.forEach((day) => {
+        object.daysByDate.set(day.date, day);
+        object.objectsById.set(day.tile.id, day);
+      });
+    }
+    object.objectsById.set(object.tile.id, object);
+    return object;
+  };
+  const calendarObject = () => {
+    if (!calendarYearObject || calendarYearObject.year !== currentYear) {
+      calendarYearObject = createCalendarYearObject(currentYear);
+    }
+    return calendarYearObject;
+  };
+  const resetCalendarObject = () => {
+    calendarYearObject = createCalendarYearObject(currentYear);
+    renderRevision += 1;
+    return calendarYearObject;
+  };
+  const calendarObjectForElement = (element) => {
+    if (!element) return null;
+    return tileObjectForElement(element)
+      || calendarObject().objectsById.get(element.dataset?.tileObjectId || "")
+      || null;
+  };
+  const bindCalendarObjectView = (element, object, view, {
+    bindSchema = false,
+    ...options
+  } = {}) => {
+    if (!element || !object) return null;
+    bindTileObject(element, object, { ...options, bindSchema, view });
+    element.dataset.calendarObjectKind = object.objectKind;
+    element.dataset.calendarObjectRevision = String(object.revision || 0);
+    return object;
+  };
+  const bindClonedCalendarViews = (root) => {
+    if (!root) return;
+    const nodes = [
+      ...(root.matches?.("[data-tile-object-id]") ? [root] : []),
+      ...(root.querySelectorAll?.("[data-tile-object-id]") || []),
+    ];
+    nodes.forEach((node) => {
+      const object = calendarObject().objectsById.get(node.dataset.tileObjectId);
+      if (object) bindCalendarObjectView(node, object, "transition-copy");
+    });
+  };
+  const entrySignature = (entry) => JSON.stringify([
+    entry.type,
+    entry.id,
+    entry.title,
+    entry.hot,
+    entry.projectTitle,
+    entry.stageId,
+    (entry.projectStages || []).map((stage) => [stage.id, stage.kind, stage.rank]),
+  ]);
+  const reconcileCalendarData = (yearObject, nextByDate) => {
+    const activeEntryIds = new Set();
+    yearObject.daysByDate.forEach((dayObject, date) => {
+      const nextEntries = (nextByDate.get(date) || []).map((payload) => {
+        const objectId = `${payload.type}:${payload.id}`;
+        activeEntryIds.add(objectId);
+        let entry = yearObject.entriesById.get(objectId);
+        if (!entry) {
+          entry = { objectKind:"calendar-entry", objectId, revision:0 };
+          yearObject.entriesById.set(objectId, entry);
+        }
+        const signature = entrySignature(payload);
+        if (entry.dataSignature !== signature) entry.revision += 1;
+        Object.assign(entry, payload, { dataSignature:signature });
+        return entry;
+      });
+      const signature = nextEntries.map((entry) => entry.dataSignature).join("|");
+      if (dayObject.dataSignature !== signature) {
+        dayObject.dataSignature = signature;
+        dayObject.revision += 1;
+      }
+      dayObject.entries.splice(0, dayObject.entries.length, ...nextEntries);
+    });
+    [...yearObject.entriesById.keys()].forEach((objectId) => {
+      if (!activeEntryIds.has(objectId)) yearObject.entriesById.delete(objectId);
+    });
+    yearObject.months.forEach((month) => {
+      month.revision = month.days.reduce((sum, day) => sum + day.revision, 0);
+    });
+    yearObject.revision += 1;
+    renderRevision += 1;
+  };
 
   const ensureStyles = () => {
     if (document.getElementById("fractal-calendar-styles")) return;
@@ -178,10 +342,14 @@ import {
       .fc-days{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:repeat(7,1fr);
         grid-template-rows:repeat(6,1fr);column-gap:1.6%;row-gap:2%}
       .fc-day-spacer{min-height:0;visibility:hidden;pointer-events:none}
-      .fc-day-preview-cell{position:relative;display:block;min-width:0;min-height:0;
-        overflow:hidden;pointer-events:none;border:1px solid rgba(255,255,255,.13);
-        border-radius:calc(var(--day-r,3px) * var(--kx,1)) /
+      .fc-day-object-view{position:relative;box-sizing:border-box;min-width:0;min-height:0;
+        overflow:hidden;border-radius:calc(var(--day-r,3px) * var(--kx,1)) /
           calc(var(--day-r,3px) * var(--ky,1));
+        --fc-day-surface:var(--bucket-acrylic-surface);
+        --fc-day-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),
+          0 14px 26px -16px rgba(0,0,0,.72)}
+      .fc-day-preview-cell{display:block;pointer-events:none;
+        border:1px solid rgba(255,255,255,.13);
         background:linear-gradient(180deg,rgba(36,45,59,.72),rgba(20,27,38,.66));
         box-shadow:inset 0 1px 0 rgba(255,255,255,.09)}
       .fc-day-preview-cell.fc-today{
@@ -195,9 +363,6 @@ import {
          of the backdrop and visually flattens the frost into transparency. */
       .fc-day.crm-home-bucket{position:relative;z-index:1;box-sizing:border-box;display:block;
         min-width:0;min-height:0;width:auto;height:auto;overflow:hidden;padding:0;appearance:none;
-        --fc-day-surface:var(--bucket-acrylic-surface);
-        --fc-day-shadow:inset 0 1px 0 var(--crm-menu-highlight,rgba(255,255,255,.24)),
-          0 14px 26px -16px rgba(0,0,0,.72);
         color:#fff;cursor:pointer;border:1px solid var(--bucket-acrylic-border)!important;
         border-radius:calc(var(--day-r,3px) * var(--kx,1)) /
           calc(var(--day-r,3px) * var(--ky,1))!important;
@@ -360,9 +525,9 @@ import {
     document.head.appendChild(style);
   };
 
-  const scheduledFor = (date) => scheduledByDate.get(date) || [];
-  const visibleScheduledFor = (date, limit) => {
-    const all = scheduledFor(date);
+  const scheduledFor = (dayObject) => dayObject?.entries || [];
+  const visibleScheduledFor = (dayObject, limit) => {
+    const all = scheduledFor(dayObject);
     const items = all.slice(0, limit);
     const projectItem = all.find((item) => item.projectStages?.length);
     if (projectItem && !items.includes(projectItem)) {
@@ -380,16 +545,16 @@ import {
       stages.map((_stage, index) => `<i data-reached="${index <= current}"></i>`).join("")
     }</span>`;
   };
-  const scheduledPreviewHTML = (date, limit = 3) => {
-    const { items } = visibleScheduledFor(date, limit);
+  const scheduledPreviewHTML = (dayObject, limit = 3) => {
+    const { items } = visibleScheduledFor(dayObject, limit);
     if (!items.length) return "";
     return `<div class="fc-day-preview" aria-hidden="true">${items.map((item) => {
       const map = progressMapHTML(item, "fc-day-preview-item");
       return map || `<span class="fc-day-preview-item" data-type="${esc(item.type)}"><i data-reached="true"></i></span>`;
     }).join("")}</div>`;
   };
-  const scheduledHTML = (date, limit = 4) => {
-    const { all, items } = visibleScheduledFor(date, limit);
+  const scheduledHTML = (dayObject, limit = 4) => {
+    const { all, items } = visibleScheduledFor(dayObject, limit);
     if (!items.length) return "";
     const extra = all.length - items.length;
     return `<div class="fc-scheduled-list">${items.map((item) => (
@@ -400,128 +565,132 @@ import {
     )).join("")}${extra > 0 ? `<div class="fc-chip-more">+${extra} more</div>` : ""}</div>`;
   };
 
-  const dayTileRecord = (month, day) => {
-    const date = iso(month, day);
-    return {
-      id:`calendar-day-${date}`,
-      key:date,
-      title:`${MONTHS[month]} ${day}`,
-      label:`${MONTHS[month]} ${day}, ${currentYear}`,
-      tileKind:"calendar-day",
-      targetType:"calendar-day",
-      targetId:date,
-      rank:day - 1,
-    };
-  };
-  const monthTileRecord = (month) => {
-    const key = `${currentYear}-${String(month + 1).padStart(2, "0")}`;
-    return {
-      id:`calendar-month-${key}`,
-      key,
-      title:MONTHS[month],
-      label:`${MONTHS[month]} ${currentYear}`,
-      tileKind:"calendar-month",
-      targetType:"calendar-month",
-      targetId:key,
-      rank:month,
-    };
-  };
-  const createDayTile = (month, day, { interactive = false } = {}) => {
-    const date = iso(month, day);
-    const tile = createTileElement(dayTileRecord(month, day), {
-      className:`fc-day${date === todayIso() ? " fc-today" : ""}`,
-      ariaLabel:`Open ${MONTHS[month]} ${day}, ${currentYear}`,
-      tabIndex:interactive ? 0 : -1,
+  const updateCalendarDayView = (element, dayObject, {
+    view = "preview",
+    interactive = false,
+  } = {}) => {
+    const preview = view === "preview";
+    bindCalendarObjectView(element, dayObject, view, {
+      bindSchema:!preview,
+      ariaLabel:`Open ${dayObject.tile.label}`,
     });
-    tile.dataset.date = date;
-    tile.dataset.calendarTile = "day";
-    tile.innerHTML = `<span class="crm-tile-acrylic" aria-hidden="true"></span>` +
-      `<span class="fc-day-num">${day}</span><div class="fc-day-body">${
-      scheduledPreviewHTML(date)
-    }${scheduledHTML(date)}</div>`;
-    return tile;
+    element.dataset.date = dayObject.date;
+    element.dataset.calendarObjectRevision = String(dayObject.revision);
+    element.classList.toggle("fc-today", dayObject.date === todayIso());
+    if (preview) {
+      element.dataset.calendarPreview = "day";
+      element.dataset.previewRecordCount = String(dayObject.entries.length);
+      element.setAttribute("aria-hidden", "true");
+      element.innerHTML = scheduledPreviewHTML(dayObject);
+    } else {
+      delete element.dataset.calendarPreview;
+      delete element.dataset.previewRecordCount;
+      element.removeAttribute("aria-hidden");
+      element.dataset.calendarTile = "day";
+      element.tabIndex = interactive ? 0 : -1;
+      element.innerHTML = `<span class="crm-tile-acrylic" aria-hidden="true"></span>` +
+        `<span class="fc-day-num">${dayObject.day}</span><div class="fc-day-body">${
+        scheduledPreviewHTML(dayObject)
+      }${scheduledHTML(dayObject)}</div>`;
+    }
+    return element;
   };
-  const createDayPreviewCell = (month, day) => {
-    const date = iso(month, day);
-    const cell = document.createElement("span");
-    cell.className = `fc-day-preview-cell${date === todayIso() ? " fc-today" : ""}`;
-    cell.dataset.date = date;
-    cell.dataset.calendarPreview = "day";
-    cell.dataset.previewRecordCount = String(scheduledByDate.get(date)?.length || 0);
-    cell.setAttribute("aria-hidden", "true");
-    cell.innerHTML = scheduledPreviewHTML(date);
-    return cell;
+  const createCalendarDayView = (dayObject, {
+    view = "preview",
+    interactive = false,
+  } = {}) => {
+    const preview = view === "preview";
+    const element = preview
+      ? document.createElement("span")
+      : createTileObjectElement(dayObject, {
+        className:"fc-day fc-day-object-view",
+        ariaLabel:`Open ${dayObject.tile.label}`,
+        tabIndex:interactive ? 0 : -1,
+        view,
+      });
+    if (preview) element.className = "fc-day-preview-cell fc-day-object-view";
+    return updateCalendarDayView(element, dayObject, { view, interactive });
   };
-  const mountMonthPreview = (host, month) => {
-    host.dataset.month = String(month + 1);
-    host.dataset.kind = "month";
-    host.dataset.previewRevision = String(renderRevision);
+  const createMonthViewStructure = (host, monthObject, {
+    view,
+    interactiveDays,
+    material,
+    materialClass,
+  }) => {
+    const existingMaterial = material
+      ? host.querySelector?.(":scope > .crm-tile-material-plane")
+      : null;
     const header = document.createElement("div");
     header.className = "fc-hd";
-    header.innerHTML = `<span>${MONTHS[month]}</span>`;
+    header.innerHTML = `<span>${MONTHS[monthObject.monthIndex]}</span>`;
     const weekdays = document.createElement("div");
     weekdays.className = "fc-dowrow";
     weekdays.innerHTML = DOW.map((day) => `<span>${day}</span>`).join("");
     const days = document.createElement("div");
     days.className = "fc-days";
-    const leading = firstDow(month);
-    const count = daysIn(month);
-    const trailing = 42 - leading - count;
+    const leading = firstDowInYearMonth(monthObject.year, monthObject.monthIndex);
+    const trailing = 42 - leading - monthObject.days.length;
+    const spacerTag = view === "preview" ? "span" : "div";
     for (let index = 0; index < leading; index += 1) {
-      const spacer = document.createElement("span");
+      const spacer = document.createElement(spacerTag);
       spacer.className = "fc-day-spacer";
       spacer.setAttribute("aria-hidden", "true");
       days.appendChild(spacer);
     }
-    for (let day = 1; day <= count; day += 1) {
-      days.appendChild(createDayPreviewCell(month, day));
-    }
+    monthObject.days.forEach((dayObject) => {
+      days.appendChild(createCalendarDayView(dayObject, {
+        view,
+        interactive:interactiveDays,
+      }));
+    });
     for (let index = 0; index < trailing; index += 1) {
-      const spacer = document.createElement("span");
+      const spacer = document.createElement(spacerTag);
       spacer.className = "fc-day-spacer";
       spacer.setAttribute("aria-hidden", "true");
       days.appendChild(spacer);
     }
     host.replaceChildren(header, weekdays, days);
-    return host;
+    if (existingMaterial) host.prepend(existingMaterial);
   };
-  const mountMonthContents = (host, month, {
+  const mountCalendarMonthView = (host, monthObject, {
+    view = "preview",
     interactiveDays = false,
     material = false,
     materialClass = "",
   } = {}) => {
-    const existingMaterial = material
-      ? host.querySelector?.(":scope > .crm-tile-material-plane")
-      : null;
-    host.dataset.month = String(month + 1);
+    const existingObjectId = host.dataset.tileObjectId || "";
+    const existingView = host.dataset.tileObjectView || "";
+    bindCalendarObjectView(host, monthObject, view);
+    host.dataset.month = String(monthObject.month);
     host.dataset.kind = "month";
-    const header = document.createElement("div");
-    header.className = "fc-hd";
-    header.innerHTML = `<span>${MONTHS[month]}</span>`;
-    const weekdays = document.createElement("div");
-    weekdays.className = "fc-dowrow";
-    weekdays.innerHTML = DOW.map((day) => `<span>${day}</span>`).join("");
-    const days = document.createElement("div");
-    days.className = "fc-days";
-    const leading = firstDow(month);
-    const count = daysIn(month);
-    const trailing = 42 - leading - count;
-    for (let index = 0; index < leading; index += 1) {
-      const spacer = document.createElement("div");
-      spacer.className = "fc-day-spacer";
-      days.appendChild(spacer);
+    host.dataset.calendarObjectRevision = String(monthObject.revision);
+    if (view === "preview") host.dataset.previewRevision = String(renderRevision);
+    else delete host.dataset.previewRevision;
+    let dayViews = [...host.querySelectorAll(":scope > .fc-days > .fc-day-object-view")];
+    const canUpdate = existingObjectId === monthObject.tile.id
+      && existingView === view
+      && dayViews.length === monthObject.days.length
+      && dayViews.every(
+        (element, index) => element.dataset.tileObjectId === monthObject.days[index].tile.id,
+      );
+    if (!canUpdate) {
+      createMonthViewStructure(host, monthObject, {
+        view,
+        interactiveDays,
+        material,
+        materialClass,
+      });
+      dayViews = [...host.querySelectorAll(":scope > .fc-days > .fc-day-object-view")];
+    } else {
+      host.querySelector(":scope > .fc-hd > span").textContent = MONTHS[monthObject.monthIndex];
+      dayViews.forEach((element, index) => {
+        updateCalendarDayView(element, monthObject.days[index], {
+          view,
+          interactive:interactiveDays,
+        });
+      });
     }
-    for (let day = 1; day <= count; day += 1) {
-      days.appendChild(createDayTile(month, day, { interactive:interactiveDays }));
-    }
-    for (let index = 0; index < trailing; index += 1) {
-      const spacer = document.createElement("div");
-      spacer.className = "fc-day-spacer";
-      days.appendChild(spacer);
-    }
-    host.replaceChildren(header, weekdays, days);
     if (material) {
-      if (existingMaterial) host.prepend(existingMaterial);
       ensureTileMaterialPlane(host, {
         className:`fc-calendar-tile-material ${materialClass}`,
         tileSelector:":scope > .fc-days > .fc-day",
@@ -529,34 +698,36 @@ import {
     }
     return host;
   };
-  const dayInnerHTML = (date) => {
-    const [, month, day] = date.split("-").map(Number);
-    const parsed = new Date(currentYear, month - 1, day);
-    const items = scheduledHTML(date, 40);
-    return `<div class="fc-hd"><span>${DOW_FULL[parsed.getDay()]}, ${MONTHS[month - 1]} ${day}</span></div>` +
-      `<div class="fc-day-detail" data-date="${date}">${
-        items || `<div class="fc-empty" data-date="${date}">No scheduled records yet</div>`
+  const dayInnerHTML = (dayObject) => {
+    const parsed = new Date(dayObject.year, dayObject.monthIndex, dayObject.day);
+    const items = scheduledHTML(dayObject, 40);
+    return `<div class="fc-hd"><span>${DOW_FULL[parsed.getDay()]}, ${MONTHS[dayObject.monthIndex]} ${dayObject.day}</span></div>` +
+      `<div class="fc-day-detail" data-date="${dayObject.date}">${
+        items || `<div class="fc-empty" data-date="${dayObject.date}">No scheduled records yet</div>`
       }<div class="fc-drop-hint">Drop grid cards here to schedule them</div></div>`;
   };
 
   const buildYear = () => {
+    const yearObject = calendarObject();
     const root = document.createElement("div");
     root.className = "fc-level";
     root.dataset.kind = "year";
+    bindCalendarObjectView(root, yearObject, "year");
     const grid = document.createElement("div");
     grid.className = "fc-grid";
-    for (let month = 0; month < 12; month += 1) {
-      const bucket = createTileElement(monthTileRecord(month), {
+    yearObject.months.forEach((monthObject) => {
+      const bucket = createTileObjectElement(monthObject, {
         className:"fc-month fc-month-layout",
-        ariaLabel:`Open ${MONTHS[month]} ${currentYear}`,
+        ariaLabel:`Open ${monthObject.tile.label}`,
         tabIndex:0,
+        view:"preview",
       });
-      bucket.dataset.month = String(month + 1);
+      bucket.dataset.month = String(monthObject.month);
       bucket.dataset.kind = "month";
       bucket.dataset.calendarTile = "month";
-      mountMonthPreview(bucket, month);
+      mountCalendarMonthView(bucket, monthObject, { view:"preview" });
       grid.appendChild(bucket);
-    }
+    });
     root.appendChild(grid);
     return root;
   };
@@ -851,13 +1022,18 @@ import {
   };
 
   const transitionSourceKey = (target) => (
-    target?.dataset?.month ? `month:${target.dataset.month}` : `day:${target?.dataset?.date || ""}`
+    calendarObjectForElement(target)?.tile?.id
+      || (target?.dataset?.month
+        ? `month:${target.dataset.month}`
+        : `day:${target?.dataset?.date || ""}`)
   );
   const createTransitionCopy = (expander, target, isMonth) => {
     const copy = expander.querySelector(":scope > .fc-transition-copy");
     if (!copy) return;
     copy.className = `fc-transition-copy${isMonth ? " fc-month-layout" : ""}`;
     copy.dataset.kind = isMonth ? "month" : "day";
+    const sourceObject = calendarObjectForElement(target);
+    if (sourceObject) bindCalendarObjectView(copy, sourceObject, "transition-copy");
     if (isMonth) {
       // The transition face is purely visual. Clone the already-rendered
       // source month instead of constructing a second collection of tile
@@ -876,42 +1052,46 @@ import {
       clone.setAttribute("aria-hidden", "true");
       copy.replaceChildren(clone);
     }
+    bindClonedCalendarViews(copy);
   };
   const renderExpander = (expander, target) => {
-    const isMonth = expander.dataset.kind === "month";
+    const object = calendarObjectForElement(target) || calendarObjectForElement(expander);
+    if (!object) return;
+    const isMonth = object.objectKind === "calendar-month";
+    bindCalendarObjectView(expander, object, "expanded-shell", {
+      bindSchema:true,
+      canonicalClass:!isMonth,
+      ariaLabel:`Open ${object.tile.label}`,
+    });
     createTransitionCopy(expander, target, isMonth);
     const live = expander.querySelector(":scope > .fc-expander-live");
     if (isMonth) {
-      mountMonthContents(live, Number(expander.dataset.month) - 1, {
+      mountCalendarMonthView(live, object, {
+        view:"full",
         interactiveDays:true,
         material:true,
       });
     } else {
-      live.innerHTML = dayInnerHTML(expander.dataset.date);
+      bindCalendarObjectView(live, object, "detail");
+      live.innerHTML = dayInnerHTML(object);
     }
     expander.dataset.renderRevision = String(renderRevision);
     if (expander.isConnected && isMonth) syncCalendarMaterial(live);
   };
   const buildExpander = (target, context) => {
-    const isMonth = context.level === 0;
-    const expander = isMonth
-      ? document.createElement("div")
-      : createTileElement({
-        id:`calendar-detail-${target.dataset.date}`,
-        key:target.dataset.date,
-        title:target.getAttribute("aria-label") || target.dataset.date,
-        tileKind:"calendar-day-detail",
-        targetType:"calendar-day",
-        targetId:target.dataset.date,
-      }, {
-        tagName:"div",
-        className:"fc-day-expander",
-        ariaLabel:target.getAttribute("aria-label") || target.dataset.date,
-      });
+    const object = calendarObjectForElement(target);
+    const isMonth = object?.objectKind === "calendar-month" || context.level === 0;
+    const expander = createTileObjectElement(object, {
+      tagName:"div",
+      className:isMonth ? "" : "fc-day-expander",
+      canonicalClass:!isMonth,
+      ariaLabel:`Open ${object?.tile?.label || target.getAttribute("aria-label") || ""}`,
+      view:"expanded-shell",
+    });
     expander.classList.add("fc-bucket", "fc-expander");
     expander.dataset.kind = isMonth ? "month" : "day";
-    if (isMonth) expander.dataset.month = target.dataset.month;
-    else expander.dataset.date = target.dataset.date;
+    if (isMonth) expander.dataset.month = String(object?.month || target.dataset.month);
+    else expander.dataset.date = object?.date || target.dataset.date;
     if (!isMonth) {
       const tint = document.createElement("span");
       tint.className = "fc-day-expander-tint";
@@ -1016,12 +1196,21 @@ import {
     });
   };
   const configureExpander = (expander, target, context) => {
-    const kind = target.dataset.month ? "month" : "day";
-    const nextMonth = target.dataset.month || "";
-    const nextDate = target.dataset.date || "";
+    const object = calendarObjectForElement(target);
+    const kind = object?.objectKind === "calendar-month" ? "month" : "day";
+    const nextMonth = String(object?.month || target.dataset.month || "");
+    const nextDate = object?.date || target.dataset.date || "";
     const targetChanged = expander.dataset.kind !== kind
+      || expander.dataset.tileObjectId !== object?.tile?.id
       || (kind === "month" && expander.dataset.month !== nextMonth)
       || (kind === "day" && expander.dataset.date !== nextDate);
+    if (object) {
+      bindCalendarObjectView(expander, object, "expanded-shell", {
+        bindSchema:true,
+        canonicalClass:kind === "day",
+        ariaLabel:`Open ${object.tile.label}`,
+      });
+    }
     expander.dataset.kind = kind;
     if (kind === "month") {
       expander.dataset.month = nextMonth;
@@ -1190,8 +1379,11 @@ import {
   };
 
   const setYear = (year) => {
-    currentYear = Math.max(1901, Math.min(2200, Number(year) || currentYear));
+    const nextYear = Math.max(1901, Math.min(2200, Number(year) || currentYear));
+    const changed = nextYear !== currentYear;
+    currentYear = nextYear;
     localStorage.setItem(YEAR_STORE, String(currentYear));
+    if (changed) resetCalendarObject();
     resetTransitionMaterials();
     camera?.rebuildRoot?.();
     ensureYearChrome();
@@ -1209,6 +1401,7 @@ import {
     if (currentYear !== year) {
       currentYear = year;
       localStorage.setItem(YEAR_STORE, String(currentYear));
+      resetCalendarObject();
     }
     resetTransitionMaterials();
     camera.rebuildRoot();
@@ -1222,13 +1415,15 @@ import {
   };
 
   const loadScheduled = async ({ refresh = false } = {}) => {
+    const yearObject = calendarObject();
+    const loadingYear = yearObject.year;
     const next = new Map();
     let projects = [];
     let workItems = [];
     const add = (type, label, record) => {
       if (!record || record.deletedAt) return;
       const date = scheduledDateOf(record);
-      if (!date || !yearDate(date)) return;
+      if (!date || !String(date).startsWith(`${loadingYear}-`)) return;
       const workLink = (record.links || []).find((link) => link.entityType === "workItems");
       const workItem = workItems.find((item) => String(item.id) === String(workLink?.recordId));
       const projectId = String(record.projectId || workItem?.projectId || "");
@@ -1250,6 +1445,7 @@ import {
         projectTitle:String(project?.title || record.projectTitle || workItem?.projectTitle || ""),
         stageId:String(record.stageId || workItem?.stageId || ""),
         projectStages,
+        sourceRecord:record,
       });
       next.set(date, items);
     };
@@ -1265,13 +1461,10 @@ import {
         .filter((record) => !["completed", "cancelled", "canceled"].includes(
           String(record.status).toLowerCase(),
         ))
-        .forEach((record) => add("commitment", record.kind || "Commitment", {
-          ...record,
-          dueDate:record.dueAt,
-        }));
+        .forEach((record) => add("commitment", record.kind || "Commitment", record));
     } catch {}
-    scheduledByDate = next;
-    renderRevision += 1;
+    if (calendarYearObject !== yearObject || currentYear !== loadingYear) return;
+    reconcileCalendarData(yearObject, next);
     if (refresh && camera) refreshLevels();
   };
   const refreshLevels = () => {
@@ -1287,7 +1480,8 @@ import {
     const grid = root?.querySelector?.(":scope > .fc-grid");
     if (grid) {
       [...grid.querySelectorAll(":scope > .fc-month")].forEach((month) => {
-        mountMonthPreview(month, Number(month.dataset.month) - 1);
+        const monthObject = calendarObjectForElement(month);
+        if (monthObject) mountCalendarMonthView(month, monthObject, { view:"preview" });
       });
     }
     layers.slice(1).forEach((layer) => {
@@ -1425,7 +1619,7 @@ import {
       ) || null;
     }
     return layers[0]?.querySelector?.(
-      `:scope > .fc-grid .fc-day[data-date="${date}"]`,
+      `:scope > .fc-grid .fc-day-preview-cell[data-date="${date}"]`,
     ) || null;
   };
   const flyCardToDay = (fromRect, date, { title = "" } = {}) => {
@@ -1671,6 +1865,7 @@ import {
     if (year !== currentYear) {
       currentYear = year;
       localStorage.setItem(YEAR_STORE, String(currentYear));
+      resetCalendarObject();
       camera.rebuildRoot();
       await loadScheduled({ refresh:true });
     }
@@ -1698,6 +1893,8 @@ import {
       pending:0,
       lastError:"",
     }),
+    _objectForElement:calendarObjectForElement,
+    _objectGraph:() => calendarObject(),
     homePreviewState,
     applyHomePreviewState,
     refresh:() => loadScheduled({ refresh:true }),
@@ -1745,7 +1942,7 @@ import {
       expander.style.setProperty("--ky", (viewport.h / source.h).toFixed(4));
       camera.surface().appendChild(expander);
       syncCalendarMaterial(expander.querySelector(":scope > .fc-expander-live"));
-      const miniCells = [...mini.querySelectorAll(".fc-day")];
+      const miniCells = [...mini.querySelectorAll(".fc-day-preview-cell")];
       const expanderCells = [...expander.querySelectorAll(":scope > .fc-expander-live .fc-day")];
       const deltas = miniCells.map((cell, index) => {
         const first = cell.getBoundingClientRect();
@@ -1761,6 +1958,9 @@ import {
         worst:Math.max(...deltas.flat().map(Math.abs)),
         day1:deltas[0],
         day31:deltas[deltas.length - 1],
+        sharedObjects:miniCells.filter(
+          (cell, index) => calendarObjectForElement(cell) === calendarObjectForElement(expanderCells[index]),
+        ).length,
       };
     },
     _parityClear:() => camera.surface()?.querySelectorAll(".fc-parity").forEach((element) => {

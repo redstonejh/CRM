@@ -1918,6 +1918,79 @@ async function main() {
   await page.evaluate((month) => document.querySelector(`.fc-month[data-month="${month}"]`)?.click(), calendarProjectPreview.month);
   await page.waitForFunction(() => window.fractalCalendar.level() === 1
     && !window.fractalCalendarCamera?.isTransitioning?.(), { timeout:5000 });
+  await check('Calendar preview and entered views share the exact same tile objects', (probe) => {
+    const objectFor = window.fractalCalendar?._objectForElement;
+    const graph = window.fractalCalendar?._objectGraph?.();
+    const sharedObjectFor = window.crmTileSystem?.objectFor;
+    const rootMonth = document.querySelector(
+      `.fc-level[data-kind="year"] > .fc-grid > .fc-month[data-month="${probe.month}"]`,
+    );
+    const pane = document.querySelector(
+      `.fc-expander[data-kind="month"][data-month="${probe.month}"]:not(.fc-warm)`,
+    );
+    const previewDay = rootMonth?.querySelector(
+      `.fc-day-preview-cell[data-date="${CSS.escape(probe.date)}"]`,
+    );
+    const liveDay = pane?.querySelector(
+      `:scope > .fc-expander-live .fc-day[data-date="${CSS.escape(probe.date)}"]`,
+    );
+    const rootMonthObject = objectFor?.(rootMonth);
+    const paneObject = objectFor?.(pane);
+    const previewObject = objectFor?.(previewDay);
+    const liveObject = objectFor?.(liveDay);
+    const graphObject = graph?.daysByDate?.get?.(probe.date);
+    return {
+      ok:!!rootMonthObject
+        && rootMonthObject === paneObject
+        && !!previewObject
+        && previewObject === liveObject
+        && previewObject === graphObject
+        && previewObject === sharedObjectFor?.(previewDay)
+        && previewObject === sharedObjectFor?.(liveDay)
+        && previewObject.entries === liveObject.entries
+        && previewDay.dataset.tileObjectId === liveDay.dataset.tileObjectId
+        && previewDay.dataset.tileObjectView === 'preview'
+        && liveDay.dataset.tileObjectView === 'full'
+        && !previewDay.matches('button,[data-crm-tile],.crm-home-bucket')
+        && liveDay.matches('button[data-crm-tile].crm-home-bucket'),
+      detail:JSON.stringify({
+        monthObject:rootMonthObject?.tile?.id,
+        paneObject:paneObject?.tile?.id,
+        previewObject:previewObject?.tile?.id,
+        liveObject:liveObject?.tile?.id,
+        entries:previewObject?.entries?.length,
+        views:[previewDay?.dataset?.tileObjectView, liveDay?.dataset?.tileObjectView],
+      }),
+    };
+  }, calendarProjectPreview);
+  await check('Calendar refresh mutates the shared objects without replacing either view', async (probe) => {
+    const previewSelector = `.fc-level[data-kind="year"] .fc-day-preview-cell[data-date="${CSS.escape(probe.date)}"]`;
+    const liveSelector = `.fc-expander[data-kind="month"]:not(.fc-warm) .fc-day[data-date="${CSS.escape(probe.date)}"]`;
+    const objectFor = window.fractalCalendar._objectForElement;
+    const preview = document.querySelector(previewSelector);
+    const live = document.querySelector(liveSelector);
+    const object = objectFor(preview);
+    const entries = object?.entries;
+    await window.fractalCalendar.refresh();
+    const nextPreview = document.querySelector(previewSelector);
+    const nextLive = document.querySelector(liveSelector);
+    return {
+      ok:!!object
+        && preview === nextPreview
+        && live === nextLive
+        && object === objectFor(nextPreview)
+        && object === objectFor(nextLive)
+        && entries === object.entries
+        && Number(nextPreview.dataset.previewRecordCount) === object.entries.length,
+      detail:JSON.stringify({
+        object:object?.tile?.id,
+        samePreviewNode:preview === nextPreview,
+        sameLiveNode:live === nextLive,
+        sameEntries:entries === object?.entries,
+        entries:object?.entries?.length,
+      }),
+    };
+  }, calendarProjectPreview);
   await check('Calendar is fed only by commitments', () => {
     const chips = [...document.querySelectorAll('[data-crm-theater="calendar"] .fc-chip[data-type]')];
     return chips.length > 0 && chips.every((chip) => chip.dataset.type === 'commitment');

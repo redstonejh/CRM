@@ -107,6 +107,11 @@ const homePreviewViewStateGenerations = new Map();
 let homePreviewViewStateGeneration = 0;
 const PROJECT_PREVIEW_VERSION = 'project-tile-v1';
 const projectPreviewCache = new Map();
+const CANONICAL_TILE_PREVIEW_VERSION = 'canonical-tile-preview-v1';
+const canonicalTilePreviewCache = new Map();
+let canonicalTilePreviewCaptureStatus = {
+  active:false, stage:'idle', key:'', startedAt:0, error:'',
+};
 let homeMotionSnapshot = null;
 let homeMotionSnapshotError = null;
 let homePreviewResizeTimer = null;
@@ -372,16 +377,23 @@ async function prepareCapture(win, matte = null, options = {}) {
   await waitForHomePreviewInteraction();
   const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
   const homeMotionObjectsOnly = options.homeMotionObjectsOnly === true;
+  const settleMs = Math.max(0, Number.isFinite(Number(options.settleMs))
+    ? Number(options.settleMs)
+    : 60);
   const css = `
     *,*::before,*::after { animation:none !important; transition:none !important; }
     .window-control-cluster,.window-glass-control,.auth-profile-cluster,.workspace-menu-overlay-layer,.dashboard-search-popover,
-    .crm-module-switch,.crm-viewport-date,.db-loading { display:none !important; }
+    .crm-module-switch,.crm-viewport-date,.fc-year-strip,.db-loading { display:none !important; }
     .crm-home-title-glass { display:none !important; }
     ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
     ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }' : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
-      html::before,html::after,body::before,body::after,.workspace-photo-backdrop,.liquid-glass-webgl-canvas { display:none !important; }` : ''}
+      html::before,html::after,body::before,body::after,.workspace-photo-backdrop,
+      .fc-live-backdrop-wallpaper > .workspace-photo-backdrop,
+      .liquid-glass-webgl-canvas { display:none !important; }` : ''}
+      ${matte ? `.fc-live-backdrop-wallpaper { background:${matte} !important;
+        background-image:none !important; }` : ''}
   `;
   await win.webContents.executeJavaScript(`(() => {
     window.__crmPreviewClasses ||= {
@@ -398,29 +410,44 @@ async function prepareCapture(win, matte = null, options = {}) {
     let style = document.getElementById('crm-preview-capture-style');
     if (!style) { style = document.createElement('style'); style.id = 'crm-preview-capture-style'; document.head.appendChild(style); }
     style.textContent = ${JSON.stringify(css)};
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 60))));
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, ${settleMs}))));
   })()`, true);
   try { win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1, movementX: 0, movementY: 0 }); } catch {}
   win.webContents.invalidate();
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  await new Promise((resolve) => setTimeout(resolve, settleMs));
+}
+
+function capturePage(win, region = null) {
+  if (!region) return win.webContents.capturePage();
+  const values = ['x', 'y', 'width', 'height'].map((key) => Number(region[key]));
+  if (!values.every(Number.isFinite) || values[2] <= 0 || values[3] <= 0) {
+    return win.webContents.capturePage();
+  }
+  const [x, y, width, height] = values;
+  return win.webContents.capturePage({
+    x:Math.max(0, Math.floor(x)),
+    y:Math.max(0, Math.floor(y)),
+    width:Math.max(1, Math.ceil(width)),
+    height:Math.max(1, Math.ceil(height)),
+  });
 }
 
 async function captureForeground(win, options = {}) {
   await waitForHomePreviewInteraction();
   await prepareCapture(win, '#000000', options);
-  const black = await win.webContents.capturePage();
+  const black = await capturePage(win, options.region);
   await waitForHomePreviewInteraction();
   await prepareCapture(win, '#ffffff', options);
-  const white = await win.webContents.capturePage();
+  const white = await capturePage(win, options.region);
   return foregroundFromMattes(black, white);
 }
 
-async function captureRoom(win) {
+async function captureRoom(win, options = {}) {
   await waitForHomePreviewInteraction();
-  await prepareCapture(win, null);
-  const exact = await win.webContents.capturePage();
+  await prepareCapture(win, null, options);
+  const exact = await capturePage(win, options.region);
   await waitForHomePreviewInteraction();
-  const foreground = await captureForeground(win);
+  const foreground = await captureForeground(win, options);
   if (!foreground || exact.isEmpty()) return null;
   return { exact, foreground: foreground.image, bounds: foreground.bounds };
 }
@@ -510,6 +537,144 @@ function publishProjectPreview(projectId, capture, viewState = null) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project-preview:changed', preview);
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.webContents.send('project-preview:changed', preview);
   return preview;
+}
+
+function canonicalTilePreviewCacheKey(kind, key) {
+  return `${String(kind || '')}:${String(key || '')}`;
+}
+
+function publishCanonicalTilePreview({
+  kind,
+  key,
+  capture,
+  revision = 0,
+  dataSignature = '',
+  provenance = null,
+  viewState = null,
+}) {
+  if (!capture?.foreground || !kind || !key) return null;
+  const size = (capture.exact || capture.foreground).getSize();
+  const preview = {
+    kind:String(kind),
+    key:String(key),
+    version:CANONICAL_TILE_PREVIEW_VERSION,
+    width:size.width,
+    height:size.height,
+    capturedAt:Date.now(),
+    revision:Number(revision) || 0,
+    dataSignature:String(dataSignature || ''),
+    foregroundSrc:capture.foreground.toDataURL(),
+    exactSrc:capture.exact?.toDataURL?.() || '',
+    foregroundBounds:capture.bounds,
+    provenance,
+    viewState,
+  };
+  canonicalTilePreviewCache.set(canonicalTilePreviewCacheKey(preview.kind, preview.key), preview);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tile-preview:changed', preview);
+  }
+  return preview;
+}
+
+function captureCalendarMonthTilePreviews(year, tiles = []) {
+  const parsedYear = Number(year);
+  const normalizedYear = Number.isFinite(parsedYear)
+    ? Math.max(1901, Math.min(2200, parsedYear))
+    : 0;
+  const requests = (Array.isArray(tiles) ? tiles : []).map((tile) => ({
+    key:String(tile?.key || ''),
+    month:Math.max(1, Math.min(12, Number(tile?.month) || 0)),
+    revision:Number(tile?.revision) || 0,
+    dataSignature:String(tile?.dataSignature || ''),
+  })).filter((tile) => (
+    tile.key === `calendar-month-${normalizedYear}-${String(tile.month).padStart(2, '0')}`
+  ));
+  if (!normalizedYear || !requests.length) return Promise.resolve([]);
+  homePreviewActivityGeneration += 1;
+  homePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
+    let worker;
+    const previews = [];
+    try {
+      canonicalTilePreviewCaptureStatus = {
+        active:true, stage:'waiting-for-interaction', key:'', startedAt:Date.now(), error:'',
+      };
+      await waitForHomePreviewInteraction();
+      canonicalTilePreviewCaptureStatus.stage = 'creating-worker';
+      worker = await createPreviewWindow();
+      canonicalTilePreviewCaptureStatus.stage = 'activating-calendar';
+      await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('calendar')`, true);
+      await waitForRenderer(worker, `document.body.dataset.crmModule === 'calendar'
+        && !!window.fractalCalendar?.prepareMonthTilePreview`);
+      for (const request of requests) {
+        canonicalTilePreviewCaptureStatus.key = request.key;
+        canonicalTilePreviewCaptureStatus.stage = 'waiting-for-tile';
+        await waitForHomePreviewInteraction();
+        const cached = canonicalTilePreviewCache.get(
+          canonicalTilePreviewCacheKey('calendar-month', request.key),
+        );
+        if (cached
+          && cached.version === CANONICAL_TILE_PREVIEW_VERSION
+          && cached.revision === request.revision
+          && cached.dataSignature === request.dataSignature) {
+          previews.push(cached);
+          continue;
+        }
+        canonicalTilePreviewCaptureStatus.stage = 'rendering-tile';
+        const prepared = await worker.webContents.executeJavaScript(
+          `window.fractalCalendar.prepareMonthTilePreview(${normalizedYear}, ${request.month})`,
+          true,
+        );
+        if (!prepared) throw new Error(`Calendar month ${request.month} did not prepare`);
+        canonicalTilePreviewCaptureStatus.stage = 'settling-tile';
+        await waitForRenderer(worker, `window.fractalCalendar.level() === 1
+          && document.querySelector('.fc-expander[data-kind="month"][data-month="${request.month}"]:not(.fc-warm) .fc-day')`);
+        await worker.webContents.executeJavaScript(
+          `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`,
+          true,
+        );
+        canonicalTilePreviewCaptureStatus.stage = 'reading-provenance';
+        const captureState = await worker.webContents.executeJavaScript(`(() => ({
+          region:window.fractalCalendar.previewCaptureRect(),
+          provenance:window.fractalCalendar.previewCaptureProvenance(${request.month})
+        }))()`, true);
+        if (captureState?.provenance?.renderer !== 'calendar-month-full') {
+          throw new Error(`Calendar month ${request.month} did not use the canonical full renderer`);
+        }
+        canonicalTilePreviewCaptureStatus.stage = 'capturing-tile';
+        const foreground = await captureForeground(worker, {
+          region:captureState.region,
+          settleMs:20,
+        });
+        const preview = publishCanonicalTilePreview({
+          kind:'calendar-month',
+          key:request.key,
+          capture:foreground ? {
+            foreground:foreground.image,
+            bounds:foreground.bounds,
+          } : null,
+          revision:request.revision,
+          dataSignature:request.dataSignature,
+          provenance:captureState.provenance,
+          viewState:{ year:normalizedYear, month:request.month },
+        });
+        if (preview) previews.push(preview);
+      }
+    } catch (error) {
+      canonicalTilePreviewCaptureStatus.error = String(error?.message || error);
+      console.error('[tile-preview] calendar capture failed:', error?.message || error);
+    } finally {
+      if (worker && !worker.isDestroyed()) worker.destroy();
+      if (previewWindow === worker) previewWindow = null;
+      canonicalTilePreviewCaptureStatus = {
+        ...canonicalTilePreviewCaptureStatus,
+        active:false,
+        stage:canonicalTilePreviewCaptureStatus.error ? 'failed' : 'idle',
+        key:'',
+      };
+    }
+    return previews;
+  });
+  return homePreviewQueue;
 }
 
 function scheduleProjectGalleryHomeRefresh() {
@@ -1506,6 +1671,35 @@ ipcMain.handle('home-preview:list', (event) => {
 ipcMain.handle('project-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok:false, previews:[] };
   return { ok:true, version:PROJECT_PREVIEW_VERSION, previews:[...projectPreviewCache.values()] };
+});
+ipcMain.handle('tile-preview:list', (event, { kind, scope = null } = {}) => {
+  if (!isMainSender(event) && !isPreviewSender(event)) {
+    return { ok:false, version:CANONICAL_TILE_PREVIEW_VERSION, previews:[] };
+  }
+  const requestedKind = String(kind || '');
+  const year = Number(scope?.year) || 0;
+  const previews = [...canonicalTilePreviewCache.values()].filter((preview) => (
+    preview.kind === requestedKind
+      && (!year || Number(preview.viewState?.year) === year)
+  ));
+  return { ok:true, version:CANONICAL_TILE_PREVIEW_VERSION, previews };
+});
+ipcMain.handle('tile-preview:diagnostics', (event) => {
+  if (!isMainSender(event) && !isPreviewSender(event)) return { ok:false };
+  return {
+    ok:true,
+    status:{ ...canonicalTilePreviewCaptureStatus },
+    cached:canonicalTilePreviewCache.size,
+    interactionActive:homePreviewInteractionActive,
+    worker:!!previewWindow && !previewWindow.isDestroyed(),
+  };
+});
+ipcMain.handle('tile-preview:capture-calendar-year', async (event, { year, tiles = [] } = {}) => {
+  if (!isMainSender(event)) return { ok:false, error:'Invalid tile preview sender', previews:[] };
+  const previews = await captureCalendarMonthTilePreviews(year, tiles);
+  return previews.length
+    ? { ok:true, version:CANONICAL_TILE_PREVIEW_VERSION, previews }
+    : { ok:false, version:CANONICAL_TILE_PREVIEW_VERSION, error:'Calendar tile preview capture failed', previews:[] };
 });
 ipcMain.handle('project-preview:capture', async (event, { projectId, viewState = null } = {}) => {
   const key = String(projectId || '').trim();

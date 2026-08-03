@@ -1,6 +1,7 @@
 import {
   applyAdaptiveTileGrid,
   bindTileObject,
+  createTileObject,
   createTileObjectElement,
   normalizeTileRecord,
 } from "./modules/tile-system.js";
@@ -14,7 +15,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const MODULES = [
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
-  ].map((module, rank) => ({
+  ].map((module, rank) => createTileObject({
     ...module,
     tile:normalizeTileRecord(module, {
       id:module.key,
@@ -82,7 +83,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!module) return null;
     const tileId = String(source.tile?.id || source.id || module.key);
     const label = [source.label, source.tile?.title, module.label].map((value) => String(value ?? "").trim()).find(Boolean) || module.label;
-    return {
+    return createTileObject({
       moduleKey:module.key,
       key:module.key,
       label,
@@ -96,7 +97,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         targetId:module.key,
         rank,
       }),
-    };
+    });
   };
   const defaultHomeTiles = () => MODULES.map((module, rank) => normalizeHomeTile({ ...module, id:module.key }, rank));
   const readHomeTiles = () => {

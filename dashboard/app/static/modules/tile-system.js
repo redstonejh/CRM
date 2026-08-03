@@ -1,6 +1,7 @@
 // Canonical tile records and adaptive, equal-cell geometry shared by every
 // viewport that presents a collection of tiles.
 const TILE_SCHEMA_VERSION = 1;
+const TILE_OBJECT_KIND = "crm-tile-object";
 const tileObjectByElement = new WeakMap();
 
 const text = (...values) => values
@@ -66,7 +67,9 @@ export function normalizeTileCollection(records = [], defaults = {}) {
 export function bindTileElement(element, source = {}, options = {}) {
   if (!element) return null;
   const tile = normalizeTileRecord(source, options.defaults || {});
-  if (options.canonicalClass !== false) element.classList.add("crm-home-bucket");
+  if (options.canonicalClass !== false) {
+    element.classList.add("crm-tile", "crm-home-bucket");
+  }
   element.dataset.crmTile = tile.id;
   element.dataset.tileId = tile.id;
   element.dataset.tileKey = tile.key;
@@ -93,6 +96,33 @@ export function createTileElement(source = {}, options = {}) {
 const tileRecordOf = (object) => (
   object?.tile && typeof object.tile === "object" ? object.tile : object
 );
+
+// Every interactive viewport object uses this one semantic shape. Domain
+// modules may add their own payload fields, but a Home room, Calendar month,
+// and Calendar day are all the same canonical tile object with the same tile
+// record and child collection.
+export function createTileObject(source = {}, options = {}) {
+  const input = source && typeof source === "object" ? source : {};
+  const object = input.objectKind === TILE_OBJECT_KIND ? input : { ...input };
+  object.objectKind = TILE_OBJECT_KIND;
+  object.tile = normalizeTileRecord(tileRecordOf(input), options.defaults || {});
+  if (!Array.isArray(object.children)) {
+    object.children = Array.isArray(options.children) ? options.children : [];
+  }
+  if (!Number.isFinite(Number(object.revision))) object.revision = 0;
+  return object;
+}
+
+export function isTileObject(object) {
+  return !!object
+    && object.objectKind === TILE_OBJECT_KIND
+    && object.tile?.schemaVersion === TILE_SCHEMA_VERSION
+    && Array.isArray(object.children);
+}
+
+export function tileKindOf(object) {
+  return isTileObject(object) ? object.tile.kind : "";
+}
 
 // A tile object is the persistent semantic object. Any number of visual LODs
 // may be bound to it without promoting an inert preview into an interactive
@@ -399,8 +429,12 @@ export function installAdaptiveTileArchitecture(root = document) {
 
 export const crmTileSystem = {
   schemaVersion:TILE_SCHEMA_VERSION,
+  objectKind:TILE_OBJECT_KIND,
   normalize:normalizeTileRecord,
   normalizeAll:normalizeTileCollection,
+  createObjectRecord:createTileObject,
+  isObject:isTileObject,
+  kindOf:tileKindOf,
   bind:bindTileElement,
   create:createTileElement,
   bindObject:bindTileObject,

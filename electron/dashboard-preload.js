@@ -224,6 +224,20 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
   captureProject: (projectId, viewState = null) => ipcRenderer.invoke('project-preview:capture', { projectId, viewState }),
   onProjectChanged: (cb) => ipcRenderer.on('project-preview:changed', (_event, preview) => cb(preview)),
 });
+contextBridge.exposeInMainWorld('crmTilePreviews', {
+  list: (kind, scope = null) => ipcRenderer.invoke('tile-preview:list', { kind, scope }),
+  captureCalendarYear: (year, tiles = []) => ipcRenderer.invoke(
+    'tile-preview:capture-calendar-year',
+    { year, tiles },
+  ),
+  diagnostics: () => ipcRenderer.invoke('tile-preview:diagnostics'),
+  onChanged: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const listener = (_event, preview) => cb(preview);
+    ipcRenderer.on('tile-preview:changed', listener);
+    return () => ipcRenderer.off('tile-preview:changed', listener);
+  },
+});
 
 // Bind only the immutable shell actions before application hydration. The
 // former minimize slot belongs to the renderer's context-aware Add control, so

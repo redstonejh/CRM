@@ -398,7 +398,13 @@ async function auditArchitecture(page, phase) {
     const root = surface.querySelector(':scope > .fc-level[data-kind="year"]');
     const rootMonths = [...root.querySelectorAll(':scope > .fc-grid > .fc-month')];
     const rootPreviews = [...root.querySelectorAll(
-      ':scope > .fc-grid > .fc-month .fc-day-preview-cell',
+      ':scope > .fc-grid > .fc-month > .fc-month-tile-preview',
+    )];
+    const rootPreviewImages = rootPreviews.map((preview) => (
+      preview.querySelector(':scope > .fc-month-preview-render')
+    )).filter(Boolean);
+    const syntheticRootNodes = [...root.querySelectorAll(
+      ':scope > .fc-grid .fc-day-preview-cell',
     )];
     const rootDays = [...root.querySelectorAll(':scope > .fc-grid > .fc-month .fc-day')];
     const warmMonthDays = [...surface.querySelectorAll(
@@ -434,11 +440,13 @@ async function auditArchitecture(page, phase) {
         count:tiles.length,
         buttonCount:tiles.filter((tile) => tile.tagName === 'BUTTON').length,
         sharedClassCount:tiles.filter((tile) => tile.classList.contains('crm-home-bucket')).length,
+        canonicalClassCount:tiles.filter((tile) => tile.classList.contains('crm-tile')).length,
         schemaCount:tiles.filter((tile) => tile.dataset.tileSchemaVersion === '1').length,
         identityCount:new Set(tiles.map((tile) => tile.dataset.tileId)).size,
         targetCount:new Set(tiles.map((tile) => tile.dataset.tileTargetId)).size,
         calendarKindCount:tiles.filter((tile) => tile.dataset.tileKind === expectedKind).length,
         objectBoundCount:objects.length,
+        canonicalObjectCount:objects.filter((object) => window.crmTileSystem.isObject(object)).length,
         objectIdentityCount:new Set(objects).size,
         directBackdropCount:tiles.filter((tile) => {
           const material = tile.querySelector(':scope > .crm-tile-acrylic') || tile;
@@ -495,24 +503,25 @@ async function auditArchitecture(page, phase) {
       rootTiles:tileAudit(rootMonths, 'calendar-month'),
       rootPreview:{
         count:rootPreviews.length,
-        objectBoundCount:rootPreviews.filter((preview) => !!objectFor(preview)).length,
-        objectIdentityCount:new Set(rootPreviews.map((preview) => objectFor(preview))).size,
-        graphIdentityCount:rootPreviews.filter((preview) => (
-          objectFor(preview) === objectGraph.daysByDate.get(preview.dataset.date)
+        imageCount:rootPreviewImages.length,
+        readyCount:rootPreviews.filter((preview) => preview.dataset.previewState === 'ready').length,
+        rendererCount:rootPreviews.filter(
+          (preview) => preview.dataset.previewRenderer === 'calendar-month-full',
+        ).length,
+        provenanceChildCount:rootPreviews.filter((preview, index) => (
+          Number(preview.dataset.previewCanonicalChildren)
+            === objectFor(rootMonths[index])?.children?.length
         )).length,
         inertCount:rootPreviews.filter((preview) => (
-          preview.tagName === 'SPAN'
+          preview.tagName === 'DIV'
           && !preview.matches('button,[data-crm-tile],.crm-home-bucket')
-          && preview.dataset.calendarPreview === 'day'
           && getComputedStyle(preview).pointerEvents === 'none'
         )).length,
-        backdropCount:rootPreviews.filter((preview) => String(
+        backdropCount:rootPreviewImages.filter((preview) => String(
           getComputedStyle(preview).webkitBackdropFilter
             || getComputedStyle(preview).backdropFilter,
         ).includes('blur(')).length,
-        scheduledCount:rootPreviews.filter(
-          (preview) => Number(preview.dataset.previewRecordCount) > 0,
-        ).length,
+        syntheticDayCount:syntheticRootNodes.length,
         realDayCount:rootDays.length,
         warmRealDayCount:warmMonthDays.length,
       },
@@ -573,14 +582,9 @@ async function auditArchitecture(page, phase) {
         shellSharesRootObject:objectFor(activeMonth) === objectFor(rootMonths.find(
           (month) => month.dataset.month === activeMonth.dataset.month,
         )),
-        dayObjectsSharedWithPreview:monthDays.filter((day) => {
-          const preview = root.querySelector(
-            `.fc-day-preview-cell[data-date="${CSS.escape(day.dataset.date)}"]`,
-          );
-          return !!preview
-            && objectFor(day) === objectFor(preview)
-            && objectFor(day) === objectGraph.daysByDate.get(day.dataset.date);
-        }).length,
+        dayObjectsSharedWithGraph:monthDays.filter(
+          (day) => objectFor(day) === objectGraph.daysByDate.get(day.dataset.date),
+        ).length,
         plane:planeAudit(monthPlane),
         transitionFrameOpacity:Number(getComputedStyle(
           activeMonth.querySelector(':scope > .fc-transition-acrylic'),
@@ -603,6 +607,7 @@ async function auditArchitecture(page, phase) {
       legacyNodeCount:surface.querySelectorAll(legacySelector).length,
       rasterNodeCount:surface.querySelectorAll('canvas,video,img.fc-strip-texture').length,
       renderer:window.fractalCalendar.stripCaptureDiagnostics(),
+      tileRenderer:window.fractalCalendar.tilePreviewStatus(),
     };
   }, phase);
 }
@@ -611,28 +616,33 @@ function architectureFailures(audit, expectedLevel) {
   const failures = [];
   if (audit.level !== expectedLevel) failures.push(`${audit.phase} level was ${audit.level}`);
   const expectedRootMonths = 12;
+  const expectedVisibleRootMonths = expectedLevel === 0 ? expectedRootMonths : 0;
   if (audit.rootTiles.count !== expectedRootMonths
     || audit.rootTiles.buttonCount !== expectedRootMonths
     || audit.rootTiles.sharedClassCount !== expectedRootMonths
+    || audit.rootTiles.canonicalClassCount !== expectedRootMonths
     || audit.rootTiles.schemaCount !== expectedRootMonths
     || audit.rootTiles.identityCount !== expectedRootMonths
     || audit.rootTiles.targetCount !== expectedRootMonths
     || audit.rootTiles.calendarKindCount !== expectedRootMonths
     || audit.rootTiles.objectBoundCount !== expectedRootMonths
+    || audit.rootTiles.canonicalObjectCount !== expectedRootMonths
     || audit.rootTiles.objectIdentityCount !== expectedRootMonths
     || audit.rootTiles.directBackdropCount !== expectedRootMonths
-    || audit.rootTiles.visibleBackdropCount !== expectedRootMonths) {
+    || audit.rootTiles.visibleBackdropCount !== expectedVisibleRootMonths) {
     failures.push(`${audit.phase} root months are not canonical Home-style tile instances`);
   }
-  if (![365, 366].includes(audit.rootPreview?.count)
-    || audit.rootPreview?.objectBoundCount !== audit.rootPreview?.count
-    || audit.rootPreview?.objectIdentityCount !== audit.rootPreview?.count
-    || audit.rootPreview?.graphIdentityCount !== audit.rootPreview?.count
+  if (audit.rootPreview?.count !== expectedRootMonths
+    || audit.rootPreview?.imageCount !== expectedRootMonths
+    || audit.rootPreview?.readyCount !== expectedRootMonths
+    || audit.rootPreview?.rendererCount !== expectedRootMonths
+    || audit.rootPreview?.provenanceChildCount !== expectedRootMonths
     || audit.rootPreview?.inertCount !== audit.rootPreview?.count
     || audit.rootPreview?.backdropCount !== 0
+    || audit.rootPreview?.syntheticDayCount !== 0
     || audit.rootPreview?.realDayCount !== 0
     || (expectedLevel === 0 && audit.rootPreview?.warmRealDayCount !== 0)) {
-    failures.push(`${audit.phase} year previews mounted real or filtered day tiles`);
+    failures.push(`${audit.phase} year tiles did not use twelve canonical full-render captures`);
   }
   if (audit.rootMaterials?.planeCount !== 0
     || audit.rootMaterials?.tileCount !== 0
@@ -663,6 +673,12 @@ function architectureFailures(audit, expectedLevel) {
     || audit.renderer?.pending !== 0
     || audit.renderer?.lastError) {
     failures.push(`${audit.phase} retained a calendar capture worker`);
+  }
+  if (audit.tileRenderer?.length !== expectedRootMonths
+    || audit.tileRenderer.some((preview) => (
+      preview.state !== 'ready' || preview.renderer !== 'calendar-month-full'
+    ))) {
+    failures.push(`${audit.phase} canonical month tile captures were not settled`);
   }
   return failures;
 }
@@ -705,6 +721,8 @@ async function main() {
       await window.crmHomePreviews?.waitForIdle?.();
       window.crmWorkspaces.setActive('calendar');
       await window.fractalCalendar.refresh();
+      const result = await window.fractalCalendar.waitForTilePreviews();
+      if (result.ready !== 12) throw new Error(JSON.stringify(result));
     });
     await page.waitForFunction(() => (
       document.body.dataset.crmModule === 'calendar'
@@ -714,16 +732,14 @@ async function main() {
         '.fc-level[data-kind="year"] > .fc-grid > .fc-month.crm-home-bucket',
       )].length === 12
       && [...document.querySelectorAll(
+        '.fc-level[data-kind="year"] .fc-month > .fc-month-tile-preview[data-preview-state="ready"]',
+      )].length === 12
+      && document.querySelectorAll(
+        '.fc-level[data-kind="year"] .fc-month-preview-render',
+      ).length === 12
+      && document.querySelectorAll(
         '.fc-level[data-kind="year"] .fc-day-preview-cell',
-      )].length >= 365
-      && [...document.querySelectorAll(
-        '.fc-level[data-kind="year"] .fc-day-preview-cell',
-      )].every((preview) => {
-        const style = getComputedStyle(preview);
-        return preview.tagName === 'SPAN'
-          && !preview.matches('button,[data-crm-tile],.crm-home-bucket')
-          && !String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(');
-      })
+      ).length === 0
       && document.querySelectorAll(
         '.fc-level[data-kind="year"] .fc-day',
       ).length === 0
@@ -874,13 +890,15 @@ async function main() {
       || ![28, 29, 30, 31].includes(monthAudit.tiles.count)
       || monthAudit.tiles.buttonCount !== monthAudit.tiles.count
       || monthAudit.tiles.sharedClassCount !== monthAudit.tiles.count
+      || monthAudit.tiles.canonicalClassCount !== monthAudit.tiles.count
       || monthAudit.tiles.schemaCount !== monthAudit.tiles.count
       || monthAudit.tiles.identityCount !== monthAudit.tiles.count
       || monthAudit.tiles.targetCount !== monthAudit.tiles.count
       || monthAudit.tiles.calendarKindCount !== monthAudit.tiles.count
       || monthAudit.tiles.objectBoundCount !== monthAudit.tiles.count
+      || monthAudit.tiles.canonicalObjectCount !== monthAudit.tiles.count
       || monthAudit.tiles.objectIdentityCount !== monthAudit.tiles.count
-      || monthAudit.dayObjectsSharedWithPreview !== monthAudit.tiles.count
+      || monthAudit.dayObjectsSharedWithGraph !== monthAudit.tiles.count
       || monthAudit.shellSharesRootObject !== true
       || monthAudit.tiles.directBackdropCount !== monthAudit.tiles.count
       || monthAudit.tiles.visibleBackdropCount !== 0

@@ -152,6 +152,7 @@
     cases: window.ticketStacks,
     planner: window.crmPlanner,
     assignments: window.crmAssignments,
+    calendar: window.fractalCalendar,
   })[key];
   let destinationLayers = [];
   let destinationRoot = null;

@@ -26,7 +26,7 @@ function shoot(outDir) {
   fs.rmSync(outDir, { recursive: true, force: true });
   execFileSync(process.execPath, [path.join(__dirname, 'shoot.js'), outDir], { stdio: 'inherit' });
   // Replace the browser harness's unavoidable Home loading placeholder with
-  // the real Electron surface after all four canonical captures have settled.
+  // the real Electron surface after all canonical captures have settled.
   const repoRoot = path.join(__dirname, '..', '..');
   const buildCommand = process.platform === 'win32'
     ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm run build:electron-runtime']]

@@ -96,7 +96,7 @@ async function main() {
     await page.waitForFunction((restFilter) => {
       const previews = window.crmHome?.previewStatus?.() || [];
       const buckets = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')];
-      if (previews.length !== 4 || buckets.length !== 4
+      if (previews.length !== 5 || buckets.length !== 5
         || previews.some(({ state }) => state !== 'ready')) return false;
       return buckets.every((bucket) => {
         const host = bucket.querySelector('.crm-home-preview');
@@ -130,7 +130,7 @@ async function main() {
         })),
     }));
     if (finalState.module !== 'home' || finalState.preparing !== 0
-      || finalState.previews.length !== 4) {
+      || finalState.previews.length !== 5) {
       throw new Error(`Home was not settled for capture: ${JSON.stringify(finalState)}`);
     }
     await page.screenshot({ path:output });

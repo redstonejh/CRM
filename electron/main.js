@@ -97,11 +97,15 @@ const cdms = createCdmsClient({
   disabled: process.env.CRM_CDMS_DISABLED === '1',
   onChange: ({ reason }) => handleCdmsChanged(reason),
 });
-const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments'];
+const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments', 'calendar'];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v46';
+const HOME_PREVIEW_VERSION = 'filtered-home-v48';
+const HOME_PREVIEW_DISK_CACHE_FILE = path.join(
+  app.getPath('userData'),
+  'home-preview-cache-v1.json',
+);
 const homePreviewCache = new Map();
 const homePreviewViewStates = new Map();
 const homePreviewViewStateGenerations = new Map();
@@ -126,8 +130,91 @@ let projectPreviewCaptureCount = 0;
 let plannerHomeCaptureRequestGeneration = 0;
 let projectPreviewBatchPlannerGeneration = 0;
 let homePreviewActivityGeneration = 0;
+let homePreviewDataGeneration = 0;
+let homePreviewBroadCaptureActive = false;
+let homePreviewBroadCaptureGeneration = 0;
+let homePreviewBroadCaptureQueued = 0;
+let homePreviewCaptureStatus = {
+  active:false,
+  label:'',
+  key:'',
+  startedAt:0,
+  nativeAlphaAttempts:0,
+  nativeAlphaHits:0,
+  nativeAlphaMisses:0,
+  lastNativeAlphaQuality:null,
+};
 let homePreviewInteractionActive = false;
 let homePreviewInteractionWaiters = [];
+let homePreviewDiskCacheLoaded = false;
+let homePreviewDiskCachePersistTimer = null;
+let homePreviewDiskCachePersistQueue = Promise.resolve();
+
+function validPreviewDataUrl(value) {
+  return typeof value === 'string' && value.startsWith('data:image/png;base64,');
+}
+
+function loadHomePreviewDiskCache(bounds = {}) {
+  const width = Number(bounds.width) || 0;
+  const height = Number(bounds.height) || 0;
+  try {
+    const cached = JSON.parse(fs.readFileSync(HOME_PREVIEW_DISK_CACHE_FILE, 'utf8'));
+    const previews = Array.isArray(cached?.previews) ? cached.previews : [];
+    const keys = new Set(previews.map((preview) => preview?.key));
+    const complete = cached?.version === HOME_PREVIEW_VERSION
+      && cached?.width === width
+      && cached?.height === height
+      && previews.length === HOME_PREVIEW_KEYS.length
+      && HOME_PREVIEW_KEYS.every((key) => keys.has(key))
+      && previews.every((preview) => preview?.version === HOME_PREVIEW_VERSION
+        && preview.width === width
+        && preview.height === height
+        && validPreviewDataUrl(preview.foregroundSrc)
+        && validPreviewDataUrl(preview.exactSrc));
+    if (!complete) return false;
+    homePreviewCache.clear();
+    previews.forEach((preview) => homePreviewCache.set(preview.key, preview));
+    const motion = cached.motionSnapshot;
+    homeMotionSnapshot = motion?.version === HOME_PREVIEW_VERSION
+      && motion.width === width
+      && motion.height === height
+      && validPreviewDataUrl(motion.src)
+      ? motion
+      : null;
+    homePreviewDiskCacheLoaded = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function scheduleHomePreviewDiskCachePersist(delay = 80) {
+  clearTimeout(homePreviewDiskCachePersistTimer);
+  homePreviewDiskCachePersistTimer = setTimeout(() => {
+    homePreviewDiskCachePersistTimer = null;
+    if (HOME_PREVIEW_KEYS.some((key) => !homePreviewCache.has(key))
+      || !homeMotionSnapshot
+      || homeMotionSnapshot.version !== HOME_PREVIEW_VERSION) return;
+    const payload = JSON.stringify({
+      version:HOME_PREVIEW_VERSION,
+      width:homeMotionSnapshot.width,
+      height:homeMotionSnapshot.height,
+      savedAt:Date.now(),
+      previews:HOME_PREVIEW_KEYS.map((key) => homePreviewCache.get(key)),
+      motionSnapshot:homeMotionSnapshot,
+    });
+    homePreviewDiskCachePersistQueue = homePreviewDiskCachePersistQueue
+      .catch(() => null)
+      .then(async () => {
+        try {
+          await fs.promises.mkdir(path.dirname(HOME_PREVIEW_DISK_CACHE_FILE), {
+            recursive:true,
+          });
+          await fs.promises.writeFile(HOME_PREVIEW_DISK_CACHE_FILE, payload, 'utf8');
+        } catch {}
+      });
+  }, Math.max(0, Number(delay) || 0));
+}
 
 function setHomePreviewInteraction(active) {
   const next = !!active;
@@ -200,6 +287,7 @@ function createMainWindow() {
       sandbox: false,        // lets dashboard-preload.js use node:fs for the layout store
     },
   });
+  loadHomePreviewDiskCache(mainWindow.getContentBounds());
 
   // Windows/Linux expose physical mouse Back/Forward buttons as app commands.
   // Keep them inside the CRM's viewport history instead of Electron's file URL
@@ -267,7 +355,7 @@ function createMainWindow() {
   // Register every one-shot lifecycle listener before navigation begins. A
   // local static dashboard can finish loading in the gap after loadFile();
   // missing did-finish-load leaves Home's preview startup job unarmed and all
-  // four tiles permanently displaying their "Preparing view" placeholders.
+  // Home tiles permanently displaying their "Preparing view" placeholders.
   mainWindow.loadFile(dashboardIndexPath());
 
   mainWindow.on('closed', () => {
@@ -276,10 +364,12 @@ function createMainWindow() {
     clearTimeout(homePreviewRefreshTimer);
     clearTimeout(homePreviewStartupTimer);
     clearTimeout(projectGalleryHomeRefreshTimer);
+    clearTimeout(homePreviewDiskCachePersistTimer);
     homePreviewResizeTimer = null;
     homePreviewRefreshTimer = null;
     homePreviewStartupTimer = null;
     projectGalleryHomeRefreshTimer = null;
+    homePreviewDiskCachePersistTimer = null;
     homePreviewBoundsKey = '';
     if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
     previewWindow = null;
@@ -386,6 +476,58 @@ function foregroundFromMattes(blackImage, whiteImage) {
       transparentRatio:transparentPixels / pixelCount,
       opaqueRatio:opaquePixels / pixelCount,
       nearSolidRatio:nearSolidPixels / pixelCount,
+    },
+  };
+}
+
+function foregroundFromNativeAlpha(image) {
+  if (!image || image.isEmpty()) return null;
+  const size = image.getSize();
+  const bitmap = image.toBitmap();
+  if (bitmap.length !== size.width * size.height * 4) return null;
+  let minX = size.width;
+  let minY = size.height;
+  let maxX = -1;
+  let maxY = -1;
+  let transparentPixels = 0;
+  let partialPixels = 0;
+  let opaquePixels = 0;
+  let nearSolidPixels = 0;
+  for (let index = 0; index < bitmap.length; index += 4) {
+    const alpha = bitmap[index + 3];
+    if (alpha <= 2) transparentPixels += 1;
+    else {
+      if (alpha >= 250) {
+        opaquePixels += 1;
+        const luma = (bitmap[index] + bitmap[index + 1] + bitmap[index + 2]) / 3;
+        if (luma <= 8 || luma >= 247) nearSolidPixels += 1;
+      } else {
+        partialPixels += 1;
+      }
+      if (alpha > 12) {
+        const pixel = index / 4;
+        const x = pixel % size.width;
+        const y = Math.floor(pixel / size.width);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  const pixelCount = Math.max(1, size.width * size.height);
+  return {
+    image,
+    bounds:maxX >= minX && maxY >= minY
+      ? { x:minX, y:minY, width:maxX - minX + 1, height:maxY - minY + 1 }
+      : { x:0, y:0, width:size.width, height:size.height },
+    quality:{
+      matteSeparationRatio:transparentPixels / pixelCount,
+      transparentRatio:transparentPixels / pixelCount,
+      partialRatio:partialPixels / pixelCount,
+      opaqueRatio:opaquePixels / pixelCount,
+      nearSolidRatio:nearSolidPixels / pixelCount,
+      nativeAlpha:true,
     },
   };
 }
@@ -511,6 +653,27 @@ async function captureForeground(win, options = {}) {
   const validateTransparentForeground = options.tileForegroundOnly === true;
   const attempts = validateTransparentForeground ? 4 : 1;
   let lastQuality = null;
+  // Offscreen Chromium can preserve the room's native alpha when its window
+  // itself is transparent. This is both more faithful and much cheaper than
+  // reconstructing alpha from separate black/white full-window captures.
+  await waitForHomePreviewInteraction();
+  await prepareCapture(win, '#00000000', options);
+  const nativeAlpha = foregroundFromNativeAlpha(
+    await capturePage(win, options.region),
+  );
+  homePreviewCaptureStatus.nativeAlphaAttempts += 1;
+  homePreviewCaptureStatus.lastNativeAlphaQuality = nativeAlpha?.quality || null;
+  if (transparentForegroundIsValid(nativeAlpha)) {
+    homePreviewCaptureStatus.nativeAlphaHits += 1;
+    nativeAlpha.quality = {
+      ...nativeAlpha.quality,
+      validated:true,
+      attempts:1,
+    };
+    return nativeAlpha;
+  }
+  homePreviewCaptureStatus.nativeAlphaMisses += 1;
+  lastQuality = nativeAlpha?.quality || null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const attemptOptions = {
       ...options,
@@ -577,10 +740,44 @@ async function captureForegroundBatch(win, batchState, options = {}) {
   if (!captureRegion || !tiles.length) return null;
   const attempts = 4;
   let lastQuality = null;
+  const directOptions = {
+    ...options,
+    tileForegroundOnly:options.tileForegroundOnly !== false,
+    tileBatchOnly:true,
+  };
+  await waitForHomePreviewInteraction();
+  await prepareCapture(win, '#00000000', directOptions);
+  const nativeAlpha = await capturePage(win, captureRegion);
+  homePreviewCaptureStatus.nativeAlphaAttempts += 1;
+  const directCaptures = new Map();
+  const directQualities = {};
+  let directValid = true;
+  for (const tile of tiles) {
+    const tileImage = cropCapturedImage(nativeAlpha, tile.region, captureRegion);
+    const foreground = foregroundFromNativeAlpha(tileImage);
+    if (!transparentForegroundIsValid(foreground)) directValid = false;
+    if (foreground) {
+      foreground.quality = {
+        ...foreground.quality,
+        validated:true,
+        attempts:1,
+        batch:true,
+      };
+      directCaptures.set(String(tile.key), foreground);
+      directQualities[String(tile.key)] = foreground.quality;
+    }
+  }
+  homePreviewCaptureStatus.lastNativeAlphaQuality = directQualities;
+  if (directValid && directCaptures.size === tiles.length) {
+    homePreviewCaptureStatus.nativeAlphaHits += 1;
+    return directCaptures;
+  }
+  homePreviewCaptureStatus.nativeAlphaMisses += 1;
+  lastQuality = directQualities;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const attemptOptions = {
       ...options,
-      tileForegroundOnly:true,
+      tileForegroundOnly:options.tileForegroundOnly !== false,
       tileBatchOnly:true,
       settleMs:Math.max(Number(options.settleMs) || 0, attempt * 12),
     };
@@ -673,7 +870,7 @@ async function createPreviewWindow({ dedicatedTileWorker = false } = {}) {
   const bounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentBounds() : { width: 1280, height: 860 };
   const worker = new BrowserWindow({
     width: bounds.width, height: bounds.height, show: false, frame: false,
-    backgroundColor: '#10141c', paintWhenInitiallyHidden: true,
+    transparent:true, backgroundColor:'#00000000', paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'dashboard-preload.js'), nodeIntegration: false, contextIsolation: true,
       sandbox: false, offscreen: true, backgroundThrottling: false,
@@ -688,7 +885,12 @@ async function createPreviewWindow({ dedicatedTileWorker = false } = {}) {
   });
   try {
     await Promise.race([
-      worker.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } }),
+      worker.loadFile(dashboardIndexPath(), {
+        query:{
+          crmPreviewWorker:'1',
+          ...(dedicatedTileWorker ? { crmTilePreviewWorker:'1' } : {}),
+        },
+      }),
       new Promise((_, reject) => setTimeout(
         () => reject(new Error('Shared preview worker load timed out')),
         20000,
@@ -716,6 +918,35 @@ function publishHomePreview(key, capture, layoutSignature, viewState = null) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:changed', preview);
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.webContents.send('home-preview:changed', preview);
   return preview;
+}
+
+function publishHomePreviewBatch(entries = []) {
+  const previews = entries.map(({ key, capture, layoutSignature, viewState }) => {
+    if (!capture?.foreground || !capture?.exact) return null;
+    const size = capture.exact.getSize();
+    const preview = {
+      key,
+      version:HOME_PREVIEW_VERSION,
+      width:size.width,
+      height:size.height,
+      capturedAt:Date.now(),
+      foregroundSrc:capture.foreground.toDataURL(),
+      exactSrc:capture.exact.toDataURL(),
+      foregroundBounds:capture.bounds,
+      layoutSignature,
+      viewState,
+    };
+    homePreviewCache.set(key, preview);
+    return preview;
+  }).filter(Boolean);
+  if (!previews.length) return previews;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('home-preview:batch-changed', previews);
+  }
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    previewWindow.webContents.send('home-preview:batch-changed', previews);
+  }
+  return previews;
 }
 
 function publishProjectPreview(projectId, capture, viewState = null) {
@@ -862,18 +1093,18 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
         }
         pending.push(request);
       }
-      if (batch.kind === 'calendar-day' && pending.length > 1) {
+      if (['calendar-month', 'calendar-day'].includes(batch.kind) && pending.length > 1) {
         canonicalTilePreviewCaptureStatus = {
           ...canonicalTilePreviewCaptureStatus,
-          stage:'rendering-day-batch',
-          key:`${pending.length} days`,
+          stage:`rendering-${batch.kind}-batch`,
+          key:`${pending.length} tiles`,
         };
         const batchState = await worker.webContents.executeJavaScript(
           `window.fractalCalendar.prepareTilePreviewBatch(${JSON.stringify(pending)})`,
           true,
         );
         if (!batchState || batchState.tiles?.length !== pending.length) {
-          throw new Error('Canonical calendar-day batch did not prepare');
+          throw new Error(`Canonical ${batch.kind} batch did not prepare`);
         }
         const statesByKey = new Map(
           batchState.tiles.map((state) => [String(state.key), state]),
@@ -883,8 +1114,10 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
             throw new Error(`Canonical tile ${request.key} did not use its batch full renderer`);
           }
         }
-        canonicalTilePreviewCaptureStatus.stage = 'capturing-day-batch';
-        const captures = await captureForegroundBatch(worker, batchState);
+        canonicalTilePreviewCaptureStatus.stage = `capturing-${batch.kind}-batch`;
+        const captures = await captureForegroundBatch(worker, batchState, {
+          tileForegroundOnly:batch.kind === 'calendar-day',
+        });
         for (const request of pending) {
           const captureState = statesByKey.get(request.key);
           const foreground = captures?.get(request.key);
@@ -1100,11 +1333,18 @@ async function captureHomeMotionSnapshot(worker) {
     foregroundBounds: foreground.bounds, backgroundMode: 'shared', materialMode: 'live-peripheral-acrylic', variants,
   };
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-preview:motion-changed', homeMotionSnapshot);
+  scheduleHomePreviewDiskCachePersist();
   return homeMotionSnapshot;
 }
 
 function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
   const requested = keys.filter((key) => HOME_PREVIEW_KEYS.includes(key));
+  const broadRequest = requested.length === HOME_PREVIEW_KEYS.length
+    && HOME_PREVIEW_KEYS.every((key) => requested.includes(key));
+  const waitingBroadCapture = homePreviewBroadCaptureQueued
+    - (homePreviewBroadCaptureActive ? 1 : 0);
+  if (broadRequest && waitingBroadCapture > 0) return homePreviewQueue;
+  if (broadRequest) homePreviewBroadCaptureQueued += 1;
   if (requested.includes('planner')) {
     plannerHomeCaptureRequestGeneration += 1;
     clearTimeout(projectGalleryHomeRefreshTimer);
@@ -1119,11 +1359,25 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
   homePreviewQueue = homePreviewQueue.then(async () => {
     let worker;
     let activeCaptureKey = 'boot';
+    const captured = [];
+    const broadCapture = broadRequest;
+    if (broadCapture) {
+      homePreviewBroadCaptureActive = true;
+      homePreviewBroadCaptureGeneration = homePreviewDataGeneration;
+    }
+    homePreviewCaptureStatus = {
+      ...homePreviewCaptureStatus,
+      active:true,
+      label,
+      key:'boot',
+      startedAt:Date.now(),
+    };
     try {
       worker = await createPreviewWindow();
       for (const key of requested) {
         await waitForHomePreviewInteraction();
         activeCaptureKey = key;
+        homePreviewCaptureStatus.key = key;
         await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive(${JSON.stringify(key)})`, true);
         await waitForRenderer(worker, `document.body.dataset.crmModule === ${JSON.stringify(key)} && !!document.querySelector('[data-crm-theater]:not([hidden])')`);
         const viewStateGeneration = homePreviewViewStateGenerations.get(key) || 0;
@@ -1132,6 +1386,18 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
           await worker.webContents.executeJavaScript(`window.crmHome?.applyCaptureState?.(${JSON.stringify(key)}, ${JSON.stringify(viewState)})`, true);
         }
         if (key === 'planner') await waitForProjectGalleryImages(worker);
+        if (key === 'calendar') {
+          const calendarPreviews = await worker.webContents.executeJavaScript(
+            `window.fractalCalendar?.waitForTilePreviews?.(null, 30000)`,
+            true,
+          );
+          if (calendarPreviews?.total
+            && calendarPreviews.ready !== calendarPreviews.total) {
+            throw new Error(
+              `Calendar month previews did not settle: ${JSON.stringify(calendarPreviews)}`,
+            );
+          }
+        }
         await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
         const layoutSignature = await worker.webContents.executeJavaScript(`(() => {
           const theater = document.querySelector('[data-crm-theater]:not([hidden])');
@@ -1149,6 +1415,11 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
         // refresh is already painting this key. Never publish that older frame:
         // the queued stateful capture must be the observable handoff.
         if ((homePreviewViewStateGenerations.get(key) || 0) !== viewStateGeneration) continue;
+        captured.push({ key, capture, layoutSignature, viewState });
+      }
+      if (captured.length > 1) publishHomePreviewBatch(captured);
+      else if (captured.length === 1) {
+        const [{ key, capture, layoutSignature, viewState }] = captured;
         publishHomePreview(key, capture, layoutSignature, viewState);
       }
       // A one-room refresh (for example after a Large/Small choice) must also
@@ -1156,6 +1427,7 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
       // briefly fly toward the old-size snapshot before handing off to Home.
       if (requested.length) {
         activeCaptureKey = 'home-motion';
+        homePreviewCaptureStatus.key = activeCaptureKey;
         await captureHomeMotionSnapshot(worker);
       }
     } catch (error) {
@@ -1164,6 +1436,18 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
     } finally {
       if (worker && !worker.isDestroyed()) worker.destroy();
       if (previewWindow === worker) previewWindow = null;
+      if (broadCapture) {
+        homePreviewBroadCaptureActive = false;
+        homePreviewBroadCaptureQueued = Math.max(
+          0,
+          homePreviewBroadCaptureQueued - 1,
+        );
+      }
+      homePreviewCaptureStatus = {
+        ...homePreviewCaptureStatus,
+        active:false,
+        key:'',
+      };
     }
     return requested.length === 1 ? homePreviewCache.get(requested[0]) || null : null;
   });
@@ -1172,10 +1456,18 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
 
 function scheduleHomePreviewRefresh(label = 'store change', delay = 700) {
   clearTimeout(homePreviewRefreshTimer);
+  const scheduledGeneration = ++homePreviewDataGeneration;
   homePreviewActivityGeneration += 1;
   homePreviewRefreshTimer = setTimeout(() => {
     homePreviewRefreshTimer = null;
     if (!mainWindow || mainWindow.isDestroyed()) return;
+    // A broad capture that started after this data notification already reads
+    // the updated stores. Do not append a duplicate five-room pass behind it.
+    const waitingBroadCapture = homePreviewBroadCaptureQueued
+      - (homePreviewBroadCaptureActive ? 1 : 0);
+    if (waitingBroadCapture > 0
+      || (homePreviewBroadCaptureActive
+        && homePreviewBroadCaptureGeneration >= scheduledGeneration)) return;
     capturePreviewKeys(HOME_PREVIEW_KEYS, label);
   }, delay);
 }
@@ -1977,7 +2269,12 @@ ipcMain.on('home-preview:interaction', (event, active) => {
 });
 ipcMain.handle('home-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
-  return { ok: true, version: HOME_PREVIEW_VERSION, previews: [...homePreviewCache.values()] };
+  return {
+    ok:true,
+    version:HOME_PREVIEW_VERSION,
+    previews:[...homePreviewCache.values()],
+    diskCacheLoaded:homePreviewDiskCacheLoaded,
+  };
 });
 ipcMain.handle('project-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok:false, previews:[] };
@@ -2014,7 +2311,9 @@ ipcMain.handle('tile-preview:capture', async (event, {
   scope = null,
   tiles = [],
 } = {}) => {
-  if (!isMainSender(event)) return { ok:false, error:'Invalid tile preview sender', previews:[] };
+  if (!isMainSender(event) && !isPreviewSender(event)) {
+    return { ok:false, error:'Invalid tile preview sender', previews:[] };
+  }
   const previews = await captureCanonicalTilePreviews(String(kind || ''), scope || {}, tiles);
   return previews.length
     ? { ok:true, version:CANONICAL_TILE_PREVIEW_VERSION, previews }
@@ -2056,11 +2355,37 @@ ipcMain.handle('home-preview:idle', async (event) => {
     }
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
-  return { ok: false, capturing: !!previewWindow && !previewWindow.isDestroyed(), error: 'Preview engine did not become idle' };
+  return {
+    ok:false,
+    capturing:!!previewWindow && !previewWindow.isDestroyed(),
+    error:'Preview engine did not become idle',
+    status:{ ...homePreviewCaptureStatus },
+    broadCaptureActive:homePreviewBroadCaptureActive,
+    broadCaptureQueued:homePreviewBroadCaptureQueued,
+    broadCaptureGeneration:homePreviewBroadCaptureGeneration,
+    dataGeneration:homePreviewDataGeneration,
+    refreshScheduled:!!homePreviewRefreshTimer,
+  };
 });
 ipcMain.handle('home-preview:motion', (event) => {
   if (!isMainSender(event)) return { ok: false, snapshot: null };
   return { ok: true, snapshot: homeMotionSnapshot, error: homeMotionSnapshotError };
+});
+ipcMain.handle('home-preview:diagnostics', (event) => {
+  if (!isMainSender(event)) return { ok:false };
+  return {
+    ok:true,
+    status:{ ...homePreviewCaptureStatus },
+    broadCaptureActive:homePreviewBroadCaptureActive,
+    broadCaptureQueued:homePreviewBroadCaptureQueued,
+    broadCaptureGeneration:homePreviewBroadCaptureGeneration,
+    dataGeneration:homePreviewDataGeneration,
+    diskCacheLoaded:homePreviewDiskCacheLoaded,
+    startupScheduled:!!homePreviewStartupTimer,
+    refreshScheduled:!!homePreviewRefreshTimer,
+    resizeScheduled:!!homePreviewResizeTimer,
+    worker:!!previewWindow && !previewWindow.isDestroyed(),
+  };
 });
 ipcMain.handle('home-preview:capture', async (event, { key, viewState = null } = {}) => {
   if (!isMainSender(event) || !HOME_PREVIEW_KEYS.includes(key)) return { ok: false, error: 'Invalid preview key' };

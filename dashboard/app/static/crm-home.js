@@ -13,13 +13,15 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
 (() => {
   if (typeof window.createFractalCamera !== "function") return;
 
-  const HOME_TILE_STORE_KEY = "crm-home-tiles-v1";
+  const HOME_TILE_STORE_KEY = "crm-home-tiles-v2";
+  const LEGACY_HOME_TILE_STORE_KEY = "crm-home-tiles-v1";
   const MODULES = [
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
+    { key: "calendar", label: "Calendar" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v46";
+  const HOME_PREVIEW_VERSION = "filtered-home-v48";
   const HOME_RETURN_INGRESS_MS = 110;
   const HOME_ACRYLIC_RELEASE_MS = 110;
   const HOME_RETURN_HANDOFF_EASE = "cubic-bezier(.4, 0, .2, 1)";
@@ -64,8 +66,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const prewarmedFactories = new Set();
   const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
-  const FACTORY_PREWARM_APIS = ["peopleCards", "ticketStacks", "crmPlanner", "crmAssignments"];
-  const FACTORY_API_BY_MODULE = { people:"peopleCards", cases:"ticketStacks", planner:"crmPlanner", assignments:"crmAssignments" };
+  const FACTORY_PREWARM_APIS = ["peopleCards", "ticketStacks", "crmPlanner", "crmAssignments", "fractalCalendar"];
+  const FACTORY_API_BY_MODULE = {
+    people:"peopleCards",
+    cases:"ticketStacks",
+    planner:"crmPlanner",
+    assignments:"crmAssignments",
+    calendar:"fractalCalendar",
+  };
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   const homeTileData = (tile) => tileDataOf(tile) || {};
   const homeTileModuleKey = (tile) => String(homeTileData(tile).moduleKey || "");
@@ -104,14 +112,29 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const defaultHomeTiles = () => MODULES.map((module, rank) => normalizeHomeTile({ ...module, id:module.key }, rank));
   const readHomeTiles = () => {
     let parsed = null;
-    try { parsed = JSON.parse(localStorage.getItem(HOME_TILE_STORE_KEY) || "null"); } catch {}
+    let migrated = false;
+    try {
+      const current = localStorage.getItem(HOME_TILE_STORE_KEY);
+      migrated = current == null;
+      parsed = JSON.parse(current || localStorage.getItem(LEGACY_HOME_TILE_STORE_KEY) || "null");
+    } catch {}
     if (!Array.isArray(parsed)) return defaultHomeTiles();
     const seen = new Set();
-    return parsed.map(normalizeHomeTile).filter((tile) => {
+    const records = parsed.map(normalizeHomeTile).filter((tile) => {
       if (!tile || seen.has(tile.tile.id)) return false;
       seen.add(tile.tile.id);
       return true;
     });
+    // v1 predates Calendar as a Home viewport. Migrate that layout exactly
+    // once, preserving custom order, labels, duplicate tiles, and removals
+    // made after the v2 layout has been written.
+    if (migrated && !records.some((tile) => homeTileModuleKey(tile) === "calendar")) {
+      records.push(normalizeHomeTile({ key:"calendar", id:"calendar" }, records.length));
+    }
+    if (migrated && !window.crmHomePreviews?.isCaptureWorker) {
+      try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(records)); } catch {}
+    }
+    return records;
   };
   const homeRootObject = createTileObject({
     data:{ domain:"home", unit:"root", moduleKey:"", key:"home", label:"Home" },
@@ -614,6 +637,48 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     });
     return true;
   };
+  const acceptPreviewBatch = (batch, replaceCurrent = false) => {
+    const staged = [];
+    (Array.isArray(batch) ? batch : []).forEach((preview) => {
+      if (!isRenderablePreview(preview)) return;
+      const existing = previews.get(preview.key);
+      const pending = pendingPreviews.get(preview.key)?.preview;
+      const newest = pending
+        && Number(pending.capturedAt || 0) >= Number(existing?.capturedAt || 0)
+        ? pending
+        : existing;
+      if (!replaceCurrent && isCurrentPreview(newest) && !isCurrentPreview(preview)) return;
+      if (newest?.version === preview.version
+        && newest?.capturedAt === preview.capturedAt
+        && newest?.foregroundSrc === preview.foregroundSrc
+        && newest?.exactSrc === preview.exactSrc) return;
+      if (!pending && existing?.foregroundSrc === preview.foregroundSrc
+        && existing?.exactSrc === preview.exactSrc) {
+        commitPreview(preview);
+        return;
+      }
+      const sequence = ++previewDecodeSequence;
+      const entry = { preview, sequence, ready:false };
+      pendingPreviews.set(preview.key, entry);
+      staged.push(entry);
+    });
+    if (!staged.length) return false;
+    // Decode the complete room set behind one barrier. The former independent
+    // promises made Home visibly populate in capture order even though main
+    // had prepared one semantic batch.
+    Promise.all(staged.flatMap(({ preview }) => [
+      preloadSource(preview.foregroundSrc),
+      preloadSource(preview.exactSrc),
+    ])).then(() => {
+      staged.forEach((entry) => {
+        if (pendingPreviews.get(entry.preview.key)?.sequence === entry.sequence) {
+          entry.ready = true;
+        }
+      });
+      flushPendingPreviews();
+    });
+    return true;
+  };
   const motionLayoutSignature = (root = camera?.layers?.()[0]) => {
     if (!root) return "";
     const rectOf = (node) => {
@@ -768,7 +833,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const requestPreviews = async (reset = false) => {
     clearTimeout(retryTimer);
     if (reset) retryAttempt = 0;
-    try { (await window.crmHomePreviews?.list?.())?.previews?.forEach(acceptPreview); } catch {}
+    try { acceptPreviewBatch((await window.crmHomePreviews?.list?.())?.previews || []); } catch {}
     if (MODULES.every(({ key }) => isCurrentPreview(previews.get(key)))) return;
     retryTimer = setTimeout(() => requestPreviews(false), RETRY_MS[Math.min(retryAttempt++, RETRY_MS.length - 1)]);
   };
@@ -1115,6 +1180,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (subscribed) return;
     subscribed = true;
     try { window.crmHomePreviews?.onChanged?.(acceptPreview); } catch {}
+    try { window.crmHomePreviews?.onBatchChanged?.(acceptPreviewBatch); } catch {}
     try { window.crmHomePreviews?.onMotionSnapshotChanged?.(acceptMotionSnapshot); } catch {}
     if (window.crmHomePreviews?.isCaptureWorker) { requestPreviews(true); refreshPriorityHand(); return; }
     try { window.crmDomain?.onChanged?.(scheduleHandRefresh); } catch {}
@@ -1195,6 +1261,34 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       gap:GAP,
       aspect,
     });
+    const centeredFive = homeTileRecords.length === 5
+      && geometry?.columns === 3
+      && geometry?.rows === 2;
+    const tileNodes = [...grid.querySelectorAll(":scope > .crm-home-bucket")];
+    const titleNodes = [...(titleLayer?.querySelectorAll(
+      ":scope > .crm-home-title-slot",
+    ) || [])];
+    if (centeredFive) {
+      // Six half-width tracks preserve the exact adaptive cell dimensions
+      // while centering the incomplete second row. This is real grid geometry
+      // (not a visual transform), so camera measurements and motion cut-outs
+      // retain the same coordinates the user sees.
+      const halfTrack = Math.max(1, (geometry.cellWidth - GAP) / 2);
+      const columns = `repeat(6,minmax(0,${halfTrack}px))`;
+      grid.style.gridTemplateColumns = columns;
+      if (titleLayer) titleLayer.style.gridTemplateColumns = columns;
+      const starts = [1, 3, 5, 2, 4];
+      [...tileNodes, ...titleNodes].forEach((node, index) => {
+        const tileIndex = index % 5;
+        node.style.gridColumn = `${starts[tileIndex]} / span 2`;
+        node.style.gridRow = tileIndex < 3 ? "1" : "2";
+      });
+    } else {
+      [...tileNodes, ...titleNodes].forEach((node) => {
+        node.style.removeProperty("grid-column");
+        node.style.removeProperty("grid-row");
+      });
+    }
     surface.style.setProperty("--home-r", `${Math.min(64,Math.max(2,16/245*Math.min(geometry?.cellWidth || 1,geometry?.cellHeight || 1)*2)).toFixed(1)}px`);
     layoutPriorityHand(hand);
   };
@@ -1688,7 +1782,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         const title = root?.querySelector?.(":scope > .crm-home-title-layer");
         const filter = foreground ? getComputedStyle(foreground).filter : "";
         const blur = Number(filter.match(/blur\(([\d.]+)px\)/)?.[1] || 0);
-        ready = buckets.length === 4
+        ready = buckets.length === homeTileRecords.length
           && buckets.every((node) => {
             const style = getComputedStyle(node);
             const backdrop = style.webkitBackdropFilter || style.backdropFilter;
@@ -1939,7 +2033,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   const waitForModuleSettled = (key, timeoutMs = 2200) => new Promise((resolve) => {
     const started = performance.now(); const theater = key === "cases" ? "tickets" : key;
-    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".tk-zone,.tk-zcard"}[key]||"*";
+    const selector = {
+      people:".tk-zone,.tk-card,.tk-zcard",
+      cases:".tk-zone,.tk-deck",
+      planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",
+      assignments:".tk-zone,.tk-zcard",
+      calendar:".crm-calendar-tile,.fc-month,.fc-day",
+    }[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden||node.hasAttribute("data-crm-transit-destination"));
       // This runs beneath the retained endpoint cover, not during camera
       // motion. Sample the complete leading viewport population so a lower
@@ -1961,7 +2061,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   const waitForModuleReady = (key) => new Promise((resolve) => {
     const theater = key === "cases" ? "tickets" : key;
-    const selector = {people:".tk-zone,.tk-card,.tk-zcard",cases:".tk-zone,.tk-deck",planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",assignments:".tk-zone,.tk-zcard"}[key]||"*";
+    const selector = {
+      people:".tk-zone,.tk-card,.tk-zcard",
+      cases:".tk-zone,.tk-deck",
+      planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",
+      assignments:".tk-zone,.tk-zcard",
+      calendar:".crm-calendar-tile,.fc-month,.fc-day",
+    }[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);
   });

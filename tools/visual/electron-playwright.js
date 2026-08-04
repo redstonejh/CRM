@@ -7,12 +7,12 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { nativeHz: 100, maxFrameMs: 15, maxOver15Ms: 0, maxLongTasks: 0 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v46';
+const HOME_PREVIEW_VERSION = 'filtered-home-v48';
 const HOME_PREVIEW_REST_FILTER = 'blur(0.65px)';
 let nativeRefreshCalibration = null;
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
-  && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 4
+  && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 5
   && window.crmHome?.handStatus?.().ready
   && window.crmHome?.motionStatus?.().ready
   && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
@@ -782,8 +782,8 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 4 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.shift || item.liveTrees)) {
-    throw new Error(`Home is not four inert native captures: ${JSON.stringify(startup)}`);
+  if (startup.buckets.length !== 5 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.shift || item.liveTrees)) {
+    throw new Error(`Home is not five inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER)
     || !item.loader.exists || item.loader.role !== 'status' || !item.loader.hiddenAtReady
@@ -792,8 +792,8 @@ async function main() {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
-    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 4
-     || !startup.homeLayers.rootWillChange.includes('transform') || startup.homeLayers.snapshots !== 1 || startup.homeLayers.motionVariants !== 4 || startup.homeLayers.snapshotDisplay !== 'none'
+    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 5
+     || !startup.homeLayers.rootWillChange.includes('transform') || startup.homeLayers.snapshots !== 1 || startup.homeLayers.motionVariants !== 5 || startup.homeLayers.snapshotDisplay !== 'none'
     || startup.homeLayers.sceneBackdrops !== 0 || startup.homeLayers.workspaceBackdrops !== 1 || startup.homeLayers.backgroundMode !== 'shared') {
     throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
   }
@@ -947,7 +947,7 @@ async function main() {
   const motionLayout = JSON.parse(motionSnapshotResult?.snapshot?.layoutSignature || '{}');
   const [motionGridX=0,motionGridY=0] = motionLayout.grid || [];
   const motionVariantCutouts = (motionLayout.buckets || []).map(([key,x,y,width,height]) => ({ key, maxAlpha:imageRegionMaxAlpha(Buffer.from((motionSnapshotResult?.snapshot?.variants?.[key] || '').split(',')[1] || '', 'base64'), [motionGridX+x,motionGridY+y,width,height], motionLayout.viewport) }));
-  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== 4 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
+  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== 5 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
     throw new Error(`Home transition texture is not the current cached cutout architecture: ${JSON.stringify({ snapshot:motionSnapshotResult?.snapshot && { version:motionSnapshotResult.snapshot.version, backgroundMode:motionSnapshotResult.snapshot.backgroundMode, materialMode:motionSnapshotResult.snapshot.materialMode, foregroundBounds:motionSnapshotResult.snapshot.foregroundBounds }, alpha:homeMotionAlpha })}`);
   }
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);

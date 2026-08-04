@@ -191,6 +191,7 @@ contextBridge.exposeInMainWorld('crmCalendarTransition', {
 });
 contextBridge.exposeInMainWorld('crmHomePreviews', {
   isCaptureWorker: new URLSearchParams(location.search).has('crmPreviewWorker'),
+  isTileCaptureWorker: new URLSearchParams(location.search).has('crmTilePreviewWorker'),
   setInteraction: (() => {
     let releaseTimer = null;
     let publishedActive = false;
@@ -217,8 +218,10 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
   list: () => ipcRenderer.invoke('home-preview:list'),
   capture: (key, viewState = null) => ipcRenderer.invoke('home-preview:capture', { key, viewState }),
   waitForIdle: () => ipcRenderer.invoke('home-preview:idle'),
+  diagnostics: () => ipcRenderer.invoke('home-preview:diagnostics'),
   motionSnapshot: () => ipcRenderer.invoke('home-preview:motion'),
   onChanged: (cb) => ipcRenderer.on('home-preview:changed', (_event, preview) => cb(preview)),
+  onBatchChanged: (cb) => ipcRenderer.on('home-preview:batch-changed', (_event, previews) => cb(previews)),
   onMotionSnapshotChanged: (cb) => ipcRenderer.on('home-preview:motion-changed', (_event, snapshot) => cb(snapshot)),
   projectList: () => ipcRenderer.invoke('project-preview:list'),
   captureProject: (projectId, viewState = null) => ipcRenderer.invoke('project-preview:capture', { projectId, viewState }),

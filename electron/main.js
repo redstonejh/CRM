@@ -118,7 +118,6 @@ let homePreviewResizeTimer = null;
 let homePreviewBoundsKey = '';
 let homePreviewQueue = Promise.resolve();
 let canonicalTilePreviewQueue = Promise.resolve();
-let canonicalTilePreviewWindow = null;
 let homePreviewRefreshTimer = null;
 let homePreviewStartupTimer = null;
 let projectGalleryHomeRefreshTimer = null;
@@ -137,12 +136,11 @@ function setHomePreviewInteraction(active) {
     // The hidden renderer only paints static capture states. Throttle it to one
     // frame while the visible camera owns the GPU, then restore a deliberately
     // modest capture cadence after the handoff.
-    try { previewWindow.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
-  }
-  if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
     try {
-      canonicalTilePreviewWindow.webContents.setFrameRate(
-        homePreviewInteractionActive ? 1 : 60,
+      previewWindow.webContents.setFrameRate(
+        homePreviewInteractionActive
+          ? 1
+          : (canonicalTilePreviewCaptureStatus.active ? 60 : 30),
       );
     } catch {}
   }
@@ -283,10 +281,6 @@ function createMainWindow() {
     homePreviewBoundsKey = '';
     if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
     previewWindow = null;
-    if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
-      canonicalTilePreviewWindow.destroy();
-    }
-    canonicalTilePreviewWindow = null;
     mainWindow = null;
   });
   return mainWindow;
@@ -401,8 +395,10 @@ async function prepareCapture(win, matte = null, options = {}) {
     .crm-home-title-glass { display:none !important; }
     ${preserveHomePreviewFilter ? '' : '.crm-home-level > .crm-home-grid > .crm-home-bucket > .crm-home-preview > .crm-home-preview-foreground { filter:none !important; }'}
     ${homeMotionObjectsOnly ? '.crm-home-level > .crm-home-grid > .crm-home-bucket { -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }' : ''}
-    ${tileForegroundOnly ? `.fc-expander[data-kind="day"] > .fc-day-expander-tint,
-      .fc-expander[data-kind="day"] > .fc-day-detail-material { display:none !important; }` : ''}
+    ${tileForegroundOnly ? `.fc-expander[data-kind="day"] {
+      background:transparent !important; border-color:transparent !important;
+      box-shadow:none !important; -webkit-backdrop-filter:none !important;
+      backdrop-filter:none !important; }` : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,
@@ -517,57 +513,18 @@ async function createPreviewWindow() {
   try { worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
   worker.on('closed', () => { if (previewWindow === worker) previewWindow = null; });
   try {
-    await worker.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } });
+    await Promise.race([
+      worker.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } }),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('Shared preview worker load timed out')),
+        20000,
+      )),
+    ]);
     await waitForRenderer(worker, `!document.documentElement.hasAttribute('data-dashboard-booting') && !!window.crmWorkspaces`);
     return worker;
   } catch (error) {
     if (!worker.isDestroyed()) worker.destroy();
     if (previewWindow === worker) previewWindow = null;
-    throw error;
-  }
-}
-
-async function createCanonicalTilePreviewWindow() {
-  if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
-    return canonicalTilePreviewWindow;
-  }
-  const bounds = mainWindow && !mainWindow.isDestroyed()
-    ? mainWindow.getContentBounds()
-    : { width:1280, height:860 };
-  const worker = new BrowserWindow({
-    width:bounds.width,
-    height:bounds.height,
-    show:false,
-    frame:false,
-    backgroundColor:'#10141c',
-    paintWhenInitiallyHidden:true,
-    webPreferences:{
-      preload:path.join(__dirname, 'dashboard-preload.js'),
-      nodeIntegration:false,
-      contextIsolation:true,
-      sandbox:false,
-      offscreen:true,
-      backgroundThrottling:false,
-    },
-  });
-  canonicalTilePreviewWindow = worker;
-  try {
-    worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 60);
-  } catch {}
-  worker.on('closed', () => {
-    if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
-  });
-  try {
-    await worker.loadFile(dashboardIndexPath(), { query:{ crmPreviewWorker:'1' } });
-    await waitForRenderer(
-      worker,
-      `!document.documentElement.hasAttribute('data-dashboard-booting')
-        && !!window.crmWorkspaces`,
-    );
-    return worker;
-  } catch (error) {
-    if (!worker.isDestroyed()) worker.destroy();
-    if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
     throw error;
   }
 }
@@ -682,21 +639,22 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
   const batch = normalizeCanonicalTilePreviewBatch(kind, scope, tiles);
   if (!batch) return Promise.resolve([]);
   homePreviewActivityGeneration += 1;
-  canonicalTilePreviewQueue = canonicalTilePreviewQueue.catch(() => null).then(async () => {
+  // Calendar, Home, and project previews share one queue and one offscreen
+  // renderer. This prevents competing capture windows while keeping every
+  // preview sourced from its module's real entered viewport.
+  canonicalTilePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
     let worker;
-    let homeWorkerWasPaused = false;
+    let ownsWorker = false;
     const previews = [];
     try {
       canonicalTilePreviewCaptureStatus = {
         active:true, stage:'waiting-for-interaction', key:'', startedAt:Date.now(), error:'',
       };
       await waitForHomePreviewInteraction();
-      if (previewWindow && !previewWindow.isDestroyed()) {
-        homeWorkerWasPaused = true;
-        try { previewWindow.webContents.setFrameRate(1); } catch {}
-      }
       canonicalTilePreviewCaptureStatus.stage = 'creating-worker';
-      worker = await createCanonicalTilePreviewWindow();
+      ownsWorker = !previewWindow || previewWindow.isDestroyed();
+      worker = await createPreviewWindow();
+      try { worker.webContents.setFrameRate(60); } catch {}
       canonicalTilePreviewCaptureStatus.stage = 'activating-calendar';
       await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('calendar')`, true);
       await waitForRenderer(worker, `document.body.dataset.crmModule === 'calendar'
@@ -770,12 +728,13 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
       canonicalTilePreviewCaptureStatus.error = String(error?.message || error);
       console.error('[tile-preview] calendar capture failed:', error?.message || error);
     } finally {
-      if (worker && !worker.isDestroyed()) worker.destroy();
-      if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
-      if (homeWorkerWasPaused && previewWindow && !previewWindow.isDestroyed()) {
+      if (!ownsWorker && worker && !worker.isDestroyed()) {
         try {
-          previewWindow.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30);
+          worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30);
         } catch {}
+      } else {
+        if (worker && !worker.isDestroyed()) worker.destroy();
+        if (previewWindow === worker) previewWindow = null;
       }
       canonicalTilePreviewCaptureStatus = {
         ...canonicalTilePreviewCaptureStatus,
@@ -786,6 +745,7 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
     }
     return previews;
   });
+  homePreviewQueue = canonicalTilePreviewQueue.catch(() => null);
   return canonicalTilePreviewQueue;
 }
 
@@ -1318,14 +1278,10 @@ function isMainSender(e) {
   return mainWindow && !mainWindow.isDestroyed() && e.sender === mainWindow.webContents;
 }
 function isPreviewSender(e) {
-  return (
+  return !!(
     previewWindow
     && !previewWindow.isDestroyed()
     && e.sender === previewWindow.webContents
-  ) || (
-    canonicalTilePreviewWindow
-    && !canonicalTilePreviewWindow.isDestroyed()
-    && e.sender === canonicalTilePreviewWindow.webContents
   );
 }
 
@@ -1813,7 +1769,9 @@ ipcMain.handle('tile-preview:diagnostics', (event) => {
     status:{ ...canonicalTilePreviewCaptureStatus },
     cached:canonicalTilePreviewCache.size,
     interactionActive:homePreviewInteractionActive,
-    worker:!!canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed(),
+    worker:canonicalTilePreviewCaptureStatus.active
+      && !!previewWindow
+      && !previewWindow.isDestroyed(),
   };
 });
 ipcMain.handle('tile-preview:capture', async (event, {

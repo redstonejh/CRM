@@ -20,13 +20,13 @@
     ".ticket-detail",
     ".tk-menu",
     ".tk-zone",
-    ".crm-home-bucket:not(.fc-day)",
+    ".crm-home-bucket",
     ".crm-home-window",
     ".crm-overview-pocket",
     ".record-world",
     ".crm-person-history",
-    // Calendar months are a clear layout plane whose individual day tiles own
-    // the canonical acrylic. Only the expanded day itself is a menu surface.
+    // Calendar's layout planes stay clear. Month and day objects are the same
+    // canonical viewport-tile surface used by Home, including at day scale.
     ".fc-bucket:not(.fc-month):not([data-kind='month'])",
     ".crm-company-account",
     ".crm-company-bucket",

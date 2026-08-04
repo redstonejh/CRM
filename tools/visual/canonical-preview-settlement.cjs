@@ -771,38 +771,50 @@ async function verifyAssignmentPreview(page, app, canonical) {
 }
 
 async function verifyCalendarDaySettlement(page) {
+  const currentMonth = new Date().getMonth() + 1;
   await page.evaluate(() => window.crmWorkspaces.setActive('calendar'));
-  await page.waitForFunction(() => (
+  await page.waitForFunction((monthNumber) => (
     document.body.dataset.crmModule === 'calendar'
     && window.fractalCalendarCamera?.level?.() === 0
     && !window.fractalCalendarCamera?.isTransitioning?.()
     && window.fractalCalendar?.geometryReady?.()
-    && !!document.querySelector('.fc-level > .fc-grid > .fc-month:has(.fc-day-preview-item)')
-  ), null, { timeout:45_000 });
+    && !!document.querySelector(
+      `.fc-level > .fc-grid > .fc-month[data-month="${monthNumber}"] `
+        + '> .fc-calendar-tile-preview[data-preview-state="ready"] '
+        + '> .fc-calendar-tile-preview-render',
+    )
+  ), currentMonth, { timeout:45_000 });
   await waitForPreviewIdle(page);
 
   const month = page.locator(
-    '.fc-level > .fc-grid > .fc-month:has(.fc-day-preview-item)',
-  ).first();
+    `.fc-level > .fc-grid > .fc-month[data-month="${currentMonth}"]`,
+  );
   await month.hover();
   await sleep(260);
   await month.click();
   await page.waitForFunction(() => (
     window.fractalCalendarCamera?.level?.() === 1
     && !window.fractalCalendarCamera?.isTransitioning?.()
-    && !!document.querySelector(
-      '.fc-expander[data-kind="month"] > .fc-expander-live '
-        + '.fc-day[data-date]:has(.fc-chip)',
-    )
   ), null, { timeout:30_000 });
+  const scheduledDate = await page.evaluate(() => {
+    const pane = document.querySelector(
+      '.fc-expander[data-kind="month"]:not(.fc-warm)',
+    );
+    const monthObject = window.fractalCalendar?._objectForElement?.(pane);
+    const dayObject = monthObject?.children?.find(
+      (object) => (window.crmTileSystem?.dataOf?.(object)?.entries || []).length > 0,
+    );
+    return window.crmTileSystem?.dataOf?.(dayObject)?.date || '';
+  });
+  assert.ok(scheduledDate, 'Calendar month has no scheduled canonical day object');
   await page.evaluate(() => new Promise(
     (resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)),
   ));
 
   const day = page.locator(
     '.fc-expander[data-kind="month"] > .fc-expander-live '
-      + '.fc-day[data-date]:has(.fc-chip)',
-  ).first();
+      + `.fc-day[data-date="${scheduledDate}"]`,
+  );
   await day.hover();
   await sleep(260);
   await armSettlementProbe(page, {

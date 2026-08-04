@@ -2,6 +2,7 @@ import {
   applyAdaptiveTileGrid,
   bindTileObject,
   createTileObject,
+  indexTileTree,
   mountTileChildren,
   normalizeTileRecord,
   tileDataOf,
@@ -125,9 +126,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     }),
     children:readHomeTiles(),
   });
+  let homeTreeIndex = indexTileTree(homeRootObject);
   let homeTileRecords = homeRootObject.children;
   const replaceHomeTileRecords = (records) => {
     homeRootObject.children = records;
+    homeTreeIndex = indexTileTree(homeRootObject);
     homeTileRecords = homeRootObject.children;
     return homeTileRecords;
   };
@@ -2061,7 +2064,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       return true;
     },
     peripheralAcrylicState:()=>homePeripheralAcrylic.status(),
-    tiles:()=>clone(homeTileRecords),_objectGraph:()=>homeRootObject,
+    tiles:()=>clone(homeTileRecords),_objectGraph:()=>homeRootObject,_objectIndex:()=>homeTreeIndex,
     createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),

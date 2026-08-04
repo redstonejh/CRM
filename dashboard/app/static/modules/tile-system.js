@@ -124,6 +124,45 @@ export function createTileTree(source = {}, options = {}) {
   return object;
 }
 
+export function indexTileTree(root) {
+  if (!isTileObject(root)) return null;
+  const objectsById = new Map();
+  const parentById = new Map();
+  const visit = (object, parent = null) => {
+    if (!isTileObject(object)) {
+      throw new TypeError("A tile tree may contain only canonical tile objects.");
+    }
+    const id = object.tile.id;
+    if (objectsById.has(id)) {
+      throw new TypeError(`Duplicate tile id in canonical tree: ${id}`);
+    }
+    objectsById.set(id, object);
+    if (parent) parentById.set(id, parent.tile.id);
+    object.children.forEach((child) => visit(child, object));
+  };
+  visit(root);
+  return {
+    root,
+    objectsById,
+    parentById,
+    objectForId:(id) => objectsById.get(String(id || "")) || null,
+    parentOf:(object) => {
+      const parentId = parentById.get(object?.tile?.id || "");
+      return parentId ? objectsById.get(parentId) || null : null;
+    },
+    pathTo:(object) => {
+      const path = [];
+      let current = isTileObject(object) ? object : null;
+      while (current && current !== root) {
+        path.unshift(current.tile.id);
+        const parentId = parentById.get(current.tile.id);
+        current = parentId ? objectsById.get(parentId) || null : null;
+      }
+      return current === root ? path : [];
+    },
+  };
+}
+
 export function tileDataOf(object) {
   return isTileObject(object) ? object.data : null;
 }
@@ -518,6 +557,7 @@ export const crmTileSystem = {
   normalizeAll:normalizeTileCollection,
   createObjectRecord:createTileObject,
   createTree:createTileTree,
+  indexTree:indexTileTree,
   isObject:isTileObject,
   dataOf:tileDataOf,
   kindOf:tileKindOf,

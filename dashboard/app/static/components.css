@@ -288,4 +288,11 @@
   backdrop-filter: none;
 }
 
+/* Material batching changes only where the shared tile samples its backdrop.
+   It never substitutes another face, wrapper, or calendar-specific component. */
+[data-crm-tile-shared-material="true"] >
+  [data-crm-tile-instance="viewport"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
 

@@ -13,6 +13,7 @@
     const releaseEase = config.releaseEase || "cubic-bezier(.3, 0, .7, 1)";
     const holdThroughMotion = config.holdThroughMotion === true;
     const hideWhenParked = config.hideWhenParked === true;
+    const retainOwnerWhenParked = config.retainOwnerWhenParked === true;
     const releaseMs = Math.max(1, Number(config.releaseMs) || 140);
     const prewarmOpacity = Math.max(.001, Math.min(1, Number(config.prewarmOpacity) || .001));
     const parkOpacity = Math.max(0, Math.min(.01, Number(config.parkOpacity) || 0));
@@ -105,10 +106,12 @@
       }
       lens.style.opacity = String(parkOpacity);
       lens.dataset.fractalAcrylicPhase = "parked";
-      owner?.classList.remove(ownerClass);
-      owner = null;
+      if (!retainOwnerWhenParked) {
+        owner?.classList.remove(ownerClass);
+        owner = null;
+      }
       state = null;
-      if (frame) frame.style.removeProperty("opacity");
+      if (frame && !retainOwnerWhenParked) frame.style.removeProperty("opacity");
       return true;
     };
     const clipFor = (rect, surfaceRect, radiusX, radiusY) => {
@@ -455,6 +458,11 @@
         // cancelling a completed full-screen backdrop animation can block the
         // first settled paint.
         releaseLens.dataset.fractalAcrylicPhase = "released";
+        // Seat the invisible endpoint values before the camera publishes its
+        // settled event. Parking then changes only the hidden compositor shell,
+        // never the destination tile's class or frame style after arrival.
+        releaseLens.style.opacity = String(parkOpacity);
+        if (releaseFrame) releaseFrame.style.opacity = "0";
         // Keep the completed geometry composition alive for one short resting
         // interval. Its invisible shell can then be parked without touching
         // the first settled paint.

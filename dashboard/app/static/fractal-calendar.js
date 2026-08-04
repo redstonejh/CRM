@@ -30,7 +30,7 @@ import {
   const MORPH_MS = 460;
   const MATERIAL_HANDOFF_MS = 72;
   const MATERIAL_PRIME_OPACITY = .02;
-  const TILE_PREVIEW_VERSION = "canonical-tile-preview-v1";
+  const TILE_PREVIEW_VERSION = "canonical-tile-preview-v2";
   const EXP_M = 48;
   const EXP_TOP = 132;
   const YEAR_STRIP_TOP = 12;
@@ -2211,6 +2211,7 @@ import {
       revision:object.revision,
       capturedAt:preview?.capturedAt || 0,
       renderer:preview?.provenance?.renderer || "",
+      captureQuality:preview?.captureQuality || null,
       error:tilePreviewLastError,
     };
   });

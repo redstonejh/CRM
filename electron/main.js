@@ -107,7 +107,7 @@ const homePreviewViewStateGenerations = new Map();
 let homePreviewViewStateGeneration = 0;
 const PROJECT_PREVIEW_VERSION = 'project-tile-v1';
 const projectPreviewCache = new Map();
-const CANONICAL_TILE_PREVIEW_VERSION = 'canonical-tile-preview-v1';
+const CANONICAL_TILE_PREVIEW_VERSION = 'canonical-tile-preview-v2';
 const canonicalTilePreviewCache = new Map();
 let canonicalTilePreviewCaptureStatus = {
   active:false, stage:'idle', key:'', startedAt:0, error:'',
@@ -337,19 +337,33 @@ function foregroundFromMattes(blackImage, whiteImage) {
   const png = new PNG({ width: size.width, height: size.height });
   const output = png.data;
   let minX = size.width, minY = size.height, maxX = -1, maxY = -1;
+  let matteSeparatedPixels = 0;
+  let transparentPixels = 0;
+  let opaquePixels = 0;
+  let nearSolidPixels = 0;
   for (let index = 0; index < black.length; index += 4) {
     const deltaB = Math.max(0, white[index] - black[index]);
     const deltaG = Math.max(0, white[index + 1] - black[index + 1]);
     const deltaR = Math.max(0, white[index + 2] - black[index + 2]);
+    if ((deltaB + deltaG + deltaR) / 3 >= 192) matteSeparatedPixels += 1;
     const alpha = Math.max(0, Math.min(255, 255 - Math.round((deltaB + deltaG + deltaR) / 3)));
     if (alpha <= 2) {
       output[index] = 0; output[index + 1] = 0; output[index + 2] = 0; output[index + 3] = 0;
+      transparentPixels += 1;
       continue;
     }
-    output[index] = Math.min(255, Math.round(black[index + 2] * 255 / alpha));
-    output[index + 1] = Math.min(255, Math.round(black[index + 1] * 255 / alpha));
-    output[index + 2] = Math.min(255, Math.round(black[index] * 255 / alpha));
+    const red = Math.min(255, Math.round(black[index + 2] * 255 / alpha));
+    const green = Math.min(255, Math.round(black[index + 1] * 255 / alpha));
+    const blue = Math.min(255, Math.round(black[index] * 255 / alpha));
+    output[index] = red;
+    output[index + 1] = green;
+    output[index + 2] = blue;
     output[index + 3] = alpha;
+    if (alpha >= 250) {
+      opaquePixels += 1;
+      const luma = (red + green + blue) / 3;
+      if (luma <= 8 || luma >= 247) nearSolidPixels += 1;
+    }
     if (alpha > 12) {
       const pixel = index / 4;
       const x = pixel % size.width;
@@ -361,7 +375,17 @@ function foregroundFromMattes(blackImage, whiteImage) {
   const bounds = maxX >= minX && maxY >= minY
     ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
     : { x: 0, y: 0, width: size.width, height: size.height };
-  return { image, bounds };
+  const pixelCount = Math.max(1, size.width * size.height);
+  return {
+    image,
+    bounds,
+    quality:{
+      matteSeparationRatio:matteSeparatedPixels / pixelCount,
+      transparentRatio:transparentPixels / pixelCount,
+      opaqueRatio:opaquePixels / pixelCount,
+      nearSolidRatio:nearSolidPixels / pixelCount,
+    },
+  };
 }
 
 function transparentImageRegion(image, region, viewport) {
@@ -425,7 +449,25 @@ async function prepareCapture(win, matte = null, options = {}) {
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, ${settleMs}))));
   })()`, true);
   try { win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1, movementX: 0, movementY: 0 }); } catch {}
-  win.webContents.invalidate();
+  const webContents = win.webContents;
+  if (webContents.isOffscreen?.()) {
+    await new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        webContents.removeListener('paint', finish);
+        resolve();
+      };
+      webContents.once('paint', finish);
+      timer = setTimeout(finish, Math.max(250, settleMs + 120));
+      try { webContents.invalidate(); } catch { finish(); }
+    });
+  } else {
+    webContents.invalidate();
+  }
   await new Promise((resolve) => setTimeout(resolve, settleMs));
 }
 
@@ -445,13 +487,46 @@ function capturePage(win, region = null) {
 }
 
 async function captureForeground(win, options = {}) {
-  await waitForHomePreviewInteraction();
-  await prepareCapture(win, '#000000', options);
-  const black = await capturePage(win, options.region);
-  await waitForHomePreviewInteraction();
-  await prepareCapture(win, '#ffffff', options);
-  const white = await capturePage(win, options.region);
-  return foregroundFromMattes(black, white);
+  const validateTransparentForeground = options.tileForegroundOnly === true;
+  const attempts = validateTransparentForeground ? 4 : 1;
+  let lastQuality = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const attemptOptions = {
+      ...options,
+      settleMs:Math.max(Number(options.settleMs) || 0, attempt * 12),
+    };
+    await waitForHomePreviewInteraction();
+    await prepareCapture(win, '#000000', attemptOptions);
+    const black = await capturePage(win, options.region);
+    await waitForHomePreviewInteraction();
+    await prepareCapture(win, '#ffffff', attemptOptions);
+    const white = await capturePage(win, options.region);
+    const foreground = foregroundFromMattes(black, white);
+    lastQuality = foreground?.quality || null;
+    const valid = !!foreground && (
+      !validateTransparentForeground
+      || (
+        foreground.quality.matteSeparationRatio >= .2
+        && foreground.quality.transparentRatio >= .2
+        && foreground.quality.opaqueRatio < .92
+        && foreground.quality.nearSolidRatio < .9
+      )
+    );
+    if (valid) {
+      foreground.quality = {
+        ...foreground.quality,
+        validated:validateTransparentForeground,
+        attempts:attempt + 1,
+      };
+      return foreground;
+    }
+  }
+  if (validateTransparentForeground) {
+    throw new Error(
+      `Tile foreground capture never produced a valid matte pair: ${JSON.stringify(lastQuality)}`,
+    );
+  }
+  return null;
 }
 
 async function captureRoom(win, options = {}) {
@@ -584,6 +659,7 @@ function publishCanonicalTilePreview({
     foregroundSrc:capture.foreground.toDataURL(),
     exactSrc:capture.exact?.toDataURL?.() || '',
     foregroundBounds:capture.bounds,
+    captureQuality:capture.quality || null,
     provenance,
     viewState,
   };
@@ -716,6 +792,7 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
           capture:foreground ? {
             foreground:foreground.image,
             bounds:foreground.bounds,
+            quality:foreground.quality,
           } : null,
           revision:request.revision,
           dataSignature:request.dataSignature,

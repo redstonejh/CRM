@@ -1051,7 +1051,13 @@ async function main() {
       || monthAudit.previews?.nestedTileCount !== 0
       || monthAudit.dayTileRenderer?.length !== monthAudit.tiles.count
       || monthAudit.dayTileRenderer.some((preview) => (
-        preview.state !== 'ready' || preview.renderer !== 'calendar-day-full'
+        preview.state !== 'ready'
+          || preview.renderer !== 'calendar-day-full'
+          || preview.captureQuality?.validated !== true
+          || preview.captureQuality?.matteSeparationRatio < .2
+          || preview.captureQuality?.transparentRatio < .2
+          || preview.captureQuality?.opaqueRatio >= .92
+          || preview.captureQuality?.nearSolidRatio >= .9
       ))
       || monthAudit.tiles.directBackdropCount !== 0
       || monthAudit.tiles.visibleBackdropCount !== 0

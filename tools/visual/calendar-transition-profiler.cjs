@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { _electron:electron } = require('playwright');
+const { PNG } = require('pngjs');
 const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -32,6 +33,81 @@ function summarizeCadence(values) {
     over15Ms:samples.filter((value) => value > 15).length,
     over20Ms:samples.filter((value) => value > 20).length,
   };
+}
+
+function compareDayAcrylicPixels(enabledBuffer, disabledBuffer, geometry) {
+  const enabled = PNG.sync.read(enabledBuffer);
+  const disabled = PNG.sync.read(disabledBuffer);
+  if (enabled.width !== disabled.width || enabled.height !== disabled.height) {
+    throw new Error('Calendar acrylic screenshots do not share one geometry');
+  }
+  const scaleX = enabled.width / Math.max(1, geometry.viewport.width);
+  const scaleY = enabled.height / Math.max(1, geometry.viewport.height);
+  const mask = new Uint8Array(enabled.width * enabled.height);
+  geometry.rects.forEach((rect) => {
+    const left = Math.max(0, Math.floor(rect.left * scaleX));
+    const top = Math.max(0, Math.floor(rect.top * scaleY));
+    const right = Math.min(enabled.width, Math.ceil(rect.right * scaleX));
+    const bottom = Math.min(enabled.height, Math.ceil(rect.bottom * scaleY));
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) mask[(y * enabled.width) + x] = 1;
+    }
+  });
+  let insideCount = 0;
+  let insideTotal = 0;
+  let insideMax = 0;
+  let outsideCount = 0;
+  let outsideTotal = 0;
+  for (let index = 0, pixel = 0; index < enabled.data.length; index += 4, pixel += 1) {
+    const difference = Math.abs(enabled.data[index] - disabled.data[index])
+      + Math.abs(enabled.data[index + 1] - disabled.data[index + 1])
+      + Math.abs(enabled.data[index + 2] - disabled.data[index + 2]);
+    if (mask[pixel]) {
+      insideCount += 1;
+      insideTotal += difference;
+      insideMax = Math.max(insideMax, difference);
+    } else {
+      outsideCount += 1;
+      outsideTotal += difference;
+    }
+  }
+  return {
+    tileCount:geometry.rects.length,
+    insideMean:insideTotal / Math.max(1, insideCount),
+    insideMax,
+    outsideMean:outsideTotal / Math.max(1, outsideCount),
+  };
+}
+
+async function measureDayAcrylicPixels(page) {
+  const geometry = await page.evaluate(() => ({
+    viewport:{ width:innerWidth, height:innerHeight },
+    rects:[...document.querySelectorAll(
+      '.fc-expander[data-kind="month"]:not(.fc-warm) .fc-day',
+    )].map((day) => {
+      const rect = day.getBoundingClientRect();
+      return {
+        left:rect.left,
+        top:rect.top,
+        right:rect.right,
+        bottom:rect.bottom,
+      };
+    }),
+  }));
+  const enabled = await page.screenshot();
+  const override = await page.addStyleTag({
+    content:'.fc-day-screen-material{'
+      + '-webkit-backdrop-filter:none!important;backdrop-filter:none!important}',
+  });
+  await page.evaluate(() => new Promise((resolve) => (
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  )));
+  const disabled = await page.screenshot();
+  await override.evaluate((element) => element.remove());
+  await page.evaluate(() => new Promise((resolve) => (
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  )));
+  return compareDayAcrylicPixels(enabled, disabled, geometry);
 }
 
 async function seedCalendarProof(apiUrl) {
@@ -428,6 +504,8 @@ async function auditArchitecture(page, phase) {
       preview.querySelector(':scope > .fc-calendar-tile-preview-render')
     )).filter(Boolean);
     const monthPlane = monthLive?.querySelector(':scope > .crm-tile-material-plane');
+    const screenDayOwner = surface.querySelector(':scope > .fc-day-screen-material-owner');
+    const screenDayPlane = screenDayOwner?.querySelector(':scope > .fc-day-screen-material');
     const activeDay = surface.querySelector(
       ':scope > .fc-expander[data-kind="day"]:not(.fc-warm)',
     );
@@ -512,6 +590,21 @@ async function auditArchitecture(page, phase) {
         clipLength:String(style.clipPath).length,
         backdrop:style.webkitBackdropFilter || style.backdropFilter,
         opacity:Number(style.opacity),
+      };
+    };
+    const screenPlaneAudit = (owner, plane) => {
+      if (!owner || !plane) return null;
+      const ownerStyle = getComputedStyle(owner);
+      const planeStyle = getComputedStyle(plane);
+      return {
+        count:Number(plane.dataset.crmTileMaterialCount || 0),
+        ready:plane.dataset.crmTileMaterialReady === 'true',
+        ownerHidden:owner.hidden,
+        ownerClipIsPath:String(ownerStyle.clipPath).startsWith('path('),
+        ownerClipLength:String(ownerStyle.clipPath).length,
+        backdrop:planeStyle.webkitBackdropFilter || planeStyle.backdropFilter,
+        opacity:Number(planeStyle.opacity),
+        visibility:planeStyle.visibility,
       };
     };
     const rootPlaneAudits = rootPlanes.map(planeAudit);
@@ -680,6 +773,7 @@ async function auditArchitecture(page, phase) {
           objectFor(activeMonth)?.tile?.id,
         ),
         plane:planeAudit(monthPlane),
+        screenPlane:screenPlaneAudit(screenDayOwner, screenDayPlane),
         transitionFrameOpacity:Number(getComputedStyle(
           activeMonth.querySelector(':scope > .fc-transition-acrylic'),
         ).opacity),
@@ -997,6 +1091,7 @@ async function main() {
     await sleep(MATERIAL_HANDOFF_MS + 180);
     architecture.push(await auditArchitecture(page, 'month-rest'));
     await page.screenshot({ path:MONTH_SCREENSHOT_PATH });
+    const dayAcrylicPixels = await measureDayAcrylicPixels(page);
     const monthSurfaceRounds = [];
     for (let round = 0; round < 3; round += 1) {
       monthSurfaceRounds.push(summarizeCadence(await measureAnimatedSurfaceCadence(
@@ -1057,6 +1152,7 @@ async function main() {
         month:monthSurface,
       },
       dayTilePreviewResult,
+      dayAcrylicPixels,
       auditMoves,
       moves,
     };
@@ -1120,6 +1216,17 @@ async function main() {
       || monthAudit.plane?.ready !== true
       || !String(monthAudit.plane?.backdrop).includes('blur(')
       || monthAudit.plane?.opacity < .998
+      || monthAudit.screenPlane?.count !== monthAudit.tiles.count
+      || monthAudit.screenPlane?.ready !== true
+      || monthAudit.screenPlane?.ownerHidden !== false
+      || monthAudit.screenPlane?.ownerClipIsPath !== true
+      || !String(monthAudit.screenPlane?.backdrop).includes('blur(')
+      || monthAudit.screenPlane?.opacity < .998
+      || monthAudit.screenPlane?.visibility !== 'visible'
+      || dayAcrylicPixels.tileCount !== monthAudit.tiles.count
+      || dayAcrylicPixels.insideMean < 2
+      || dayAcrylicPixels.insideMax < 10
+      || dayAcrylicPixels.outsideMean > .25
       || monthAudit.transitionFrameOpacity > .001
       || !monthAudit.liveSurfaceClear) {
       failures.push('expanded month days are not canonical tiles on one true-acrylic plane');

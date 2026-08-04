@@ -70,6 +70,9 @@ import {
   let backdropCoverSettleTimer = 0;
   let backdropCoverPrewarmTimer = 0;
   let backdropCoverSourceObserver = null;
+  let dayScreenMaterialOwner = null;
+  let dayScreenMaterial = null;
+  let dayScreenMaterialMotion = null;
   const tilePreviews = new Map();
   const tilePreviewRequests = new Set();
   const tilePreviewListedScopes = new Set();
@@ -334,6 +337,14 @@ import {
       .fc-live-backdrop-cover{position:absolute;z-index:3;overflow:hidden;pointer-events:none;
         will-change:opacity;contain:strict;backface-visibility:hidden}
       .fc-live-backdrop-cover[hidden]{display:none}
+      .fc-day-screen-material-owner{position:absolute;inset:0;z-index:4;box-sizing:border-box;
+        pointer-events:none;transform-origin:0 0;backface-visibility:hidden}
+      .fc-day-screen-material-owner[hidden]{display:none}
+      .fc-day-screen-material{position:absolute;inset:0;box-sizing:border-box;
+        pointer-events:none;background:transparent;opacity:.001;transform-origin:0 0;
+        backface-visibility:hidden;will-change:opacity,backdrop-filter;
+        -webkit-backdrop-filter:var(--bucket-acrylic-filter);
+        backdrop-filter:var(--bucket-acrylic-filter)}
       .fc-live-backdrop-scene{position:absolute;inset:0;overflow:visible;pointer-events:none;
         backface-visibility:hidden}
       .fc-live-backdrop-wallpaper{position:absolute;overflow:hidden;pointer-events:none;
@@ -1243,6 +1254,193 @@ import {
     if (direct) return syncTileMaterialPlane(direct);
     return null;
   };
+  const ensureDayScreenMaterial = (surface = camera?.surface?.()) => {
+    if (!surface) return null;
+    if (dayScreenMaterialOwner?.isConnected
+      && dayScreenMaterialOwner.parentElement === surface
+      && dayScreenMaterial?.parentElement === dayScreenMaterialOwner) return dayScreenMaterial;
+    dayScreenMaterialOwner?.remove?.();
+    dayScreenMaterialOwner = document.createElement("span");
+    dayScreenMaterialOwner.className = "fc-day-screen-material-owner";
+    dayScreenMaterialOwner.hidden = true;
+    dayScreenMaterialOwner.setAttribute("aria-hidden", "true");
+    dayScreenMaterial = document.createElement("span");
+    dayScreenMaterial.className = "fc-day-screen-material";
+    dayScreenMaterial.setAttribute("aria-hidden", "true");
+    dayScreenMaterialOwner.appendChild(dayScreenMaterial);
+    surface.appendChild(dayScreenMaterialOwner);
+    return dayScreenMaterial;
+  };
+  const stopDayScreenMaterialAnimations = () => {
+    [dayScreenMaterialOwner, dayScreenMaterial].forEach((node) => {
+      node?.getAnimations?.().forEach?.((animation) => animation.cancel());
+    });
+  };
+  const hideDayScreenMaterial = () => {
+    dayScreenMaterialMotion = null;
+    if (!dayScreenMaterialOwner || !dayScreenMaterial) return;
+    stopDayScreenMaterialAnimations();
+    dayScreenMaterial.style.opacity = ".001";
+    dayScreenMaterialOwner.hidden = true;
+    dayScreenMaterial.dataset.crmTileMaterialReady = "false";
+  };
+  const parkDayScreenMaterial = ({ visible = false } = {}) => {
+    dayScreenMaterialMotion = null;
+    if (!dayScreenMaterialOwner?.isConnected || !dayScreenMaterial?.isConnected) return;
+    dayScreenMaterial.style.opacity = ".001";
+    dayScreenMaterial.style.visibility = visible ? "visible" : "hidden";
+    stopDayScreenMaterialAnimations();
+    dayScreenMaterialOwner.hidden = false;
+    dayScreenMaterial.dataset.crmTileMaterialParked = "true";
+  };
+  const primeDayScreenMaterialSurface = (surface = camera?.surface?.()) => {
+    const plane = ensureDayScreenMaterial(surface);
+    if (!plane || !dayScreenMaterialOwner) return null;
+    stopDayScreenMaterialAnimations();
+    Object.assign(dayScreenMaterialOwner.style, {
+      zIndex:"2",
+      clipPath:"inset(0)",
+      webkitClipPath:"inset(0)",
+      transform:"translateZ(0)",
+    });
+    plane.style.transform = "translateZ(0)";
+    plane.style.opacity = ".001";
+    plane.style.visibility = "hidden";
+    dayScreenMaterialOwner.hidden = false;
+    plane.dataset.crmTileMaterialParked = "true";
+    plane.dataset.crmTileMaterialReady = "false";
+    return plane;
+  };
+  const syncDayScreenMaterial = (monthLayer, {
+    zIndex = 4,
+  } = {}) => {
+    const surface = camera?.surface?.();
+    const live = monthLayer?.querySelector?.(":scope > .fc-expander-live");
+    const days = [...(live?.querySelectorAll?.(
+      ":scope > .fc-day-stage > .fc-days > .fc-day",
+    ) || [])];
+    if (!surface || monthLayer?.dataset?.kind !== "month" || !days.length) {
+      hideDayScreenMaterial();
+      return null;
+    }
+    const plane = ensureDayScreenMaterial(surface);
+    const path = tileUnionPath(days, surface);
+    Object.assign(dayScreenMaterialOwner.style, {
+      zIndex:String(zIndex),
+      clipPath:path,
+      webkitClipPath:path,
+    });
+    dayScreenMaterialOwner.hidden = false;
+    plane.dataset.crmTileMaterialCount = String(days.length);
+    plane.dataset.crmTileMaterialReady = String(path !== "none");
+    plane.dataset.crmTileMaterialParked = "false";
+    plane.dataset.calendarMonth = String(monthLayer.dataset.month || "");
+    return plane;
+  };
+  const monthLayerForScreenMaterial = (context) => {
+    const existing = context?.layers?.[1];
+    if (existing?.dataset?.kind === "month") return existing;
+    return context?.surface?.querySelector?.(
+      ':scope > .fc-expander[data-kind="month"]:not(.fc-warm)',
+    ) || null;
+  };
+  const prepareDayScreenMaterialTransition = (direction, context) => {
+    const level = Number(context?.level) || 0;
+    dayScreenMaterialMotion = null;
+    const enteringMonth = direction === "expand" && level === 0;
+    if (enteringMonth) {
+      // The day clip has 28-31 rounded subpaths. Build it after the camera
+      // reaches the viewport, not on an early moving frame; the existing
+      // month lens remains the sole live acrylic owner during this zoom.
+      const plane = ensureDayScreenMaterial(context?.surface);
+      if (!plane || !dayScreenMaterialOwner) return;
+      stopDayScreenMaterialAnimations();
+      dayScreenMaterialOwner.hidden = false;
+      plane.style.opacity = ".001";
+      plane.style.visibility = "hidden";
+      dayScreenMaterialMotion = {
+        direction,
+        level,
+        plane,
+        owner:dayScreenMaterialOwner,
+        enteringMonth:true,
+      };
+      return;
+    }
+    const monthLayer = monthLayerForScreenMaterial(context);
+    if (!monthLayer) {
+      hideDayScreenMaterial();
+      return;
+    }
+    const plane = syncDayScreenMaterial(monthLayer, {
+      zIndex:direction === "contract" ? 5 : 4,
+    });
+    if (!plane) return;
+    dayScreenMaterialOwner.style.transform = "translateZ(0)";
+    plane.style.transform = "translateZ(0)";
+    plane.style.opacity = enteringMonth ? ".001" : ".999";
+    plane.style.visibility = enteringMonth ? "hidden" : "visible";
+    dayScreenMaterialMotion = {
+      direction,
+      level,
+      plane,
+      owner:dayScreenMaterialOwner,
+      enteringMonth,
+    };
+  };
+  const armDayScreenMaterialTransition = () => {
+    const motion = dayScreenMaterialMotion;
+    if (!motion?.plane?.isConnected || !motion.owner?.isConnected) return;
+    if (motion.direction === "contract" && motion.level === 1) {
+      motion.opacityAnimation = motion.plane.animate([
+        { opacity:.999, visibility:"visible", offset:0 },
+        { opacity:.001, visibility:"visible", offset:.92 },
+        { opacity:.001, visibility:"hidden", offset:1 },
+      ], {
+        duration:MATERIAL_HANDOFF_MS,
+        easing:"linear",
+        fill:"forwards",
+      });
+    }
+  };
+  const syncDayScreenMaterialTransition = (startTime) => {
+    const motion = dayScreenMaterialMotion;
+    if (!motion || !Number.isFinite(Number(startTime))) return;
+    [motion.opacityAnimation].forEach((animation) => {
+      if (animation) animation.startTime = Number(startTime);
+    });
+  };
+  const settleDayScreenMaterial = (context) => {
+    const motion = dayScreenMaterialMotion;
+    dayScreenMaterialMotion = null;
+    const level = Number(context?.level) || 0;
+    if (level !== 1) {
+      parkDayScreenMaterial({ visible:level === 2 });
+      return;
+    }
+    const monthLayer = monthLayerForScreenMaterial(context);
+    const plane = syncDayScreenMaterial(monthLayer, { zIndex:4 });
+    if (plane) {
+      dayScreenMaterialOwner.style.transform = "translateZ(0)";
+      plane.style.transform = "translateZ(0)";
+      plane.style.visibility = "visible";
+      if (motion?.enteringMonth) {
+        plane.style.opacity = ".001";
+        stopDayScreenMaterialAnimations();
+        plane.animate(
+          [{ opacity:.001 }, { opacity:.999 }],
+          {
+            duration:MATERIAL_HANDOFF_MS,
+            easing:"linear",
+            fill:"forwards",
+          },
+        );
+      } else {
+        plane.style.opacity = ".999";
+        stopDayScreenMaterialAnimations();
+      }
+    }
+  };
   const layoutCalendar = ({ surface, layers, expRect }) => {
     const root = layers[0];
     const grid = root?.querySelector?.(":scope > .fc-grid");
@@ -1285,6 +1483,15 @@ import {
       if (Number(surface.dataset.level || 0) > 0) {
         seatBackdropCover({ surface, expRect });
       } else hideBackdropCover();
+      if (Number(surface.dataset.level || 0) === 1) {
+        const plane = syncDayScreenMaterial(layers[1], { zIndex:4 });
+        if (plane) {
+          dayScreenMaterialOwner.style.transform = "translateZ(0)";
+          plane.style.transform = "translateZ(0)";
+          plane.style.opacity = ".999";
+          plane.style.visibility = "visible";
+        }
+      } else parkDayScreenMaterial();
     }
   };
 
@@ -1634,6 +1841,7 @@ import {
     monthAcrylicLens?.finish?.();
     dayAcrylicLens?.finish?.();
     hideBackdropCover();
+    hideDayScreenMaterial();
     activeTransition = null;
   };
 
@@ -1953,7 +2161,7 @@ import {
     holdThroughMotion:true,
     hideWhenParked:true,
     retainOwnerWhenParked:true,
-    motionHandoffStart:.54,
+    motionHandoffStart:options.motionHandoffStart,
     clipToDestinationBounds:options.clipToDestinationBounds === true,
     prewarmOpacity:options.prewarmOpacity ?? MATERIAL_PRIME_OPACITY,
     prewarmZIndex:options.prewarmZIndex,
@@ -1963,10 +2171,13 @@ import {
     expandZIndex:4,
     contractZIndex:4,
   });
-  monthAcrylicLens = createCalendarAcrylicLens();
+  monthAcrylicLens = createCalendarAcrylicLens({
+    motionHandoffStart:.54,
+  });
   dayAcrylicLens = createCalendarAcrylicLens({
     prewarmOpacity:MATERIAL_PRIME_OPACITY,
     prewarmZIndex:2,
+    motionHandoffStart:.54,
   });
 
   camera = window.createFractalCamera({
@@ -1996,9 +2207,13 @@ import {
     layout:layoutCalendar,
     buildExpander,
     configureExpander,
-    primeExpander:(_expander, target, context) => {
+    primeExpander:(expander, target, context) => {
       monthAcrylicLens?.prime?.();
       dayAcrylicLens?.prime?.();
+      if (calendarTileUnit(calendarObjectForElement(target)) === "month") {
+        const plane = syncDayScreenMaterial(expander, { zIndex:2 });
+        if (plane && Number(context?.level) === 0) parkDayScreenMaterial();
+      }
     },
     prepareTransition:(direction, target) => {
       if (direction === "expand" && target) camera?.prefetch?.(target);
@@ -2013,6 +2228,7 @@ import {
       const belowIndex = direction === "expand" ? context.level : context.level - 1;
       context.layers?.[belowIndex]?.classList?.add?.("fc-calendar-below");
       prepareBackdropCover(direction, context);
+      prepareDayScreenMaterialTransition(direction, context);
       context.surface?.classList.add("fc-camera-moving");
       context.surface?.classList.toggle("fc-camera-expanding", direction === "expand");
       context.surface?.classList.toggle("fc-camera-contracting", direction === "contract");
@@ -2020,14 +2236,17 @@ import {
     onTransformPrepare:(direction) => {
       activeTransition?.lens?.start?.(direction);
       startBackdropCover(direction);
+      armDayScreenMaterialTransition();
     },
     onTransformReady:(_direction, context) => {
       activeTransition?.lens?.sync?.(context.transformAnimation, context.transformStartTime);
       syncBackdropCover(context.transformStartTime);
+      syncDayScreenMaterialTransition(context.transformStartTime);
     },
     onTransitionEnd:(direction, context) => {
       settleTransitionMaterial(direction, context);
       settleBackdropCover(direction, context);
+      settleDayScreenMaterial(context);
       clearCameraTargets(context.surface);
       context.layers?.forEach?.((layer) => layer?.classList?.remove?.("fc-calendar-below"));
       context.surface?.classList.remove(
@@ -2099,6 +2318,17 @@ import {
           updateBackdropCoverGeometry(context);
           if (context.level > 0) seatBackdropCover(context);
           else hideBackdropCover();
+          if (context.level === 1) {
+            const plane = syncDayScreenMaterial(context.layers?.[1]);
+            if (plane) {
+              dayScreenMaterialOwner.style.transform = "translateZ(0)";
+              plane.style.transform = "translateZ(0)";
+              plane.style.opacity = ".999";
+              plane.style.visibility = "visible";
+            }
+          } else if (context.level === 0) {
+            primeDayScreenMaterialSurface(context.surface);
+          } else parkDayScreenMaterial();
         });
         // The photo surface may finish mounting one frame after the Calendar.
         // Warm the exact live wallpaper clone once it exists so the first

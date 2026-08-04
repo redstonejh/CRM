@@ -23,6 +23,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
     { key: "calendar", label: "Calendar" }, { key: "monitoring", label: "Monitoring" },
   ];
+  const CANONICAL_HOME_TILE_IDS = new Set(MODULES.map(({ key }) => key));
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
   const HOME_PREVIEW_VERSION = "filtered-home-v49";
   const HOME_RETURN_INGRESS_MS = 110;
@@ -61,6 +62,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   let homeEndpointSettling = false;
   let todoPopover = null;
   let todoOutsideClose = null;
+  let homeTileMenu = null;
+  let homeTileMenuOutsideClose = null;
   let previewCommitTimer = 0;
   let previewDecodeSequence = 0;
   let priorityTicketOpen = null;
@@ -177,6 +180,16 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   let homeTreeIndex = indexTileTree(homeRootObject);
   let homeTileRecords = homeRootObject.children;
+  const isCanonicalHomeTile = (tile) => !!tile
+    && CANONICAL_HOME_TILE_IDS.has(String(tile.tile?.id || ""))
+    && homeTileModuleKey(tile) === String(tile.tile?.id || "");
+  const homeTileForId = (tileId) => homeTileRecords.find(
+    (tile) => tile.tile.id === String(tileId || ""),
+  ) || null;
+  const canRemoveHomeTile = (tileId) => {
+    const tile = homeTileForId(tileId);
+    return !!tile && !isCanonicalHomeTile(tile);
+  };
   const replaceHomeTileRecords = (records) => {
     homeRootObject.children = records;
     homeTreeIndex = indexTileTree(homeRootObject);
@@ -229,11 +242,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   }[char]));
   const cssValue = (value) => window.CSS?.escape?.(String(value ?? "")) || String(value ?? "").replace(/["\\]/g, "\\$&");
   const firstText = (...values) => values.map((value) => String(value ?? "").trim()).find(Boolean) || "";
+  const closeHomeTileMenu = () => {
+    if (homeTileMenuOutsideClose) {
+      document.removeEventListener("pointerdown", homeTileMenuOutsideClose, true);
+      homeTileMenuOutsideClose = null;
+    }
+    homeTileMenu?.remove();
+    homeTileMenu = null;
+  };
   const writeHomeTiles = () => {
     if (window.crmHomePreviews?.isCaptureWorker) return;
     try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(homeTileRecords)); } catch {}
   };
   const rebuildHomeTiles = (refreshKey = MODULES[0]?.key || "people") => {
+    closeHomeTileMenu();
     const rebuild = () => {
       camera?.rebuildRoot?.();
       camera?.layout?.();
@@ -266,9 +288,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   const removeHomeTile = (tileId) => {
     const removedId = String(tileId || "");
-    const removed = homeTileRecords.find((tile) => tile.tile.id === removedId);
+    const removed = homeTileForId(removedId);
+    if (!removed || isCanonicalHomeTile(removed)) return false;
     const next = homeTileRecords.filter((tile) => tile.tile.id !== removedId);
-    if (next.length === homeTileRecords.length) return false;
     replaceHomeTileRecords(next.map((tile, rank) => normalizeHomeTile(tile, rank)));
     const removedModuleKey = homeTileModuleKey(removed);
     if (removed && returnTileByModule.get(removedModuleKey) === removedId) {
@@ -276,6 +298,48 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     }
     writeHomeTiles(); rebuildHomeTiles(removedModuleKey);
     return true;
+  };
+  const openHomeTileMenu = (tileId, bucket, x, y) => {
+    closeHomeTileMenu();
+    if (!canRemoveHomeTile(tileId) || !bucket?.isConnected) return null;
+    const id = String(tileId);
+    const menu = document.createElement("div");
+    menu.className = "crm-home-tile-menu crm-menu-surface";
+    menu.dataset.homeTileMenu = id;
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Home tile options");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "crm-menu-action tk-menu-danger";
+    remove.dataset.homeTileDelete = id;
+    remove.setAttribute("role", "menuitem");
+    remove.textContent = "Delete tile";
+    remove.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeHomeTileMenu();
+      removeHomeTile(id);
+    });
+    menu.appendChild(remove);
+    document.body.appendChild(menu);
+    homeTileMenu = menu;
+    const menuRect = menu.getBoundingClientRect();
+    const bucketRect = bucket.getBoundingClientRect();
+    const anchorX = Number.isFinite(Number(x)) && Number(x) > 0
+      ? Number(x)
+      : bucketRect.right - 18;
+    const anchorY = Number.isFinite(Number(y)) && Number(y) > 0
+      ? Number(y)
+      : bucketRect.top + 18;
+    menu.style.left = `${Math.max(8, Math.min(innerWidth - menuRect.width - 8, anchorX))}px`;
+    menu.style.top = `${Math.max(48, Math.min(innerHeight - menuRect.height - 8, anchorY))}px`;
+    homeTileMenuOutsideClose = (event) => {
+      if (homeTileMenu?.contains(event.target)) return;
+      closeHomeTileMenu();
+    };
+    document.addEventListener("pointerdown", homeTileMenuOutsideClose, true);
+    requestAnimationFrame(() => remove.focus({ preventScroll:true }));
+    return menu;
   };
   const resetHomeTiles = () => {
     replaceHomeTileRecords(defaultHomeTiles());
@@ -455,6 +519,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-todo-actions{display:flex;justify-content:flex-end;gap:2px;padding-top:1px}
       .crm-home-todo-popover .crm-menu-action{height:32px;font-size:var(--crm-type-body,12px)!important}
       .crm-home-todo-menu{position:fixed;z-index:9365;width:166px;padding:6px;display:grid;gap:1px}.crm-home-todo-menu .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}
+      .crm-home-tile-menu{position:fixed;z-index:9368;width:158px;padding:6px;display:grid;gap:1px}
+      .crm-home-tile-menu .crm-menu-action{height:33px;text-align:left;font-size:var(--crm-type-body,12px)!important}
       .crm-home-hand-trigger{position:absolute;z-index:1;left:50%;bottom:0;width:var(--home-hand-span,760px);height:92px;
         transform:translateX(-50%);pointer-events:auto}
       .crm-home-priority-hand>.crm-home-hand-card.tk-card{position:absolute;left:50%;right:auto;bottom:52px;z-index:var(--hand-z,10);
@@ -1237,6 +1303,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         bucket.dataset.module = key;
         bucket.dataset.viewportModule = key;
         bucket.dataset.enabled = "true";
+        bucket.dataset.homeTileRemovable = String(!isCanonicalHomeTile(module));
         if (!created) return;
         // Do not activate merely because a tile finishes loading beneath an
         // already-stationary pointer. Actual pointer movement arms the reveal.
@@ -2004,6 +2071,26 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       window.crmWorkspaces?.setActive?.(key);
     }
   }, true);
+  document.addEventListener("contextmenu", (event) => {
+    if (!camera?.isActive?.() || camera.level() !== 0) return;
+    const target = event.target?.closest?.(".crm-home-bucket[data-tile-id]");
+    if (!target || !camera.surface()?.contains(target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeHomeTileMenu();
+    if (target.dataset.homeTileRemovable !== "true") return;
+    openHomeTileMenu(
+      target.dataset.tileId,
+      target,
+      event.clientX,
+      event.clientY,
+    );
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeHomeTileMenu();
+  });
+  document.addEventListener("crm:theater-switch", closeHomeTileMenu);
+  window.addEventListener("resize", closeHomeTileMenu);
 
   const setActive = (on) => {
     subscribe();
@@ -2199,7 +2286,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     },
     peripheralAcrylicState:()=>homePeripheralAcrylic.status(),
     tiles:()=>clone(homeTileRecords),_objectGraph:()=>homeRootObject,_objectIndex:()=>homeTreeIndex,
-    createTile:createHomeTile,removeTile:removeHomeTile,resetTiles:resetHomeTiles,
+    createTile:createHomeTile,removeTile:removeHomeTile,canRemoveTile:canRemoveHomeTile,resetTiles:resetHomeTiles,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||"",materialMode:motionSnapshot?.materialMode||""}),

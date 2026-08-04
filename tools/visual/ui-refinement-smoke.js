@@ -375,6 +375,20 @@ async function main() {
       invariant(schemas.every((tile) => tile.schemaVersion === 1 && tile.target?.type === 'workspace' && tile.id && tile.key), 'Home tile schema is not normalized');
       return { columns: initialHomeGeometry.columns, rows: initialHomeGeometry.rows, cell: [initialHomeGeometry.adaptiveWidth, initialHomeGeometry.adaptiveHeight] };
     });
+    const canonicalRemoval = await page.evaluate(() => ({
+      removed: window.crmHome.removeTile('people'),
+      removable: window.crmHome.canRemoveTile('people'),
+      count: window.crmHome.tiles().length,
+    }));
+    await page.locator('.crm-home-grid > .crm-home-bucket[data-tile-id="people"]').click({ button: 'right' });
+    await sleep(50);
+    const canonicalMenuCount = await page.locator('.crm-home-tile-menu').count();
+    await check('Canonical Home tiles cannot be deleted', () => {
+      invariant(canonicalRemoval.removed === false && canonicalRemoval.removable === false, 'The People canonical tile accepted deletion');
+      invariant(canonicalRemoval.count === 6, 'A canonical deletion attempt changed the Home tile count');
+      invariant(canonicalMenuCount === 0, 'A canonical tile exposed the delete menu');
+      return canonicalRemoval;
+    });
 
     const temporaryHomeTile = await page.evaluate(() => window.crmHome.createTile('people', {
       id: 'ui-refinement-smoke-home-tile',
@@ -390,12 +404,46 @@ async function main() {
       invariant(dimensionsAreEqual(expandedHomeGeometry.tiles), 'Home tiles are uneven after add');
       return { columns: expandedHomeGeometry.columns, rows: expandedHomeGeometry.rows };
     });
-    await page.evaluate((id) => window.crmHome.removeTile(id), temporaryHomeTile.tile.id);
+    await page.locator(`.crm-home-grid > .crm-home-bucket[data-tile-id="${temporaryHomeTile.tile.id}"]`).click({ button: 'right' });
+    await page.locator('.crm-home-tile-menu').waitFor({ state: 'visible' });
+    const deleteMenu = await page.evaluate((tileId) => {
+      const menu = document.querySelector('.crm-home-tile-menu');
+      const action = menu?.querySelector(`[data-home-tile-delete="${CSS.escape(tileId)}"]`);
+      const rect = menu?.getBoundingClientRect();
+      return {
+        removable: window.crmHome.canRemoveTile(tileId),
+        canonicalSurface: menu?.classList.contains('crm-menu-surface') || false,
+        action: action?.textContent.trim() || '',
+        canonicalAction: action?.classList.contains('crm-menu-action') || false,
+        danger: action?.classList.contains('tk-menu-danger') || false,
+        role: menu?.getAttribute('role') || '',
+        itemRole: action?.getAttribute('role') || '',
+        inViewport: !!rect && rect.left >= 8 && rect.top >= 48
+          && rect.right <= innerWidth - 8 && rect.bottom <= innerHeight - 8,
+      };
+    }, temporaryHomeTile.tile.id);
+    await check('Extra Home tiles expose the canonical right-click delete menu', () => {
+      invariant(deleteMenu.removable, 'The added Home tile is not marked removable');
+      invariant(deleteMenu.canonicalSurface && deleteMenu.canonicalAction, 'The delete menu does not use the shared menu contract');
+      invariant(deleteMenu.action === 'Delete tile' && deleteMenu.danger, 'The delete action is missing or not destructive');
+      invariant(deleteMenu.role === 'menu' && deleteMenu.itemRole === 'menuitem', 'The delete menu is missing menu semantics');
+      invariant(deleteMenu.inViewport, 'The delete menu escaped the viewport');
+      return deleteMenu;
+    });
+    await page.locator(`.crm-home-tile-menu [data-home-tile-delete="${temporaryHomeTile.tile.id}"]`).click();
     await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 6);
     await sleep(100);
     const restoredHomeGeometry = await tileGeometry(homeGridSelector);
-    await check('Home tile removal restores an even grid', () => {
+    const deletionPersistence = await page.evaluate((tileId) => {
+      const stored = JSON.parse(localStorage.getItem('crm-home-tiles-v3') || '[]');
+      return {
+        live: window.crmHome.tiles().some((tile) => tile.tile.id === tileId),
+        stored: stored.some((tile) => tile.tile?.id === tileId),
+      };
+    }, temporaryHomeTile.tile.id);
+    await check('Right-click deletion persists and restores an even Home grid', () => {
       invariant(restoredHomeGeometry?.count === 6 && dimensionsAreEqual(restoredHomeGeometry.tiles), 'Home grid is uneven after removal');
+      invariant(!deletionPersistence.live && !deletionPersistence.stored, 'The deleted Home tile remained in live or persisted state');
       return { columns: restoredHomeGeometry.columns, rows: restoredHomeGeometry.rows };
     });
 

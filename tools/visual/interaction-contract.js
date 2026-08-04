@@ -30,7 +30,7 @@ async function main() {
   const activate = async (key) => { await page.evaluate((value) => window.crmWorkspaces.setActive(value), key); await sleep(700); };
 
   await activate('home');
-  await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 5, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6, { timeout: 10000 });
   await check('Non-card interface audit has complete canonical-menu coverage', () => {
     const audit = window.crmInterfaceParity?.audit?.();
     return {
@@ -74,13 +74,13 @@ async function main() {
       && new Set(controls.map((control) => getComputedStyle(control).backgroundImage)).size === 1
       && new Set(controls.map((control) => getComputedStyle(control).borderRadius)).size === 1;
   });
-  await check('Home has five inert screenshot LODs and no live miniature trees', () => ({
-    ok: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 5
+  await check('Home has six inert screenshot LODs and no live miniature trees', () => ({
+    ok: document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
       && !document.querySelector('.crm-home-grid .crm-home-lod-scene,.crm-home-grid .crm-home-lod-root'),
-    detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/5 surfaces`,
+    detail: `${document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length}/6 surfaces`,
   }));
-  await check('Calendar is a canonical Home workspace tile', () => {
-    const keys = ['people','cases','planner','assignments','calendar'];
+  await check('Calendar and Monitoring are canonical Home workspace tiles', () => {
+    const keys = ['people','cases','planner','assignments','calendar','monitoring'];
     const title = (key) => document.querySelector(`.crm-home-title-layer > .crm-home-title-slot[data-module="${key}"] .crm-home-title`);
     return keys.every((key) => document.querySelector(`.crm-home-bucket[data-module="${key}"]`))
       && !document.querySelector('.crm-home-bucket[data-module="pipeline"]')
@@ -88,7 +88,27 @@ async function main() {
       && title('cases')?.textContent.trim() === 'Tickets'
       && title('planner')?.textContent.trim() === 'Projects'
       && title('assignments')?.textContent.trim() === 'Assignments'
-      && title('calendar')?.textContent.trim() === 'Calendar';
+      && title('calendar')?.textContent.trim() === 'Calendar'
+      && title('monitoring')?.textContent.trim() === 'Monitoring';
+  });
+  await check('Monitoring owns two empty canonical child tile objects', () => {
+    const graph = window.crmMonitoring?._objectGraph?.();
+    const tiles = [...document.querySelectorAll(
+      '[data-crm-theater="monitoring"] .crm-monitoring-grid > .crm-monitoring-tile',
+    )];
+    return graph?.objectKind === 'crm-tile-object'
+      && graph.children.length === 2
+      && tiles.length === 2
+      && graph.children.every((object, index) => (
+        object.objectKind === 'crm-tile-object'
+        && object.tile.kind === 'monitoring-tile'
+        && object.data.empty === true
+        && object.children.length === 0
+        && tiles[index]?.dataset.crmTileInstance === 'viewport'
+        && tiles[index]?.dataset.monitoringEmpty === 'true'
+        && window.crmMonitoring._objectForElement(tiles[index]) === object
+        && tiles[index].childElementCount === 0
+      ));
   });
   await check('Home has no calendar control', () => {
     const control = document.querySelector('.crm-viewport-date');
@@ -105,12 +125,12 @@ async function main() {
       const rect = tile.getBoundingClientRect(); return { width:rect.width, height:rect.height, ratio:rect.width / rect.height };
     });
     const widths = tiles.map((tile) => tile.width); const heights = tiles.map((tile) => tile.height);
-    return tiles.length === 5 && tiles.every((tile) => Math.abs(tile.ratio - expected) <= .01)
+    return tiles.length === 6 && tiles.every((tile) => Math.abs(tile.ratio - expected) <= .01)
       && Math.max(...widths) - Math.min(...widths) < 1 && Math.max(...heights) - Math.min(...heights) < 1;
   });
   await check('Home tile titles use a sharp live type layer', () => {
     const titles = [...document.querySelectorAll('.crm-home-title-layer > .crm-home-title-slot .crm-home-title')];
-    return titles.length === 5 && titles.every((title) => {
+    return titles.length === 6 && titles.every((title) => {
       const style = getComputedStyle(title);
       return style.fontSize === '16px' && style.fontWeight === '650'
         && style.fontFamily.includes('Segoe UI Variable Text') && !style.textShadow.includes('12px')
@@ -119,7 +139,7 @@ async function main() {
   });
   await check('Home has a visible progressive state while previews prepare', () => {
     const states = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-state[role="status"]')];
-    return states.length === 5 && states.every((state) => state.textContent.trim() === 'Preparing view'
+    return states.length === 6 && states.every((state) => state.textContent.trim() === 'Preparing view'
       && getComputedStyle(state).visibility === 'visible' && Number(getComputedStyle(state).opacity) === 1);
   });
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0 && document.querySelectorAll('.crm-home-hand-card.tk-card').length > 0, { timeout: 10000 });
@@ -228,7 +248,7 @@ async function main() {
   }));
   await check('Resting Home objects use one cached raster with the subtle blur', () => {
     const images = [...document.querySelectorAll('.crm-home-grid .crm-home-preview-foreground')];
-    return images.length === 5 && images.every((image) => {
+    return images.length === 6 && images.every((image) => {
       const filter = getComputedStyle(image).filter;
       return image.dataset.previewVariant === 'filtered' && filter.includes('blur(0.65px)')
         && filter.includes('saturate(0.95)') && filter.includes('brightness(0.88)');
@@ -346,14 +366,14 @@ async function main() {
     const motion = window.crmHome?.motionStatus?.();
     const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
     const liveNeighbors = [...(window.crmHomeCamera?.layers?.()[0]?.querySelectorAll('.crm-home-bucket:not(.is-camera-target)') || [])];
-    const liveFallback = !motion?.ready && liveNeighbors.length === 4 && liveNeighbors.every((bucket) => {
+    const liveFallback = !motion?.ready && liveNeighbors.length === 5 && liveNeighbors.every((bucket) => {
       const bucketStyle = getComputedStyle(bucket);
       const bucketMaterial = bucketStyle.webkitBackdropFilter || bucketStyle.backdropFilter || '';
       return bucketStyle.visibility !== 'hidden' && bucketMaterial.includes('blur(') && bucketMaterial.includes('saturate(');
     });
     const clippedPlane = !!acrylic && clipHost?.parentElement === surface
       && surface.classList.contains('crm-home-peripheral-acrylic-active')
-      && state?.active && state.phase === 'motion' && state.direction === 'expand' && state.neighborCount === 4
+      && state?.active && state.phase === 'motion' && state.direction === 'expand' && state.neighborCount === 5
       && Number(style.opacity) > .99 && style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.backgroundImage === 'none'
       && material.includes('blur(') && material.includes('saturate(')
       && hostStyle?.clipPath.startsWith('path(')
@@ -666,14 +686,14 @@ async function main() {
     const motion = window.crmHome?.motionStatus?.();
     const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
     const liveNeighbors = [...(window.crmHomeCamera?.layers?.()[0]?.querySelectorAll('.crm-home-bucket:not(.is-camera-target)') || [])];
-    const liveFallback = !motion?.ready && liveNeighbors.length === 4 && liveNeighbors.every((bucket) => {
+    const liveFallback = !motion?.ready && liveNeighbors.length === 5 && liveNeighbors.every((bucket) => {
       const bucketStyle = getComputedStyle(bucket);
       const bucketMaterial = bucketStyle.webkitBackdropFilter || bucketStyle.backdropFilter || '';
       return bucketStyle.visibility !== 'hidden' && bucketMaterial.includes('blur(') && bucketMaterial.includes('saturate(');
     });
     const clippedPlane = !!acrylic && clipHost?.parentElement === surface
       && surface.classList.contains('crm-home-peripheral-acrylic-active')
-      && state?.active && state.phase === 'motion' && state.direction === 'contract' && state.neighborCount === 4
+      && state?.active && state.phase === 'motion' && state.direction === 'contract' && state.neighborCount === 5
       && Number(style.opacity) > .99 && style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.backgroundImage === 'none'
       && material.includes('blur(') && material.includes('saturate(')
       && hostStyle?.clipPath.startsWith('path(')
@@ -2699,7 +2719,7 @@ async function main() {
   await activate('home');
   await page.waitForFunction(() => window.crmHome?.handStatus?.().count > 0
     && document.querySelectorAll('.crm-home-hand-card.tk-card').length === window.crmHome?.handStatus?.().count, { timeout: 10000 });
-  await check('The Home priority hand remains available beside the five worlds', () => window.crmHome.handStatus().count > 0);
+  await check('The Home priority hand remains available beside the six worlds', () => window.crmHome.handStatus().count > 0);
   await page.hover('.crm-home-hand-trigger');
   await sleep(420);
   await page.click(`.crm-home-hand-card[data-commitment-id="${linkedHomeTodo.ticketCommitmentId}"]`);

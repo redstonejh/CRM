@@ -194,11 +194,10 @@
   <div class="stat-band widget-layout" data-widget-layout-key="builder">
   </div>
 
-  <!-- TICKETING: the monitor's default widgets (latency/loss trackers, the
-       status-timeline chart, the recent-checks table) are intentionally removed —
-       this app does no monitoring. The ticketing UI will be built later on this
-       empty, canonical glass workspace. The layout regions below are kept so the
-       builder runtime initialises cleanly. -->
+  <!-- The legacy builder's status widgets remain intentionally absent. The
+       canonical Monitoring tile world is mounted independently by
+       crm-monitoring.js; these builder regions stay empty so that runtime can
+       initialise cleanly without creating a second monitoring structure. -->
   <div class="panel-layout" data-layout-key="builder"></div>
   <!-- Tickets live in the corner stacks (ticket-stacks.js); none is auto-spawned on
        the grid. The builder-chart layout stays empty on load and is the drop target
@@ -239,6 +238,7 @@
   <script type="module" src="./app/static/fractal-calendar.js"></script>
   <script type="module" src="./app/static/crm-assignments.js"></script>
   <script type="module" src="./app/static/crm-planner.js"></script>
+  <script type="module" src="./app/static/crm-monitoring.js"></script>
   <script type="module" src="./app/static/crm-object-sizing.js"></script>
   <script type="module" src="./app/static/crm-record-world.js"></script>
   <script type="module" src="./app/static/crm-person-history.js"></script>

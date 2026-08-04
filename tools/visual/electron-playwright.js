@@ -7,12 +7,12 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { nativeHz: 100, maxFrameMs: 15, maxOver15Ms: 0, maxLongTasks: 0 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v48';
+const HOME_PREVIEW_VERSION = 'filtered-home-v49';
 const HOME_PREVIEW_REST_FILTER = 'blur(0.65px)';
 let nativeRefreshCalibration = null;
 const readyHome = () => document.body.dataset.crmModule === 'home'
   && !document.querySelector('.crm-home-surface')?.hidden
-  && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 5
+  && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
   && window.crmHome?.handStatus?.().ready
   && window.crmHome?.motionStatus?.().ready
   && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
@@ -300,7 +300,7 @@ async function startEndpointProbe(page, label, room, direction) {
         const snapshot = root?.querySelector?.(':scope > .crm-home-motion-snapshot');
         const homeBucket = homeHandoff ? root?.querySelector?.('.crm-home-grid > .crm-home-bucket') : null;
         const handoffVariant = homeHandoff ? root?.querySelector?.(':scope > .crm-home-motion-variant.is-active-motion-variant') : null;
-        const homeMaterialsReady = homeHandoff && homeBuckets.length === 4 && homeBuckets.every((bucket) => {
+        const homeMaterialsReady = homeHandoff && homeBuckets.length === 6 && homeBuckets.every((bucket) => {
           const style = getComputedStyle(bucket); const backdrop = style.webkitBackdropFilter || style.backdropFilter;
           return backdrop.includes('blur(') && style.backgroundImage !== 'none' && style.boxShadow.includes('26px -16px');
         });
@@ -317,9 +317,9 @@ async function startEndpointProbe(page, label, room, direction) {
         const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
         const incomingAverage = finiteIncoming.length ? average(finiteIncoming) : NaN;
         const outgoingAverage = finiteOutgoing.length ? average(finiteOutgoing) : NaN;
-        const bucketsUnderpainted = homeBucketOpacities.length === 4
+        const bucketsUnderpainted = homeBucketOpacities.length === 6
           && homeBucketOpacities.every((value) => value <= .01);
-        const bucketsOwned = homeBucketOpacities.length === 4
+        const bucketsOwned = homeBucketOpacities.length === 6
           && homeBucketOpacities.every((value) => value >= .99);
         const outgoingOwned = finiteOutgoing.length === 4
           && finiteOutgoing.every((value) => value >= .99);
@@ -782,8 +782,8 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 5 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.shift || item.liveTrees)) {
-    throw new Error(`Home is not five inert native captures: ${JSON.stringify(startup)}`);
+  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.shift || item.liveTrees)) {
+    throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER)
     || !item.loader.exists || item.loader.role !== 'status' || !item.loader.hiddenAtReady
@@ -792,8 +792,8 @@ async function main() {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
-    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 5
-     || !startup.homeLayers.rootWillChange.includes('transform') || startup.homeLayers.snapshots !== 1 || startup.homeLayers.motionVariants !== 5 || startup.homeLayers.snapshotDisplay !== 'none'
+    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 6
+     || !startup.homeLayers.rootWillChange.includes('transform') || startup.homeLayers.snapshots !== 1 || startup.homeLayers.motionVariants !== 6 || startup.homeLayers.snapshotDisplay !== 'none'
     || startup.homeLayers.sceneBackdrops !== 0 || startup.homeLayers.workspaceBackdrops !== 1 || startup.homeLayers.backgroundMode !== 'shared') {
     throw new Error(`Home resting layers duplicate or occlude live content: ${JSON.stringify(startup.homeLayers)}`);
   }
@@ -930,7 +930,7 @@ async function main() {
     nativeDrag.syntheticMissAllowed = false;
     await app.evaluate(({ BrowserWindow }, position) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setPosition(position[0], position[1]), dragStart);
   }
-  const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length===4&&after.length===4&&before.every((node,index)=>node===after[index]); });
+  const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length===6&&after.length===6&&before.every((node,index)=>node===after[index]); });
   if (!sameNodes) throw new Error('Home refresh recreated screenshot objects');
   const homeComposition = await page.evaluate(() => {
     const grid = document.querySelector('.crm-home-grid');
@@ -946,8 +946,21 @@ async function main() {
   const motionVariants = Object.keys(motionSnapshotResult?.snapshot?.variants || {});
   const motionLayout = JSON.parse(motionSnapshotResult?.snapshot?.layoutSignature || '{}');
   const [motionGridX=0,motionGridY=0] = motionLayout.grid || [];
-  const motionVariantCutouts = (motionLayout.buckets || []).map(([key,x,y,width,height]) => ({ key, maxAlpha:imageRegionMaxAlpha(Buffer.from((motionSnapshotResult?.snapshot?.variants?.[key] || '').split(',')[1] || '', 'base64'), [motionGridX+x,motionGridY+y,width,height], motionLayout.viewport) }));
-  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== 5 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
+  const motionVariantCutouts = (motionLayout.buckets || []).map((bucket) => {
+    const [key] = bucket;
+    const [x=0,y=0,width=0,height=0] = bucket.length >= 6
+      ? bucket.slice(2, 6)
+      : bucket.slice(1, 5);
+    return {
+      key,
+      maxAlpha:imageRegionMaxAlpha(
+        Buffer.from((motionSnapshotResult?.snapshot?.variants?.[key] || '').split(',')[1] || '', 'base64'),
+        [motionGridX+x,motionGridY+y,width,height],
+        motionLayout.viewport,
+      ),
+    };
+  });
+  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== 6 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
     throw new Error(`Home transition texture is not the current cached cutout architecture: ${JSON.stringify({ snapshot:motionSnapshotResult?.snapshot && { version:motionSnapshotResult.snapshot.version, backgroundMode:motionSnapshotResult.snapshot.backgroundMode, materialMode:motionSnapshotResult.snapshot.materialMode, foregroundBounds:motionSnapshotResult.snapshot.foregroundBounds }, alpha:homeMotionAlpha })}`);
   }
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);

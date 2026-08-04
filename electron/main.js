@@ -97,11 +97,18 @@ const cdms = createCdmsClient({
   disabled: process.env.CRM_CDMS_DISABLED === '1',
   onChange: ({ reason }) => handleCdmsChanged(reason),
 });
-const HOME_PREVIEW_KEYS = ['people', 'cases', 'planner', 'assignments', 'calendar'];
+const HOME_PREVIEW_KEYS = [
+  'people',
+  'cases',
+  'planner',
+  'assignments',
+  'calendar',
+  'monitoring',
+];
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v48';
+const HOME_PREVIEW_VERSION = 'filtered-home-v49';
 const HOME_PREVIEW_DISK_CACHE_FILE = path.join(
   app.getPath('userData'),
   'home-preview-cache-v1.json',
@@ -842,6 +849,7 @@ function waitForRenderer(win, expression, timeoutMs = 30000) {
             ticketStacks: !!window.ticketStacks,
             planner: !!window.crmPlanner,
             assignments: !!window.crmAssignments,
+            monitoring: !!window.crmMonitoring,
             theaters: [...document.querySelectorAll('[data-crm-theater]')].map((node) => ({
               key: node.dataset.crmTheater || '',
               hidden: node.hidden,

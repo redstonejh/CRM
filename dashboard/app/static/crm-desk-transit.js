@@ -153,6 +153,7 @@
     planner: window.crmPlanner,
     assignments: window.crmAssignments,
     calendar: window.fractalCalendar,
+    monitoring: window.crmMonitoring,
   })[key];
   let destinationLayers = [];
   let destinationRoot = null;

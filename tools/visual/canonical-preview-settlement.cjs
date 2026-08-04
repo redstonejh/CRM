@@ -27,6 +27,11 @@ const HOME_ROOMS = [
     theater:'planner',
     objects:'.crm-project-bucket,.crm-planner-bucket,.crm-planner-card',
   },
+  {
+    module:'monitoring',
+    theater:'monitoring',
+    objects:'.crm-monitoring-tile',
+  },
 ];
 
 const WORKER_ASSIGNMENT_AUDIT_SOURCE = `(${async function assignmentWorkerAudit() {

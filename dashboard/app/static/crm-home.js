@@ -13,15 +13,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
 (() => {
   if (typeof window.createFractalCamera !== "function") return;
 
-  const HOME_TILE_STORE_KEY = "crm-home-tiles-v2";
-  const LEGACY_HOME_TILE_STORE_KEY = "crm-home-tiles-v1";
+  const HOME_TILE_STORE_KEY = "crm-home-tiles-v3";
+  const LEGACY_HOME_TILE_STORES = [
+    { key:"crm-home-tiles-v2", additions:["monitoring"] },
+    { key:"crm-home-tiles-v1", additions:["calendar", "monitoring"] },
+  ];
   const MODULES = [
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
-    { key: "calendar", label: "Calendar" },
+    { key: "calendar", label: "Calendar" }, { key: "monitoring", label: "Monitoring" },
   ];
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v48";
+  const HOME_PREVIEW_VERSION = "filtered-home-v49";
   const HOME_RETURN_INGRESS_MS = 110;
   const HOME_ACRYLIC_RELEASE_MS = 110;
   const HOME_RETURN_HANDOFF_EASE = "cubic-bezier(.4, 0, .2, 1)";
@@ -66,13 +69,21 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const prewarmedFactories = new Set();
   const TODO_LINK_ENTITIES = new Set(["tasks", "contacts", "tickets", "workItems"]);
   const recycledExpanders = new Map();
-  const FACTORY_PREWARM_APIS = ["peopleCards", "ticketStacks", "crmPlanner", "crmAssignments", "fractalCalendar"];
+  const FACTORY_PREWARM_APIS = [
+    "peopleCards",
+    "ticketStacks",
+    "crmPlanner",
+    "crmAssignments",
+    "fractalCalendar",
+    "crmMonitoring",
+  ];
   const FACTORY_API_BY_MODULE = {
     people:"peopleCards",
     cases:"ticketStacks",
     planner:"crmPlanner",
     assignments:"crmAssignments",
     calendar:"fractalCalendar",
+    monitoring:"crmMonitoring",
   };
   const clone = (value) => typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   const homeTileData = (tile) => tileDataOf(tile) || {};
@@ -112,11 +123,22 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const defaultHomeTiles = () => MODULES.map((module, rank) => normalizeHomeTile({ ...module, id:module.key }, rank));
   const readHomeTiles = () => {
     let parsed = null;
+    let migrationAdditions = [];
     let migrated = false;
     try {
       const current = localStorage.getItem(HOME_TILE_STORE_KEY);
       migrated = current == null;
-      parsed = JSON.parse(current || localStorage.getItem(LEGACY_HOME_TILE_STORE_KEY) || "null");
+      let source = current;
+      if (source == null) {
+        const legacy = LEGACY_HOME_TILE_STORES.find(
+          ({ key }) => localStorage.getItem(key) != null,
+        );
+        if (legacy) {
+          source = localStorage.getItem(legacy.key);
+          migrationAdditions = legacy.additions;
+        }
+      }
+      parsed = JSON.parse(source || "null");
     } catch {}
     if (!Array.isArray(parsed)) return defaultHomeTiles();
     const seen = new Set();
@@ -125,12 +147,16 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       seen.add(tile.tile.id);
       return true;
     });
-    // v1 predates Calendar as a Home viewport. Migrate that layout exactly
-    // once, preserving custom order, labels, duplicate tiles, and removals
-    // made after the v2 layout has been written.
-    if (migrated && !records.some((tile) => homeTileModuleKey(tile) === "calendar")) {
-      records.push(normalizeHomeTile({ key:"calendar", id:"calendar" }, records.length));
-    }
+    // Each store generation adds only the modules that did not exist in that
+    // generation. Migrate once while preserving custom order, labels,
+    // duplicates, and any removals made after the v3 layout has been written.
+    migrationAdditions.forEach((moduleKey) => {
+      if (records.some((tile) => homeTileModuleKey(tile) === moduleKey)) return;
+      records.push(normalizeHomeTile(
+        { key:moduleKey, id:moduleKey },
+        records.length,
+      ));
+    });
     if (migrated && !window.crmHomePreviews?.isCaptureWorker) {
       try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(records)); } catch {}
     }
@@ -313,7 +339,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface.crm-home-camera-handoff .crm-home-level[data-motion-snapshot-ready="true"]>.crm-home-motion-variant.is-active-motion-variant{display:block;opacity:1}
       /* During camera motion the decoded cut-out raster is the sole Home
          owner. Keeping the live grid/hand/title tree beneath that identical
-         image still asks Chromium to composite four backdrop surfaces on its
+         image still asks Chromium to composite every backdrop surface on its
          first transformed frame. Hide those live owners until the covered
          endpoint exchange; their geometry and state remain resident. */
       .crm-home-surface.crm-home-camera-moving.crm-home-bitmap-motion .crm-home-level>:is(.crm-home-grid,.crm-home-title-layer,.crm-home-priority-hand){
@@ -388,7 +414,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         -webkit-backdrop-filter:blur(28px) saturate(140%);backdrop-filter:blur(28px) saturate(140%);
         box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.18),0 14px 26px -16px rgba(0,0,0,.72);
         transition:box-shadow .18s ease,background .18s ease}
-      /* Home consumes the canonical glass material, but its four adjacent
+      /* Home consumes the canonical glass material, but its adjacent
          surfaces cannot also consume the menu's large floating shadow. That
          shadow overlaps into a single clipped rectangle around the grid. */
       .crm-home-bucket.crm-menu-surface{box-shadow:inset 0 1px 0 var(--crm-menu-highlight),0 14px 26px -16px rgba(0,0,0,.72)!important}
@@ -461,7 +487,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         opacity:0;transform:translateZ(0);will-change:opacity,transform}
       .crm-home-expander[data-fractal-frame="source"]>.crm-home-transition-acrylic{opacity:1}
       .crm-home-surface.crm-home-camera-expanding .crm-home-title-glass{visibility:hidden;opacity:0!important;transition:none!important}
-      /* Freeze only the four resting tiles. The expander is also a
+      /* Freeze only the resting tiles. The expander is also a
          .crm-home-bucket; matching it here disabled the actual zoom. */
       /* The selected tile's acrylic is a fixed screen-space lens whose clip
          follows the transformed tile. Do not flatten or disable its backdrop:
@@ -2039,6 +2065,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",
       assignments:".tk-zone,.tk-zcard",
       calendar:".crm-calendar-tile,.fc-month,.fc-day",
+      monitoring:".crm-monitoring-tile",
     }[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden||node.hasAttribute("data-crm-transit-destination"));
       // This runs beneath the retained endpoint cover, not during camera
@@ -2067,6 +2094,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",
       assignments:".tk-zone,.tk-zcard",
       calendar:".crm-calendar-tile,.fc-month,.fc-day",
+      monitoring:".crm-monitoring-tile",
     }[key]||"*";
     const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden);
     if(source?.querySelector?.(selector))resolve();else requestAnimationFrame(resolve);

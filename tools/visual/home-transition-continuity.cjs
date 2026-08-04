@@ -279,19 +279,19 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
             surface.querySelector('.crm-home-peripheral-screen-acrylic'),
           ].map(opacity).filter(Number.isFinite);
           const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
-          const incomingOpacity = incoming.length === 6 ? average(incoming) : NaN;
+          const incomingOpacity = incoming.length === 8 ? average(incoming) : NaN;
           const outgoingOpacity = outgoing.length === 4 ? average(outgoing) : NaN;
-          const bucketOpacity = incoming.slice(0, 4);
-          const titleOpacity = incoming[4];
-          const handOpacity = incoming[5];
+          const bucketOpacity = incoming.slice(0, 6);
+          const titleOpacity = incoming[6];
+          const handOpacity = incoming[7];
           const matching = surface.classList.contains('crm-home-camera-releasing')
             && !surface.classList.contains('crm-home-camera-committing');
           const committing = surface.classList.contains('crm-home-camera-committing');
           probe.homeReturnCoverage.push({
             matching,
             committing,
-            bucketMinOpacity:bucketOpacity.length === 4 ? Math.min(...bucketOpacity) : NaN,
-            bucketMaxOpacity:bucketOpacity.length === 4 ? Math.max(...bucketOpacity) : NaN,
+            bucketMinOpacity:bucketOpacity.length === 6 ? Math.min(...bucketOpacity) : NaN,
+            bucketMaxOpacity:bucketOpacity.length === 6 ? Math.max(...bucketOpacity) : NaN,
             titleOpacity,
             handOpacity,
             outgoingMinOpacity:outgoing.length === 4 ? Math.min(...outgoing) : NaN,

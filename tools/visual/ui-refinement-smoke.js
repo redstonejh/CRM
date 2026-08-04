@@ -68,6 +68,7 @@ async function main() {
     localStorage.removeItem('crm-active-module-v3');
     localStorage.removeItem('crm-home-tiles-v1');
     localStorage.removeItem('crm-home-tiles-v2');
+    localStorage.removeItem('crm-home-tiles-v3');
     localStorage.removeItem('crm-planner-selected-v2');
     localStorage.setItem('dashboard-background', 'photo-water');
   });
@@ -335,15 +336,16 @@ async function main() {
       && !!window.crmHome
       && !!window.crmPlanner
       && !!window.crmAssignments
+      && !!window.crmMonitoring
     ), null, { timeout: 30000 });
     await sleep(1600);
 
     await activate('home');
-    await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 5);
+    await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 6);
     const homeMenu = await openAddMenu();
     await check('Home + contains viewport tiles only', () => {
       invariant(homeMenu.heading === 'Add to Home', `unexpected heading "${homeMenu.heading}"`);
-      invariant(homeMenu.actions.length === 5, `expected five tile choices, got ${homeMenu.actions.length}`);
+      invariant(homeMenu.actions.length === 6, `expected six tile choices, got ${homeMenu.actions.length}`);
       invariant(homeMenu.actions.every((action) => action.id.startsWith('home-tile-') && / tile$/i.test(action.label)), 'Home exposed a non-tile action');
       invariant(!homeMenu.actions.some((action) => /^Ticket$|^Card$/i.test(action.label)), 'Home exposed an independent ticket/card action');
       return homeMenu.actions.map(({ id }) => id);
@@ -365,9 +367,9 @@ async function main() {
     const homeGridSelector = '.crm-home-surface:not([hidden]) .crm-home-grid';
     const initialHomeGeometry = await tileGeometry(homeGridSelector);
     await check('Home tiles share equal adaptive cells and canonical tile records', async () => {
-      invariant(initialHomeGeometry?.tiles.length === 5, 'Home grid did not expose five tiles');
+      invariant(initialHomeGeometry?.tiles.length === 6, 'Home grid did not expose six tiles');
       invariant(dimensionsAreEqual(initialHomeGeometry.tiles), 'Home tile dimensions are not equal');
-      invariant(initialHomeGeometry.count === 5 && initialHomeGeometry.columns > 0 && initialHomeGeometry.rows > 0, 'Home adaptive grid metadata is incomplete');
+      invariant(initialHomeGeometry.count === 6 && initialHomeGeometry.columns > 0 && initialHomeGeometry.rows > 0, 'Home adaptive grid metadata is incomplete');
       invariant(initialHomeGeometry.tiles.every((tile) => tile.id && tile.kind === 'home-viewport'), 'Home tiles are missing canonical tile identity/kind');
       const schemas = await page.evaluate(() => window.crmHome.tiles().map(({ tile }) => tile));
       invariant(schemas.every((tile) => tile.schemaVersion === 1 && tile.target?.type === 'workspace' && tile.id && tile.key), 'Home tile schema is not normalized');
@@ -379,21 +381,21 @@ async function main() {
       label: 'People alternate view',
     }));
     invariant(temporaryHomeTile?.tile?.id, 'Could not create the temporary Home tile');
-    await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 6);
+    await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 7);
     await sleep(100);
     const expandedHomeGeometry = await tileGeometry(homeGridSelector);
     await check('Home tile add reflows every tile evenly', () => {
-      invariant(expandedHomeGeometry?.tiles.length === 6, 'Home tile count did not grow to six');
-      invariant(expandedHomeGeometry.count === 6, 'Home adaptive metadata did not update after add');
+      invariant(expandedHomeGeometry?.tiles.length === 7, 'Home tile count did not grow to seven');
+      invariant(expandedHomeGeometry.count === 7, 'Home adaptive metadata did not update after add');
       invariant(dimensionsAreEqual(expandedHomeGeometry.tiles), 'Home tiles are uneven after add');
       return { columns: expandedHomeGeometry.columns, rows: expandedHomeGeometry.rows };
     });
     await page.evaluate((id) => window.crmHome.removeTile(id), temporaryHomeTile.tile.id);
-    await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 5);
+    await page.waitForFunction(() => document.querySelectorAll('.crm-home-surface .crm-home-grid > [data-crm-tile]').length === 6);
     await sleep(100);
     const restoredHomeGeometry = await tileGeometry(homeGridSelector);
     await check('Home tile removal restores an even grid', () => {
-      invariant(restoredHomeGeometry?.count === 5 && dimensionsAreEqual(restoredHomeGeometry.tiles), 'Home grid is uneven after removal');
+      invariant(restoredHomeGeometry?.count === 6 && dimensionsAreEqual(restoredHomeGeometry.tiles), 'Home grid is uneven after removal');
       return { columns: restoredHomeGeometry.columns, rows: restoredHomeGeometry.rows };
     });
 

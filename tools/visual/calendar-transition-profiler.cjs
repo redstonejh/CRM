@@ -830,9 +830,34 @@ async function main() {
       await window.fractalCalendar.refresh();
     });
     console.log('[calendar-profiler] calendar refreshed; capture status polling started');
-    const initialPreviewResult = await page.evaluate(
-      () => window.fractalCalendar.waitForTilePreviews(undefined, 30000),
-    );
+    const initialPreviewResult = await page.evaluate(async () => {
+      const counts = [];
+      const started = performance.now();
+      let sampling = true;
+      const sample = () => {
+        const hosts = [...document.querySelectorAll(
+          '.fc-level[data-kind="year"] > .fc-grid > .fc-month '
+            + '> .fc-calendar-tile-preview',
+        )];
+        const ready = hosts.filter((host) => host.dataset.previewState === 'ready').length;
+        const staging = hosts.filter((host) => host.dataset.previewState === 'staging').length;
+        const previous = counts[counts.length - 1];
+        if (!previous || previous.ready !== ready || previous.staging !== staging) {
+          counts.push({ at:performance.now() - started, ready, staging });
+        }
+        if (sampling) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+      const result = await window.fractalCalendar.waitForTilePreviews(undefined, 30000);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      sampling = false;
+      sample();
+      return {
+        ...result,
+        elapsedMs:performance.now() - started,
+        readyTransitions:counts,
+      };
+    });
     if (initialPreviewResult.ready !== 12) {
       const diagnostics = await page.evaluate(
         () => window.crmTilePreviews?.diagnostics?.(),
@@ -929,12 +954,39 @@ async function main() {
       { captureAudit:true },
     ));
     const dayTilePreviewResult = await page.evaluate(
-      () => {
+      async () => {
         const month = document.querySelector(
           '.fc-expander[data-kind="month"]:not(.fc-warm)',
         );
         const object = window.fractalCalendar._objectForElement(month);
-        return window.fractalCalendar.waitForTilePreviews(object?.tile?.id);
+        const counts = [];
+        const started = performance.now();
+        let sampling = true;
+        const sample = () => {
+          const hosts = [...month.querySelectorAll(
+            '.fc-day > .fc-calendar-tile-preview',
+          )];
+          const ready = hosts.filter((host) => host.dataset.previewState === 'ready').length;
+          const staging = hosts.filter(
+            (host) => host.dataset.previewState === 'staging',
+          ).length;
+          const previous = counts[counts.length - 1];
+          if (!previous || previous.ready !== ready || previous.staging !== staging) {
+            counts.push({ at:performance.now() - started, ready, staging });
+          }
+          if (sampling) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+        const result = await window.fractalCalendar.waitForTilePreviews(object?.tile?.id);
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        sampling = false;
+        sample();
+        return {
+          ...result,
+          elapsedMs:performance.now() - started,
+          readyTransitions:counts,
+          captureDiagnostics:await window.crmTilePreviews?.diagnostics?.(),
+        };
       },
     );
     if (dayTilePreviewResult.ready !== dayTilePreviewResult.total) {
@@ -996,6 +1048,7 @@ async function main() {
       displayHz,
       idleRounds,
       idle,
+      rootTilePreviewResult:initialPreviewResult,
       architecture,
       surfaceCadence:{
         yearRounds:yearSurfaceRounds,
@@ -1054,6 +1107,7 @@ async function main() {
         preview.state !== 'ready'
           || preview.renderer !== 'calendar-day-full'
           || preview.captureQuality?.validated !== true
+          || preview.captureQuality?.batch !== true
           || preview.captureQuality?.matteSeparationRatio < .2
           || preview.captureQuality?.transparentRatio < .2
           || preview.captureQuality?.opaqueRatio >= .92
@@ -1069,6 +1123,20 @@ async function main() {
       || monthAudit.transitionFrameOpacity > .001
       || !monthAudit.liveSurfaceClear) {
       failures.push('expanded month days are not canonical tiles on one true-acrylic plane');
+    }
+    const rootPreviewProgressive = initialPreviewResult.readyTransitions?.some(
+      (state) => state.ready > 0 && state.ready < initialPreviewResult.total,
+    );
+    const dayPreviewProgressive = dayTilePreviewResult.readyTransitions?.some(
+      (state) => state.ready > 0 && state.ready < dayTilePreviewResult.total,
+    );
+    if (initialPreviewResult.ready !== initialPreviewResult.total
+      || initialPreviewResult.elapsedMs > 15000
+      || rootPreviewProgressive
+      || dayTilePreviewResult.ready !== dayTilePreviewResult.total
+      || dayTilePreviewResult.elapsedMs > 8000
+      || dayPreviewProgressive) {
+      failures.push('calendar tile previews are not fast atomic scope commits');
     }
     const dayAudit = architecture.find((audit) => audit.phase === 'day-rest')?.activeDay;
     if (dayAudit?.date !== '2026-07-15'

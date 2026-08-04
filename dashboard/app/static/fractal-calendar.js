@@ -30,7 +30,7 @@ import {
   const MORPH_MS = 460;
   const MATERIAL_HANDOFF_MS = 72;
   const MATERIAL_PRIME_OPACITY = .02;
-  const TILE_PREVIEW_VERSION = "canonical-tile-preview-v2";
+  const TILE_PREVIEW_VERSION = "canonical-tile-preview-v3";
   const EXP_M = 48;
   const EXP_TOP = 132;
   const YEAR_STRIP_TOP = 12;
@@ -75,6 +75,8 @@ import {
   const tilePreviewListedScopes = new Set();
   const tilePreviewTimers = new Map();
   let tilePreviewSubscription = null;
+  let tilePreviewCommitQueue = Promise.resolve();
+  let tilePreviewBatchStage = null;
   let tilePreviewLastError = "";
   let scheduledDataReadyYear = 0;
 
@@ -240,6 +242,8 @@ import {
     tilePreviewTimers.forEach((timer) => clearTimeout(timer));
     tilePreviewTimers.clear();
     tilePreviewRequests.clear();
+    tilePreviewBatchStage?.remove?.();
+    tilePreviewBatchStage = null;
     return calendarYearObject;
   };
   const calendarObjectForElement = (element) => {
@@ -392,6 +396,11 @@ import {
         font:600 10px/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
         letter-spacing:.075em;text-transform:uppercase;color:rgba(225,234,246,.6)}
       .fc-calendar-tile-preview[data-preview-state="ready"]>.crm-home-preview-state{display:none}
+      .fc-calendar-tile-preview[data-preview-state="staging"]>
+        .fc-calendar-tile-preview-render{visibility:hidden}
+      .fc-tile-preview-batch-stage{position:fixed;inset:0;z-index:2147480000;
+        overflow:hidden;pointer-events:none;background:transparent}
+      .fc-tile-preview-batch-slot{position:absolute;overflow:hidden;pointer-events:none}
       /* Once a month owns the viewport, park the fully covered year tiles.
          Bring them back before the month-to-year contraction begins so their
          live acrylic and populated faces remain present throughout the visible
@@ -710,14 +719,18 @@ import {
     return host;
   };
 
-  const mountCalendarTilePreview = (tile, object) => {
+  const mountCalendarTilePreview = (tile, object, {
+    reveal = true,
+  } = {}) => {
     if (!tile || !object) return false;
     const host = tilePreviewHostFor(tile);
     if (!host) return false;
     const preview = tilePreviews.get(object.tile.id) || object.preview || null;
     const current = calendarTilePreviewIsCurrent(preview, object);
     host.dataset.previewKey = object.tile.id;
-    host.dataset.previewState = current ? "ready" : (preview ? "updating" : "waiting");
+    host.dataset.previewState = current
+      ? (reveal ? "ready" : "staging")
+      : (preview ? "updating" : "waiting");
     if (!current) {
       tile.removeAttribute("data-preview-ready");
       return false;
@@ -742,20 +755,46 @@ import {
       preview.provenance.canonicalChildCount ?? object.children.length,
     );
     host.dataset.capturedAt = String(preview.capturedAt || 0);
-    tile.dataset.previewReady = "true";
-    return true;
+    if (reveal) tile.dataset.previewReady = "true";
+    else tile.removeAttribute("data-preview-ready");
+    return image;
   };
-  const acceptTilePreview = (preview) => {
+  const cacheTilePreview = (preview) => {
     if (!preview?.key) return false;
     calendarObject();
     const object = tileTreeIndex.objectForId(preview.key);
     if (!object || preview.kind !== tileKindOf(object)) return false;
     tilePreviews.set(String(preview.key), preview);
     object.preview = preview;
-    camera?.surface?.().querySelectorAll?.(
-      `.crm-calendar-tile[data-tile-id="${CSS.escape(String(preview.key))}"]`,
-    ).forEach((tile) => mountCalendarTilePreview(tile, object));
-    return true;
+    return object;
+  };
+  const acceptTilePreviewBatch = (previews) => {
+    const batch = (Array.isArray(previews) ? previews : [previews]).filter(Boolean);
+    tilePreviewCommitQueue = tilePreviewCommitQueue.catch(() => null).then(async () => {
+      const staged = [];
+      batch.forEach((preview) => {
+        const object = cacheTilePreview(preview);
+        if (!object) return;
+        camera?.surface?.().querySelectorAll?.(
+          `.crm-calendar-tile[data-tile-id="${CSS.escape(String(preview.key))}"]`,
+        ).forEach((tile) => {
+          const image = mountCalendarTilePreview(tile, object, { reveal:false });
+          if (image) staged.push({ tile, object, image });
+        });
+      });
+      if (staged.length) {
+        await Promise.race([
+          Promise.all(staged.map(({ image }) => image.decode?.().catch(() => null))),
+          new Promise((resolve) => setTimeout(resolve, 1200)),
+        ]);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        staged.forEach(({ tile, object }) => {
+          mountCalendarTilePreview(tile, object, { reveal:true });
+        });
+      }
+      return batch.length;
+    });
+    return tilePreviewCommitQueue;
   };
   const activeMonthObject = () => {
     const layer = camera?.layers?.()[1];
@@ -838,7 +877,7 @@ import {
       );
       if (result?.ok === false) tilePreviewLastError = String(result.error || "Capture failed");
       else tilePreviewLastError = "";
-      (result?.previews || []).forEach(acceptTilePreview);
+      await acceptTilePreviewBatch(result?.previews || []);
       return result?.previews || [];
     } catch (error) {
       tilePreviewLastError = String(error?.message || error || "Capture failed");
@@ -864,7 +903,7 @@ import {
       tilePreviewListedScopes.add(scopeKey);
       try {
         const result = await window.crmTilePreviews.list(kind, scope);
-        (result?.previews || []).forEach(acceptTilePreview);
+        await acceptTilePreviewBatch(result?.previews || []);
       } catch {}
     }
     if (!capture || !camera?.isActive?.() || scheduledDataReadyYear !== currentYear) return [];
@@ -873,7 +912,11 @@ import {
   };
   const subscribeTilePreviews = () => {
     if (tilePreviewSubscription || !window.crmTilePreviews?.onChanged) return;
-    try { tilePreviewSubscription = window.crmTilePreviews.onChanged(acceptTilePreview); } catch {}
+    try {
+      tilePreviewSubscription = window.crmTilePreviews.onChanged(
+        (preview) => { void acceptTilePreviewBatch(preview); },
+      );
+    } catch {}
   };
   const waitForTileChildren = async (parent, timeoutMs = 90000) => {
     const kind = tilePreviewKindFor(parent);
@@ -2024,6 +2067,7 @@ import {
         tilePreviewTimers.forEach((timer) => clearTimeout(timer));
         tilePreviewTimers.clear();
         tilePreviewRequests.clear();
+        clearTilePreviewBatch();
         clearTimeout(materialPrewarmTimer);
         materialPrewarmTimer = 0;
         cancelAnimationFrame(materialPrewarmFrame);
@@ -2110,6 +2154,142 @@ import {
     }
     await camera.restoreHistoryState?.(state.camera || {});
     return homePreviewState();
+  };
+  const clearTilePreviewBatch = () => {
+    tilePreviewBatchStage?.remove?.();
+    tilePreviewBatchStage = null;
+    return true;
+  };
+  const prepareTilePreviewBatch = async (requests = []) => {
+    clearTilePreviewBatch();
+    const batch = (Array.isArray(requests) ? requests : [])
+      .filter((request) => request?.kind === "calendar-day" && request?.key)
+      .slice(0, 64);
+    if (!batch.length) return null;
+    const viewState = batch[0].viewState || {};
+    const nextYear = Math.max(
+      1901,
+      Math.min(2200, Number(viewState.year) || currentYear),
+    );
+    if (nextYear !== currentYear) {
+      currentYear = nextYear;
+      localStorage.setItem(YEAR_STORE, String(currentYear));
+      resetCalendarObject();
+    }
+    if (scheduledDataReadyYear !== currentYear) await loadScheduled({ refresh:false });
+    resetTransitionMaterials();
+    camera.rebuildRoot();
+    const graph = calendarObject();
+    const objects = batch.map((request) => tileTreeIndex.objectForId(request.key));
+    if (objects.some((object) => !object || object === graph
+      || calendarTileUnit(object) !== "day")) return null;
+    const parent = tileTreeIndex.parentOf(objects[0]);
+    if (!parent || objects.some((object) => tileTreeIndex.parentOf(object) !== parent)) {
+      return null;
+    }
+    const monthTarget = camera.layers()[0]?.querySelector?.(
+      `.crm-calendar-tile[data-tile-id="${CSS.escape(parent.tile.id)}"]`,
+    );
+    if (!monthTarget || !camera.jumpTo(monthTarget)) return null;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const monthLayer = camera.layers()[1];
+    if (calendarObjectForElement(monthLayer) !== parent) return null;
+    const viewport = previewCaptureRect();
+    const stage = document.createElement("div");
+    stage.className = "fc-tile-preview-batch-stage";
+    stage.setAttribute("aria-hidden", "true");
+    const slots = [];
+    batch.forEach((request, index) => {
+      const object = objects[index];
+      const source = monthLayer.querySelector(
+        `.fc-day[data-tile-id="${CSS.escape(object.tile.id)}"]`,
+      );
+      const rectangle = source?.getBoundingClientRect?.();
+      if (!source || !rectangle || rectangle.width <= 0 || rectangle.height <= 0) return;
+      const slot = document.createElement("div");
+      slot.className = "fc-tile-preview-batch-slot";
+      slot.dataset.previewKey = object.tile.id;
+      Object.assign(slot.style, {
+        left:`${rectangle.left}px`,
+        top:`${rectangle.top}px`,
+        width:`${rectangle.width}px`,
+        height:`${rectangle.height}px`,
+      });
+      const shell = createTileInstance(object, {
+        tagName:"div",
+        className:"fc-day-expander",
+        preview:false,
+        view:"expanded-shell",
+        ariaLabel:`Open ${object.tile.label}`,
+      });
+      shell.classList.add("fc-bucket", "fc-expander");
+      shell.dataset.kind = "day";
+      shell.dataset.date = calendarData(object).date;
+      Object.assign(shell.style, {
+        position:"absolute",
+        inset:"auto",
+        left:"0",
+        top:"0",
+        width:`${viewport.width}px`,
+        height:`${viewport.height}px`,
+        transformOrigin:"0 0",
+        transform:`scale(${rectangle.width / Math.max(1, viewport.width)},` +
+          `${rectangle.height / Math.max(1, viewport.height)})`,
+      });
+      const live = document.createElement("div");
+      live.className = "fc-expander-live";
+      mountCalendarDayViewport(live, object);
+      shell.appendChild(live);
+      slot.appendChild(shell);
+      stage.appendChild(slot);
+      slots.push({ request, object, source, slot, shell, live });
+    });
+    if (slots.length !== batch.length) {
+      clearTilePreviewBatch();
+      return null;
+    }
+    document.body.appendChild(stage);
+    tilePreviewBatchStage = stage;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+      region:{
+        x:0,
+        y:0,
+        width:window.innerWidth,
+        height:window.innerHeight,
+      },
+      tiles:slots.map(({ request, object, source, slot, shell, live }) => {
+        const rectangle = slot.getBoundingClientRect();
+        return {
+          key:object.tile.id,
+          region:{
+            x:rectangle.left,
+            y:rectangle.top,
+            width:rectangle.width,
+            height:rectangle.height,
+          },
+          provenance:{
+            renderer:live.dataset.tileRenderer || "",
+            tileId:object.tile.id,
+            tileKind:tileKindOf(object),
+            tileObjectCanonical:isTileObject(object),
+            shellSharesSourceObject:calendarObjectForElement(source)
+              === calendarObjectForElement(shell),
+            fullRendererSharesObject:calendarObjectForElement(live) === object,
+            sourceView:source.dataset.tileObjectView || "",
+            canonicalChildCount:0,
+            sharedChildCount:0,
+            directChildCount:0,
+            syntheticChildCount:0,
+            path:tilePathFor(object),
+            revision:Number(object.revision) || 0,
+            dataSignature:String(calendarData(object).dataSignature || ""),
+            batchRenderer:"calendar-day-full-batch",
+            requestKey:request.key,
+          },
+        };
+      }),
+    };
   };
   const prepareTilePreview = async (request = {}) => {
     const tileId = String(
@@ -2245,6 +2425,8 @@ import {
     _objectGraph:() => calendarObject(),
     _objectIndex:() => (calendarObject(), tileTreeIndex),
     prepareTilePreview,
+    prepareTilePreviewBatch,
+    clearTilePreviewBatch,
     tilePreviewCaptureState,
     previewCaptureRect,
     waitForTilePreviews:(parentTileId, timeoutMs) => waitForTileChildren(

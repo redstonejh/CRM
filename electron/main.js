@@ -87,6 +87,7 @@ function normalizeApiUrl(value) {
 let tray = null;
 let mainWindow = null;
 let previewWindow = null;
+let canonicalTilePreviewWindow = null;
 let exitRequested = false;
 let ticketsEnded = false;
 let settings = loadSettings();
@@ -107,7 +108,7 @@ const homePreviewViewStateGenerations = new Map();
 let homePreviewViewStateGeneration = 0;
 const PROJECT_PREVIEW_VERSION = 'project-tile-v1';
 const projectPreviewCache = new Map();
-const CANONICAL_TILE_PREVIEW_VERSION = 'canonical-tile-preview-v2';
+const CANONICAL_TILE_PREVIEW_VERSION = 'canonical-tile-preview-v3';
 const canonicalTilePreviewCache = new Map();
 let canonicalTilePreviewCaptureStatus = {
   active:false, stage:'idle', key:'', startedAt:0, error:'',
@@ -132,18 +133,19 @@ function setHomePreviewInteraction(active) {
   const next = !!active;
   if (homePreviewInteractionActive === next) return;
   homePreviewInteractionActive = next;
-  if (previewWindow && !previewWindow.isDestroyed()) {
+  [previewWindow, canonicalTilePreviewWindow].forEach((worker) => {
+    if (!worker || worker.isDestroyed()) return;
     // The hidden renderer only paints static capture states. Throttle it to one
     // frame while the visible camera owns the GPU, then restore a deliberately
     // modest capture cadence after the handoff.
     try {
-      previewWindow.webContents.setFrameRate(
+      worker.webContents.setFrameRate(
         homePreviewInteractionActive
           ? 1
-          : (canonicalTilePreviewCaptureStatus.active ? 60 : 30),
+          : (worker === canonicalTilePreviewWindow ? 60 : 30),
       );
     } catch {}
-  }
+  });
   if (!homePreviewInteractionActive) {
     const waiters = homePreviewInteractionWaiters;
     homePreviewInteractionWaiters = [];
@@ -388,6 +390,14 @@ function foregroundFromMattes(blackImage, whiteImage) {
   };
 }
 
+function transparentForegroundIsValid(foreground) {
+  return !!foreground
+    && foreground.quality.matteSeparationRatio >= .2
+    && foreground.quality.transparentRatio >= .2
+    && foreground.quality.opaqueRatio < .92
+    && foreground.quality.nearSolidRatio < .9;
+}
+
 function transparentImageRegion(image, region, viewport) {
   if (!image || image.isEmpty() || !Array.isArray(region) || region.length < 4 || !Array.isArray(viewport) || viewport.length < 2) return '';
   const png = PNG.sync.read(image.toPNG());
@@ -409,6 +419,7 @@ async function prepareCapture(win, matte = null, options = {}) {
   const preserveHomePreviewFilter = options.preserveHomePreviewFilter === true;
   const homeMotionObjectsOnly = options.homeMotionObjectsOnly === true;
   const tileForegroundOnly = options.tileForegroundOnly === true;
+  const tileBatchOnly = options.tileBatchOnly === true;
   const settleMs = Math.max(0, Number.isFinite(Number(options.settleMs))
     ? Number(options.settleMs)
     : 60);
@@ -423,6 +434,16 @@ async function prepareCapture(win, matte = null, options = {}) {
       background:transparent !important; border-color:transparent !important;
       box-shadow:none !important; -webkit-backdrop-filter:none !important;
       backdrop-filter:none !important; }` : ''}
+    ${tileBatchOnly ? `body > :not(.fc-tile-preview-batch-stage) {
+      display:none !important;
+    }
+    body > .fc-tile-preview-batch-stage {
+      display:block !important;
+    }
+    body > .fc-tile-preview-batch-stage,
+    body > .fc-tile-preview-batch-stage * {
+      visibility:visible !important;
+    }` : ''}
     ${matte ? `html,body { --page-background:${matte} !important; --bg:${matte} !important; --bg-end:${matte} !important;
       background:${matte} !important; background-color:${matte} !important; }
       html::before,html::after,body::before,body::after,.workspace-photo-backdrop,
@@ -505,12 +526,7 @@ async function captureForeground(win, options = {}) {
     lastQuality = foreground?.quality || null;
     const valid = !!foreground && (
       !validateTransparentForeground
-      || (
-        foreground.quality.matteSeparationRatio >= .2
-        && foreground.quality.transparentRatio >= .2
-        && foreground.quality.opaqueRatio < .92
-        && foreground.quality.nearSolidRatio < .9
-      )
+      || transparentForegroundIsValid(foreground)
     );
     if (valid) {
       foreground.quality = {
@@ -527,6 +543,78 @@ async function captureForeground(win, options = {}) {
     );
   }
   return null;
+}
+
+function cropCapturedImage(image, region, capturedRegion) {
+  if (!image || image.isEmpty() || !region || !capturedRegion) return null;
+  const size = image.getSize();
+  const scaleX = size.width / Math.max(1, Number(capturedRegion.width) || size.width);
+  const scaleY = size.height / Math.max(1, Number(capturedRegion.height) || size.height);
+  const left = Math.max(0, Math.floor(
+    (Number(region.x) - Number(capturedRegion.x)) * scaleX,
+  ));
+  const top = Math.max(0, Math.floor(
+    (Number(region.y) - Number(capturedRegion.y)) * scaleY,
+  ));
+  const right = Math.min(size.width, Math.ceil(
+    (Number(region.x) + Number(region.width) - Number(capturedRegion.x)) * scaleX,
+  ));
+  const bottom = Math.min(size.height, Math.ceil(
+    (Number(region.y) + Number(region.height) - Number(capturedRegion.y)) * scaleY,
+  ));
+  if (right <= left || bottom <= top) return null;
+  return image.crop({
+    x:left,
+    y:top,
+    width:right - left,
+    height:bottom - top,
+  });
+}
+
+async function captureForegroundBatch(win, batchState, options = {}) {
+  const captureRegion = batchState?.region;
+  const tiles = Array.isArray(batchState?.tiles) ? batchState.tiles : [];
+  if (!captureRegion || !tiles.length) return null;
+  const attempts = 4;
+  let lastQuality = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const attemptOptions = {
+      ...options,
+      tileForegroundOnly:true,
+      tileBatchOnly:true,
+      settleMs:Math.max(Number(options.settleMs) || 0, attempt * 12),
+    };
+    await waitForHomePreviewInteraction();
+    await prepareCapture(win, '#000000', attemptOptions);
+    const black = await capturePage(win, captureRegion);
+    await waitForHomePreviewInteraction();
+    await prepareCapture(win, '#ffffff', attemptOptions);
+    const white = await capturePage(win, captureRegion);
+    const captures = new Map();
+    const qualities = {};
+    let valid = true;
+    for (const tile of tiles) {
+      const blackTile = cropCapturedImage(black, tile.region, captureRegion);
+      const whiteTile = cropCapturedImage(white, tile.region, captureRegion);
+      const foreground = foregroundFromMattes(blackTile, whiteTile);
+      if (!transparentForegroundIsValid(foreground)) valid = false;
+      if (foreground) {
+        foreground.quality = {
+          ...foreground.quality,
+          validated:true,
+          attempts:attempt + 1,
+          batch:true,
+        };
+        captures.set(String(tile.key), foreground);
+        qualities[String(tile.key)] = foreground.quality;
+      }
+    }
+    lastQuality = qualities;
+    if (valid && captures.size === tiles.length) return captures;
+  }
+  throw new Error(
+    `Tile foreground batch never produced valid matte pairs: ${JSON.stringify(lastQuality)}`,
+  );
 }
 
 async function captureRoom(win, options = {}) {
@@ -573,8 +661,15 @@ function waitForRenderer(win, expression, timeoutMs = 30000) {
   });
 }
 
-async function createPreviewWindow() {
-  if (previewWindow && !previewWindow.isDestroyed()) return previewWindow;
+async function createPreviewWindow({ dedicatedTileWorker = false } = {}) {
+  if (!dedicatedTileWorker && previewWindow && !previewWindow.isDestroyed()) {
+    return previewWindow;
+  }
+  if (dedicatedTileWorker
+    && canonicalTilePreviewWindow
+    && !canonicalTilePreviewWindow.isDestroyed()) {
+    return canonicalTilePreviewWindow;
+  }
   const bounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentBounds() : { width: 1280, height: 860 };
   const worker = new BrowserWindow({
     width: bounds.width, height: bounds.height, show: false, frame: false,
@@ -584,9 +679,13 @@ async function createPreviewWindow() {
       sandbox: false, offscreen: true, backgroundThrottling: false,
     },
   });
-  previewWindow = worker;
+  if (dedicatedTileWorker) canonicalTilePreviewWindow = worker;
+  else previewWindow = worker;
   try { worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
-  worker.on('closed', () => { if (previewWindow === worker) previewWindow = null; });
+  worker.on('closed', () => {
+    if (previewWindow === worker) previewWindow = null;
+    if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
+  });
   try {
     await Promise.race([
       worker.loadFile(dashboardIndexPath(), { query: { crmPreviewWorker: '1' } }),
@@ -600,6 +699,7 @@ async function createPreviewWindow() {
   } catch (error) {
     if (!worker.isDestroyed()) worker.destroy();
     if (previewWindow === worker) previewWindow = null;
+    if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
     throw error;
   }
 }
@@ -664,9 +764,9 @@ function publishCanonicalTilePreview({
     viewState,
   };
   canonicalTilePreviewCache.set(canonicalTilePreviewCacheKey(preview.kind, preview.key), preview);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('tile-preview:changed', preview);
-  }
+  // Canonical preview sets are returned to the requesting renderer only after
+  // the complete scope is ready. Publishing each tile here made the visible
+  // collection fill progressively in capture order.
   return preview;
 }
 
@@ -711,16 +811,27 @@ function normalizeCanonicalTilePreviewBatch(kind, scope = {}, tiles = []) {
   return requests.length ? { kind:requestedKind, requests } : null;
 }
 
+function canonicalTileCaptureIsValid(request, captureState) {
+  const provenance = captureState?.provenance;
+  return provenance?.renderer === `${request.kind}-full`
+    && provenance?.tileObjectCanonical === true
+    && provenance?.shellSharesSourceObject === true
+    && provenance?.fullRendererSharesObject === true
+    && provenance?.tileId === request.key
+    && provenance?.tileKind === request.kind
+    && provenance?.syntheticChildCount === 0
+    && JSON.stringify(provenance?.path || []) === JSON.stringify(request.path);
+}
+
 function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
   const batch = normalizeCanonicalTilePreviewBatch(kind, scope, tiles);
   if (!batch) return Promise.resolve([]);
   homePreviewActivityGeneration += 1;
-  // Calendar, Home, and project previews share one queue and one offscreen
-  // renderer. This prevents competing capture windows while keeping every
-  // preview sourced from its module's real entered viewport.
-  canonicalTilePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
+  // Calendar captures use a short-lived worker of their own. Visible Calendar
+  // tiles must not sit behind the slower, unrelated Home/project refresh
+  // queue; camera interaction still pauses both workers to protect animation.
+  canonicalTilePreviewQueue = canonicalTilePreviewQueue.catch(() => null).then(async () => {
     let worker;
-    let ownsWorker = false;
     const previews = [];
     try {
       canonicalTilePreviewCaptureStatus = {
@@ -728,14 +839,15 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
       };
       await waitForHomePreviewInteraction();
       canonicalTilePreviewCaptureStatus.stage = 'creating-worker';
-      ownsWorker = !previewWindow || previewWindow.isDestroyed();
-      worker = await createPreviewWindow();
+      worker = await createPreviewWindow({ dedicatedTileWorker:true });
       try { worker.webContents.setFrameRate(60); } catch {}
       canonicalTilePreviewCaptureStatus.stage = 'activating-calendar';
       await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('calendar')`, true);
       await waitForRenderer(worker, `document.body.dataset.crmModule === 'calendar'
         && !!window.fractalCalendar?.prepareTilePreview
+        && !!window.fractalCalendar?.prepareTilePreviewBatch
         && !!window.fractalCalendar?.tilePreviewCaptureState`);
+      const pending = [];
       for (const request of batch.requests) {
         canonicalTilePreviewCaptureStatus.key = request.key;
         const cached = canonicalTilePreviewCache.get(
@@ -748,71 +860,118 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
           previews.push(cached);
           continue;
         }
-        canonicalTilePreviewCaptureStatus.stage = 'waiting-for-tile';
-        await waitForHomePreviewInteraction();
-        canonicalTilePreviewCaptureStatus.stage = 'rendering-tile';
-        const prepared = await worker.webContents.executeJavaScript(
-          `window.fractalCalendar.prepareTilePreview(${JSON.stringify(request)})`,
+        pending.push(request);
+      }
+      if (batch.kind === 'calendar-day' && pending.length > 1) {
+        canonicalTilePreviewCaptureStatus = {
+          ...canonicalTilePreviewCaptureStatus,
+          stage:'rendering-day-batch',
+          key:`${pending.length} days`,
+        };
+        const batchState = await worker.webContents.executeJavaScript(
+          `window.fractalCalendar.prepareTilePreviewBatch(${JSON.stringify(pending)})`,
           true,
         );
-        if (!prepared) throw new Error(`Canonical tile ${request.key} did not prepare`);
-        canonicalTilePreviewCaptureStatus.stage = 'settling-tile';
-        await worker.webContents.executeJavaScript(
-          `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(
-            () => setTimeout(resolve, ${request.settleMs})
-          )))`,
-          true,
-        );
-        canonicalTilePreviewCaptureStatus.stage = 'reading-provenance';
-        const captureState = await worker.webContents.executeJavaScript(
-          `window.fractalCalendar.tilePreviewCaptureState(${JSON.stringify(request.key)})`,
-          true,
-        );
-        const expectedRenderer = `${request.kind}-full`;
-        const provenance = captureState?.provenance;
-        const canonical = provenance?.tileObjectCanonical === true
-          && provenance?.shellSharesSourceObject === true
-          && provenance?.fullRendererSharesObject === true
-          && provenance?.tileId === request.key
-          && provenance?.tileKind === request.kind
-          && provenance?.syntheticChildCount === 0
-          && JSON.stringify(provenance?.path || []) === JSON.stringify(request.path);
-        if (provenance?.renderer !== expectedRenderer || !canonical) {
-          throw new Error(`Canonical tile ${request.key} did not use its full renderer`);
+        if (!batchState || batchState.tiles?.length !== pending.length) {
+          throw new Error('Canonical calendar-day batch did not prepare');
         }
-        canonicalTilePreviewCaptureStatus.stage = 'capturing-tile';
-        const foreground = await captureForeground(worker, {
-          region:captureState.region,
-          settleMs:request.settleMs,
-          tileForegroundOnly:request.captureMode === 'tile-foreground',
-        });
-        const preview = publishCanonicalTilePreview({
-          kind:request.kind,
-          key:request.key,
-          capture:foreground ? {
-            foreground:foreground.image,
-            bounds:foreground.bounds,
-            quality:foreground.quality,
-          } : null,
-          revision:request.revision,
-          dataSignature:request.dataSignature,
-          provenance,
-          viewState:request.viewState,
-        });
-        if (preview) previews.push(preview);
+        const statesByKey = new Map(
+          batchState.tiles.map((state) => [String(state.key), state]),
+        );
+        for (const request of pending) {
+          if (!canonicalTileCaptureIsValid(request, statesByKey.get(request.key))) {
+            throw new Error(`Canonical tile ${request.key} did not use its batch full renderer`);
+          }
+        }
+        canonicalTilePreviewCaptureStatus.stage = 'capturing-day-batch';
+        const captures = await captureForegroundBatch(worker, batchState);
+        for (const request of pending) {
+          const captureState = statesByKey.get(request.key);
+          const foreground = captures?.get(request.key);
+          const preview = publishCanonicalTilePreview({
+            kind:request.kind,
+            key:request.key,
+            capture:foreground ? {
+              foreground:foreground.image,
+              bounds:foreground.bounds,
+              quality:foreground.quality,
+            } : null,
+            revision:request.revision,
+            dataSignature:request.dataSignature,
+            provenance:captureState.provenance,
+            viewState:request.viewState,
+          });
+          if (preview) previews.push(preview);
+        }
+      } else {
+        for (const request of pending) {
+          canonicalTilePreviewCaptureStatus.key = request.key;
+          canonicalTilePreviewCaptureStatus.stage = 'waiting-for-tile';
+          await waitForHomePreviewInteraction();
+          canonicalTilePreviewCaptureStatus.stage = 'rendering-tile';
+          const prepared = await worker.webContents.executeJavaScript(
+            `window.fractalCalendar.prepareTilePreview(${JSON.stringify(request)})`,
+            true,
+          );
+          if (!prepared) throw new Error(`Canonical tile ${request.key} did not prepare`);
+          canonicalTilePreviewCaptureStatus.stage = 'settling-tile';
+          await worker.webContents.executeJavaScript(
+            `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(
+              () => setTimeout(resolve, ${request.settleMs})
+            )))`,
+            true,
+          );
+          canonicalTilePreviewCaptureStatus.stage = 'reading-provenance';
+          const captureState = await worker.webContents.executeJavaScript(
+            `window.fractalCalendar.tilePreviewCaptureState(${JSON.stringify(request.key)})`,
+            true,
+          );
+          const provenance = captureState?.provenance;
+          if (!canonicalTileCaptureIsValid(request, captureState)) {
+            throw new Error(`Canonical tile ${request.key} did not use its full renderer`);
+          }
+          canonicalTilePreviewCaptureStatus.stage = 'capturing-tile';
+          const foreground = await captureForeground(worker, {
+            region:captureState.region,
+            settleMs:request.settleMs,
+            tileForegroundOnly:request.captureMode === 'tile-foreground',
+          });
+          const preview = publishCanonicalTilePreview({
+            kind:request.kind,
+            key:request.key,
+            capture:foreground ? {
+              foreground:foreground.image,
+              bounds:foreground.bounds,
+              quality:foreground.quality,
+            } : null,
+            revision:request.revision,
+            dataSignature:request.dataSignature,
+            provenance,
+            viewState:request.viewState,
+          });
+          if (preview) previews.push(preview);
+        }
+      }
+      if (previews.length !== batch.requests.length) {
+        throw new Error(
+          `Canonical tile scope completed ${previews.length}/${batch.requests.length} previews`,
+        );
       }
     } catch (error) {
       canonicalTilePreviewCaptureStatus.error = String(error?.message || error);
       console.error('[tile-preview] calendar capture failed:', error?.message || error);
+      previews.splice(0);
     } finally {
-      if (!ownsWorker && worker && !worker.isDestroyed()) {
+      if (worker && !worker.isDestroyed()) {
         try {
-          worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30);
+          await worker.webContents.executeJavaScript(
+            `window.fractalCalendar?.clearTilePreviewBatch?.()`,
+            true,
+          );
         } catch {}
-      } else {
-        if (worker && !worker.isDestroyed()) worker.destroy();
-        if (previewWindow === worker) previewWindow = null;
       }
+      if (worker && !worker.isDestroyed()) worker.destroy();
+      if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
       canonicalTilePreviewCaptureStatus = {
         ...canonicalTilePreviewCaptureStatus,
         active:false,
@@ -822,7 +981,6 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
     }
     return previews;
   });
-  homePreviewQueue = canonicalTilePreviewQueue.catch(() => null);
   return canonicalTilePreviewQueue;
 }
 
@@ -1847,8 +2005,8 @@ ipcMain.handle('tile-preview:diagnostics', (event) => {
     cached:canonicalTilePreviewCache.size,
     interactionActive:homePreviewInteractionActive,
     worker:canonicalTilePreviewCaptureStatus.active
-      && !!previewWindow
-      && !previewWindow.isDestroyed(),
+      && !!canonicalTilePreviewWindow
+      && !canonicalTilePreviewWindow.isDestroyed(),
   };
 });
 ipcMain.handle('tile-preview:capture', async (event, {

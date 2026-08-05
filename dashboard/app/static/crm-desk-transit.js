@@ -73,10 +73,14 @@
       /* Room navigation enters from below the viewport during the final part
          of the camera landing. It remains semantically hidden and inert while
          entering, but no longer pops in after the room settles. */
+      .crm-module-switch[hidden]:not([data-crm-transit-nav-entering]){
+        display:grid!important;opacity:${ENDPOINT_PARKED_OPACITY}!important;
+        transform:translateX(-50%) translateY(calc(100% + 36px))!important;
+        pointer-events:none!important;will-change:transform,opacity}
       .crm-module-switch[data-crm-transit-nav-entering][hidden]{
-        display:grid!important}
+        display:grid!important;opacity:1!important}
       .crm-module-switch[data-crm-transit-nav-entering]{
-        pointer-events:none!important;will-change:transform}
+        pointer-events:none!important;will-change:transform,opacity}
       html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][data-crm-transit-nav-entering]{
         opacity:1!important}
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
@@ -165,7 +169,17 @@
     destinationRoot?.removeAttribute?.("data-crm-transit-destination");
     destinationRoot?.removeAttribute?.("data-crm-transit-group");
     destinationRoot?.removeAttribute?.("data-crm-transit-retained");
-    destinationRoot?.removeAttribute?.("data-crm-home-precomposed");
+    const focusedPrecompose = destinationRoot?.dataset?.crmHomeFocusedPrecompose === "true";
+    if (!focusedPrecompose) destinationRoot?.removeAttribute?.("data-crm-home-precomposed");
+    if (focusedPrecompose) {
+      if (document.body.dataset.crmModule === "home") {
+        destinationRoot.hidden = true;
+        destinationRoot.setAttribute("aria-hidden", "true");
+      } else {
+        destinationRoot.hidden = false;
+        destinationRoot.removeAttribute("aria-hidden");
+      }
+    }
     destinationRoot = null;
     destinationLayers = [];
   };
@@ -191,8 +205,22 @@
     clearDestinationLayers();
     if (!theater) return destinationLayers;
     destinationRoot = theater;
+    const ownsSharedAcrylic = !!document.querySelector(
+      `[data-crm-acrylic-owner="${key}"]`,
+    );
+    if (ownsSharedAcrylic) {
+      // The shared card-system plane is already a canonical, precomposed
+      // compositor owner. Keep its display:contents theater only as a
+      // readiness sentinel; tagging it as a CSS opacity layer invalidates the
+      // complete 1k+ descendant tree twice beneath an already-opaque raster.
+      destinationLayers.push(theater);
+      addDestinationLayer(document.querySelector(".crm-module-switch"));
+      return destinationLayers;
+    }
     destinationRoot.setAttribute("data-crm-transit-destination", "");
-    if (destinationRoot.matches(".crm-theater,[data-crm-home-precomposed]") || getComputedStyle(destinationRoot).display === "contents") {
+    if (!ownsSharedAcrylic
+      && (destinationRoot.matches(".crm-theater,[data-crm-home-precomposed]")
+        || getComputedStyle(destinationRoot).display === "contents")) {
       destinationRoot.setAttribute("data-crm-transit-group", "");
     }
     addDestinationLayer(theater);
@@ -201,6 +229,15 @@
   };
   const stageDestinationLayers = (key, theater = findDestinationTheater(key)) => {
     if (!theater) return destinationLayers;
+    // A room with its own shared screen-space acrylic owner is already
+    // precomposed through its canonical display:contents topology. Its direct
+    // children must not receive temporary layer attributes: doing so both
+    // changes their parked-opacity baseline and invalidates the complete card
+    // tree. The theater plus native navigation remain sufficient ownership
+    // sentinels for the covered handoff.
+    if (document.querySelector(`[data-crm-acrylic-owner="${key}"]`)) {
+      return destinationLayers;
+    }
     const boxesOf = (node) => {
       if (!node || node.hidden || getComputedStyle(node).display === "none") return [];
       if (getComputedStyle(node).display === "contents") return [...node.children].flatMap(boxesOf);
@@ -334,12 +371,54 @@
         viewport:{ width:innerWidth, height:innerHeight },
       };
     }
+    const bridgeOwned = stage?.coverBridge === host && host.isConnected;
+    if (bridgeOwned) {
+      const animatedOpacity = (animation, from, to) => {
+        if (!animation) return null;
+        const progress = Number(animation.effect?.getComputedTiming?.().progress);
+        return Number.isFinite(progress) ? from + (to - from) * progress : null;
+      };
+      const liveOpacity = animatedOpacity(
+        stage.coverAnimation,
+        ENDPOINT_UNOCCLUDE_OPACITY,
+        ENDPOINT_PARKED_OPACITY,
+      ) ?? animatedOpacity(stage.endpointBlendAnimation, ENDPOINT_PARKED_OPACITY, 1)
+        ?? Number(host.style.opacity || 1);
+      const imageRaster = raster instanceof HTMLImageElement;
+      const complete = imageRaster ? !!raster.complete : true;
+      const naturalWidth = imageRaster ? raster.naturalWidth || 0 : innerWidth;
+      const naturalHeight = imageRaster ? raster.naturalHeight || 0 : innerHeight;
+      const source = stage?.coverSource
+        || (imageRaster ? (raster.currentSrc || raster.src) : coverSourceOf(raster));
+      const signature = {
+        ready:complete && naturalWidth > 0 && naturalHeight > 0
+          && host.isConnected && raster.isConnected,
+        nodeId:rasterIdentity(raster),
+        mode:stage?.coverMode || lid.dataset.fractalFrame || "",
+        source:compactSource(source),
+        complete,
+        naturalWidth,
+        naturalHeight,
+        rect:{ x:0, y:0, width:innerWidth, height:innerHeight },
+        opacity:1,
+        hostOpacity:roundGeometry(liveOpacity),
+        display:"block",
+        visibility:"visible",
+        frame:"viewport",
+        lidStyle:{ left:"", top:"", width:"", height:"", transform:"", opacity:"" },
+        viewport:{ width:innerWidth, height:innerHeight },
+      };
+      stage.lid = lid;
+      stage.coverHost = host;
+      stage.coverRaster = raster;
+      stage.coverSource = source;
+      return signature;
+    }
     const source = coverSourceOf(raster);
     const rect = raster.getBoundingClientRect();
     const rasterStyle = getComputedStyle(raster);
     const hostStyle = getComputedStyle(host);
-    const bridgeOwned = stage?.coverBridge === host && host.isConnected;
-    const lidStyle = bridgeOwned ? null : lid.style;
+    const lidStyle = lid.style;
     const imageRaster = raster instanceof HTMLImageElement;
     const complete = imageRaster ? !!raster.complete : true;
     const naturalWidth = imageRaster ? raster.naturalWidth || 0 : Math.round(rect.width);
@@ -363,7 +442,7 @@
       hostOpacity:roundGeometry(hostStyle.opacity),
       display:rasterStyle.display,
       visibility:rasterStyle.visibility,
-      frame:bridgeOwned ? "viewport" : (lid.dataset.fractalFrame || ""),
+      frame:lid.dataset.fractalFrame || "",
       lidStyle:{
         left:lidStyle?.left || "",
         top:lidStyle?.top || "",
@@ -424,26 +503,29 @@
   });
   const destinationAcrylicState = (stage) => {
     const root = stage?.theater || findDestinationTheater(stage?.key);
-    const candidates = root
-      ? [root, ...root.querySelectorAll(".tk-zone-hacrylic-lens,.tk-zone,.crm-planner-bucket,.crm-project-bucket,.crm-menu-surface")]
-      : [];
-    const owners = candidates.filter((node) => {
+    const candidates = stage?.acrylicCandidates?.filter?.((node) => node?.isConnected)
+      || (root
+        ? [root, ...root.querySelectorAll(
+          ".tk-zone-acrylic-plane,.tk-zone-hacrylic-lens,.tk-zone,"
+            + ".crm-planner-bucket,.crm-project-bucket,.crm-menu-surface",
+        ), ...document.querySelectorAll(`[data-crm-acrylic-owner="${stage?.key || ""}"]`)]
+        : []);
+    if (stage) stage.acrylicCandidates = candidates;
+    const owners = [];
+    candidates.forEach((node) => {
       if (!node?.isConnected) return false;
       const style = getComputedStyle(node);
       const filter = style.webkitBackdropFilter || style.backdropFilter || "";
-      if (!filter || filter === "none" || /blur\(\s*0(?:px)?\s*\)/i.test(filter)) return false;
+      if (!filter || filter === "none" || /blur\(\s*0(?:px)?\s*\)/i.test(filter)) return;
       const rect = node.getBoundingClientRect();
-      return rect.width > 2 && rect.height > 2
+      if (!(rect.width > 2 && rect.height > 2
         && rect.right > 0 && rect.bottom > 0
         && rect.left < innerWidth && rect.top < innerHeight
         && style.display !== "none" && style.visibility === "visible"
-        && Number(style.opacity) > .99;
-    }).map((node) => {
-      const style = getComputedStyle(node);
-      const rect = node.getBoundingClientRect();
-      return {
+        && Number(style.opacity) > .99)) return;
+      owners.push({
         className:String(node.className || ""),
-        filter:style.webkitBackdropFilter || style.backdropFilter || "",
+        filter,
         opacity:roundGeometry(style.opacity),
         rect:[
           roundGeometry(rect.x),
@@ -451,7 +533,7 @@
           roundGeometry(rect.width),
           roundGeometry(rect.height),
         ],
-      };
+      });
     });
     return {
       ownerCount:owners.length,
@@ -460,24 +542,22 @@
     };
   };
   const waitForDestinationAcrylic = async (stage) => {
-    let previous = "";
-    let stableFrames = 0;
-    let snapshot = { ownerCount:0, owners:[], signature:"" };
+    // Geometry and module settlement have already completed under the endpoint
+    // cover. Let the compositor close a finite run of untouched paints, then
+    // inspect the final owner set once. Re-reading computed style and layout for
+    // every bucket on every frame was itself the largest endpoint stall.
     let frames = 0;
-    for (; frames < 36 && stage?.sequence === activeDive?.sequence; frames += 1) {
+    for (; frames < ACRYLIC_WARM_FRAMES
+      && stage?.sequence === activeDive?.sequence; frames += 1) {
       await paint(1);
-      snapshot = destinationAcrylicState(stage);
-      stableFrames = snapshot.ownerCount > 0 && snapshot.signature === previous
-        ? stableFrames + 1
-        : (snapshot.ownerCount > 0 ? 1 : 0);
-      previous = snapshot.signature;
-      if (stableFrames >= ACRYLIC_WARM_FRAMES) break;
     }
+    const snapshot = destinationAcrylicState(stage);
+    const stable = frames >= ACRYLIC_WARM_FRAMES && snapshot.ownerCount > 0;
     return {
       ...snapshot,
-      frames:frames + 1,
-      stableFrames,
-      stable:stableFrames >= ACRYLIC_WARM_FRAMES && snapshot.ownerCount > 0,
+      frames,
+      stableFrames:stable ? frames : 0,
+      stable,
     };
   };
   const phaseDetail = (stage, phase) => ({
@@ -650,6 +730,11 @@
   };
 
   const primeEndpointPreview = async (key) => {
+    // Hover normally seats the retained room before a click, but keyboard,
+    // history and automation routes have no pointer lead. Await the same finite
+    // precompose hook before the camera starts so no destination geometry can
+    // be written during visible motion.
+    try { await window.crmHome?.prepareModule?.(key); } catch {}
     const preview = window.crmHome?.endpointPreview?.(key);
     if (!preview?.src) return false;
     return primeEndpointRaster(preview.src, key, preview.capturedAt);
@@ -685,6 +770,9 @@
     stage.coverBridge = bridge;
     stage.coverHost = bridge;
     stage.coverRaster = bridgeRaster;
+    stage.coverSource = bridgeRaster instanceof HTMLImageElement
+      ? (bridgeRaster.currentSrc || bridgeRaster.src)
+      : coverSourceOf(bridgeRaster);
     if (stage.sequence !== activeDive?.sequence || !bridge.isConnected || !bridgeRaster.isConnected) return false;
     return stage.sequence === activeDive?.sequence
       && bridge.isConnected
@@ -854,14 +942,17 @@
       if (!navigation) return false;
       navigation.setAttribute("data-crm-transit-nav-entering", "");
       navigation.inert = true;
-      const travel = Math.max(72, Math.ceil(navigation.getBoundingClientRect().height + 36));
+      // The control is permanently prepainted at this same offscreen transform.
+      // Keeping the relative travel in CSS avoids a synchronous layout read and
+      // avoids decoding its acrylic/icon resources during the camera move.
+      const travel = "calc(100% + 36px)";
       stage.navigationControl = navigation;
       stage.navigationEntranceStartedAt = performance.now();
-      stage.navigationEntranceTravel = travel;
+      stage.navigationEntranceTravel = 82;
       stage.navigationEntranceAnimation?.cancel?.();
       const animation = navigation.animate(
         [
-          { transform:`translateX(-50%) translateY(${travel}px)` },
+          { transform:`translateX(-50%) translateY(${travel})` },
           { transform:"translateX(-50%) translateY(0px)" },
         ],
         {
@@ -960,6 +1051,11 @@
     await holdProbePhase(stage, "covered");
     // The blend's final opaque paints already close a clean raster-owned
     // refresh interval before live-room ownership work begins.
+    if (stage.sequence !== activeDive?.sequence) return false;
+    // Close the cover-selector invalidations before retiring the moving Home
+    // acrylic. Awaiting the probe alone resumes in the same microtask and used
+    // to combine both full-window layer updates into one missed refresh.
+    await paint(1);
     if (stage.sequence !== activeDive?.sequence) return false;
     // The camera's full-viewport acrylic stayed fully composited until this
     // independent raster had owned completed opaque paints. Retire it only
@@ -1095,7 +1191,8 @@
     stage.homePrewarm = window.crmHome?.prewarmStatus?.() || null;
     let theater = findDestinationTheater(stage.key);
     let retainedPrecompose = !!theater?.hasAttribute?.("data-crm-home-precomposed");
-    if (!retainedPrecompose) {
+    const factoryReady = window.crmHome?.isModulePrewarmed?.(stage.key) === true;
+    if (!retainedPrecompose && !factoryReady) {
       try { await destinationApi?.baseline?.({ canRender: () => stage.sequence === activeDive?.sequence }); } catch {}
       theater = findDestinationTheater(stage.key);
       retainedPrecompose = !!theater?.hasAttribute?.("data-crm-home-precomposed");
@@ -1103,18 +1200,20 @@
     if (stage.sequence !== activeDive?.sequence) return;
 
     if (retainedPrecompose) {
-      // Keep the completed room painted, but park its compositor group one
-      // viewport offstage during the camera move. A native-size People room
-      // sharing the visible GPU pass costs camera frames even at .001 opacity.
-      // The covered acrylic warm-up below reacquires it without exposing that
-      // upload to the user.
-      theater.setAttribute("data-crm-transit-retained", "");
+      // Pointer intent has already painted this room at its final native
+      // coordinates beneath Home. Keep that exact compositor topology in place
+      // through the zoom; relocating it offscreen would force Viz to allocate
+      // the room again at the endpoint.
       stage.settledState = { stable:true, signature:"retained-precompose" };
     } else {
       // baseline() resolves only after the factory has built its complete DOM.
-      // Measuring that hidden tree would require making it paint during motion,
-      // which is precisely the competing GPU work this endpoint bridge avoids.
-      stage.settledState = { stable:true, signature:"baseline-complete" };
+      // Home's finite prewarm lease removes paint ownership after this work is
+      // complete. Recognize that semantic readiness here instead of invoking a
+      // second full factory baseline while the camera is visibly moving.
+      stage.settledState = {
+        stable:true,
+        signature:factoryReady ? "home-prewarm-complete" : "baseline-complete",
+      };
       window.crmHome?.noteModuleReady?.(stage.key);
     }
     stage.theater = theater;
@@ -1127,6 +1226,7 @@
     ensureStyles();
     stage.materializeAt = performance.now();
     stage.phase = "materializing-covered";
+    window.crmHome?.setPrecomposedModulePromoted?.(stage.key, true);
     stage.theater?.removeAttribute?.("data-crm-transit-retained");
     primeDestinationLayers(stage.key, stage.theater || findDestinationTheater(stage.key));
     document.documentElement.classList.remove("crm-transit-revealing");
@@ -1152,6 +1252,10 @@
       commit(stage.key);
       stage.committedAt = performance.now();
       stage.committed = true;
+      // Close the workspace switch before the baseline starts reading final
+      // geometry. Those reads must not force the whole style tree in this task.
+      await paint(1);
+      if (stage.sequence !== activeDive?.sequence) return false;
     }
     try {
       await destinationFor(stage.key)?.baseline?.({
@@ -1180,6 +1284,11 @@
     stage.finalDestinationLayers = [...destinationLayers];
     document.documentElement.classList.remove("crm-transit-materializing", "crm-transit-revealing");
     clearDestinationLayers();
+    // Close the destination's final CSS topology in its own refresh interval.
+    // Retiring the Home camera in this same BeginMainFrame previously combined
+    // both full-window invalidations into a single 13–20 ms renderer task.
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return false;
     stage.phase = "settling-covered";
     // The room now owns its final natural layer topology under the opaque
     // endpoint. Warm its acrylic while geometry stability is sampled instead
@@ -1231,16 +1340,24 @@
     // The independent opaque bridge now owns the endpoint. Put Home into the
     // exact retained state it will keep while this room is active, including
     // its final z-order, before any live destination pixel can be exposed.
-    if (cam?.restoreRoot) cam.restoreRoot();
-    else cam?.rebuildRoot?.();
-    surface?.removeAttribute?.("data-crm-transit-cover");
-    lid?.classList?.remove("crm-home-endpoint-cover");
-    if (lid?.dataset) delete lid.dataset.crmEndpointCover;
-    try { window.crmHome?.recycleExpander?.(stage.key, lid); } catch {}
     if (surface) {
       surface.hidden = true;
       surface.style.zIndex = "";
     }
+    // Reset the hidden Home camera before exposing the live underpaint. The
+    // destination backdrop must warm against its final, stable layer topology.
+    if (cam?.restoreRoot) cam.restoreRoot();
+    else cam?.rebuildRoot?.();
+    try { window.crmHome?.recycleExpander?.(stage.key, lid); } catch {}
+    // Establish the lightweight reverse-camera retention in its own covered
+    // refresh. Doing this inside workspace activation forced Home and the
+    // incoming room through one full-document style/layout pass.
+    try { window.crmHome?.retainMotionSurface?.(); } catch {}
+    await paint(1);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    surface?.removeAttribute?.("data-crm-transit-cover");
+    lid?.classList?.remove("crm-home-endpoint-cover");
+    if (lid?.dataset) delete lid.dataset.crmEndpointCover;
     stage.sourceRetiredAt = performance.now();
     stage.sourceRetired = true;
     stage.phase = "unoccluding-acrylic";
@@ -1344,7 +1461,10 @@
     // First close the final moving refresh interval. Endpoint preparation may
     // be expensive, but from this point forward the viewport is deliberately
     // static and every task remains under a decoded raster owner.
-    await paint(1);
+    // A requestAnimationFrame queued by a transitionend handler can still run
+    // later in that same BeginMainFrame. Two callbacks guarantee that endpoint
+    // ownership work starts in a distinct refresh interval.
+    await paint(2);
     if (stage.sequence !== activeDive?.sequence) return;
     stage.maintenanceStartedAt = performance.now();
     let coverReady = false;
@@ -1354,9 +1474,21 @@
       stage.resolveReveal?.();
       stage.resolveReveal = null;
     } else {
+      // Source-acrylic retirement and destination promotion each affect a
+      // complete viewport compositor owner. Keep them in adjacent 100 Hz
+      // refreshes beneath the already-opaque endpoint bridge.
+      await paint(1);
+      if (stage.sequence !== activeDive?.sequence) return;
       try { await materializeDiveDestination(stage); } catch {}
       if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
+      // Destination promotion, workspace activation and source retirement each
+      // own a bounded covered frame. Coalescing them made one 20–35 ms frame
+      // even though the user still saw the same static endpoint raster.
+      await paint(1);
+      if (stage.sequence !== activeDive?.sequence) return;
       try { await settleDiveDestination(stage); } catch {}
+      await paint(1);
+      if (stage.sequence !== activeDive?.sequence) return;
       let sourceRetired = false;
       try { sourceRetired = await (stage.sourceRetirementPromise || retireDiveSource(stage)); } catch {}
       if (!sourceRetired) {
@@ -1542,12 +1674,23 @@
     const surface = cam.surface();
     if (!bucket || !cam.jumpTo?.(bucket)) { commit("home"); done(); return; }
     if (surface) surface.style.zIndex = TRANSIT_Z;
+    // The full-size return lid is now the exact visible room. Retaining the
+    // complete outgoing .001 module underneath only asks Viz to raster both
+    // scenes during the first reverse frame.
+    if (!window.crmHome?.releasePrecomposedModule?.(fromKey)) {
+      window.crmHome?.setPrecomposedModulePromoted?.(fromKey, false);
+    }
     commit("home");   // the module vanishes behind the full-screen lid, same frame
+    // The first refresh closes Home activation, full-screen lid seating and
+    // outgoing-room retirement. Start the reverse camera in the following
+    // refresh so its geometry/style preparation never shares that paint.
     requestAnimationFrame(() => {
-      cam.back();     // 460ms house contract into the Home slot
-      Promise.resolve(cam.whenSettled?.()).then(() => window.crmHome?.waitForHandoff?.()).then(() => {
-        if (surface) surface.style.zIndex = "";
-        done();
+      requestAnimationFrame(() => {
+        cam.back();     // 460ms house contract into the Home slot
+        Promise.resolve(cam.whenSettled?.()).then(() => window.crmHome?.waitForHandoff?.()).then(() => {
+          if (surface) surface.style.zIndex = "";
+          done();
+        });
       });
     });
   };
@@ -1604,7 +1747,8 @@
     const recordHistory = options.history !== false && !navigationRestoring;
     if (recordHistory) noteViewportDeparture();
     busy = true;
-    try { window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
+    let interactionReady = null;
+    try { interactionReady = window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
     announceNavigationHistory();
     const done = (success = true) => {
       busy = false;
@@ -1616,14 +1760,16 @@
       queued = null;
       if (next) driveTo(next.key, next.options).then(next.resolve);
     };
-    try {
-      if (current === "home") diveIn(key, done);
-      else if (key === "home") diveOut(current, done);
-      else diveOut(current, () => diveIn(key, done));   // neighbors on the desk: out through Home, in again
-    } catch {
-      commit(key);   // motion failed — state must still be correct
-      done();
-    }
+    void Promise.resolve(interactionReady).catch(() => null).then(() => {
+      try {
+        if (current === "home") diveIn(key, done);
+        else if (key === "home") diveOut(current, done);
+        else diveOut(current, () => diveIn(key, done));   // neighbors on the desk: out through Home, in again
+      } catch {
+        commit(key);   // motion failed — state must still be correct
+        done();
+      }
+    });
   });
 
   // A dive the home camera already started (a bucket click — the camera's own
@@ -1633,11 +1779,9 @@
     if (!ws || busy) { resolve(false); return; }
     noteViewportDeparture();
     busy = true;
-    try { window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
+    let interactionReady = null;
+    try { interactionReady = window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
     announceNavigationHistory();
-    const surface = camera()?.surface?.();
-    if (surface) surface.style.zIndex = TRANSIT_Z;
-    const stage = beginDiveDestination(key);
     const done = (success = true) => {
       busy = false;
       try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
@@ -1648,7 +1792,12 @@
       queued = null;
       if (next) driveTo(next.key, next.options).then(next.resolve);
     };
-    Promise.resolve(camera()?.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
+    void Promise.resolve(interactionReady).catch(() => null).then(() => {
+      const surface = camera()?.surface?.();
+      if (surface) surface.style.zIndex = TRANSIT_Z;
+      const stage = beginDiveDestination(key);
+      Promise.resolve(camera()?.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
+    });
   });
 
   // B / Esc backs out to Home from any camera-less module. Camera surfaces
@@ -1824,8 +1973,17 @@
       const target = String(key) === "tickets" ? "cases" : String(key);
       return !!activeDive
         && activeDive.key === target
-        && activeDive.coverStart?.ready === true
-        && !["crossfading", "crossfade-mid", "swapped", "live"].includes(activeDive.phase);
+        && (
+          // The destination's retained .001 room may finish canonical layout
+          // before the first transform frame. Once motion has started, only
+          // the opaque endpoint-cover phase may write destination geometry.
+          (!Number.isFinite(activeDive.motionStartedAt)
+            && activeDive.phase === "preparing")
+          || (
+            activeDive.coverStart?.ready === true
+            && !["crossfading", "crossfade-mid", "swapped", "live"].includes(activeDive.phase)
+          )
+        );
     },
     isBusy: () => busy || navigationRestoring,
     performanceTimings: () => performanceTimings.map((item) => ({ ...item })),

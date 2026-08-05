@@ -408,9 +408,18 @@
     };
     let refreshScheduled = false;
     let refreshPendingWhileHidden = false;
+    let refreshPendingWhileInteracting = false;
+    const visualInteractionBusy = () => !!window.crmDeskTransit?.isBusy?.()
+      || !!window.crmHomeCamera?.isTransitioning?.()
+      || !!window.crmProjectsCamera?.isTransitioning?.()
+      || !!window.fractalCalendarCamera?.isTransitioning?.();
     const refreshAllWidgetData = () => {
       if (typeof document !== "undefined" && document.hidden) {
         refreshPendingWhileHidden = true;
+        return;
+      }
+      if (visualInteractionBusy()) {
+        refreshPendingWhileInteracting = true;
         return;
       }
       if (refreshScheduled) return;
@@ -419,6 +428,10 @@
         refreshScheduled = false;
         if (typeof document !== "undefined" && document.hidden) {
           refreshPendingWhileHidden = true;
+          return;
+        }
+        if (visualInteractionBusy()) {
+          refreshPendingWhileInteracting = true;
           return;
         }
         doRefreshAllWidgetData();
@@ -432,6 +445,15 @@
           refreshPendingWhileHidden = false;
           refreshAllWidgetData();
         }
+      });
+      const flushInteractionRefresh = () => {
+        if (!refreshPendingWhileInteracting || visualInteractionBusy()) return;
+        refreshPendingWhileInteracting = false;
+        refreshAllWidgetData();
+      };
+      document.addEventListener("crm:desk-transit-settled", flushInteractionRefresh);
+      document.addEventListener("crm:camera-navigation", (event) => {
+        if (event.detail?.phase === "settled") flushInteractionRefresh();
       });
     }
     const setWidgetData = (key, data, options = {}) => {

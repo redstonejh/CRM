@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { _electron: electron } = require('playwright');
 const { start } = require('./harness.js');
@@ -220,6 +221,10 @@ async function main() {
   const roomSelector = `.crm-home-bucket[data-module="${profileRoom}"]`;
   const repeatCount = Math.max(1, Math.min(12, Number(process.env.CRM_PROFILE_REPEATS) || 1));
   const traceAll = process.env.CRM_TRACE_ALL === '1';
+  const captureTransition = process.env.CRM_CAPTURE_TRANSITION === '1';
+  const captureDelay = Math.max(0, Number(process.env.CRM_CAPTURE_DELAY) || 150);
+  const captureDir = path.resolve(__dirname, 'electron-actual', 'transition-performance');
+  let capturedAcrylic = null;
   const harness = await start();
   const app = await electron.launch({
     args:['.'],
@@ -229,16 +234,27 @@ async function main() {
   });
   try {
     const page = await app.firstWindow();
+    const windowReadyAt = performance.now();
     await page.waitForLoadState('load');
+    const documentLoadedAt = performance.now();
     await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting') && window.crmWorkspaces, null, { timeout:30000 });
     await page.evaluate(() => window.crmWorkspaces.setActive('home'));
     await page.waitForFunction(readyHome, null, { timeout:60000 });
+    const homeReadyAt = performance.now();
     await page.waitForFunction(() => {
       const state = window.crmHome?.prewarmStatus?.();
       return !!state && !state.running && state.pending.length === 0;
     }, null, { timeout:60000 });
+    const factoriesReadyAt = performance.now();
     await page.evaluate(() => window.crmHome?.waitForPreviewSync?.());
+    const previewsIdleAt = performance.now();
     await sleep(160);
+    const loadTiming = {
+      documentLoadMs:documentLoadedAt - windowReadyAt,
+      homeReadyMs:homeReadyAt - windowReadyAt,
+      factoriesReadyMs:factoriesReadyAt - windowReadyAt,
+      previewsIdleMs:previewsIdleAt - windowReadyAt,
+    };
 
     const before = await page.evaluate((selector) => {
       const bucket = document.querySelector(selector);
@@ -258,7 +274,53 @@ async function main() {
     const inbound = await profileMove(
       page,
       `${profileRoom}-in`,
-      () => page.click(roomSelector),
+      async () => {
+        await page.click(roomSelector);
+        if (!captureTransition) return;
+        await sleep(captureDelay);
+        capturedAcrylic = await page.evaluate(() => {
+          const surface = window.crmHomeCamera?.surface?.();
+          const surfaceRect = surface?.getBoundingClientRect();
+          const root = window.crmHomeCamera?.layers?.()[0];
+          const host = surface?.querySelector?.('.crm-home-peripheral-acrylic-clip');
+          const lens = host?.querySelector?.('.crm-home-peripheral-screen-acrylic');
+          const group = surface?.querySelector?.('.crm-home-peripheral-acrylic-defs clipPath > g');
+          const matrix = new DOMMatrix(getComputedStyle(group).transform);
+          const mapped = [...(group?.children || [])].map((shape) => {
+            const x = Number(shape.getAttribute('x')) || 0;
+            const y = Number(shape.getAttribute('y')) || 0;
+            const width = Number(shape.getAttribute('width')) || 0;
+            const height = Number(shape.getAttribute('height')) || 0;
+            const p1 = new DOMPoint(x, y).matrixTransform(matrix);
+            const p2 = new DOMPoint(x + width, y + height).matrixTransform(matrix);
+            return [p1.x, p1.y, p2.x - p1.x, p2.y - p1.y];
+          });
+          const buckets = [...(root?.querySelectorAll(':scope > .crm-home-grid > .crm-home-bucket') || [])]
+            .map((bucket) => {
+              const rect = bucket.getBoundingClientRect();
+              return [rect.x - surfaceRect.x, rect.y - surfaceRect.y, rect.width, rect.height];
+            });
+          const errors = mapped.map((rect, index) =>
+            Math.max(...rect.map((value, axis) => Math.abs(value - (buckets[index]?.[axis] || 0)))));
+          const lensStyle = lens && getComputedStyle(lens);
+          const hostStyle = host && getComputedStyle(host);
+          const animation = group?.getAnimations?.()[0] || null;
+          return {
+            moving:window.crmDeskTransit?.motionState?.() || null,
+            clip:hostStyle?.clipPath || '',
+            backdrop:lensStyle?.webkitBackdropFilter || lensStyle?.backdropFilter || '',
+            opacity:Number(lensStyle?.opacity || 0),
+            groupTransform:getComputedStyle(group).transform || '',
+            animationProperty:animation?.effect?.getKeyframes?.()?.some((frame) => frame.transform != null) ? 'transform' : '',
+            animationTime:Number(animation?.currentTime),
+            mapped,
+            buckets,
+            maxGeometryError:Math.max(0, ...errors),
+          };
+        });
+        fs.mkdirSync(captureDir, { recursive:true });
+        await page.screenshot({ path:path.join(captureDir, `${profileRoom}-mid.png`) });
+      },
       () => page.waitForFunction((room) => document.body.dataset.crmModule === room && !window.crmDeskTransit?.isBusy?.(), profileRoom, { timeout:15000 }),
     );
     const inboundTrace = await finishBrowserTrace(inboundBrowserTrace);
@@ -319,13 +381,28 @@ async function main() {
     const fullTrace = await finishBrowserTrace(fullBrowserTrace);
     const repeatInbound = repeats[0]?.inbound || null;
     const repeatOutbound = repeats[0]?.outbound || null;
-    const evidence = { profileRoom, repeatCount, before, retention, inbound, outbound, repeatInbound, repeatOutbound, repeats, inboundTrace, trace, fullTrace };
+    const acrylicGeometry = await page.evaluate(() => {
+      const surface = window.crmHomeCamera?.surface?.();
+      const host = surface?.querySelector?.('.crm-home-peripheral-acrylic-clip');
+      const lens = host?.querySelector?.('.crm-home-peripheral-screen-acrylic');
+      const group = surface?.querySelector?.('.crm-home-peripheral-acrylic-defs clipPath > g');
+      const hostStyle = host && getComputedStyle(host);
+      const lensStyle = lens && getComputedStyle(lens);
+      return {
+        clip:hostStyle?.clipPath || '',
+        backdrop:lensStyle?.webkitBackdropFilter || lensStyle?.backdropFilter || '',
+        opacity:Number(lensStyle?.opacity || 0),
+        shapes:group?.children?.length || 0,
+        transform:getComputedStyle(group).transform || '',
+      };
+    });
+    const evidence = { profileRoom, repeatCount, loadTiming, before, retention, capturedAcrylic, acrylicGeometry, inbound, outbound, repeatInbound, repeatOutbound, repeats, inboundTrace, trace, fullTrace };
     console.log(JSON.stringify(evidence, null, 2));
     const visibleMoves = [inbound, outbound, ...repeats.flatMap((repeat) => [repeat.inbound, repeat.outbound])];
-    if (before.bucketTransform !== 'none' || before.farShift
+    if (!captureTransition && (before.bucketTransform !== 'none' || before.farShift
       || visibleMoves.some((probe) => Math.round(probe.fps) !== 100
         || probe.p95Ms > 11 || probe.maxMs > 15 || probe.over15Ms
-        || probe.revealFrames || probe.longTasks.length)) {
+        || probe.revealFrames || probe.longTasks.length))) {
       throw new Error(`Transition profiler missed its budget: ${JSON.stringify(evidence)}`);
     }
   } finally {

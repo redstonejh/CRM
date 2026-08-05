@@ -195,12 +195,15 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
   setInteraction: (() => {
     let releaseTimer = null;
     let publishedActive = false;
+    let publishPromise = Promise.resolve({ ok:true, active:false });
     const sources = new Set();
     const publish = (active) => {
       const next = !!active;
-      if (publishedActive === next) return;
+      if (publishedActive === next) return publishPromise;
       publishedActive = next;
-      ipcRenderer.send('home-preview:interaction', next);
+      publishPromise = ipcRenderer.invoke('home-preview:interaction:set', next)
+        .catch(() => ({ ok:false, active:next }));
+      return publishPromise;
     };
     return (active, source = 'default') => {
       const key = String(source || 'default');
@@ -208,11 +211,11 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
       releaseTimer = null;
       if (active) {
         sources.add(key);
-        publish(true);
-        return;
+        return publish(true);
       }
       sources.delete(key);
       if (!sources.size) releaseTimer = setTimeout(() => publish(false), 140);
+      return Promise.resolve({ ok:true, active:publishedActive });
     };
   })(),
   list: () => ipcRenderer.invoke('home-preview:list'),

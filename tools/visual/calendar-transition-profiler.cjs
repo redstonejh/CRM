@@ -243,7 +243,7 @@ async function installProfiler(page) {
         '.fc-live-backdrop-wallpaper > .workspace-photo-backdrop .workspace-photo-panel',
       ) || [])];
       const backdropOwners = [...surface.querySelectorAll(
-        '.crm-tile-material-plane,.fc-source-screen-acrylic',
+        '.crm-tile-material-plane,.fc-day-screen-material,.fc-source-screen-acrylic',
       )].filter((node) => {
         const style = getComputedStyle(node);
         return String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(')
@@ -448,7 +448,7 @@ async function profileMove(page, label, action, endLevel, {
     removedNodes:raw.removedNodes,
     motionAudit:raw.motionAudit,
     stalls:raw.timedDeltas
-      .filter((sample) => sample.delta > 30)
+      .filter((sample) => sample.delta > 15)
       .map((sample) => ({
         elapsedMs:Number(sample.elapsed.toFixed(2)),
         deltaMs:Number(sample.delta.toFixed(2)),
@@ -487,8 +487,13 @@ async function auditArchitecture(page, phase) {
       ':scope > .fc-expander.fc-warm[data-kind="month"] .fc-day',
     )];
     const rootPlanes = [...root.querySelectorAll(
-      ':scope > .fc-grid > .crm-tile-material-plane',
+      ':scope > .fc-year-screen-material-owner > .crm-tile-material-plane',
     )];
+    if (!rootPlanes.length) {
+      rootPlanes.push(...surface.querySelectorAll(
+        ':scope > .fc-year-screen-material-owner > .crm-tile-material-plane',
+      ));
+    }
     const activeMonth = surface.querySelector(
       ':scope > .fc-expander[data-kind="month"]:not(.fc-warm)',
     );
@@ -586,10 +591,14 @@ async function auditArchitecture(page, phase) {
         count:Number(plane.dataset.crmTileMaterialCount || 0),
         ready:plane.dataset.crmTileMaterialReady === 'true',
         clipIsPath:String(style.clipPath).startsWith('path('),
+        clipIsUrl:String(style.clipPath).startsWith('url('),
         clipIsActive:String(style.clipPath) !== 'none',
         clipLength:String(style.clipPath).length,
+        maskIsActive:String(style.maskImage || style.webkitMaskImage) !== 'none',
+        maskMode:plane.dataset.crmTileMaterialMode || '',
         backdrop:style.webkitBackdropFilter || style.backdropFilter,
         opacity:Number(style.opacity),
+        muted:plane.dataset.crmTileMaterialMuted === 'true',
       };
     };
     const screenPlaneAudit = (owner, plane) => {
@@ -610,8 +619,17 @@ async function auditArchitecture(page, phase) {
     const rootPlaneAudits = rootPlanes.map(planeAudit);
     const referenceMonth = document.querySelector('.crm-home-grid > .crm-home-bucket');
     const referenceMonthStyle = referenceMonth && getComputedStyle(referenceMonth);
-    const referenceMonthBackdrop = referenceMonthStyle
+    const referenceMonthDirectBackdrop = referenceMonthStyle
       && (referenceMonthStyle.webkitBackdropFilter || referenceMonthStyle.backdropFilter);
+    const referenceHomePlane = document.querySelector(
+      '.crm-home-peripheral-screen-acrylic',
+    );
+    const referenceHomePlaneStyle = referenceHomePlane && getComputedStyle(referenceHomePlane);
+    const referenceMonthBackdrop = referenceMonthDirectBackdrop
+      && referenceMonthDirectBackdrop !== 'none'
+      ? referenceMonthDirectBackdrop
+      : (referenceHomePlaneStyle
+        && (referenceHomePlaneStyle.webkitBackdropFilter || referenceHomePlaneStyle.backdropFilter));
     const rootStyle = getComputedStyle(root);
     const gridStyle = getComputedStyle(root.querySelector(':scope > .fc-grid'));
     const sourcePhoto = document.querySelector('body > .workspace-photo-backdrop');
@@ -663,6 +681,8 @@ async function auditArchitecture(page, phase) {
         tileCount:rootPlaneAudits.reduce((sum, plane) => sum + plane.count, 0),
         readyCount:rootPlaneAudits.filter((plane) => plane.ready).length,
         pathCount:rootPlaneAudits.filter((plane) => plane.clipIsPath).length,
+        urlClipCount:rootPlaneAudits.filter((plane) => plane.clipIsUrl).length,
+        maskCount:rootPlaneAudits.filter((plane) => plane.maskIsActive).length,
         backdropCount:rootPlaneAudits.filter(
           (plane) => String(plane.backdrop).includes('blur('),
         ).length,
@@ -681,7 +701,8 @@ async function auditArchitecture(page, phase) {
         present:!!liveBackdropCover,
         visible:!!liveBackdropCover && !liveBackdropCover.hidden
           && coverStyle?.display !== 'none'
-          && coverStyle?.visibility === 'visible',
+          && coverStyle?.visibility === 'visible'
+          && Number(coverStyle?.opacity || 0) > .01,
         opacity:Number(coverStyle?.opacity || 0),
         clipIsInset:String(coverStyle?.clipPath || '').startsWith('inset('),
         sceneTransform:coverSceneStyle?.transform || '',
@@ -701,8 +722,21 @@ async function auditArchitecture(page, phase) {
       monthTilesMatchHome:!!referenceMonthStyle && rootMonths.every((month) => {
         const style = getComputedStyle(month);
         return style.backgroundImage === referenceMonthStyle.backgroundImage
-          && (style.webkitBackdropFilter || style.backdropFilter) === referenceMonthBackdrop;
-      }),
+          && (style.webkitBackdropFilter || style.backdropFilter) === 'none';
+      }) && rootPlaneAudits.length === 1
+        && rootPlaneAudits[0].backdrop === referenceMonthBackdrop,
+      monthMaterialParity:{
+        referenceBackground:referenceMonthStyle?.backgroundImage || '',
+        monthBackgrounds:[...new Set(rootMonths.map(
+          (month) => getComputedStyle(month).backgroundImage,
+        ))],
+        referenceBackdrop:referenceMonthBackdrop || '',
+        directBackdrops:[...new Set(rootMonths.map((month) => {
+          const style = getComputedStyle(month);
+          return style.webkitBackdropFilter || style.backdropFilter;
+        }))],
+        planeBackdrop:rootPlaneAudits[0]?.backdrop || '',
+      },
       prewarmMaterials:{
         count:prewarmLenses.length,
         maxOpacity:Math.max(0, ...prewarmLenses.map((lens) => Number(
@@ -820,8 +854,8 @@ function architectureFailures(audit, expectedLevel) {
     || audit.rootTiles.objectBoundCount !== expectedRootMonths
     || audit.rootTiles.canonicalObjectCount !== expectedRootMonths
     || audit.rootTiles.objectIdentityCount !== expectedRootMonths
-    || audit.rootTiles.directBackdropCount !== expectedRootMonths
-    || audit.rootTiles.visibleBackdropCount !== expectedVisibleRootMonths) {
+    || audit.rootTiles.directBackdropCount !== 0
+    || audit.rootTiles.visibleBackdropCount !== 0) {
     failures.push(`${audit.phase} root months are not canonical Home-style tile instances`);
   }
   if (audit.rootCollection?.owner !== audit.rootCollection?.expected
@@ -840,10 +874,17 @@ function architectureFailures(audit, expectedLevel) {
     || (expectedLevel === 0 && audit.rootPreview?.warmRealDayCount !== 0)) {
     failures.push(`${audit.phase} year tiles did not use twelve canonical full-render captures`);
   }
-  if (audit.rootMaterials?.planeCount !== 0
-    || audit.rootMaterials?.tileCount !== 0
-    || audit.rootMaterials?.visibleCount !== 0) {
-    failures.push(`${audit.phase} retained an unnecessary year day-material plane`);
+  if (audit.rootMaterials?.planeCount !== 1
+    || audit.rootMaterials?.tileCount !== expectedRootMonths
+    || audit.rootMaterials?.readyCount !== 1
+    || audit.rootMaterials?.pathCount !== 0
+    || audit.rootMaterials?.urlClipCount !== 1
+    || audit.rootMaterials?.maskCount !== 0
+    || audit.rootMaterials?.backdropCount !== 1
+    || audit.rootMaterials?.minTileCount !== expectedRootMonths
+    || audit.rootMaterials?.maxTileCount !== expectedRootMonths
+    || audit.rootMaterials?.visibleCount !== (expectedLevel === 0 ? 1 : 0)) {
+    failures.push(`${audit.phase} did not consolidate the canonical month acrylic into one plane`);
   }
   const coverShouldBeVisible = expectedLevel > 0;
   if (!audit.liveBackdropCover?.present
@@ -985,7 +1026,14 @@ async function main() {
         && months.every((month) => String(
           getComputedStyle(month).webkitBackdropFilter
             || getComputedStyle(month).backdropFilter,
-        ).includes('blur('));
+        ) === 'none')
+        && String((() => {
+          const plane = document.querySelector(
+            '.fc-surface > .fc-year-screen-material-owner > .fc-calendar-year-material',
+          );
+          const style = plane && getComputedStyle(plane);
+          return style && (style.webkitBackdropFilter || style.backdropFilter);
+        })()).includes('blur(');
     }, null, { timeout:60000 });
     await page.waitForFunction(() => {
       const sourcePanels = document.querySelectorAll(
@@ -1214,7 +1262,8 @@ async function main() {
       || monthAudit.plane?.count !== monthAudit.tiles.count
       || monthAudit.plane?.clipIsPath !== true
       || monthAudit.plane?.ready !== true
-      || !String(monthAudit.plane?.backdrop).includes('blur(')
+      || monthAudit.plane?.muted !== true
+      || String(monthAudit.plane?.backdrop) !== 'none'
       || monthAudit.plane?.opacity < .998
       || monthAudit.screenPlane?.count !== monthAudit.tiles.count
       || monthAudit.screenPlane?.ready !== true
@@ -1290,7 +1339,8 @@ async function main() {
         || audit.ownerTransformAnimated !== true
         || audit.lensTransformAnimated !== true
         || audit.ownerClipAnimated !== false
-        || audit.visibleBackdropOwnerCount > 5
+        || audit.visibleBackdropOwnerCount < 2
+        || audit.visibleBackdropOwnerCount > 3
         || audit.liveBackdropCover?.present !== true
         || audit.liveBackdropCover?.opacityAnimated !== crossesYearBoundary
         || (!crossesYearBoundary && audit.liveBackdropCover?.opacity < .998)

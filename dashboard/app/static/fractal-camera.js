@@ -927,6 +927,7 @@
         zIndex: "5",
         pointerEvents: "auto",
         transition: "none",
+        visibility:"visible",
         opacity: keepExpanderOpaque ? "1" : "0",
         transform: `translate(${(rect.left - E.x).toFixed(2)}px, ${(rect.top - E.y).toFixed(2)}px) scale(${(rect.width / E.w).toFixed(5)}, ${(rect.height / E.h).toFixed(5)})`,
         transformOrigin:"0 0",
@@ -1236,9 +1237,20 @@
       preparing = false;
       transitionSeq += 1;
       const root = layers[0];
-      layers.slice(1).forEach((el) => el?.remove?.());
+      const retainedLayers = new Set();
+      layers.slice(1).forEach((el) => {
+        let retained = false;
+        try { retained = config.restoreLayer?.(el, ctx()) === true; } catch {}
+        if (retained) retainedLayers.add(el);
+        else el?.remove?.();
+      });
       if (!root) { rebuildRoot(); return; }
-      [...surface.children].forEach((child) => { if (child !== root) child.remove(); });
+      [...surface.children].forEach((child) => {
+        if (child === root || retainedLayers.has(child)) return;
+        let retained = false;
+        try { retained = config.retainSurfaceChildOnRestore?.(child, ctx()) === true; } catch {}
+        if (!retained) child.remove();
+      });
       Object.assign(root.style, {
         zIndex: "", pointerEvents: "", transition: "none", visibility: "",
         transform: "none", opacity: "1",
@@ -1291,7 +1303,7 @@
         try { global.crmHomePreviews?.setInteraction?.(false, hoverInteractionSource); } catch {}
         if (wasPreparing && !transitioning) settleWaiters();
       }
-      else layout();
+      else if (config.layoutOnActivate?.(ctx()) !== false) layout();
       config.onActiveChange?.(active, ctx());
       return api;
     };

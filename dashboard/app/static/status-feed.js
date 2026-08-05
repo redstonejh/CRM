@@ -509,10 +509,31 @@ function publish() {
 }
 
 let publishTimer = null;
+let publishDeferredForMotion = false;
+const publishInteractionBusy = () => !!window.crmDeskTransit?.isBusy?.()
+  || !!window.crmHomeCamera?.isTransitioning?.()
+  || !!window.crmProjectsCamera?.isTransitioning?.()
+  || !!window.fractalCalendarCamera?.isTransitioning?.();
+const flushDeferredPublish = () => {
+  if (!publishDeferredForMotion || publishInteractionBusy()) return;
+  publishDeferredForMotion = false;
+  publishSoon();
+};
 function publishSoon() {
-  if (publishTimer) return;
-  publishTimer = setTimeout(() => { publishTimer = null; publish(); }, 250);
+  if (publishTimer || publishDeferredForMotion) return;
+  publishTimer = setTimeout(() => {
+    publishTimer = null;
+    if (publishInteractionBusy()) {
+      publishDeferredForMotion = true;
+      return;
+    }
+    publish();
+  }, 250);
 }
+document.addEventListener("crm:desk-transit-settled", flushDeferredPublish);
+document.addEventListener("crm:camera-navigation", (event) => {
+  if (event.detail?.phase === "settled") flushDeferredPublish();
+});
 
 async function loadCompanyHistory(id) {
   try {

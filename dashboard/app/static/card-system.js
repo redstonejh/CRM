@@ -3807,6 +3807,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (horizontalZones) {
       zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hshade tk-zone-hshade-left"></div><div class="tk-zone-hshade tk-zone-hshade-right"></div><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><div class="tk-zone-htrack"><div class="tk-zone-hacrylic-lens" aria-hidden="true"></div></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
       zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHAcrylicLens = zonesRoot.querySelector(".tk-zone-hacrylic-lens"); zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+      if (zoneHAcrylicLens) zoneHAcrylicLens.dataset.crmAcrylicOwner = theaterKey;
       zoneHLeftShade = zonesRoot.querySelector(".tk-zone-hshade-left"); zoneHRightShade = zonesRoot.querySelector(".tk-zone-hshade-right");
       zoneHTrack.classList.toggle("is-paged", pagedHorizontalZones);
       zoneHTrack.classList.toggle("has-zone-lod", lazyZoneCards);

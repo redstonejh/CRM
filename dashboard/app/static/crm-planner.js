@@ -1434,6 +1434,39 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     else if (!needed && !mustPublish) render();
     camera?.setActive?.(active); return root;
   };
+  const waitForGeometrySettled = async () => {
+    mount();
+    // Home temporarily exposes an inactive factory at .001 while calling this
+    // hook. The camera's inactive setActive() correctly leaves [hidden] on the
+    // surface, but that also means its earlier layout pass measured a zero
+    // viewport. Re-run layout only inside that finite precompose lease so the
+    // parked gallery owns the exact geometry activation will reuse.
+    const applicable = active || root?.hasAttribute?.("data-crm-home-precomposed");
+    if (!applicable) return { stable:true, applicable:false, signature:"inactive" };
+    const state = () => {
+      const layer = camera?.layers?.()[0];
+      const grid = layer?.querySelector?.(".crm-project-tile-grid");
+      const titles = layer?.querySelector?.(".crm-project-title-grid");
+      const canvas = layer?.querySelector?.(".crm-project-gallery-canvas");
+      const signature = [grid, titles, canvas].map((node) => (
+        node ? `${node.style.left}:${node.style.top}:${node.style.width}:${node.style.height}` : ""
+      )).join("|");
+      return {
+        stable:[grid, titles, canvas].every((node) => (
+          node && parseFloat(node.style.width) > 1 && parseFloat(node.style.height) > 1
+        )),
+        applicable:true,
+        signature,
+      };
+    };
+    const current = state();
+    if (current.stable) return current;
+    camera?.layout?.();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    camera?.layout?.();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return state();
+  };
   const homePreviewState = () => {
     const scroller = root?.querySelector(".crm-planner-buckets");
     if (scroller?.dataset.plannerScrollProject) plannerScrollPositions.set(scroller.dataset.plannerScrollProject, scroller.scrollLeft);
@@ -1549,7 +1582,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       ],
     };
   });
-  const api = { setActive, baseline, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), cardKinds:() => clone(CARD_KINDS), createProject, createPipeline:createProject, updateProject, createStage, createBucket, createCard, openProjectCreator, openCardCreator, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+  const api = { setActive, baseline, waitForGeometrySettled, miniature, refresh, isActive:() => active, selected:() => selectedId, selectProject, openProject, level:() => camera?.level?.() || 0, view:() => camera?.level?.() ? "project" : "projects", back:() => camera?.back?.(), projects:projectsSnapshot, pipelines:projectsSnapshot, items:() => clone(model.items), cardKinds:() => clone(CARD_KINDS), createProject, createPipeline:createProject, updateProject, createStage, createBucket, createCard, openProjectCreator, openCardCreator, updateItem, moveCard, deleteItem, openItem, setStageExpanded, expandedStages:() => [...expandedStacks], projectPreviewSignature:(projectId) => projectPreviewSignature(projectById(projectId)), projectPreviewStatus:() => model.projects.map((project) => ({ id:project.id, ready:isProjectPreviewCurrent(projectPreviews.get(project.id), project), capturedAt:projectPreviews.get(project.id)?.capturedAt || 0 })), refreshProjectPreview:(projectId) => requestProjectPreview(projectById(projectId), true), homePreviewState, applyHomePreviewState, detail:() => ensurePlannerDetail(), onChanged:(listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   document.addEventListener("crm:theater-switch", closeFloating); window.addEventListener("storage", (event) => { if (event.key === SELECTED_KEY) { selectedId = localStorage.getItem(SELECTED_KEY) || ""; render(); } });
   document.addEventListener("crm:object-size-change", (event) => {
     if (event.detail?.homeKey !== "planner") return;

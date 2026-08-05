@@ -29,7 +29,7 @@ import {
   const EASE = "cubic-bezier(.22, 1, .26, 1)";
   const MORPH_MS = 460;
   const MATERIAL_HANDOFF_MS = 72;
-  const MATERIAL_PRIME_OPACITY = .02;
+  const MATERIAL_PRIME_OPACITY = .001;
   const TILE_PREVIEW_VERSION = "canonical-tile-preview-v3";
   const EXP_M = 48;
   const EXP_TOP = 132;
@@ -73,6 +73,20 @@ import {
   let dayScreenMaterialOwner = null;
   let dayScreenMaterial = null;
   let dayScreenMaterialMotion = null;
+  let yearScreenMaterialOwner = null;
+  let yearScreenMaterial = null;
+  let yearMaterialMaskSvg = null;
+  let yearMaterialMask = null;
+  let yearMaterialClipGroup = null;
+  let yearMaterialMaskShapes = [];
+  let yearMaterialSelectedClip = null;
+  let yearMaterialEraserShape = null;
+  let yearMaterialEraserRect = null;
+  let yearMaterialEraser = null;
+  let yearMaterialEraserScene = null;
+  let yearMaterialGeometrySignature = "";
+  let yearMaterialMotion = null;
+  let yearMaterialSequence = 0;
   const tilePreviews = new Map();
   const tilePreviewRequests = new Set();
   const tilePreviewListedScopes = new Set();
@@ -359,6 +373,26 @@ import {
       .fc-grid{position:absolute;z-index:1;display:grid;pointer-events:auto;-webkit-app-region:no-drag;
         grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr);gap:14px;
         contain:layout style}
+      .fc-year-screen-material-owner{position:absolute;inset:0;z-index:0;box-sizing:border-box;
+        pointer-events:none;transform:translateZ(0);backface-visibility:hidden}
+      .fc-year-screen-material-owner[hidden]{display:none}
+      .fc-year-screen-material{position:absolute;inset:0;box-sizing:border-box;
+        pointer-events:none;background:transparent;opacity:.999;transform:translateZ(0);
+        backface-visibility:hidden;will-change:opacity,backdrop-filter;
+        -webkit-backdrop-filter:var(--crm-menu-filter,var(--bucket-acrylic-filter));
+        backdrop-filter:var(--crm-menu-filter,var(--bucket-acrylic-filter))}
+      .fc-year-material-defs{position:absolute;width:0;height:0;overflow:hidden;
+        pointer-events:none}
+      .fc-year-material-eraser{position:absolute;inset:0;z-index:4;box-sizing:border-box;
+        pointer-events:none;overflow:hidden;opacity:0;transform:translateZ(0);
+        backface-visibility:hidden;will-change:opacity}
+      .fc-year-material-eraser[hidden]{display:none}
+      .fc-level[data-crm-tile-shared-material="true"]>.fc-grid>.fc-month{
+        z-index:1;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+      .fc-surface.fc-year-material-visible>.fc-level[data-kind="year"]{z-index:1!important}
+      .fc-surface.fc-year-material-motion>.fc-year-screen-material-owner{z-index:4}
+      .fc-surface.fc-year-material-motion>.fc-level.fc-calendar-below[data-kind="year"]{
+        z-index:5!important}
 
       .fc-year-strip{position:fixed;left:50%;top:${YEAR_STRIP_TOP}px;z-index:9400;
         transform:translateX(-50%);display:inline-flex;align-items:center;gap:7px;
@@ -506,6 +540,8 @@ import {
       .fc-expander[data-kind="day"].crm-home-bucket{
         border-radius:calc(var(--day-r,14px) * var(--kx,1)) /
           calc(var(--day-r,14px) * var(--ky,1))!important}
+      .fc-expander[data-kind="day"].fc-source-acrylic-owner:not(.fc-warm){
+        -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .fc-transition-acrylic{
         position:absolute;inset:0;box-sizing:border-box;pointer-events:none}
       .fc-transition-acrylic{z-index:4;border-width:1px;border-radius:inherit;opacity:0}
@@ -523,7 +559,8 @@ import {
         position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:fill;
         filter:none;transform:none}
       .fc-transition-copy>.fc-transition-day-tile{position:absolute!important;inset:0!important;
-        width:100%!important;height:100%!important}
+        width:100%!important;height:100%!important;
+        -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .fc-warm>.fc-transition-copy,.fc-expander[data-fractal-frame="source"]>.fc-transition-copy{opacity:1}
       .fc-warm>.fc-expander-live,.fc-expander[data-fractal-frame="source"]>.fc-expander-live{opacity:.001}
       .fc-warm,.fc-warm *{pointer-events:none!important}
@@ -1008,9 +1045,9 @@ import {
       }),
     });
     root.appendChild(grid);
+    root.dataset.crmTileSharedMaterial = "true";
     return root;
   };
-
   const yearChromeHTML = () => `
     <button type="button" class="fc-year-btn window-glass-control" data-year-step="-1"
       aria-label="Previous year"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1226,12 +1263,11 @@ import {
     backdropCoverSettleTimer = setTimeout(() => {
       backdropCoverSettleTimer = 0;
       if (!motion.cover.isConnected) return;
-      motion.cover.hidden = true;
-      motion.cover.style.opacity = "0";
-      requestAnimationFrame(() => {
-        if (!motion.cover.hidden) return;
-        motion.cover.getAnimations?.().forEach?.((animation) => animation.cancel());
-      });
+      // Retain the already-painted wallpaper composition at an inert opacity.
+      // A display:none boundary here made the next expansion upload the full
+      // viewport clone during its first moving frames.
+      motion.cover.hidden = false;
+      motion.cover.style.opacity = ".001";
     }, MATERIAL_HANDOFF_MS + 28);
   };
   const seatBackdropCover = (context) => {
@@ -1240,19 +1276,459 @@ import {
     cover.hidden = false;
     cover.style.opacity = ".999";
   };
-  const hideBackdropCover = () => {
+  const hideBackdropCover = ({ force = false } = {}) => {
     stopBackdropCoverMotion();
     if (!backdropCover) return;
-    backdropCover.hidden = true;
-    backdropCover.style.opacity = "0";
+    const park = !force && (camera?.isActive?.() ?? false);
+    backdropCover.hidden = !park;
+    backdropCover.style.opacity = park ? ".001" : "0";
+    if (park) return;
     requestAnimationFrame(() => {
       if (!backdropCover?.hidden) return;
       backdropCover.getAnimations?.().forEach?.((animation) => animation.cancel());
     });
   };
   const radiusFor = (width, height) => clampN(RADIUS_F * Math.min(width, height), 2, 64);
+  const yearTransitionTarget = (root) => {
+    if (!root || activeTransition?.kind !== "month") return null;
+    const marked = root.querySelector?.(":scope > .fc-grid > .fc-month.fc-camera-target");
+    if (marked) return marked;
+    const tileId = activeTransition.target?.dataset?.tileId || activeTransition.key || "";
+    if (tileId) {
+      const byId = root.querySelector?.(
+        `:scope > .fc-grid > .fc-month[data-tile-id="${CSS.escape(tileId)}"]`,
+      );
+      if (byId) return byId;
+    }
+    return root.querySelector?.(
+      `:scope > .fc-grid > .fc-month[data-month="${CSS.escape(
+        String(activeTransition.month || ""),
+      )}"]`,
+    ) || null;
+  };
+  const stopYearMaterialMotion = () => {
+    [
+      yearMaterialMotion?.transformAnimation,
+      yearMaterialMotion?.eraserTransformAnimation,
+      yearMaterialMotion?.eraserOpacityAnimation,
+    ].forEach((animation) => animation?.cancel?.());
+    yearMaterialMotion = null;
+  };
+  const ensureYearScreenMaterial = (surface) => {
+    if (!surface) return null;
+    if (yearScreenMaterialOwner?.parentElement === surface
+      && yearScreenMaterial?.parentElement === yearScreenMaterialOwner
+      && yearMaterialMaskSvg?.parentElement === surface
+      && yearMaterialMask
+      && yearMaterialEraser?.parentElement === surface) return yearScreenMaterial;
+    stopYearMaterialMotion();
+    yearScreenMaterialOwner?.remove?.();
+    yearMaterialMaskSvg?.remove?.();
+    yearMaterialEraser?.remove?.();
+    yearMaterialMaskShapes = [];
+    yearMaterialGeometrySignature = "";
+    yearScreenMaterialOwner = document.createElement("span");
+    yearScreenMaterialOwner.className = "fc-year-screen-material-owner";
+    yearScreenMaterialOwner.setAttribute("aria-hidden", "true");
+    yearScreenMaterial = document.createElement("span");
+    yearScreenMaterial.className =
+      "crm-tile-material-plane fc-calendar-year-material fc-year-screen-material";
+    yearScreenMaterial.setAttribute("aria-hidden", "true");
+    yearScreenMaterialOwner.appendChild(yearScreenMaterial);
+
+    const namespace = "http://www.w3.org/2000/svg";
+    yearMaterialMaskSvg = document.createElementNS(namespace, "svg");
+    yearMaterialMaskSvg.classList.add("fc-year-material-defs");
+    yearMaterialMaskSvg.setAttribute("aria-hidden", "true");
+    yearMaterialMaskSvg.setAttribute("focusable", "false");
+    const defs = document.createElementNS(namespace, "defs");
+    yearMaterialMask = document.createElementNS(namespace, "clipPath");
+    yearMaterialMask.id = `fc-year-material-clip-${++yearMaterialSequence}`;
+    yearMaterialMask.setAttribute("clipPathUnits", "userSpaceOnUse");
+    yearMaterialClipGroup = document.createElementNS(namespace, "g");
+    yearMaterialClipGroup.style.transformBox = "view-box";
+    yearMaterialClipGroup.style.transformOrigin = "0 0";
+    yearMaterialClipGroup.style.willChange = "transform";
+    yearMaterialMask.appendChild(yearMaterialClipGroup);
+    yearMaterialSelectedClip = document.createElementNS(namespace, "clipPath");
+    yearMaterialSelectedClip.id = `fc-year-material-selected-${yearMaterialSequence}`;
+    yearMaterialSelectedClip.setAttribute("clipPathUnits", "userSpaceOnUse");
+    yearMaterialEraserShape = document.createElementNS(namespace, "g");
+    yearMaterialEraserShape.style.transformBox = "view-box";
+    yearMaterialEraserShape.style.transformOrigin = "0 0";
+    yearMaterialEraserShape.style.willChange = "transform";
+    yearMaterialEraserRect = document.createElementNS(namespace, "rect");
+    yearMaterialEraserRect.setAttribute("fill", "#fff");
+    yearMaterialEraserShape.appendChild(yearMaterialEraserRect);
+    yearMaterialSelectedClip.appendChild(yearMaterialEraserShape);
+    defs.append(yearMaterialMask, yearMaterialSelectedClip);
+    yearMaterialMaskSvg.appendChild(defs);
+    yearMaterialEraser = document.createElement("span");
+    yearMaterialEraser.className = "fc-year-material-eraser";
+    yearMaterialEraser.setAttribute("aria-hidden", "true");
+    yearMaterialEraser.hidden = true;
+    yearMaterialEraserScene = document.createElement("div");
+    yearMaterialEraserScene.className = "fc-live-backdrop-scene";
+    const eraserWallpaper = document.createElement("div");
+    eraserWallpaper.className = "fc-live-backdrop-wallpaper";
+    yearMaterialEraserScene.appendChild(eraserWallpaper);
+    yearMaterialEraser.appendChild(yearMaterialEraserScene);
+    surface.append(
+      yearMaterialMaskSvg,
+      yearScreenMaterialOwner,
+      yearMaterialEraser,
+    );
+    const reference = `url("#${yearMaterialMask.id}")`;
+    const selectedReference = `url("#${yearMaterialSelectedClip.id}")`;
+    Object.assign(yearScreenMaterial.style, {
+      clipPath:reference,
+      webkitClipPath:reference,
+      maskImage:"none",
+      webkitMaskImage:"none",
+    });
+    Object.assign(yearMaterialEraser.style, {
+      clipPath:selectedReference,
+      webkitClipPath:selectedReference,
+    });
+    return yearScreenMaterial;
+  };
+  const yearMaskNumber = (value) => {
+    const number = Number(value);
+    return (Number.isFinite(number) ? number : 0).toFixed(2);
+  };
+  const syncYearMaterialEraserWallpaper = (surface = camera?.surface?.()) => {
+    if (!surface || !yearMaterialEraser || !yearMaterialEraserScene) return false;
+    const wallpaper = yearMaterialEraserScene.querySelector(
+      ":scope > .fc-live-backdrop-wallpaper",
+    );
+    if (!wallpaper) return false;
+    const source = document.querySelector("body > .workspace-photo-backdrop");
+    const signature = [
+      innerWidth,
+      innerHeight,
+      document.documentElement.dataset.background || document.body.dataset.background || "",
+      source?.hidden ?? true,
+      source?.querySelector?.(".workspace-photo-track")?.style?.transform || "",
+      ...[...(source?.querySelectorAll?.(".workspace-photo-panel") || [])]
+        .map((panel) => panel.style.backgroundImage || ""),
+    ].join("|");
+    Object.assign(wallpaper.style, {
+      left:"0px",
+      top:"0px",
+      width:`${innerWidth}px`,
+      height:`${innerHeight}px`,
+    });
+    if (yearMaterialEraser.dataset.backdropSignature !== signature
+      || (!!source && !wallpaper.querySelector(":scope > .workspace-photo-backdrop"))) {
+      yearMaterialEraser.dataset.backdropSignature = signature;
+      rebuildBackdropWallpaper(wallpaper);
+    }
+    return true;
+  };
+  const hideYearScreenMaterial = (surface = camera?.surface?.()) => {
+    stopYearMaterialMotion();
+    if (!yearScreenMaterialOwner || !yearScreenMaterial) return;
+    yearScreenMaterial.style.opacity = ".001";
+    yearScreenMaterial.style.visibility = "hidden";
+    yearScreenMaterialOwner.style.zIndex = "0";
+    yearScreenMaterial.dataset.crmTileMaterialParked = "true";
+    if (yearMaterialEraser) {
+      yearMaterialEraser.hidden = true;
+      yearMaterialEraser.style.opacity = "0";
+    }
+    surface?.classList?.remove("fc-year-material-visible", "fc-year-material-motion");
+  };
+  const syncYearScreenMaterial = (context, {
+    visible = true,
+  } = {}) => {
+    const root = context?.layers?.[0];
+    const surface = context?.surface || camera?.surface?.();
+    const grid = root?.querySelector?.(":scope > .fc-grid");
+    const months = [...(grid?.querySelectorAll?.(":scope > .fc-month") || [])];
+    // Dedicated preview windows capture the canonical full month/day
+    // renderers, never the interactive year viewport. Giving those hidden
+    // workers another live full-screen blur competes with the visible window
+    // and can stall an otherwise atomic preview batch.
+    if (window.crmHomePreviews?.isCaptureWorker) {
+      hideYearScreenMaterial(surface);
+      return null;
+    }
+    const plane = ensureYearScreenMaterial(surface);
+    if (!root || !surface || !plane || !months.length) {
+      hideYearScreenMaterial(surface);
+      return null;
+    }
+    root.dataset.crmTileSharedMaterial = "true";
+    if (!visible) {
+      hideYearScreenMaterial(surface);
+      return plane;
+    }
+    stopYearMaterialMotion();
+    const surfaceRect = surface.getBoundingClientRect();
+    const monthRects = months.map((month) => month.getBoundingClientRect());
+    const materialPadding = 34;
+    const materialLeft = Math.max(
+      0,
+      Math.min(...monthRects.map((rect) => rect.left)) - surfaceRect.left - materialPadding,
+    );
+    const materialTop = Math.max(
+      0,
+      Math.min(...monthRects.map((rect) => rect.top)) - surfaceRect.top - materialPadding,
+    );
+    const materialRight = Math.min(
+      surfaceRect.width,
+      Math.max(...monthRects.map((rect) => rect.right)) - surfaceRect.left + materialPadding,
+    );
+    const materialBottom = Math.min(
+      surfaceRect.height,
+      Math.max(...monthRects.map((rect) => rect.bottom)) - surfaceRect.top + materialPadding,
+    );
+    const materialWidth = Math.max(1, materialRight - materialLeft);
+    const materialHeight = Math.max(1, materialBottom - materialTop);
+    Object.assign(yearScreenMaterialOwner.style, {
+      inset:"auto",
+      left:`${yearMaskNumber(materialLeft)}px`,
+      top:`${yearMaskNumber(materialTop)}px`,
+      width:`${yearMaskNumber(materialWidth)}px`,
+      height:`${yearMaskNumber(materialHeight)}px`,
+    });
+    const namespace = "http://www.w3.org/2000/svg";
+    yearMaterialMaskSvg.setAttribute(
+      "viewBox",
+      `0 0 ${yearMaskNumber(materialWidth)} ${yearMaskNumber(materialHeight)}`,
+    );
+    const boxes = months.map((month, index) => {
+      const rect = monthRects[index];
+      const radiusParts = String(getComputedStyle(month).borderTopLeftRadius || "0")
+        .split(/\s+/)
+        .map((value) => parseFloat(value) || 0);
+      return {
+        id:month.dataset.tileId || "",
+        x:yearMaskNumber(rect.left - surfaceRect.left - materialLeft),
+        y:yearMaskNumber(rect.top - surfaceRect.top - materialTop),
+        width:yearMaskNumber(rect.width),
+        height:yearMaskNumber(rect.height),
+        radiusX:yearMaskNumber(radiusParts[0]),
+        radiusY:yearMaskNumber(radiusParts[1] || radiusParts[0]),
+      };
+    });
+    const geometrySignature = [
+      yearMaskNumber(materialLeft),
+      yearMaskNumber(materialTop),
+      yearMaskNumber(materialWidth),
+      yearMaskNumber(materialHeight),
+      ...boxes.flatMap((box) => [
+        box.id,
+        box.x,
+        box.y,
+        box.width,
+        box.height,
+        box.radiusX,
+        box.radiusY,
+      ]),
+    ].join("|");
+    if (geometrySignature !== yearMaterialGeometrySignature
+      || yearMaterialMaskShapes.length !== boxes.length) {
+      yearMaterialMaskShapes = boxes.map((box) => {
+        const shape = document.createElementNS(namespace, "g");
+        shape.dataset.tileId = box.id;
+        shape.style.transformBox = "view-box";
+        shape.style.transformOrigin = "0 0";
+        shape.style.willChange = "transform";
+        const rect = document.createElementNS(namespace, "rect");
+        rect.setAttribute("x", box.x);
+        rect.setAttribute("y", box.y);
+        rect.setAttribute("width", box.width);
+        rect.setAttribute("height", box.height);
+        rect.setAttribute("rx", box.radiusX);
+        rect.setAttribute("ry", box.radiusY);
+        rect.setAttribute("fill", "#fff");
+        shape.appendChild(rect);
+        return shape;
+      });
+      yearMaterialClipGroup.replaceChildren(...yearMaterialMaskShapes);
+      yearMaterialGeometrySignature = geometrySignature;
+    }
+    yearMaterialMaskShapes.forEach((shape) => {
+      shape.style.transform = "matrix(1, 0, 0, 1, 0, 0)";
+      shape.style.opacity = "1";
+      shape.style.visibility = "visible";
+    });
+    yearMaterialClipGroup.style.transform = "matrix(1, 0, 0, 1, 0, 0)";
+    yearScreenMaterialOwner.hidden = false;
+    yearScreenMaterialOwner.style.zIndex = "0";
+    plane.style.opacity = ".999";
+    plane.style.visibility = "visible";
+    yearMaterialEraser.hidden = true;
+    yearMaterialEraser.style.opacity = "0";
+    plane.dataset.crmTileMaterialCount = String(months.length);
+    plane.dataset.crmTileMaterialReady = String(months.length === 12);
+    plane.dataset.crmTileMaterialParked = "false";
+    plane.dataset.crmTileMaterialMode = "svg-transform-clip";
+    syncYearMaterialEraserWallpaper(surface);
+    surface.classList.add("fc-year-material-visible");
+    surface.classList.remove("fc-year-material-motion");
+    return plane;
+  };
+  const prepareYearMaterialTransition = (direction, context) => {
+    if (activeTransition?.kind !== "month") {
+      hideYearScreenMaterial(context?.surface);
+      return null;
+    }
+    const root = context?.layers?.[0];
+    let plane = null;
+    const canReuseRetainedGeometry = direction === "contract"
+      && yearMaterialGeometrySignature
+      && yearMaterialMaskShapes.length === 12
+      && yearScreenMaterial?.isConnected;
+    if (canReuseRetainedGeometry) {
+      plane = yearScreenMaterial;
+      yearScreenMaterialOwner.hidden = false;
+      yearScreenMaterialOwner.style.zIndex = "0";
+      plane.style.opacity = ".999";
+      plane.style.visibility = "visible";
+      plane.dataset.crmTileMaterialParked = "false";
+      context.surface?.classList.add("fc-year-material-visible");
+    } else {
+      plane = syncYearScreenMaterial(context, { visible:true });
+    }
+    const target = yearTransitionTarget(root);
+    const months = [...(root?.querySelectorAll?.(":scope > .fc-grid > .fc-month") || [])];
+    const targetIndex = months.indexOf(target);
+    const shape = yearMaterialMaskShapes[targetIndex];
+    if (!plane || !shape || !target || !context?.surface) return null;
+    const surfaceRect = context.surface.getBoundingClientRect();
+    const source = context.layoutRect(target, root);
+    const destination = context.expRect();
+    const scaleX = destination.w / Math.max(.01, source.w);
+    const scaleY = destination.h / Math.max(.01, source.h);
+    const sourceX = (root.offsetLeft || 0) + source.x;
+    const sourceY = (root.offsetTop || 0) + source.y;
+    const translateX = destination.x - surfaceRect.left
+      - sourceX * scaleX;
+    const translateY = destination.y - surfaceRect.top
+      - sourceY * scaleY;
+    const sourceTransform = "matrix(1, 0, 0, 1, 0, 0)";
+    const destinationTransform =
+      `matrix(${scaleX.toFixed(6)}, 0, 0, ${scaleY.toFixed(6)}, ` +
+      `${translateX.toFixed(3)}, ${translateY.toFixed(3)})`;
+    const shapeRect = shape.querySelector(":scope > rect");
+    ["x", "y", "width", "height", "rx", "ry"].forEach((attribute) => {
+      let value = Number(shapeRect?.getAttribute(attribute) || 0);
+      if (attribute === "x") value += parseFloat(yearScreenMaterialOwner.style.left) || 0;
+      if (attribute === "y") value += parseFloat(yearScreenMaterialOwner.style.top) || 0;
+      yearMaterialEraserRect.setAttribute(attribute, yearMaskNumber(value));
+    });
+    yearMaterialClipGroup.style.transform = sourceTransform;
+    // Keep the shared 12-month clip immutable. Removing one SVG child forces
+    // Chromium to rerasterize the entire live blur during the first moving
+    // frames. The exact live-wallpaper cutout above that one source slot erases
+    // its stationary blur while the selected screen-space lens moves.
+    shape.style.visibility = "visible";
+    syncYearMaterialEraserWallpaper(context.surface);
+    yearMaterialEraser.hidden = false;
+    yearMaterialEraser.style.opacity = ".999";
+    yearScreenMaterialOwner.style.zIndex = "4";
+    context.surface.classList.add("fc-year-material-visible", "fc-year-material-motion");
+    yearMaterialMotion = {
+      direction,
+      shape:yearMaterialClipGroup,
+      eraserShape:yearMaterialEraserShape,
+      eraser:yearMaterialEraser,
+      selectedLens:true,
+      sourceTransform,
+      destinationTransform,
+      duration:Number(context.morphMs) || MORPH_MS,
+      easing:context.ease || EASE,
+    };
+    return plane;
+  };
+  const startYearMaterialTransition = (direction) => {
+    const motion = yearMaterialMotion;
+    if (!motion?.shape?.isConnected || motion.direction !== direction) return null;
+    if (motion.selectedLens) return yearScreenMaterial;
+    const from = direction === "expand"
+      ? motion.sourceTransform
+      : motion.destinationTransform;
+    const to = direction === "expand"
+      ? motion.destinationTransform
+      : motion.sourceTransform;
+    motion.transformAnimation = motion.shape.animate(
+      [{ transform:from }, { transform:to }],
+      { duration:motion.duration, easing:motion.easing, fill:"forwards" },
+    );
+    motion.eraserTransformAnimation = motion.eraserShape.animate(
+      [{ transform:from }, { transform:to }],
+      { duration:motion.duration, easing:motion.easing, fill:"forwards" },
+    );
+    motion.eraserOpacityAnimation = motion.eraser.animate(
+      direction === "expand"
+        ? [
+          { opacity:0, offset:0 },
+          { opacity:0, offset:.54 },
+          { opacity:.999, offset:1 },
+        ]
+        : [
+          { opacity:.999, offset:0 },
+          { opacity:.999, offset:.38 },
+          { opacity:0, offset:1 },
+        ],
+      { duration:motion.duration, easing:"linear", fill:"forwards" },
+    );
+    return yearScreenMaterial;
+  };
+  const syncYearMaterialTransition = (transformAnimation, startTime) => {
+    const motion = yearMaterialMotion;
+    const anchor = Number(startTime);
+    if (!motion || !Number.isFinite(anchor)) return false;
+    const align = () => {
+      const liveStart = Number(transformAnimation?.startTime);
+      const liveTime = Number(transformAnimation?.currentTime);
+      [
+        motion.transformAnimation,
+        motion.eraserTransformAnimation,
+        motion.eraserOpacityAnimation,
+      ].forEach((animation) => {
+        if (!animation) return;
+        animation.startTime = Number.isFinite(liveStart) ? liveStart : anchor;
+        if (Number.isFinite(liveTime)) animation.currentTime = liveTime;
+      });
+      return true;
+    };
+    const aligned = align();
+    if (transformAnimation) {
+      Promise.allSettled([
+        transformAnimation.ready,
+        motion.transformAnimation?.ready,
+        motion.eraserTransformAnimation?.ready,
+        motion.eraserOpacityAnimation?.ready,
+      ].filter(Boolean)).then(align);
+    }
+    return aligned;
+  };
+  const settleYearScreenMaterial = (context) => {
+    const level = Number(context?.level ?? 0);
+    stopYearMaterialMotion();
+    if (level === 0 && (camera?.isActive?.() ?? true)) {
+      return syncYearScreenMaterial(context, { visible:true });
+    }
+    hideYearScreenMaterial(context?.surface);
+    return yearScreenMaterial;
+  };
+  const syncYearMaterialState = (context) => {
+    const active = camera?.isActive?.() ?? !context?.surface?.hidden;
+    const level = Number(context?.level ?? context?.surface?.dataset?.level ?? 0);
+    return syncYearScreenMaterial(context, { visible:!!active && level === 0 });
+  };
   const syncCalendarMaterial = (host) => {
     if (!host) return null;
+    if (host.dataset?.kind === "year") {
+      return syncYearMaterialState({
+        surface:camera?.surface?.() || host.parentElement,
+        layers:[host],
+        level:Number((camera?.surface?.() || host.parentElement)?.dataset?.level || 0),
+      });
+    }
     const direct = host.querySelector?.(":scope > .crm-tile-material-plane");
     if (direct) return syncTileMaterialPlane(direct);
     return null;
@@ -1279,6 +1755,13 @@ import {
       node?.getAnimations?.().forEach?.((animation) => animation.cancel());
     });
   };
+  const setMonthLocalMaterialMuted = (monthLayer, muted) => {
+    const live = monthLayer?.querySelector?.(":scope > .fc-expander-live");
+    const local = live?.querySelector?.(":scope > .crm-tile-material-plane");
+    if (!local) return null;
+    local.dataset.crmTileMaterialMuted = String(!!muted);
+    return local;
+  };
   const hideDayScreenMaterial = () => {
     dayScreenMaterialMotion = null;
     if (!dayScreenMaterialOwner || !dayScreenMaterial) return;
@@ -1302,6 +1785,11 @@ import {
     stopDayScreenMaterialAnimations();
     Object.assign(dayScreenMaterialOwner.style, {
       zIndex:"2",
+      inset:"auto",
+      left:"0px",
+      top:"0px",
+      width:"1px",
+      height:"1px",
       clipPath:"inset(0)",
       webkitClipPath:"inset(0)",
       transform:"translateZ(0)",
@@ -1316,6 +1804,8 @@ import {
   };
   const syncDayScreenMaterial = (monthLayer, {
     zIndex = 4,
+    exclude = null,
+    muteLocal = true,
   } = {}) => {
     const surface = camera?.surface?.();
     const live = monthLayer?.querySelector?.(":scope > .fc-expander-live");
@@ -1327,17 +1817,45 @@ import {
       return null;
     }
     const plane = ensureDayScreenMaterial(surface);
-    const path = tileUnionPath(days, surface);
+    const surfaceRect = surface.getBoundingClientRect();
+    const dayRects = days.map((day) => day.getBoundingClientRect());
+    const materialPadding = 34;
+    const materialLeft = Math.max(
+      0,
+      Math.min(...dayRects.map((rect) => rect.left)) - surfaceRect.left - materialPadding,
+    );
+    const materialTop = Math.max(
+      0,
+      Math.min(...dayRects.map((rect) => rect.top)) - surfaceRect.top - materialPadding,
+    );
+    const materialRight = Math.min(
+      surfaceRect.width,
+      Math.max(...dayRects.map((rect) => rect.right)) - surfaceRect.left + materialPadding,
+    );
+    const materialBottom = Math.min(
+      surfaceRect.height,
+      Math.max(...dayRects.map((rect) => rect.bottom)) - surfaceRect.top + materialPadding,
+    );
+    Object.assign(dayScreenMaterialOwner.style, {
+      inset:"auto",
+      left:`${yearMaskNumber(materialLeft)}px`,
+      top:`${yearMaskNumber(materialTop)}px`,
+      width:`${yearMaskNumber(Math.max(1, materialRight - materialLeft))}px`,
+      height:`${yearMaskNumber(Math.max(1, materialBottom - materialTop))}px`,
+    });
+    const materialDays = exclude ? days.filter((day) => day !== exclude) : days;
+    const path = tileUnionPath(materialDays, dayScreenMaterialOwner, { precise:true });
     Object.assign(dayScreenMaterialOwner.style, {
       zIndex:String(zIndex),
       clipPath:path,
       webkitClipPath:path,
     });
     dayScreenMaterialOwner.hidden = false;
-    plane.dataset.crmTileMaterialCount = String(days.length);
+    plane.dataset.crmTileMaterialCount = String(materialDays.length);
     plane.dataset.crmTileMaterialReady = String(path !== "none");
     plane.dataset.crmTileMaterialParked = "false";
     plane.dataset.calendarMonth = String(monthLayer.dataset.month || "");
+    setMonthLocalMaterialMuted(monthLayer, muteLocal);
     return plane;
   };
   const monthLayerForScreenMaterial = (context) => {
@@ -1368,6 +1886,7 @@ import {
         owner:dayScreenMaterialOwner,
         enteringMonth:true,
       };
+      setMonthLocalMaterialMuted(monthLayerForScreenMaterial(context), false);
       return;
     }
     const monthLayer = monthLayerForScreenMaterial(context);
@@ -1377,6 +1896,7 @@ import {
     }
     const plane = syncDayScreenMaterial(monthLayer, {
       zIndex:direction === "contract" ? 5 : 4,
+      exclude:activeTransition?.kind === "day" ? activeTransition.target : null,
     });
     if (!plane) return;
     dayScreenMaterialOwner.style.transform = "translateZ(0)";
@@ -1390,21 +1910,18 @@ import {
       owner:dayScreenMaterialOwner,
       enteringMonth,
     };
+    if (direction === "contract" && level === 1) {
+      // The full month is becoming a tile again. Its local shared plane keeps
+      // the miniature days genuinely acrylic while the screen owner retires.
+      setMonthLocalMaterialMuted(monthLayer, false);
+      plane.style.opacity = ".001";
+      plane.style.visibility = "hidden";
+    }
   };
   const armDayScreenMaterialTransition = () => {
-    const motion = dayScreenMaterialMotion;
-    if (!motion?.plane?.isConnected || !motion.owner?.isConnected) return;
-    if (motion.direction === "contract" && motion.level === 1) {
-      motion.opacityAnimation = motion.plane.animate([
-        { opacity:.999, visibility:"visible", offset:0 },
-        { opacity:.001, visibility:"visible", offset:.92 },
-        { opacity:.001, visibility:"hidden", offset:1 },
-      ], {
-        duration:MATERIAL_HANDOFF_MS,
-        easing:"linear",
-        fill:"forwards",
-      });
-    }
+    // Month contraction swaps the identical day union to its local moving
+    // owner during prepare. There is deliberately no overlapping fade: two
+    // simultaneous backdrop filters make the material darker and costlier.
   };
   const syncDayScreenMaterialTransition = (startTime) => {
     const motion = dayScreenMaterialMotion;
@@ -1414,7 +1931,6 @@ import {
     });
   };
   const settleDayScreenMaterial = (context) => {
-    const motion = dayScreenMaterialMotion;
     dayScreenMaterialMotion = null;
     const level = Number(context?.level) || 0;
     if (level !== 1) {
@@ -1427,21 +1943,12 @@ import {
       dayScreenMaterialOwner.style.transform = "translateZ(0)";
       plane.style.transform = "translateZ(0)";
       plane.style.visibility = "visible";
-      if (motion?.enteringMonth) {
-        plane.style.opacity = ".001";
-        stopDayScreenMaterialAnimations();
-        plane.animate(
-          [{ opacity:.001 }, { opacity:.999 }],
-          {
-            duration:MATERIAL_HANDOFF_MS,
-            easing:"linear",
-            fill:"forwards",
-          },
-        );
-      } else {
-        plane.style.opacity = ".999";
-        stopDayScreenMaterialAnimations();
-      }
+      // syncDayScreenMaterial switches the identical day union from the local
+      // plane to this bounded screen plane synchronously. Keeping either owner
+      // translucent during that swap creates a missing-acrylic flash; allowing
+      // both to paint creates a darker double-blur flash.
+      plane.style.opacity = ".999";
+      stopDayScreenMaterialAnimations();
     }
   };
   const layoutCalendar = ({ surface, layers, expRect }) => {
@@ -1450,7 +1957,7 @@ import {
     if (!surface || !root || !grid) return;
     ensureYearChrome(surface);
     layoutGrid(grid, expRect);
-    const firstMonth = grid.firstElementChild;
+    const firstMonth = grid.querySelector(":scope > .fc-month");
     const firstDay = layers[1]?.querySelector?.(
       ":scope > .fc-expander-live .fc-day",
     ) || null;
@@ -1466,7 +1973,6 @@ import {
         firstDay.offsetHeight,
       ).toFixed(1)}px`);
     }
-    syncCalendarMaterial(root);
     layers.slice(1).forEach((layer) => {
       const live = layer?.querySelector?.(":scope > .fc-expander-live");
       if (layer?.dataset?.kind === "month") syncCalendarMaterial(live);
@@ -1483,6 +1989,7 @@ import {
     surface.dataset.geometrySignature = layoutGeometrySignature;
     surface.dataset.geometryReady = "true";
     if (!surface.classList.contains("fc-camera-moving")) {
+      syncYearMaterialState({ surface, layers, level:Number(surface.dataset.level || 0) });
       if (Number(surface.dataset.level || 0) > 0) {
         seatBackdropCover({ surface, expRect });
       } else hideBackdropCover();
@@ -1596,9 +2103,10 @@ import {
   );
   const sourceMaterialTarget = (_expander, target) => {
     const unit = calendarTileUnit(calendarObjectForElement(target));
-    if (unit === "month") return target;
+    if (unit === "month") return yearScreenMaterial || target;
     if (unit !== "day") return target;
-    return target.closest(".fc-expander-live,.fc-month")
+    return (dayScreenMaterial?.isConnected && dayScreenMaterial)
+      || target.closest(".fc-expander-live,.fc-month")
       ?.querySelector?.(":scope > .crm-tile-material-plane")
       || target;
   };
@@ -1813,6 +2321,20 @@ import {
     const lens = transition?.lens;
     if (!transition || !lens) return;
     const destination = endpointMaterial(context);
+    if (transition.kind === "day") {
+      // The moving lens and the endpoint are the same canonical tile material.
+      // Switch them in one task so no painted frame contains zero or two blur
+      // owners. This also removes the transformed endpoint's redundant filter
+      // from every moving frame.
+      destination?.classList?.remove("fc-source-acrylic-owner");
+      context?.outgoingLayer?.classList?.remove?.("fc-source-acrylic-owner");
+      if (destination?.isConnected && direction === "expand") {
+        clearMaterialExclusion(destination);
+        destination.style.opacity = "1";
+      }
+      lens.park?.();
+      return;
+    }
     let destinationAnimation = null;
     if (destination?.isConnected && direction === "expand") {
       clearMaterialExclusion(destination);
@@ -1836,15 +2358,22 @@ import {
     const surface = camera?.surface?.();
     camera?.surface?.()?.querySelectorAll?.(".crm-tile-material-plane")?.forEach?.(
       (plane) => {
-        clearMaterialExclusion(plane);
-        plane.style.removeProperty("opacity");
+        if (plane.classList.contains("fc-calendar-year-material")) {
+          plane.style.opacity = ".001";
+          plane.style.visibility = "hidden";
+          plane.dataset.crmTileMaterialParked = "true";
+        } else {
+          clearMaterialExclusion(plane);
+          plane.style.removeProperty("opacity");
+        }
       },
     );
     finishAllMaterialHandoffs();
     monthAcrylicLens?.finish?.();
     dayAcrylicLens?.finish?.();
-    hideBackdropCover();
+    hideBackdropCover({ force:true });
     hideDayScreenMaterial();
+    hideYearScreenMaterial(surface);
     activeTransition = null;
   };
 
@@ -1982,6 +2511,17 @@ import {
         if (!camera?.isActive?.() || camera.isTransitioning?.()) return;
         const level = camera.level();
         let target = null;
+        let lens = null;
+        let warmKind = "";
+        if (level === 0) {
+          const root = camera.layers()?.[0];
+          const preferredMonth = currentYear === crmNow().getFullYear()
+            ? crmNow().getMonth() + 1
+            : 1;
+          target = root?.querySelector?.(`.fc-month[data-month="${preferredMonth}"]`)
+            || root?.querySelector?.(".fc-month");
+          lens = monthAcrylicLens;
+        }
         if (level === 1) {
           const monthLayer = camera.layers()?.[1];
           const preferredDate = currentYear === crmNow().getFullYear()
@@ -1991,8 +2531,48 @@ import {
           target = (preferredDate && monthLayer?.querySelector?.(
             `.fc-day[data-date="${preferredDate}"]`,
           )) || monthLayer?.querySelector?.(".fc-day");
+          lens = dayAcrylicLens;
+          warmKind = "day";
         }
-        if (target) camera.prefetch?.(target);
+        if (target) {
+          if (level === 0) {
+            // Warm the compositor material against the actual canonical month
+            // tile. Building a hidden month shell here would mount real day
+            // children at the year level, violating the one object/view tree.
+            const surface = camera.surface();
+            const root = camera.layers()?.[0];
+            lens?.prepare?.(target, target, {
+              direction:"prewarm",
+              level,
+              layers:camera.layers(),
+              surface,
+              expRect:camera.expRect,
+              layoutRect:camera.layoutRect,
+              sourceRect:camera.layoutRect(target, root),
+              morphMs:MORPH_MS,
+              ease:EASE,
+            });
+            lens?.prime?.();
+          } else {
+            camera.prefetch?.(target);
+          }
+          let remainingWarmPaints = 8;
+          const retireTransparentWarmPass = () => {
+            materialPrewarmFrame = 0;
+            if (!camera?.isActive?.() || camera.isTransitioning?.()
+              || camera.level() !== level) return;
+            remainingWarmPaints -= 1;
+            if (remainingWarmPaints > 0) {
+              materialPrewarmFrame = requestAnimationFrame(retireTransparentWarmPass);
+              return;
+            }
+            const warmExpander = warmKind && camera.surface()?.querySelector?.(
+              `:scope > .fc-expander.fc-warm[data-kind="${warmKind}"]`,
+            );
+            if (warmExpander) warmExpander.style.visibility = "hidden";
+          };
+          materialPrewarmFrame = requestAnimationFrame(retireTransparentWarmPass);
+        }
       });
     }, Math.max(0, Number(delay) || 0));
   };
@@ -2176,11 +2756,12 @@ import {
   });
   monthAcrylicLens = createCalendarAcrylicLens({
     motionHandoffStart:.54,
+    clipToDestinationBounds:true,
   });
   dayAcrylicLens = createCalendarAcrylicLens({
     prewarmOpacity:MATERIAL_PRIME_OPACITY,
     prewarmZIndex:2,
-    motionHandoffStart:.54,
+    clipToDestinationBounds:true,
   });
 
   camera = window.createFractalCamera({
@@ -2214,12 +2795,27 @@ import {
       monthAcrylicLens?.prime?.();
       dayAcrylicLens?.prime?.();
       if (calendarTileUnit(calendarObjectForElement(target)) === "month") {
-        const plane = syncDayScreenMaterial(expander, { zIndex:2 });
+        const plane = syncDayScreenMaterial(expander, {
+          zIndex:2,
+          muteLocal:false,
+        });
         if (plane && Number(context?.level) === 0) parkDayScreenMaterial();
       }
     },
-    prepareTransition:(direction, target) => {
-      if (direction === "expand" && target) camera?.prefetch?.(target);
+    prepareTransition:(direction, target, context) => {
+      if (direction === "expand" && target) {
+        if (calendarTileUnit(calendarObjectForElement(target)) === "day") {
+          // Exclude the selected day from the shared stationary plane before
+          // the navigation clock starts. The moving lens replaces it in the
+          // same task, so this is visually atomic while avoiding a 31-shape
+          // filter invalidation on an animated frame.
+          syncDayScreenMaterial(context?.layers?.[1], {
+            zIndex:4,
+            exclude:target,
+          });
+        }
+        camera?.prefetch?.(target);
+      }
     },
     prepareTarget:markCameraTarget,
     shouldPrefetch:(_target, context) => context.level < 2,
@@ -2235,8 +2831,10 @@ import {
       context.surface?.classList.add("fc-camera-moving");
       context.surface?.classList.toggle("fc-camera-expanding", direction === "expand");
       context.surface?.classList.toggle("fc-camera-contracting", direction === "contract");
+      prepareYearMaterialTransition(direction, context);
     },
     onTransformPrepare:(direction) => {
+      startYearMaterialTransition(direction);
       activeTransition?.lens?.start?.(direction);
       startBackdropCover(direction);
       armDayScreenMaterialTransition();
@@ -2245,6 +2843,7 @@ import {
       activeTransition?.lens?.sync?.(context.transformAnimation, context.transformStartTime);
       syncBackdropCover(context.transformStartTime);
       syncDayScreenMaterialTransition(context.transformStartTime);
+      syncYearMaterialTransition(context.transformAnimation, context.transformStartTime);
     },
     onTransitionEnd:(direction, context) => {
       settleTransitionMaterial(direction, context);
@@ -2257,6 +2856,7 @@ import {
         "fc-camera-expanding",
         "fc-camera-contracting",
       );
+      settleYearScreenMaterial(context);
       activeTransition = null;
       if (context.level < 2) {
         // Do not upload the next zoom shell during the live material
@@ -2273,6 +2873,7 @@ import {
       });
       if (!context.surface?.classList.contains("fc-camera-moving")) {
         clearCameraTargets(context.surface);
+        syncYearMaterialState(context);
         if (context.level > 0) seatBackdropCover(context);
         else hideBackdropCover();
       }
@@ -2318,6 +2919,7 @@ import {
         }
         requestAnimationFrame(() => {
           if (!camera?.isActive?.()) return;
+          syncYearMaterialState(context);
           updateBackdropCoverGeometry(context);
           if (context.level > 0) seatBackdropCover(context);
           else hideBackdropCover();
@@ -2404,6 +3006,19 @@ import {
   };
   const prepareTilePreviewBatch = async (requests = []) => {
     clearTilePreviewBatch();
+    const failedBatch = (reason, detail = {}) => ({
+      error:reason,
+      diagnostics:{
+        kind:String(requests?.[0]?.kind || ""),
+        currentYear,
+        scheduledDataReadyYear,
+        cameraActive:camera.isActive(),
+        cameraLevel:camera.level(),
+        cameraTransitioning:camera.isTransitioning(),
+        ...detail,
+      },
+      tiles:[],
+    });
     const batch = (Array.isArray(requests) ? requests : [])
       .filter((request) => ["calendar-month", "calendar-day"].includes(request?.kind)
         && request?.key)
@@ -2422,12 +3037,23 @@ import {
       resetCalendarObject();
     }
     if (scheduledDataReadyYear !== currentYear) await loadScheduled({ refresh:false });
+    // The dedicated capture renderer is intentionally reused across month and
+    // day batches. Reassert camera ownership because setting the already-active
+    // Calendar workspace is otherwise a no-op, leaving a renderer parked by a
+    // prior capture lifecycle unable to jump into the requested month.
+    camera.setActive(true);
+    if (camera.isTransitioning()) await camera.whenSettled();
     resetTransitionMaterials();
     camera.rebuildRoot();
     const graph = calendarObject();
     const objects = batch.map((request) => tileTreeIndex.objectForId(request.key));
     if (objects.some((object) => !object || object === graph
-      || tileKindOf(object) !== batchKind)) return null;
+      || tileKindOf(object) !== batchKind)) {
+      return failedBatch("canonical objects unavailable", {
+        requested:batch.map((request) => request.key),
+        resolved:objects.map((object) => object?.tile?.id || ""),
+      });
+    }
     const viewport = previewCaptureRect();
     if (batchKind === "calendar-month") {
       if (objects.some((object) => tileTreeIndex.parentOf(object) !== graph)) return null;
@@ -2544,15 +3170,27 @@ import {
     }
     const parent = tileTreeIndex.parentOf(objects[0]);
     if (!parent || objects.some((object) => tileTreeIndex.parentOf(object) !== parent)) {
-      return null;
+      return failedBatch("day objects do not share one canonical month", {
+        parent:parent?.tile?.id || "",
+      });
     }
     const monthTarget = camera.layers()[0]?.querySelector?.(
       `.crm-calendar-tile[data-tile-id="${CSS.escape(parent.tile.id)}"]`,
     );
-    if (!monthTarget || !camera.jumpTo(monthTarget)) return null;
+    if (!monthTarget || !camera.jumpTo(monthTarget)) {
+      return failedBatch("canonical month camera target unavailable", {
+        parent:parent.tile.id,
+        monthTarget:monthTarget?.dataset?.tileId || "",
+      });
+    }
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const monthLayer = camera.layers()[1];
-    if (calendarObjectForElement(monthLayer) !== parent) return null;
+    if (calendarObjectForElement(monthLayer) !== parent) {
+      return failedBatch("entered month does not retain its canonical object", {
+        parent:parent.tile.id,
+        layerObject:calendarObjectForElement(monthLayer)?.tile?.id || "",
+      });
+    }
     const stage = document.createElement("div");
     stage.className = "fc-tile-preview-batch-stage";
     stage.setAttribute("aria-hidden", "true");
@@ -2604,7 +3242,10 @@ import {
     });
     if (slots.length !== batch.length) {
       clearTilePreviewBatch();
-      return null;
+      return failedBatch("one or more canonical day slots have no geometry", {
+        slots:slots.length,
+        requested:batch.length,
+      });
     }
     document.body.appendChild(stage);
     tilePreviewBatchStage = stage;
@@ -2802,7 +3443,10 @@ import {
       ensureStyles();
       const year = buildYear();
       year.classList.add("crm-calendar-mini-scene");
-      requestAnimationFrame(() => syncCalendarMaterial(year));
+      // Detached miniatures do not share the live camera's screen-space
+      // material owner. Restore the canonical tile's own filter for this
+      // isolated renderer rather than attaching anything to the active view.
+      delete year.dataset.crmTileSharedMaterial;
       return year;
     },
     dayEl:activeDayElement,

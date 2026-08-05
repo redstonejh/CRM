@@ -225,32 +225,70 @@ function scheduleHomePreviewDiskCachePersist(delay = 80) {
 
 function setHomePreviewInteraction(active) {
   const next = !!active;
-  if (homePreviewInteractionActive === next) return;
+  const changed = homePreviewInteractionActive !== next;
   homePreviewInteractionActive = next;
-  [previewWindow, canonicalTilePreviewWindow].forEach((worker) => {
-    if (!worker || worker.isDestroyed()) return;
-    // The hidden renderer only paints static capture states. Throttle it to one
-    // frame while the visible camera owns the GPU, then restore a deliberately
-    // modest capture cadence after the handoff.
-    try {
-      worker.webContents.setFrameRate(
-        homePreviewInteractionActive
-          ? 1
-          : (worker === canonicalTilePreviewWindow ? 60 : 30),
-      );
-    } catch {}
-  });
-  if (!homePreviewInteractionActive) {
+  const lifecycleAcks = [previewWindow, canonicalTilePreviewWindow]
+    .filter((worker) => worker && !worker.isDestroyed())
+    .map((worker) => syncPreviewWorkerFrameRate(worker))
+    .filter(Boolean);
+  if (changed && !homePreviewInteractionActive) {
     const waiters = homePreviewInteractionWaiters;
     homePreviewInteractionWaiters = [];
     waiters.forEach((resolve) => resolve());
   }
+  // An interaction caller may already own another lease (for example hover
+  // followed by click). Still return the current lifecycle operations so the
+  // visible renderer can wait until every offscreen renderer has positively
+  // acknowledged `frozen`, instead of merely sending a best-effort IPC hint.
+  return Promise.allSettled(lifecycleAcks);
 }
 
 function waitForHomePreviewInteraction() {
   return homePreviewInteractionActive
     ? new Promise((resolve) => homePreviewInteractionWaiters.push(resolve))
     : Promise.resolve();
+}
+
+function previewWorkerFrameRate(worker) {
+  if (homePreviewInteractionActive) return 1;
+  if (worker === canonicalTilePreviewWindow) {
+    return canonicalTilePreviewCaptureStatus.active ? 60 : 1;
+  }
+  return homePreviewCaptureStatus.active || projectPreviewCaptureCount > 0 ? 30 : 1;
+}
+
+const previewWorkerLifecycle = new WeakMap();
+async function setPreviewWorkerSuspended(worker, suspended) {
+  if (!worker || worker.isDestroyed() || !worker.__crmPreviewReady) return;
+  const desired = suspended ? 'frozen' : 'active';
+  const state = previewWorkerLifecycle.get(worker) || { desired:'', applied:'', pending:null };
+  if (state.desired === desired && (state.applied === desired || state.pending)) {
+    return state.pending;
+  }
+  state.desired = desired;
+  const apply = async () => {
+    try {
+      const debug = worker.webContents.debugger;
+      if (!debug.isAttached()) debug.attach('1.3');
+      await debug.sendCommand('Page.setWebLifecycleState', { state:desired });
+      if (state.desired === desired) state.applied = desired;
+    } catch {}
+  };
+  state.pending = apply().finally(() => {
+    state.pending = null;
+    if (state.applied !== state.desired) {
+      void setPreviewWorkerSuspended(worker, state.desired === 'frozen');
+    }
+  });
+  previewWorkerLifecycle.set(worker, state);
+  return state.pending;
+}
+
+function syncPreviewWorkerFrameRate(worker) {
+  if (!worker || worker.isDestroyed()) return;
+  const frameRate = previewWorkerFrameRate(worker);
+  try { worker.webContents.setFrameRate(frameRate); } catch {}
+  return setPreviewWorkerSuspended(worker, frameRate <= 1);
 }
 
 // ─── Main window ────────────────────────────────────────────────────────────────
@@ -379,7 +417,11 @@ function createMainWindow() {
     homePreviewDiskCachePersistTimer = null;
     homePreviewBoundsKey = '';
     if (previewWindow && !previewWindow.isDestroyed()) previewWindow.destroy();
+    if (canonicalTilePreviewWindow && !canonicalTilePreviewWindow.isDestroyed()) {
+      canonicalTilePreviewWindow.destroy();
+    }
     previewWindow = null;
+    canonicalTilePreviewWindow = null;
     mainWindow = null;
   });
   return mainWindow;
@@ -867,13 +909,29 @@ function waitForRenderer(win, expression, timeoutMs = 30000) {
 }
 
 async function createPreviewWindow({ dedicatedTileWorker = false } = {}) {
-  if (!dedicatedTileWorker && previewWindow && !previewWindow.isDestroyed()) {
-    return previewWindow;
-  }
-  if (dedicatedTileWorker
-    && canonicalTilePreviewWindow
-    && !canonicalTilePreviewWindow.isDestroyed()) {
-    return canonicalTilePreviewWindow;
+  const existing = dedicatedTileWorker ? canonicalTilePreviewWindow : previewWindow;
+  if (existing && !existing.isDestroyed()) {
+    await setPreviewWorkerSuspended(existing, false);
+    const bounds = mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow.getContentBounds()
+      : { width:1280, height:860 };
+    const current = existing.getContentBounds();
+    if (current.width !== bounds.width || current.height !== bounds.height) {
+      existing.setContentSize(bounds.width, bounds.height);
+    }
+    syncPreviewWorkerFrameRate(existing);
+    await existing.webContents.executeJavaScript(`new Promise((resolve) => {
+      const captureStyle = document.getElementById('crm-preview-capture-style');
+      if (captureStyle) captureStyle.textContent = '';
+      const original = window.__crmPreviewClasses;
+      if (original) {
+        document.documentElement.classList.toggle('has-photo-background', original.htmlPhoto);
+        document.body.classList.toggle('has-photo-background', original.bodyPhoto);
+        document.body.classList.toggle('webgl-glass-on', original.webgl);
+      }
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    })`, true);
+    return existing;
   }
   const bounds = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentBounds() : { width: 1280, height: 860 };
   const worker = new BrowserWindow({
@@ -886,7 +944,7 @@ async function createPreviewWindow({ dedicatedTileWorker = false } = {}) {
   });
   if (dedicatedTileWorker) canonicalTilePreviewWindow = worker;
   else previewWindow = worker;
-  try { worker.webContents.setFrameRate(homePreviewInteractionActive ? 1 : 30); } catch {}
+  syncPreviewWorkerFrameRate(worker);
   worker.on('closed', () => {
     if (previewWindow === worker) previewWindow = null;
     if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
@@ -905,6 +963,12 @@ async function createPreviewWindow({ dedicatedTileWorker = false } = {}) {
       )),
     ]);
     await waitForRenderer(worker, `!document.documentElement.hasAttribute('data-dashboard-booting') && !!window.crmWorkspaces`);
+    await worker.webContents.executeJavaScript(
+      `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`,
+      true,
+    );
+    worker.__crmPreviewReady = true;
+    syncPreviewWorkerFrameRate(worker);
     return worker;
   } catch (error) {
     if (!worker.isDestroyed()) worker.destroy();
@@ -1112,7 +1176,12 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
           true,
         );
         if (!batchState || batchState.tiles?.length !== pending.length) {
-          throw new Error(`Canonical ${batch.kind} batch did not prepare`);
+          throw new Error(
+            `Canonical ${batch.kind} batch did not prepare: `
+            + JSON.stringify(batchState?.error
+              ? { error:batchState.error, diagnostics:batchState.diagnostics || null }
+              : { state:batchState || null }),
+          );
         }
         const statesByKey = new Map(
           batchState.tiles.map((state) => [String(state.key), state]),
@@ -1211,14 +1280,17 @@ function captureCanonicalTilePreviews(kind, scope = {}, tiles = []) {
           );
         } catch {}
       }
-      if (worker && !worker.isDestroyed()) worker.destroy();
-      if (canonicalTilePreviewWindow === worker) canonicalTilePreviewWindow = null;
       canonicalTilePreviewCaptureStatus = {
         ...canonicalTilePreviewCaptureStatus,
         active:false,
         stage:canonicalTilePreviewCaptureStatus.error ? 'failed' : 'idle',
         key:'',
       };
+      // Keep the fully parsed capture renderer resident at one frame per
+      // second. Reusing it avoids loading the entire dashboard during a later
+      // Calendar/Home interaction; the queue raises its cadence only while a
+      // capture batch is actually active.
+      syncPreviewWorkerFrameRate(worker);
     }
     return previews;
   });
@@ -1279,11 +1351,9 @@ function captureProjectPreview(projectId, viewState = {}) {
     } finally {
       projectPreviewCaptureCount = Math.max(0, projectPreviewCaptureCount - 1);
       if (!projectPreviewCaptureCount) {
-        // Reuse one renderer for the whole project batch, then retire it. A
-        // subsequent Projects/Home capture starts with the completed cache
-        // instead of the worker's pre-batch placeholder state.
-        if (worker && !worker.isDestroyed()) worker.destroy();
-        if (previewWindow === worker) previewWindow = null;
+        // Leave the parsed renderer parked rather than recreating the entire
+        // application for the next project/Home refresh.
+        syncPreviewWorkerFrameRate(worker);
         if (plannerHomeCaptureRequestGeneration === projectPreviewBatchPlannerGeneration) scheduleProjectGalleryHomeRefresh();
       }
     }
@@ -1381,6 +1451,11 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
       startedAt:Date.now(),
     };
     try {
+      // Do not even construct/parse a hidden renderer while the visible app is
+      // interacting. The previous per-room guard ran only after loadFile(),
+      // allowing a full dashboard parse to steal multiple 100 Hz deadlines
+      // from the camera before the worker could be throttled.
+      await waitForHomePreviewInteraction();
       worker = await createPreviewWindow();
       for (const key of requested) {
         await waitForHomePreviewInteraction();
@@ -1442,8 +1517,6 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
       homeMotionSnapshotError = `${activeCaptureKey}: ${String(error?.stack || error?.message || error)}`;
       console.error(`[home-preview] ${label} capture failed at ${activeCaptureKey}:`, error?.message || error);
     } finally {
-      if (worker && !worker.isDestroyed()) worker.destroy();
-      if (previewWindow === worker) previewWindow = null;
       if (broadCapture) {
         homePreviewBroadCaptureActive = false;
         homePreviewBroadCaptureQueued = Math.max(
@@ -1456,6 +1529,10 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
         active:false,
         key:'',
       };
+      // A parsed but quiescent worker is substantially cheaper than loading
+      // another renderer during the next room handoff. Park it at 1 FPS until
+      // the serialized capture queue has more work.
+      syncPreviewWorkerFrameRate(worker);
     }
     return requested.length === 1 ? homePreviewCache.get(requested[0]) || null : null;
   });
@@ -2273,7 +2350,12 @@ ipcMain.handle('calendar-transition:capture-strip', async (event) => {
   }
 });
 ipcMain.on('home-preview:interaction', (event, active) => {
-  if (isMainSender(event)) setHomePreviewInteraction(active);
+  if (isMainSender(event)) void setHomePreviewInteraction(active);
+});
+ipcMain.handle('home-preview:interaction:set', async (event, active) => {
+  if (!isMainSender(event)) return { ok:false };
+  await setHomePreviewInteraction(active);
+  return { ok:true, active:homePreviewInteractionActive };
 });
 ipcMain.handle('home-preview:list', (event) => {
   if (!isMainSender(event) && !isPreviewSender(event)) return { ok: false, previews: [] };
@@ -2347,7 +2429,7 @@ ipcMain.handle('home-preview:idle', async (event) => {
       queue.catch(() => null),
       new Promise((resolve) => setTimeout(resolve, 250)),
     ]);
-    const capturing = !!previewWindow && !previewWindow.isDestroyed();
+    const capturing = homePreviewCaptureStatus.active || projectPreviewCaptureCount > 0;
     if (homePreviewStartupTimer || homePreviewResizeTimer || homePreviewRefreshTimer || capturing || queue !== homePreviewQueue) {
       quietGeneration = -1;
       quietSince = 0;
@@ -2365,7 +2447,7 @@ ipcMain.handle('home-preview:idle', async (event) => {
   }
   return {
     ok:false,
-    capturing:!!previewWindow && !previewWindow.isDestroyed(),
+    capturing:homePreviewCaptureStatus.active || projectPreviewCaptureCount > 0,
     error:'Preview engine did not become idle',
     status:{ ...homePreviewCaptureStatus },
     broadCaptureActive:homePreviewBroadCaptureActive,
@@ -2392,7 +2474,10 @@ ipcMain.handle('home-preview:diagnostics', (event) => {
     startupScheduled:!!homePreviewStartupTimer,
     refreshScheduled:!!homePreviewRefreshTimer,
     resizeScheduled:!!homePreviewResizeTimer,
-    worker:!!previewWindow && !previewWindow.isDestroyed(),
+    worker:(homePreviewCaptureStatus.active || projectPreviewCaptureCount > 0)
+      && !!previewWindow
+      && !previewWindow.isDestroyed(),
+    workerReady:!!previewWindow && !previewWindow.isDestroyed(),
   };
 });
 ipcMain.handle('home-preview:capture', async (event, { key, viewState = null } = {}) => {

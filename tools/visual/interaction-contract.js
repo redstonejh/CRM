@@ -42,12 +42,17 @@ async function main() {
   });
   await check('Home tiles use the canonical glass without the menu shadow rectangle', () => {
     const surface = document.querySelector('.crm-home-grid > .crm-home-bucket');
+    const shared = document.querySelector('.crm-home-peripheral-screen-acrylic');
     const reference = document.querySelector('.auth-profile-menu');
-    if (!surface || !reference) return false;
+    if (!surface || !shared || !reference) return false;
     const actual = getComputedStyle(surface);
+    const sharedStyle = getComputedStyle(shared);
     const expected = getComputedStyle(reference);
-    return ['backgroundImage', 'backdropFilter', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'color']
+    return ['backgroundImage', 'borderTopColor', 'borderTopWidth', 'borderRadius', 'color']
       .every((property) => actual[property] === expected[property])
+      && actual.backdropFilter === 'none'
+      && sharedStyle.backdropFilter === expected.backdropFilter
+      && Number(sharedStyle.opacity) > .99
       && actual.boxShadow !== expected.boxShadow && !actual.boxShadow.includes('42px');
   });
   await check('Non-top physical controls inherit the top geometry with one neutral acrylic material', () => {
@@ -287,10 +292,14 @@ async function main() {
     const selected = selectedTile?.getBoundingClientRect();
     const neighbor = document.querySelector('.crm-home-bucket[data-module="cases"]')?.getBoundingClientRect();
     const material = selectedTile && getComputedStyle(selectedTile);
+    const sharedNode = document.querySelector('.crm-home-peripheral-screen-acrylic');
+    const sharedMaterial = sharedNode ? getComputedStyle(sharedNode) : material;
     window.__homeAcrylicMaterial = material ? {
       backgroundColor:material.backgroundColor,
       backgroundImage:material.backgroundImage,
-      backdropFilter:material.webkitBackdropFilter || material.backdropFilter,
+      backdropFilter:(material.webkitBackdropFilter || material.backdropFilter) !== 'none'
+        ? (material.webkitBackdropFilter || material.backdropFilter)
+        : (sharedMaterial.webkitBackdropFilter || sharedMaterial.backdropFilter),
       borderColor:material.borderColor,
       borderStyle:material.borderStyle,
       boxShadow:material.boxShadow,
@@ -328,24 +337,31 @@ async function main() {
     const hostStyle = acrylicHost && getComputedStyle(acrylicHost);
     const frameStyle = frame && getComputedStyle(frame);
     const exactStyle = exact && getComputedStyle(exact);
+    const sharedAcrylic = document.querySelector('.crm-home-peripheral-screen-acrylic');
+    const sharedStyle = sharedAcrylic && getComputedStyle(sharedAcrylic);
     const transform = hostStyle?.transform && hostStyle.transform !== 'none' ? new DOMMatrix(hostStyle.transform) : new DOMMatrix();
     const status = window.crmHome?.motionStatus?.();
     const source = window.__homeAcrylicMaterial;
+    const selectedMaterial = style?.webkitBackdropFilter || style?.backdropFilter || '';
+    const sharedMaterial = sharedStyle?.webkitBackdropFilter || sharedStyle?.backdropFilter || '';
+    const delegatedMaterial = acrylic?.dataset?.crmAcrylicBackdropOwner === 'shared'
+      && Number(sharedStyle?.opacity || 0) > .99
+      && sharedMaterial === source?.backdropFilter;
     const exactMaterial = !!style && !!source
       && style.backgroundColor === source.backgroundColor && style.backgroundImage === source.backgroundImage
-      && (style.webkitBackdropFilter || style.backdropFilter) === source.backdropFilter;
+      && (selectedMaterial === source.backdropFilter || delegatedMaterial);
     const exactFrame = !!frameStyle && !!source
       && frameStyle.borderColor === source.borderColor && frameStyle.borderStyle === source.borderStyle
       && frameStyle.boxShadow === source.boxShadow;
     const state = { ready:status?.ready, materialMode:status?.materialMode, background:style?.backgroundImage,
       backdrop:style?.backdropFilter, opacity:Number(style?.opacity || 0), wallpapers:document.querySelectorAll('body > .workspace-photo-backdrop:not([hidden])').length,
       exact:!!exact, exactOpacity:exactStyle ? Number(exactStyle.opacity) : null, foregrounds:expander?.querySelectorAll('.crm-home-preview-foreground').length || 0,
-      exactMaterial, exactFrame, acrylicState:window.crmHome?.acrylicState?.(), source, clip:hostStyle?.clipPath, screenScale:[transform.a,transform.d],
+      exactMaterial, delegatedMaterial, sharedMaterial, exactFrame, acrylicState:window.crmHome?.acrylicState?.(), source, clip:hostStyle?.clipPath, screenScale:[transform.a,transform.d],
       transformedFrame:{ background:frameStyle?.backgroundImage, backdrop:frameStyle?.backdropFilter } };
     return { ok:!!style && (!status?.ready || status.materialMode === 'live-peripheral-acrylic')
       && exactMaterial && exactFrame && Number(style.opacity) > .99
-      && (style.webkitBackdropFilter || style.backdropFilter).includes('blur(')
-      && (style.webkitBackdropFilter || style.backdropFilter).includes('saturate(')
+      && (selectedMaterial.includes('blur(') || delegatedMaterial)
+      && (selectedMaterial.includes('saturate(') || delegatedMaterial)
       && window.crmHome?.acrylicState?.().phase === 'motion'
       && Number(frameStyle?.opacity) > .99
       && Number(getComputedStyle(expander).opacity) > .99 && !expander.style.transition.includes('opacity')

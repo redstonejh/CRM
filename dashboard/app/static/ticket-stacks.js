@@ -528,6 +528,12 @@
         border: 1px solid var(--bucket-acrylic-border);
         box-shadow: var(--bucket-acrylic-shadow);
         transition: left .2s ${EASE}, top .2s ${EASE}, width .2s ${EASE}, height .2s ${EASE}, border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+      .tk-zone-acrylic-plane{position:fixed;left:0;top:0;width:1px;height:1px;z-index:799;display:block;
+        pointer-events:none;background:transparent;opacity:.001;transform:translateZ(0);
+        backface-visibility:hidden;contain:paint;will-change:opacity;-webkit-backdrop-filter:var(--bucket-acrylic-filter);
+        backdrop-filter:var(--bucket-acrylic-filter)}
+      .tk-zones.has-shared-zone-acrylic>.tk-zone:not(.tk-sharp){
+        -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       /* In focus: lift the bucket above the scrim (sharp). Out of focus it simply rests below the scrim
          and the scrim blurs it — the same crisp depth-of-field whether the bin is closed, a stack is
          fanned, or a drag is in flight (the valid target lifts, the rest stay scrim-blurred). */
@@ -1015,7 +1021,10 @@
   // (.tk-sharp), an out-of-focus one rests below it and the scrim blurs it — always the crisp scrim blur,
   // never a filter. Gaps between fanned cards count as "on the stack", so hovering one doesn't pull them in.
   let bucketsFocused = false;
-  const setBucketSharp = (fn) => STAGES.forEach((s, i) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-sharp", fn(i)));
+  const setBucketSharp = (fn) => {
+    STAGES.forEach((s, i) => zoneBody[s.key]?.parentElement?.classList.toggle("tk-sharp", fn(i)));
+    syncZoneAcrylicPlane();
+  };
   const applyBucketFocus = () => {
     if (dragActive) return;   // during a drag, focusDropTargets owns the per-bucket focus
     // Co-focus: lift ALL buckets above the scrim (sharp) ONLY while the cursor is drifting up to
@@ -1895,6 +1904,7 @@
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
+  let zoneAcrylicPlane = null;
   let zoneGeometryRefreshPending = false;
   let zoneGeometryRefreshFrame = 0;
   const zoneGeometryBlocked = () => (!active && !theater?.hasAttribute?.("data-crm-home-precomposed")) || (
@@ -2183,6 +2193,63 @@
     const right = bodyRect.right - (scrollbarCenter + scrollbarWidth / 2);
     scrollbar.style.right = `${Math.round(right * 10) / 10}px`;
   };
+  const syncZoneAcrylicPlane = () => {
+    if (!zoneAcrylicPlane || !zonesRoot) return null;
+    const fixed = (value) => (Number(value) || 0).toFixed(2);
+    zoneAcrylicPlane.style.opacity = active ? ".999" : ".001";
+    const entries = STAGES.map((stage) => zoneBody[stage.key]?.parentElement)
+      .filter((panel) => panel?.isConnected && !panel.classList.contains("tk-sharp"))
+      .map((panel) => {
+        const rect = panel.getBoundingClientRect();
+        const radius = Math.min(
+          rect.width / 2,
+          rect.height / 2,
+          parseFloat(getComputedStyle(panel).borderTopLeftRadius) || 0,
+        );
+        return { rect, radius };
+      })
+      .filter(({ rect }) => rect.width > 2 && rect.height > 2);
+    if (!entries.length) {
+      zoneAcrylicPlane.style.width = "1px";
+      zoneAcrylicPlane.style.height = "1px";
+      zoneAcrylicPlane.style.clipPath = "none";
+      zoneAcrylicPlane.style.webkitClipPath = "none";
+      zoneAcrylicPlane.dataset.crmTileMaterialCount = "0";
+      zoneAcrylicPlane.dataset.crmTileMaterialReady = "false";
+      zonesRoot.classList.remove("has-shared-zone-acrylic");
+      return zoneAcrylicPlane;
+    }
+    const left = Math.min(...entries.map(({ rect }) => rect.left));
+    const top = Math.min(...entries.map(({ rect }) => rect.top));
+    const rightEdge = Math.max(...entries.map(({ rect }) => rect.right));
+    const bottomEdge = Math.max(...entries.map(({ rect }) => rect.bottom));
+    zoneAcrylicPlane.style.left = `${fixed(left)}px`;
+    zoneAcrylicPlane.style.top = `${fixed(top)}px`;
+    zoneAcrylicPlane.style.width = `${fixed(rightEdge - left)}px`;
+    zoneAcrylicPlane.style.height = `${fixed(bottomEdge - top)}px`;
+    const parts = entries.map(({ rect, radius }) => {
+        const x = rect.left - left; const y = rect.top - top;
+        const right = rect.right - left; const bottom = rect.bottom - top;
+        return [
+          `M ${fixed(x + radius)} ${fixed(y)}`,
+          `L ${fixed(right - radius)} ${fixed(y)}`,
+          `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(right)} ${fixed(y + radius)}`,
+          `L ${fixed(right)} ${fixed(bottom - radius)}`,
+          `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(right - radius)} ${fixed(bottom)}`,
+          `L ${fixed(x + radius)} ${fixed(bottom)}`,
+          `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(x)} ${fixed(bottom - radius)}`,
+          `L ${fixed(x)} ${fixed(y + radius)}`,
+          `A ${fixed(radius)} ${fixed(radius)} 0 0 1 ${fixed(x + radius)} ${fixed(y)} Z`,
+        ].join(" ");
+      });
+    const path = `path('${parts.join(" ")}')`;
+    zoneAcrylicPlane.style.clipPath = path;
+    zoneAcrylicPlane.style.webkitClipPath = path;
+    zoneAcrylicPlane.dataset.crmTileMaterialCount = String(parts.length);
+    zoneAcrylicPlane.dataset.crmTileMaterialReady = String(parts.length > 0);
+    zonesRoot.classList.toggle("has-shared-zone-acrylic", parts.length > 0);
+    return zoneAcrylicPlane;
+  };
   // Compact buckets — each just large enough for one full ticket card — spread across the
   // dashboard grid's extent with equal space between them. Height follows the ticket's own
   // proportions instead of stretching to fill the screen.
@@ -2246,6 +2313,7 @@
     // the same via updateDeckEdges() at the end of layout(). Without the re-clamp a bucket scrolled to
     // the bottom stays pinned there after the window grows past being scrollable (no way back up).
     STAGES.forEach((s) => clampZoneScroll(s.key));
+    syncZoneAcrylicPlane();
   };
   // Pull a bucket's scroll back inside [zMin, 0] for the current viewport height, then reposition. Skips
   // while a scroll animation owns st.sy (its own loop clamps). Runs on every resize/reflow → live update.
@@ -2296,6 +2364,10 @@
     ensureTheater();
     zonesRoot = document.createElement("div");
     zonesRoot.className = "tk-zones";
+    zoneAcrylicPlane = document.createElement("span");
+    zoneAcrylicPlane.className = "tk-zone-acrylic-plane";
+    zoneAcrylicPlane.dataset.crmAcrylicOwner = "cases";
+    zoneAcrylicPlane.setAttribute("aria-hidden", "true");
     STAGES.forEach((s, i) => {
       const panel = document.createElement("div");
       panel.className = "tk-zone";
@@ -2320,7 +2392,8 @@
       }).observe(zoneBody[s.key]);
       wireZoneThumb(s.key);
     });
-    theater.appendChild(zonesRoot);
+    document.body.append(zoneAcrylicPlane);
+    theater.append(zonesRoot);
     layoutZones();
     requestAnimationFrame(layoutZones);              // re-measure once the grid has laid out
     window.addEventListener("resize", () => {
@@ -2919,6 +2992,11 @@
         render();
       }
       if (visible && zoneGeometryRefreshPending) scheduleZoneGeometryRefresh();
+      // The final union geometry was already measured during baseline/prewarm.
+      // Workspace activation only changes ownership; re-reading every bucket
+      // immediately after [hidden] changes would force a full synchronous
+      // layout in the endpoint task.
+      if (zoneAcrylicPlane) zoneAcrylicPlane.style.opacity = visible ? ".999" : ".001";
       return window.ticketStacks;
     },
     isDeleted,

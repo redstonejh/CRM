@@ -1,4 +1,14 @@
 export function initializeOverflowTitles() {
+  // The offscreen preview renderers only exist to produce pixels. Computing
+  // native title fallbacks there is both unobservable and especially costly:
+  // every scrollWidth/clientWidth read can flush the worker's entire style
+  // tree, competing with the visible renderer and GPU during a desk camera.
+  // Keep the accessibility enhancement in the real window and make preview
+  // workers a true no-op.
+  if (window.crmHomePreviews?.isCaptureWorker) {
+    const noop = () => {};
+    return { scheduleOverflowTitles:noop, refreshOverflowTitles:noop };
+  }
   const skipTags = new Set(["SCRIPT", "STYLE", "SVG", "PATH", "INPUT", "TEXTAREA", "SELECT", "OPTION"]);
   const refreshElement = (element) => {
     if (!(element instanceof Element) || !element.isConnected || skipTags.has(element.tagName)) return;

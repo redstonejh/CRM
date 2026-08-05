@@ -137,18 +137,26 @@
 
   const pending = new Set();
   let frame = 0;
-  const queue = (node) => {
-    const root = isElement(node) ? node : node?.parentElement;
-    if (!root) return;
-    pending.add(root);
-    if (frame) return;
+  const transitionBusy = () => !!window.crmDeskTransit?.isBusy?.()
+    || !!window.crmHomeCamera?.isTransitioning?.()
+    || !!window.crmProjectsCamera?.isTransitioning?.()
+    || !!window.fractalCalendarCamera?.isTransitioning?.();
+  const flushPending = () => {
+    if (frame || !pending.size || transitionBusy()) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
+      if (transitionBusy()) return;
       const roots = [...pending];
       pending.clear();
       roots.forEach(scan);
       document.documentElement.dataset.crmInterfaceParity = "canonical-menu";
     });
+  };
+  const queue = (node) => {
+    const root = isElement(node) ? node : node?.parentElement;
+    if (!root) return;
+    pending.add(root);
+    flushPending();
   };
 
   const eligibleAction = (element) => (
@@ -188,6 +196,10 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();
+  document.addEventListener("crm:desk-transit-settled", flushPending);
+  document.addEventListener("crm:camera-navigation", (event) => {
+    if (event.detail?.phase === "settled") flushPending();
+  });
 
   window.crmInterfaceParity = Object.freeze({ audit, scan, selectors: Object.freeze({ surfaces: SURFACE_SELECTOR, cards: CARD_FACE_SELECTOR }) });
 })();

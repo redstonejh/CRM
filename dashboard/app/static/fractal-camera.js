@@ -395,6 +395,29 @@
       }
       return lens;
     };
+    const arm = (direction = "expand") => {
+      if (!lens || !state || !["expand", "contract"].includes(direction)) return null;
+      stop();
+      state.direction = direction;
+      const fromSource = direction === "expand";
+      const clip = fromSource ? state.sourceClip : state.destinationClip;
+      const ownerTransform = fromSource
+        ? state.sourceOwnerTransform
+        : state.destinationOwnerTransform;
+      const lensTransform = fromSource
+        ? state.sourceLensTransform
+        : state.destinationLensTransform;
+      state.clipOwner.style.clipPath = clip;
+      state.clipOwner.style.webkitClipPath = clip;
+      state.clipOwner.style.transform = ownerTransform;
+      lens.style.transform = lensTransform;
+      lens.style.opacity = holdThroughMotion ? "1" : (fromSource ? "1" : "0");
+      lens.dataset.fractalAcrylicLens = direction;
+      lens.dataset.fractalAcrylicDirection = direction;
+      lens.dataset.fractalAcrylicPhase = "prepared";
+      if (state.frame) state.frame.style.opacity = "1";
+      return lens;
+    };
     const holdEndpoint = () => {
       if (!holdThroughMotion || !lens || !state) return false;
       const endpointClip = state.direction === "expand" ? state.destinationClip : state.sourceClip;
@@ -566,6 +589,7 @@
     });
     return {
       prepare,
+      arm,
       start,
       sync,
       prime,
@@ -910,11 +934,13 @@
       const rect = target.getBoundingClientRect();
       const key = keyOf(target);
       let expander = null;
+      let reusedWarmExpander = false;
       if (warm && warm.key === key) {
         warm.animation?.cancel?.();
         expander = warm.el;
         expander.classList.remove(config.warmClass || "fractal-camera-warm");
         warm = null;
+        reusedWarmExpander = true;
       } else {
         dropWarm();
         expander = buildExpander(target);
@@ -939,7 +965,12 @@
       // A warm expander may have been built several pointer frames earlier.
       // Refresh source-owned paint immediately before motion so its acrylic
       // handoff carries the material that is actually visible at click time.
-      config.configureExpander?.(expander, target, { ...ctx(), sourceRect: source, direction: "expand" });
+      config.configureExpander?.(expander, target, {
+        ...ctx(),
+        sourceRect: source,
+        direction: "expand",
+        reusedWarmExpander,
+      });
       const kx = E.w / source.w;
       const ky = E.h / source.h;
       const dive = `translate(${(E.x - below.offsetLeft - source.x * kx).toFixed(2)}px, ${(E.y - below.offsetTop - source.y * ky).toFixed(2)}px) scale(${kx.toFixed(4)}, ${ky.toFixed(4)})`;

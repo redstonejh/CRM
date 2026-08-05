@@ -8,7 +8,8 @@
 (() => {
   const TEMPORAL_MODULES = new Set(["pipeline", "jobs", "cases"]);
   const TRANSIT_Z = "4500";        // above room objects, below persistent native chrome
-  const ENDPOINT_BRIDGE_Z = "4501"; // above the moving Home surface, still below native chrome
+  const ENDPOINT_BRIDGE_Z = "9500"; // above all room furniture, below transit-owned persistent chrome
+  const TRANSIT_CHROME_Z = "9600";
   const ENDPOINT_MATERIAL_BLEND_MS = 180;
   const ENDPOINT_MATERIAL_LEAD_MS = 220;
   const ENDPOINT_MATERIAL_BLEND_EASE = "cubic-bezier(.4, 0, .2, 1)";
@@ -74,13 +75,14 @@
          of the camera landing. It remains semantically hidden and inert while
          entering, but no longer pops in after the room settles. */
       .crm-module-switch[hidden]:not([data-crm-transit-nav-entering]){
-        display:grid!important;opacity:${ENDPOINT_PARKED_OPACITY}!important;
-        transform:translateX(-50%) translateY(calc(100% + 36px))!important;
-        pointer-events:none!important;will-change:transform,opacity}
+        display:grid!important;opacity:1!important;
+        transform:translateX(-50%) translateY(calc(100% + 36px)) translateZ(0)!important;
+        pointer-events:none!important;will-change:transform}
       .crm-module-switch[data-crm-transit-nav-entering][hidden]{
         display:grid!important;opacity:1!important}
       .crm-module-switch[data-crm-transit-nav-entering]{
-        pointer-events:none!important;will-change:transform,opacity}
+        z-index:${TRANSIT_CHROME_Z}!important;
+        pointer-events:none!important;will-change:transform}
       html.crm-transit-materializing .crm-module-switch[data-crm-transit-layer][data-crm-transit-nav-entering]{
         opacity:1!important}
       html.crm-transit-materializing.crm-transit-revealing [data-crm-transit-layer]{
@@ -125,12 +127,13 @@
         position:absolute;inset:0;display:block;width:100%;height:100%;
         object-fit:cover;pointer-events:none;user-select:none;opacity:1;
         transform:translateZ(0);backface-visibility:hidden}
-      /* Canonical room furniture can own high local z-indices (deck arrows,
-         drag flyers, loading state). Keep those room-only layers below the
-         endpoint cover; persistent window/navigation chrome remains above it. */
+      /* The endpoint bridge sits above room furniture without rewriting the
+         room's complete layer tree. Only the small persistent chrome set is
+         raised over it while the bridge owns the viewport. */
       html.crm-transit-endpoint-covered :is(
-        .tk-stacks,.tk-scrim,.tk-system-state,.tk-arrow,.tk-stack-btn,.tk-zfly
-      ){z-index:4400!important}
+        .window-control-cluster,.auth-profile-cluster,.dashboard-search-popover,
+        .workspace-menu-overlay-layer
+      ){z-index:${TRANSIT_CHROME_Z}!important}
       [data-crm-transit-retained]{transform:translate3d(-110vw,0,0)!important;pointer-events:none!important}
     `;
     document.head.appendChild(style);
@@ -138,6 +141,12 @@
 
   const camera = () => window.crmHomeCamera;
   const commit = (key) => window.crmWorkspaces?.setActive?.(key);
+  const commitStaged = async (key) => {
+    if (typeof window.crmWorkspaces?.setActiveStaged === "function") {
+      return window.crmWorkspaces.setActiveStaged(key);
+    }
+    return commit(key);
+  };
   const paint = (frames = 1) => new Promise((resolve) => {
     let remaining = Math.max(1, Number(frames) || 1);
     const next = () => {
@@ -952,8 +961,8 @@
       stage.navigationEntranceAnimation?.cancel?.();
       const animation = navigation.animate(
         [
-          { transform:`translateX(-50%) translateY(${travel})` },
-          { transform:"translateX(-50%) translateY(0px)" },
+          { transform:`translateX(-50%) translateY(${travel}) translateZ(0)` },
+          { transform:"translateX(-50%) translateY(0px) translateZ(0)" },
         ],
         {
           duration:NAVIGATION_ENTRANCE_MS,
@@ -1226,7 +1235,14 @@
     ensureStyles();
     stage.materializeAt = performance.now();
     stage.phase = "materializing-covered";
-    window.crmHome?.setPrecomposedModulePromoted?.(stage.key, true);
+    if (typeof window.crmHome?.promotePrecomposedModule === "function") {
+      await window.crmHome.promotePrecomposedModule(stage.key, {
+        canContinue:() => stage.sequence === activeDive?.sequence,
+      });
+    } else {
+      window.crmHome?.setPrecomposedModulePromoted?.(stage.key, true);
+    }
+    if (stage.sequence !== activeDive?.sequence) return;
     stage.theater?.removeAttribute?.("data-crm-transit-retained");
     primeDestinationLayers(stage.key, stage.theater || findDestinationTheater(stage.key));
     document.documentElement.classList.remove("crm-transit-revealing");
@@ -1249,7 +1265,7 @@
     // after arrival.
     if (!stage.committed) {
       stage.commitAt = performance.now();
-      commit(stage.key);
+      await commitStaged(stage.key);
       stage.committedAt = performance.now();
       stage.committed = true;
       // Close the workspace switch before the baseline starts reading final
@@ -1340,10 +1356,7 @@
     // The independent opaque bridge now owns the endpoint. Put Home into the
     // exact retained state it will keep while this room is active, including
     // its final z-order, before any live destination pixel can be exposed.
-    if (surface) {
-      surface.hidden = true;
-      surface.style.zIndex = "";
-    }
+    if (surface) surface.style.zIndex = "";
     // Reset the hidden Home camera before exposing the live underpaint. The
     // destination backdrop must warm against its final, stable layer topology.
     if (cam?.restoreRoot) cam.restoreRoot();
@@ -1353,6 +1366,9 @@
     // refresh. Doing this inside workspace activation forced Home and the
     // incoming room through one full-document style/layout pass.
     try { window.crmHome?.retainMotionSurface?.(); } catch {}
+    await paint(1);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    if (!window.crmHome?.finalizeInactiveSurface?.() && surface) surface.hidden = true;
     await paint(1);
     if (stage.sequence !== activeDive?.sequence) return false;
     surface?.removeAttribute?.("data-crm-transit-cover");
@@ -1677,22 +1693,26 @@
     // The full-size return lid is now the exact visible room. Retaining the
     // complete outgoing .001 module underneath only asks Viz to raster both
     // scenes during the first reverse frame.
-    if (!window.crmHome?.releasePrecomposedModule?.(fromKey)) {
-      window.crmHome?.setPrecomposedModulePromoted?.(fromKey, false);
-    }
-    commit("home");   // the module vanishes behind the full-screen lid, same frame
-    // The first refresh closes Home activation, full-screen lid seating and
-    // outgoing-room retirement. Start the reverse camera in the following
-    // refresh so its geometry/style preparation never shares that paint.
-    requestAnimationFrame(() => {
+    void (async () => {
+      if (!window.crmHome?.releasePrecomposedModule?.(fromKey)) {
+        window.crmHome?.setPrecomposedModulePromoted?.(fromKey, false);
+      }
+      // The exact full-size return lid is already authoritative. Retire the
+      // large outgoing room, route state, API activation and theater topology
+      // in their own covered paints just as the forward endpoint does.
+      await paint(1);
+      await commitStaged("home");
+      await paint(1);
       requestAnimationFrame(() => {
-        cam.back();     // 460ms house contract into the Home slot
-        Promise.resolve(cam.whenSettled?.()).then(() => window.crmHome?.waitForHandoff?.()).then(() => {
-          if (surface) surface.style.zIndex = "";
-          done();
+        requestAnimationFrame(() => {
+          cam.back();     // 460ms house contract into the Home slot
+          Promise.resolve(cam.whenSettled?.()).then(() => window.crmHome?.waitForHandoff?.()).then(() => {
+            if (surface) surface.style.zIndex = "";
+            done();
+          });
         });
       });
-    });
+    })();
   };
 
   const restoreViewport = async (viewport) => {

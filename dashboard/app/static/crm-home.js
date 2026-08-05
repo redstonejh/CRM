@@ -47,6 +47,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   let handRefreshGeneration = 0;
   let handDirty = true;
   let activeRefreshPending = false;
+  let inactiveCommitDeferred = false;
   let motionSnapshot = null;
   let pendingMotionSnapshot = null;
   let motionCommitTimer = 0;
@@ -436,6 +437,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         .tk-zones>[data-crm-home-precompose-promoted]{
         opacity:var(--crm-home-precompose-opacity,1)!important;
         pointer-events:var(--crm-home-precompose-pointer,auto)!important}
+      /* A focused room has already completed its native-size factory/layout
+         pass. Cull only its finite paint owners while Home is visibly moving:
+         a large card room can contain 1,200+ descendants, and retaining that
+         second scene at .001 still makes Viz composite every descendant layer.
+         Promotion removes this flag beneath the opaque endpoint raster. */
+      html body [data-crm-home-motion-parked-owner]{visibility:hidden!important}
       /* Returning Home retires only each room's finite compositor owners.
          Keeping the precomposed root selector stable avoids restyling the
          complete canonical tree; opacity zero culls every retired paint and
@@ -479,7 +486,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface.crm-home-camera-handoff>.crm-home-expander:not(.crm-home-warm){
         opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff>.crm-home-expander:not(.crm-home-warm) .crm-home-preview-foreground{
-        filter:none;transition:none!important}
+        filter:none;opacity:1!important;transition:none!important}
+      .crm-home-expander .crm-home-preview-resting-filter{
+        z-index:2;filter:blur(.65px) saturate(.95) brightness(.88);
+        opacity:0;transform:translateZ(0);transition:none;will-change:opacity}
+      .crm-home-warm .crm-home-preview-resting-filter,
+      .crm-home-recycled-expander .crm-home-preview-resting-filter{
+        opacity:1!important}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-title-layer{
         opacity:.001!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-grid>.crm-home-bucket,
@@ -491,8 +504,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing>
         .crm-home-expander:not(.crm-home-warm) .crm-home-preview-foreground{
-        filter:blur(.65px) saturate(.95) brightness(.88)!important;
-        transition:filter ${HOME_RETURN_INGRESS_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
+        filter:none!important;opacity:0!important;
+        transition:opacity ${HOME_RETURN_INGRESS_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
+      .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing>
+        .crm-home-expander:not(.crm-home-warm) .crm-home-preview-resting-filter{
+        opacity:1!important;
+        transition:opacity ${HOME_RETURN_INGRESS_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-committing .crm-home-title-layer,
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-committing .crm-home-grid>.crm-home-bucket,
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-committing .crm-home-priority-hand{
@@ -1309,6 +1326,33 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       ...node.querySelectorAll(":scope > .tk-zones > *"),
     ];
   };
+  const motionPaintOwnersOf = (node) => {
+    if (!node?.matches?.(".crm-theater")) return node ? [node] : [];
+    const granular = [
+      ...node.querySelectorAll(":scope > .tk-zones .tk-zone"),
+      ...node.querySelectorAll(":scope > .tk-zones .tk-zone-hacrylic-lens"),
+      ...node.querySelectorAll(":scope [data-crm-acrylic-owner]"),
+      ...node.querySelectorAll(":scope > .tk-stacks"),
+      ...node.querySelectorAll(":scope > .tk-scrim"),
+    ];
+    return granular.length ? [...new Set(granular)] : precomposeOwnersOf(node);
+  };
+  const clearMotionPaintParking = (node) => {
+    if (!node) return false;
+    node.removeAttribute("data-crm-home-motion-parked");
+    motionPaintOwnersOf(node).forEach((owner) => {
+      owner.removeAttribute("data-crm-home-motion-parked-owner");
+    });
+    return true;
+  };
+  const parkMotionPaint = (node) => {
+    if (!node) return false;
+    node.setAttribute("data-crm-home-motion-parked", "");
+    motionPaintOwnersOf(node).forEach((owner) => {
+      owner.setAttribute("data-crm-home-motion-parked-owner", "");
+    });
+    return true;
+  };
   const rememberPrecomposeOwners = (node) => {
     if (node && !node.matches?.(".crm-theater")) {
       if (node.dataset.crmHomePrecomposeOwner !== "true") {
@@ -1336,6 +1380,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     );
     if (!node) return false;
     node.removeAttribute("data-crm-home-released-owner");
+    clearMotionPaintParking(node);
     rememberPrecomposeOwners(node);
     node.hidden = false;
     if (!node.matches?.(".crm-theater")) {
@@ -1375,6 +1420,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       node.setAttribute("data-crm-home-released-owner", "");
     }
     node.hidden = true;
+    clearMotionPaintParking(node);
     node.inert = false;
     node.removeAttribute("aria-hidden");
     return true;
@@ -1400,6 +1446,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         delete node.dataset.crmHomeFocusedPrecompose;
       }
       node.removeAttribute("data-crm-home-precompose-promoted");
+      clearMotionPaintParking(node);
       if (node.matches?.(".crm-theater")) {
         precomposeOwnersOf(node).forEach((owner) => {
           owner.removeAttribute("data-crm-home-precompose-promoted");
@@ -1433,19 +1480,135 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const preparePrecomposedModule = async (key) => {
     const node = focusPrecomposedModule(key);
     if (!node) return null;
+    if (node.hasAttribute("data-crm-home-motion-parked")) return node;
     const api = window[FACTORY_API_BY_MODULE[key]] || null;
+    // Idle factory prewarm has already completed this exact canonical layout.
+    // Pointer intent only needs to cull its retained paint and close that
+    // selector change; rerunning the geometry stability sampler can otherwise
+    // spill into the click's pre-motion interval on the first large room.
+    if (prewarmedFactories.has(FACTORY_API_BY_MODULE[key])) {
+      parkMotionPaint(node);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return node;
+    }
     if (!node.matches?.(".crm-theater")) node.removeAttribute("data-crm-home-precompose-seated");
     let settled = null;
     try { settled = await api?.waitForGeometrySettled?.(); } catch {}
     if (!node.matches?.(".crm-theater") && settled?.stable === true) {
       node.setAttribute("data-crm-home-precompose-seated", "true");
     }
+    // The geometry/data factory is retained; only its offscreen paint is
+    // culled. Close that visibility change before a click can begin the camera
+    // so no large inherited-style invalidation lands in the first motion frame.
+    parkMotionPaint(node);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     return node;
+  };
+  const promotePrecomposedModule = async (key, options = {}) => {
+    const theater = key === "cases" ? "tickets" : key;
+    const node = document.querySelector(
+      `[data-crm-theater="${theater}"][data-crm-home-precomposed]`,
+    );
+    if (!node) return false;
+    const canContinue = typeof options.canContinue === "function"
+      ? options.canContinue
+      : () => true;
+    node.removeAttribute("data-crm-home-released-owner");
+    rememberPrecomposeOwners(node);
+    node.hidden = false;
+    node.inert = false;
+    if (!node.matches?.(".crm-theater")) {
+      node.setAttribute("data-crm-home-precompose-promoted", "");
+      node.removeAttribute("aria-hidden");
+      clearMotionPaintParking(node);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return canContinue();
+    }
+    node.removeAttribute("data-crm-home-precompose-promoted");
+    const owners = precomposeOwnersOf(node);
+    owners.forEach((owner) => {
+      owner.removeAttribute("data-crm-home-released-owner");
+      owner.setAttribute("data-crm-home-precompose-promoted", "");
+    });
+    node.removeAttribute("aria-hidden");
+    // First close the cheap outer rail/deck promotion while every heavy card
+    // subtree is still culled. Then reveal one independently-contained bucket
+    // per native paint. A 160-person room previously instantiated all 1,232
+    // descendants in one 40 ms frame despite being safely raster-covered.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (!canContinue()) return false;
+    const parkedOwners = motionPaintOwnersOf(node).filter((owner) =>
+      owner.hasAttribute("data-crm-home-motion-parked-owner"));
+    for (const owner of parkedOwners) {
+      owner.removeAttribute("data-crm-home-motion-parked-owner");
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (!canContinue()) return false;
+    }
+    node.removeAttribute("data-crm-home-motion-parked");
+    return true;
+  };
+  let factoryAcrylicCover = null;
+  const prepareFactoryAcrylicCover = async () => {
+    const deadline = performance.now() + 20_000;
+    while (!motionSnapshot?.src && canPrewarmFactory() && performance.now() < deadline) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    if (!motionSnapshot?.src || !canPrewarmFactory()) return null;
+    if (!factoryAcrylicCover?.isConnected) {
+      factoryAcrylicCover = imageNode("crm-home-factory-acrylic-cover", "", "sync");
+      Object.assign(factoryAcrylicCover.style, {
+        position:"fixed",
+        inset:"0",
+        zIndex:"819",
+        width:"100vw",
+        height:"100vh",
+        objectFit:"fill",
+        pointerEvents:"none",
+        opacity:"0",
+        visibility:"hidden",
+      });
+      factoryAcrylicCover.setAttribute("aria-hidden", "true");
+      document.body.appendChild(factoryAcrylicCover);
+    }
+    if (factoryAcrylicCover.src !== motionSnapshot.src) {
+      factoryAcrylicCover.src = motionSnapshot.src;
+    }
+    if (!factoryAcrylicCover.complete || factoryAcrylicCover.naturalWidth <= 0) {
+      try { await factoryAcrylicCover.decode?.(); } catch {}
+    }
+    return factoryAcrylicCover.complete && factoryAcrylicCover.naturalWidth > 0
+      ? factoryAcrylicCover
+      : null;
+  };
+  const prewarmFactoryAcrylic = async (node) => {
+    const acrylicOwners = [...(node?.querySelectorAll?.("[data-crm-acrylic-owner]") || [])];
+    if (!node || !acrylicOwners.length || !canPrewarmFactory()) return true;
+    const cover = await prepareFactoryAcrylicCover();
+    if (!cover || !canPrewarmFactory()) return false;
+    parkMotionPaint(node);
+    const outerOwners = precomposeOwnersOf(node);
+    outerOwners.forEach((owner) => owner.setAttribute("data-crm-home-precompose-promoted", ""));
+    acrylicOwners.forEach((owner) => owner.removeAttribute("data-crm-home-motion-parked-owner"));
+    // Home itself remains the top visible surface. This matching raster sits
+    // directly below it and above the inactive room, exactly mirroring the
+    // endpoint's 99% cover/1% live-underpaint topology without changing a
+    // visible pixel. Four closed paints allocate and raster the real blur.
+    cover.style.visibility = "visible";
+    cover.style.opacity = ".99";
+    await new Promise((resolve) => requestAnimationFrame(() =>
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+    cover.style.opacity = "0";
+    cover.style.visibility = "hidden";
+    acrylicOwners.forEach((owner) => owner.setAttribute("data-crm-home-motion-parked-owner", ""));
+    outerOwners.forEach((owner) => owner.removeAttribute("data-crm-home-precompose-promoted"));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return canPrewarmFactory();
   };
   const primeInactiveTheater = async (node, api) => {
     if (!node || api?.isActive?.() || !canPrewarmFactory()) return;
     const lease = {};
     node.removeAttribute("data-crm-home-released-owner");
+    clearMotionPaintParking(node);
     precomposeOwnersOf(node).forEach((owner) => owner.removeAttribute("data-crm-home-released-owner"));
     node.hidden = false;
     node.inert = !node.matches?.(".crm-theater");
@@ -1463,6 +1626,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (!node.matches?.(".crm-theater") && settled?.stable === true) {
         node.setAttribute("data-crm-home-precompose-seated", "true");
       }
+      if (!await prewarmFactoryAcrylic(node)) return;
     } finally {
       // Prewarming is a finite paint/upload operation, not permanent visual
       // ownership. Keeping every completed room at opacity .001 preserved all
@@ -1897,6 +2061,15 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       lens.dataset.crmPeripheralAcrylicPhase = enabled ? "prepared" : "standby";
       return !!enabled;
     };
+    const arm = (direction = "expand") => {
+      if (!lens || !state || !["expand", "contract"].includes(direction)) return null;
+      stop();
+      state.direction = direction;
+      setClipTransform(direction === "expand" ? state.sourceTransform : state.destinationTransform);
+      lens.dataset.crmPeripheralAcrylicDirection = direction;
+      setEnabled(true);
+      return lens;
+    };
     const start = (direction, enabled = true) => {
       if (!lens || !state || state.direction !== direction || !enabled) {
         setEnabled(false);
@@ -1999,7 +2172,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       backdropFilter:state?.backdrop || "",
       screenSpace:!!lens && getComputedStyle(lens).transform !== "",
     });
-    return { prepare, setEnabled, start, sync, prime, rest, release, holdEndpoint, park, finish, element:() => lens, status };
+    return { prepare, arm, setEnabled, start, sync, prime, rest, release, holdEndpoint, park, finish, element:() => lens, status };
   };
   const homePeripheralAcrylic = createPeripheralAcrylic();
   let restingAcrylicFrame = 0;
@@ -2060,7 +2233,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // One transparent, full-resolution room texture carries its objects and
     // shadows above a live acrylic lens. The fixed workspace wallpaper remains
     // the only background paint throughout the camera move.
-    mountHost(bucket.querySelector(".crm-home-preview"), previews.get(module.key), true);
+    const previewHost = bucket.querySelector(".crm-home-preview");
+    mountHost(previewHost, previews.get(module.key), true);
+    const foreground = previewHost?.querySelector(":scope > .crm-home-preview-foreground");
+    if (foreground) {
+      let restingFilter = previewHost.querySelector(":scope > .crm-home-preview-resting-filter");
+      if (!restingFilter) {
+        restingFilter = imageNode("crm-home-preview-resting-filter", "", "sync");
+        previewHost.appendChild(restingFilter);
+      }
+      const foregroundSource = foreground.currentSrc || foreground.src;
+      if (foregroundSource && restingFilter.src !== foregroundSource) restingFilter.src = foregroundSource;
+    }
     return bucket;
   };
   const recycleExpander = (key, expander) => {
@@ -2074,8 +2258,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     expander.style.removeProperty("transition");
     expander.classList.remove("crm-home-endpoint-cover");
     preview?.querySelector(":scope > .crm-home-endpoint-fallback")?.remove();
-    preview?.querySelector(":scope > .crm-home-preview-foreground")
-      ?.style.removeProperty("visibility");
+    const foreground = preview?.querySelector(":scope > .crm-home-preview-foreground");
+    foreground?.style.removeProperty("visibility");
+    foreground?.style.removeProperty("will-change");
     delete expander.dataset.crmEndpointCover;
     expander.className = "crm-home-bucket crm-home-expander crm-home-recycled-expander";
     Object.assign(expander.style, {
@@ -2282,13 +2467,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
           ? [...root.querySelectorAll(":scope > .crm-home-grid > .crm-home-bucket")]
           : [];
         const title = root?.querySelector?.(":scope > .crm-home-title-layer");
-        const foregroundFilter = foreground ? getComputedStyle(foreground).filter : "";
+        const restingFilter = expander?.querySelector?.(".crm-home-preview-resting-filter");
         ready = buckets.length === homeTileRecords.length
           && buckets.every((node) => Number(getComputedStyle(node).opacity) <= .002)
           && !!title
           && Number(getComputedStyle(title).opacity) <= .002
           && (!expander || Number(getComputedStyle(expander).opacity) >= .999)
-          && (!foreground || foregroundFilter.includes("blur(0.65px)"));
+          && (!foreground || Number(getComputedStyle(foreground).opacity) <= .002)
+          && (!foreground || (!!restingFilter && Number(getComputedStyle(restingFilter).opacity) >= .999));
       } else {
         const outgoing = [
           root?.querySelector?.(":scope > .crm-home-motion-variant.is-active-motion-variant"),
@@ -2374,6 +2560,16 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     configureExpander:(expander,target,context)=>{
       expander.__crmHomeRestingFilterPrime?.cancel?.();
       expander.__crmHomeRestingFilterPrime = null;
+      // Hover already measured this exact expander and built both persistent
+      // screen-space acrylic owners. Re-arming those retained owners is a
+      // handful of compositor writes; rebuilding their viewport geometry and
+      // SVG masks on click consumed two refresh intervals before motion.
+      if (context.reusedWarmExpander && context.direction === "expand") {
+        const selectedLens = homeAcrylicLens.arm("expand");
+        const sharedLens = homePeripheralAcrylic.arm("expand");
+        delegateSelectedAcrylicBackdrop(!!selectedLens && !!sharedLens);
+        return;
+      }
       // Read the canonical bucket material before returning its backdrop to
       // the shared owner. Removing this class and restoring it below happen in
       // one task, so no intermediate double-filter frame can be presented.
@@ -2384,24 +2580,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     },
     primeExpander:(expander,target,context)=>{
       const key = moduleKeyOf(target);
-      const foreground = expander.querySelector?.(":scope > .crm-home-preview > .crm-home-preview-foreground");
-      if (foreground && !expander.__crmHomeRestingFilterPrimed) {
-        expander.__crmHomeRestingFilterPrimed = true;
-        const filterPrime = foreground.animate(
-          [
-            { filter:"none", offset:0 },
-            { filter:"blur(.65px) saturate(.95) brightness(.88)", offset:.5 },
-            { filter:"none", offset:1 },
-          ],
-          { duration:96, easing:"linear" },
-        );
-        expander.__crmHomeRestingFilterPrime = filterPrime;
-        filterPrime.finished.catch(() => {}).finally(() => {
-          if (expander.__crmHomeRestingFilterPrime === filterPrime) {
-            expander.__crmHomeRestingFilterPrime = null;
-          }
-        });
-      }
+      const restingFilter = expander.querySelector?.(":scope > .crm-home-preview > .crm-home-preview-resting-filter");
+      try { void restingFilter?.decode?.(); } catch {}
       selectMotionVariant(context.layers?.[0],target?.dataset?.tileId || key);
       homeAcrylicLens.prime();
       const ownsSharedBackdrop = !!homePeripheralAcrylic.prime();
@@ -2564,19 +2744,26 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
 
   const setActive = (on) => {
     subscribe();
+    const requestedActive = !!on;
     const transitBusy = !!window.crmDeskTransit?.isBusy?.();
-    const changed = camera.isActive() !== !!on;
+    const logicalActive = camera.isActive() && !inactiveCommitDeferred;
+    const changed = logicalActive !== requestedActive;
     if (changed) {
       // Forward transit still owns an opaque endpoint bridge and asks the
       // camera to restore its root a few covered frames later. Applying the
       // retained-tree selectors here would combine that full Home topology
       // change with the destination workspace commit.
-      if (!on && !transitBusy) setInactiveMotionRetention(true);
-      camera.setActive(on);
-      if (on && !transitBusy) setInactiveMotionRetention(false);
-      if (on) factoryPrewarmAfter = performance.now() + 250;
+      if (!requestedActive && transitBusy) {
+        inactiveCommitDeferred = true;
+      } else {
+        if (!requestedActive) setInactiveMotionRetention(true);
+        inactiveCommitDeferred = false;
+        camera.setActive(requestedActive);
+        if (requestedActive && !transitBusy) setInactiveMotionRetention(false);
+      }
+      if (requestedActive) factoryPrewarmAfter = performance.now() + 250;
     }
-    if (on) {
+    if (requestedActive) {
       if (!transitBusy) mountAll();
       // The decoded transition texture survives while Home is inactive, but a
       // layout/camera boundary can leave its readiness flag cleared. Re-seat
@@ -2608,6 +2795,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       }
     }
     return window.crmHome;
+  };
+  const finalizeInactiveSurface = () => {
+    if (!inactiveCommitDeferred && !camera?.isActive?.()) return true;
+    inactiveCommitDeferred = false;
+    camera?.setActive?.(false);
+    return !camera?.isActive?.();
   };
   document.addEventListener("crm:desk-transit-settled", (event) => {
     scheduleTransitionMaintenance();
@@ -2760,7 +2953,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       scheduleRestingAcrylic();
     });
   });
-  window.crmHome={setActive,isActive:()=>camera.isActive(),refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,setPrecomposedModulePromoted,prepareModule:preparePrecomposedModule,
+  window.crmHome={setActive,isActive:()=>camera.isActive()&&!inactiveCommitDeferred,refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,setPrecomposedModulePromoted,promotePrecomposedModule,prepareModule:preparePrecomposedModule,
     endpointPreview:(key)=>{const preview=previews.get(key);return isRenderablePreview(preview)?{key,src:preview.exactSrc,capturedAt:preview.capturedAt||0,width:preview.width||0,height:preview.height||0}:null},
     acrylicState:()=>homeAcrylicLens.status(),
     retireEndpointAcrylic:()=>{
@@ -2783,6 +2976,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     createTile:createHomeTile,removeTile:removeHomeTile,canRemoveTile:canRemoveHomeTile,resetTiles:resetHomeTiles,
     releasePrecomposedModule,
     retainMotionSurface:()=>setInactiveMotionRetention(true),
+    finalizeInactiveSurface,
     previewStatus:()=>MODULES.map(({key})=>{const preview=previews.get(key);const pending=pendingPreviews.get(key);return{key,state:(pending||previewSyncKeys.has(key)||pendingDisplayedPreviewRefreshes.has(key))?"updating":preview?(isCurrentPreview(preview)?"ready":"stale"):"waiting",version:preview?.version||null,capturedAt:preview?.capturedAt||0,layoutSignature:preview?.layoutSignature||null}}),
     handStatus:()=>({ready:!handDirty,count:priorityItems.length,username:priorityUsername,day:todayKey(),ids:priorityItems.map((item)=>item.id),targets:priorityItems.map((item)=>priorityLink(item))}),
     ensureHandReady:refreshPriorityHand,motionLayoutSignature,motionStatus:()=>({ready:camera?.layers?.()[0]?.dataset?.motionSnapshotReady==="true",capturedAt:motionSnapshot?.capturedAt||0,layoutSignature:motionSnapshot?.layoutSignature||"",backgroundMode:motionSnapshot?.backgroundMode||"",materialMode:motionSnapshot?.materialMode||""}),

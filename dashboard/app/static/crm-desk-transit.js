@@ -800,19 +800,62 @@
   };
 
   const primeEndpointPreview = async (key) => {
+    const theaterKey = key === "cases" ? "tickets" : key;
+    const preparedModule = document.querySelector(
+      `[data-crm-theater="${CSS.escape(theaterKey)}"]`
+        + `[data-crm-home-focused-precompose="true"][data-crm-home-motion-parked]`,
+    );
+    let preview = window.crmHome?.endpointPreview?.(key);
+    const preparedIdentity = preview?.src
+      ? endpointImageIdentity(preview.src, key, preview.capturedAt)
+      : "";
+    const retainedBridge = persistentEndpointBridge?.isConnected
+      ? persistentEndpointBridge
+      : document.querySelector("body > .crm-home-endpoint-bridge[data-crm-persistent-bridge]");
+    const retainedRaster = retainedBridge?.querySelector?.(
+      ":scope > img.crm-home-endpoint-bridge-raster",
+    );
+    const retainedExactReady = !!preparedIdentity
+      && retainedBridge?.dataset?.crmEndpointIdentity === preparedIdentity
+      && retainedBridge.dataset.crmEndpointRasterReady === "true"
+      && retainedRaster?.complete
+      && retainedRaster.naturalWidth > 0;
+    if (window.__crmDeskPerformanceTrace === true) {
+      performance.mark(
+        `crm-desk-transit:prime:${key}:module-${preparedModule ? "ready" : "cold"}`
+          + `:raster-${retainedExactReady ? "ready" : "cold"}`,
+      );
+    }
+    // Pointer intent already completed both expensive pieces of navigation
+    // preflight. Revalidating the same decoded image calls getAnimations() and
+    // re-parks its full-screen compositor surface, which can consume 30+ ms
+    // before the camera is even allowed to start.
+    if (preparedModule && retainedExactReady) return true;
     // Hover normally seats the retained room before a click, but keyboard,
     // history and automation routes have no pointer lead. Await the same finite
     // precompose hook before the camera starts so no destination geometry can
     // be written during visible motion.
     try { await window.crmHome?.prepareModule?.(key); } catch {}
-    const preview = window.crmHome?.endpointPreview?.(key);
+    if (window.__crmDeskPerformanceTrace === true) {
+      performance.mark(`crm-desk-transit:prime:${key}:module-complete`);
+    }
+    preview = window.crmHome?.endpointPreview?.(key);
     if (!preview?.src) return false;
-    return !!await loadEndpointBridgeImage(preview.src, {
+    const identity = endpointImageIdentity(preview.src, key, preview.capturedAt);
+    if (retainedBridge?.dataset?.crmEndpointIdentity === identity
+      && retainedBridge.dataset.crmEndpointRasterReady === "true"
+      && retainedRaster?.complete
+      && retainedRaster.naturalWidth > 0) return true;
+    const loaded = !!await loadEndpointBridgeImage(preview.src, {
       key,
       capturedAt:preview.capturedAt,
       mode:"exact",
       decodedImage:preview.raster,
     });
+    if (window.__crmDeskPerformanceTrace === true) {
+      performance.mark(`crm-desk-transit:prime:${key}:raster-complete`);
+    }
+    return loaded;
   };
 
   const buildEndpointBridge = async (stage, raster) => {

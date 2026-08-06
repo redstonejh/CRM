@@ -1322,8 +1322,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone-hrail{--tk-zone-rail-inset:clamp(22px,2.2vw,30px);position:fixed;left:0;right:0;overflow:visible;pointer-events:none}
       .tk-zone-hshade{position:fixed;z-index:3;top:0;bottom:0;width:clamp(34px,4.5vw,68px);opacity:0;pointer-events:none;transition:opacity .12s linear;will-change:opacity}.tk-zone-hshade-left{left:0;background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hshade-right{right:0;background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .tk-zone-hclip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0;pointer-events:auto}.tk-zone-hclip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
-      .tk-zone-htrack{position:relative;width:max-content;min-width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 var(--tk-zone-rail-inset);will-change:transform;pointer-events:auto}
-      .tk-zone-hacrylic-lens{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;pointer-events:none;background:transparent;-webkit-backdrop-filter:var(--bucket-acrylic-filter);backdrop-filter:var(--bucket-acrylic-filter);will-change:transform}
+      .tk-zone-hacrylic-defs{position:absolute;inset:0;z-index:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+      .tk-zone-hacrylic-lens{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;pointer-events:none;background:transparent;-webkit-backdrop-filter:var(--bucket-acrylic-filter);backdrop-filter:var(--bucket-acrylic-filter);transform:translateZ(0);backface-visibility:hidden}
+      .tk-zone-htrack{position:relative;z-index:1;width:max-content;min-width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 var(--tk-zone-rail-inset);will-change:transform;pointer-events:auto}
       .tk-zone-htrack.has-shared-zone-acrylic>.tk-zone{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .tk-zone-htrack>.tk-zone{position:relative;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 auto;z-index:1}
       .tk-zone-htrack.is-paged{display:block;width:100%;min-width:0;padding:0}
@@ -2780,7 +2781,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
-  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHAcrylicLens = null, zoneHBar = null, zoneHThumb = null, zoneHLeftShade = null, zoneHRightShade = null, zoneHResizeObserver = null;
+  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHAcrylicLens = null, zoneHAcrylicDefs = null, zoneHAcrylicClipGroup = null, zoneHAcrylicClipId = "", zoneHBar = null, zoneHThumb = null, zoneHLeftShade = null, zoneHRightShade = null, zoneHResizeObserver = null;
   let zoneHWindowWheelWired = false;
   let zoneHInteractionReadyWired = false;
   let zoneVRail = null, zoneVClip = null, zoneVTrack = null, zoneVBar = null, zoneVThumb = null, zoneVResizeObserver = null;
@@ -2794,6 +2795,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // different axes. Keep one literal motion recipe so their feel cannot drift
   // apart again: 22% target easing with a 90ms wheel release.
   const ZONE_SCROLL_EASE = .22;
+  const ZONE_SCROLL_FRAME_MS = 10;
   const ZONE_SCROLL_WHEEL_RELEASE_MS = 90;
   const ZONE_RAIL_PENDING_LIMIT = 420;
   const zoneHScroll = {
@@ -2803,8 +2805,16 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     wheeling:false,
     pendingWheel:0,
     releaseT:0,
+    motionAnimation:null,
+    maskAnimation:null,
+    thumbAnimation:null,
+    leftShadeAnimation:null,
+    rightShadeAnimation:null,
+    motionTarget:0,
+    motionPositions:[],
   };
   let zoneHPrimeAnimation = null;
+  let zoneHPrimeMaskAnimation = null;
   let zoneHPrimeSignature = "";
   const zoneRailInteractionKey = `zone-rail:${theaterKey || apiName || "cards"}`;
   let zoneRailInteractionHeld = false;
@@ -3171,32 +3181,37 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneHMetrics.bar = zoneHBar?.clientWidth || 0;
     return zoneHMetrics;
   };
-  const horizontalAcrylicPath = (x, y, width, height, radius) => {
-    const left = Math.round(x * 10) / 10, top = Math.round(y * 10) / 10;
-    const right = Math.round((x + width) * 10) / 10, bottom = Math.round((y + height) * 10) / 10;
-    const r = Math.round(Math.max(0, Math.min(radius, width / 2, height / 2)) * 10) / 10;
-    if (!r) return `M${left} ${top}H${right}V${bottom}H${left}Z`;
-    return `M${left + r} ${top}H${right - r}A${r} ${r} 0 0 1 ${right} ${top + r}V${bottom - r}A${r} ${r} 0 0 1 ${right - r} ${bottom}H${left + r}A${r} ${r} 0 0 1 ${left} ${bottom - r}V${top + r}A${r} ${r} 0 0 1 ${left + r} ${top}Z`;
-  };
   const syncHorizontalZoneAcrylic = () => {
-    if (!horizontalZones || !zoneHTrack || !zoneHAcrylicLens) return;
-    // This is layout-time work only. One exact shared acrylic filter sits
-    // beneath the bucket fills, clipped to the union of their real rounded
-    // border boxes; rail motion then has one backdrop owner instead of one per
-    // company without changing the tint, border, shadow, or radius.
-    const paths = STAGES.map((stage) => zoneBody[stage.key]?.parentElement).filter(Boolean).map((panel) => {
+    if (!horizontalZones || !zoneHTrack || !zoneHAcrylicLens || !zoneHAcrylicClipGroup) return;
+    // This is layout-time work only. The real filter is bounded to the visible
+    // rail viewport; an SVG union moves its bucket silhouettes across that
+    // fixed screen-space surface. The previous track-sized filter could exceed
+    // 4,000 px for People and periodically miss a native refresh despite being
+    // a single compositor layer.
+    const panels = STAGES.map((stage) => zoneBody[stage.key]?.parentElement).filter(Boolean);
+    const shapes = panels.map((panel) => {
       const radius = parseFloat(getComputedStyle(panel).borderTopLeftRadius) || 0;
-      return horizontalAcrylicPath(panel.offsetLeft, panel.offsetTop, panel.offsetWidth, panel.offsetHeight, radius);
+      const shape = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      shape.setAttribute("x", String(Math.round(panel.offsetLeft * 10) / 10));
+      shape.setAttribute("y", String(Math.round(panel.offsetTop * 10) / 10));
+      shape.setAttribute("width", String(Math.round(panel.offsetWidth * 10) / 10));
+      shape.setAttribute("height", String(Math.round(panel.offsetHeight * 10) / 10));
+      shape.setAttribute("rx", String(Math.round(radius * 10) / 10));
+      shape.setAttribute("ry", String(Math.round(radius * 10) / 10));
+      return shape;
     });
-    if (!paths.length) {
+    if (!shapes.length) {
       zoneHTrack.classList.remove("has-shared-zone-acrylic");
       zoneHAcrylicLens.style.clipPath = "";
       zoneHAcrylicLens.style.webkitClipPath = "";
+      zoneHAcrylicClipGroup.replaceChildren();
       return;
     }
-    const value = `path("${paths.join(" ")}")`;
+    zoneHAcrylicClipGroup.replaceChildren(...shapes);
+    const value = `url("#${zoneHAcrylicClipId}")`;
     zoneHAcrylicLens.style.clipPath = value;
     zoneHAcrylicLens.style.webkitClipPath = value;
+    zoneHAcrylicClipGroup.style.transform = `translate(${Math.round(zoneHScroll.x)}px, 0px)`;
     zoneHTrack.classList.add("has-shared-zone-acrylic");
   };
   const primeHorizontalZoneCompositor = () => {
@@ -3204,26 +3219,41 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const signature = `${zoneHClip.clientWidth}:${zoneHTrack.scrollWidth}:${STAGES.length}`;
     if (signature === zoneHPrimeSignature) return;
     zoneHPrimeAnimation?.cancel?.();
+    zoneHPrimeMaskAnimation?.cancel?.();
     const x = Math.round(zoneHScroll.x);
     const base = `translate3d(${x}px,0,0)`;
     const primed = `translate3d(${x - .25}px,0,0)`;
+    const maskBase = `translate(${x}px, 0px)`;
+    const maskPrimed = `translate(${x - .25}px, 0px)`;
     zoneHPrimeAnimation = zoneHTrack.animate(
       [{ transform:base }, { transform:primed, offset:.5 }, { transform:base }],
       { duration:64, easing:"linear" },
     );
+    zoneHPrimeMaskAnimation = zoneHAcrylicClipGroup?.animate?.(
+      [{ transform:maskBase }, { transform:maskPrimed, offset:.5 }, { transform:maskBase }],
+      { duration:64, easing:"linear" },
+    ) || null;
     zoneHPrimeSignature = signature;
     const animation = zoneHPrimeAnimation;
     animation.finished.catch(() => null).finally(() => {
-      if (zoneHPrimeAnimation === animation) zoneHPrimeAnimation = null;
+      if (zoneHPrimeAnimation === animation) {
+        zoneHPrimeAnimation = null;
+        zoneHPrimeMaskAnimation?.cancel?.();
+        zoneHPrimeMaskAnimation = null;
+      }
     });
   };
   const zoneHMin = () => {
     const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
     return Math.min(0, metrics.view - metrics.content);
   };
-  const positionZoneRail = (reconcileLod = true) => {
+  const positionZoneRail = (reconcileLod = true, moveSurface = true) => {
     if (!horizontalZones || !zoneRail || !zoneHClip || !zoneHTrack || !zoneHBar || !zoneHThumb) return;
-    zoneHTrack.style.transform = `translate3d(${Math.round(zoneHScroll.x)}px,0,0)`;
+    const roundedRailX = Math.round(zoneHScroll.x);
+    if (moveSurface) {
+      zoneHTrack.style.transform = `translate3d(${roundedRailX}px,0,0)`;
+      if (zoneHAcrylicClipGroup) zoneHAcrylicClipGroup.style.transform = `translate(${roundedRailX}px, 0px)`;
+    }
     const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
     const view = metrics.view, content = metrics.content, minimum = Math.min(0, view - content), over = content > view + 1;
     const fade = Math.min(72, Math.max(42, view * .06));
@@ -3232,7 +3262,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (zoneHLeftShade && leftOpacity !== zoneHLeftOpacity) { zoneHLeftOpacity = leftOpacity; zoneHLeftShade.style.opacity = leftOpacity; }
     if (zoneHRightShade && rightOpacity !== zoneHRightOpacity) { zoneHRightOpacity = rightOpacity; zoneHRightShade.style.opacity = rightOpacity; }
     zoneHBar.classList.toggle("is-on", over); const hidden = String(!over); if (zoneHBar.getAttribute("aria-hidden") !== hidden) zoneHBar.setAttribute("aria-hidden", hidden);
-    if (!over) { zoneHScroll.x = zoneHScroll.target = 0; zoneHTrack.style.transform = "translate3d(0,0,0)"; if (reconcileLod) updateHorizontalZoneLod(); return; }
+    if (!over) {
+      zoneHScroll.x = zoneHScroll.target = 0;
+      if (moveSurface) {
+        zoneHTrack.style.transform = "translate3d(0,0,0)";
+        if (zoneHAcrylicClipGroup) zoneHAcrylicClipGroup.style.transform = "translate(0px, 0px)";
+      }
+      if (reconcileLod) updateHorizontalZoneLod();
+      return;
+    }
     const trackW = Math.max(1, metrics.bar), base = Math.max(28, trackW * (view / content)); let width = base, left = 0;
     if (zoneHScroll.x > 0) { width = Math.max(14, base - zoneHScroll.x); left = 0; }
     else if (zoneHScroll.x < minimum) { width = Math.max(14, base - (minimum - zoneHScroll.x)); left = trackW - width; }
@@ -3242,32 +3280,130 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneHThumb.style.transform = `translate3d(${Math.round(left)}px,0,0)`;
     if (reconcileLod) updateHorizontalZoneLod();
   };
+  const cancelZoneRailMotionAnimations = () => {
+    zoneHScroll.motionAnimation?.cancel?.();
+    zoneHScroll.maskAnimation?.cancel?.();
+    zoneHScroll.thumbAnimation?.cancel?.();
+    zoneHScroll.leftShadeAnimation?.cancel?.();
+    zoneHScroll.rightShadeAnimation?.cancel?.();
+    zoneHScroll.motionAnimation = null;
+    zoneHScroll.maskAnimation = null;
+    zoneHScroll.thumbAnimation = null;
+    zoneHScroll.leftShadeAnimation = null;
+    zoneHScroll.rightShadeAnimation = null;
+    zoneHScroll.motionPositions = [];
+  };
+  const startZoneRailMotionAnimations = (goal) => {
+    cancelZoneRailMotionAnimations();
+    const start = zoneHScroll.x;
+    const positions = [start];
+    let value = start;
+    while (Math.abs(goal - value) >= .4 && positions.length < 80) {
+      value += (goal - value) * ZONE_SCROLL_EASE;
+      positions.push(value);
+    }
+    if (positions.at(-1) !== goal) positions.push(goal);
+    const trackFrames = positions.map((x) => ({
+      transform:`translate3d(${x}px,0,0)`,
+    }));
+    const maskFrames = positions.map((x) => ({
+      transform:`translate(${x}px, 0px)`,
+    }));
+    const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
+    const view = metrics.view;
+    const content = metrics.content;
+    const minimum = Math.min(0, view - content);
+    const trackWidth = Math.max(1, metrics.bar);
+    const thumbWidth = Math.max(28, trackWidth * (view / content));
+    const thumbTravel = Math.max(0, trackWidth - thumbWidth);
+    const fade = Math.min(72, Math.max(42, view * .06));
+    const thumbFrames = positions.map((x) => {
+      const bounded = clamp(x, minimum, 0);
+      const left = (minimum ? bounded / minimum : 0) * thumbTravel;
+      return { transform:`translate3d(${left}px,0,0)` };
+    });
+    const leftShadeFrames = positions.map((x) => ({
+      opacity:clamp(-x / fade, 0, 1),
+    }));
+    const rightShadeFrames = positions.map((x) => ({
+      opacity:clamp((x - minimum) / fade, 0, 1),
+    }));
+    const timing = {
+      duration:Math.max(ZONE_SCROLL_FRAME_MS, (positions.length - 1) * ZONE_SCROLL_FRAME_MS),
+      easing:"linear",
+      fill:"both",
+    };
+    zoneHScroll.motionTarget = goal;
+    zoneHScroll.motionPositions = positions;
+    const roundedThumbWidth = Math.round(thumbWidth);
+    if (roundedThumbWidth !== zoneHThumbWidth) {
+      zoneHThumbWidth = roundedThumbWidth;
+      zoneHThumb.style.width = `${roundedThumbWidth}px`;
+    }
+    zoneHScroll.motionAnimation = zoneHTrack.animate(trackFrames, timing);
+    zoneHScroll.maskAnimation = zoneHAcrylicClipGroup?.animate?.(maskFrames, timing) || null;
+    zoneHScroll.thumbAnimation = zoneHThumb.animate(thumbFrames, timing);
+    zoneHScroll.leftShadeAnimation = zoneHLeftShade?.animate?.(leftShadeFrames, timing) || null;
+    zoneHScroll.rightShadeAnimation = zoneHRightShade?.animate?.(rightShadeFrames, timing) || null;
+    // Buffered entry input is observable in the same task that releases it.
+    // Advance only the logical value to the first canonical physics sample;
+    // the synchronized compositor animations present that same sample on the
+    // next native paint.
+    if (positions.length > 1) zoneHScroll.x = positions[1];
+  };
   const runZoneRailScroll = () => {
     if (!horizontalZones || zoneHScroll.raf) return;
     zoneHPrimeAnimation?.cancel?.();
     zoneHPrimeAnimation = null;
+    zoneHPrimeMaskAnimation?.cancel?.();
+    zoneHPrimeMaskAnimation = null;
     holdZoneRailInteraction();
+    const currentGoal = () => zoneHScroll.wheeling
+      ? zoneHScroll.target
+      : clamp(zoneHScroll.target, zoneHMin(), 0);
+    startZoneRailMotionAnimations(currentGoal());
     const tick = () => {
-      const minimum = zoneHMin(), goal = zoneHScroll.wheeling ? zoneHScroll.target : clamp(zoneHScroll.target, minimum, 0);
-      zoneHScroll.x += (goal - zoneHScroll.x) * ZONE_SCROLL_EASE;
-      if (!zoneHScroll.wheeling && Math.abs(goal - zoneHScroll.x) < .4) {
+      const goal = currentGoal();
+      const animation = zoneHScroll.motionAnimation;
+      const positions = zoneHScroll.motionPositions;
+      const progress = Number(animation?.effect?.getComputedTiming?.().progress);
+      if (Number.isFinite(progress) && positions.length) {
+        const scaled = progress * (positions.length - 1);
+        const index = Math.min(positions.length - 1, Math.floor(scaled));
+        const nextIndex = Math.min(positions.length - 1, index + 1);
+        const fraction = scaled - index;
+        const sampled = positions[index] + (positions[nextIndex] - positions[index]) * fraction;
+        zoneHScroll.x = positions.at(-1) < positions[0]
+          ? Math.min(zoneHScroll.x, sampled)
+          : Math.max(zoneHScroll.x, sampled);
+      }
+      if (Math.abs(goal - zoneHScroll.motionTarget) >= .4) {
+        startZoneRailMotionAnimations(goal);
+      } else if (!zoneHScroll.wheeling
+        && (animation?.playState === "finished" || Math.abs(goal - zoneHScroll.x) < 1.5)) {
         zoneHScroll.x = zoneHScroll.target = goal;
+        cancelZoneRailMotionAnimations();
         positionZoneRail(true);
         zoneHScroll.raf = 0;
         releaseZoneRailInteraction();
         return;
       }
-      // The promoted track moves at its original physical speed. Semantic LOD
-      // is reconciled once, after motion, and never changes paint visibility.
-      positionZoneRail(false); zoneHScroll.raf = requestAnimationFrame(tick);
+      // Track, acrylic mask, scrollbar and adaptive edge shadows travel through
+      // synchronized compositor animations. This callback updates logical
+      // state only; it performs no per-frame DOM writes.
+      zoneHScroll.raf = requestAnimationFrame(tick);
     };
     zoneHScroll.raf = requestAnimationFrame(tick);
   };
   const scrollZoneRailBy = (delta, immediate = false) => {
     if (!horizontalZones) return false; const minimum = zoneHMin(); if (minimum >= 0) return false;
     if (immediate) {
+      if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf);
+      zoneHScroll.raf = 0;
+      cancelZoneRailMotionAnimations();
       zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x - delta, minimum, 0);
       positionZoneRail();
+      releaseZoneRailInteraction();
       return true;
     }
     if (!zoneHScroll.raf) zoneHScroll.target = zoneHScroll.x;
@@ -3359,7 +3495,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     let dragging = false, startX = 0, startScroll = 0, pointerId = null;
     const move = (event) => { if (!dragging) return; const minimum = zoneHMin(), view = zoneHClip.clientWidth, content = view - minimum, trackW = zoneHBar.clientWidth, thumbW = Math.max(28, trackW * (view / content)), fraction = (event.clientX - startX) / Math.max(1, trackW - thumbW); zoneHScroll.x = damp(startScroll + fraction * minimum, minimum); zoneHScroll.target = zoneHScroll.x; positionZoneRail(false); };
     const up = () => { if (!dragging) return; dragging = false; try { if (pointerId != null && zoneHThumb.hasPointerCapture?.(pointerId)) zoneHThumb.releasePointerCapture(pointerId); } catch {} pointerId = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); zoneHScroll.wheeling = false; zoneHScroll.target = zoneHScroll.x; runZoneRailScroll(); };
-    zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; holdZoneRailInteraction(); pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
+    zoneHThumb.addEventListener("pointerdown", (event) => { event.stopPropagation(); dragging = true; holdZoneRailInteraction(); pointerId = event.pointerId; try { zoneHThumb.setPointerCapture?.(pointerId); } catch {} startX = event.clientX; startScroll = zoneHScroll.x; cancelAnimationFrame(zoneHScroll.raf); zoneHScroll.raf = 0; cancelZoneRailMotionAnimations(); clearTimeout(zoneHScroll.releaseT); zoneHScroll.wheeling = false; window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up); });
     zoneHResizeObserver?.disconnect(); zoneHResizeObserver = new ResizeObserver(() => {
       if (zoneGeometryBlocked()) { scheduleZoneGeometryRefresh(); return; }
       cacheZoneRailMetrics(); zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x, zoneHMin(), 0); positionZoneRail();
@@ -3809,8 +3945,15 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zonesRoot = document.createElement("div");
     zonesRoot.className = `tk-zones${horizontalZones ? " is-horizontal" : ""}${scrollZoneRows ? " is-vertical-scroll" : ""}`;
     if (horizontalZones) {
-      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hshade tk-zone-hshade-left"></div><div class="tk-zone-hshade tk-zone-hshade-right"></div><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><div class="tk-zone-htrack"><div class="tk-zone-hacrylic-lens" aria-hidden="true"></div></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
-      zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHAcrylicLens = zonesRoot.querySelector(".tk-zone-hacrylic-lens"); zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hshade tk-zone-hshade-left"></div><div class="tk-zone-hshade tk-zone-hshade-right"></div><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><svg class="tk-zone-hacrylic-defs" aria-hidden="true" focusable="false"><defs><clipPath clipPathUnits="userSpaceOnUse"><g></g></clipPath></defs></svg><div class="tk-zone-hacrylic-lens" aria-hidden="true"></div><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
+      zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHAcrylicLens = zonesRoot.querySelector(".tk-zone-hacrylic-lens"); zoneHAcrylicDefs = zonesRoot.querySelector(".tk-zone-hacrylic-defs"); zoneHAcrylicClipGroup = zoneHAcrylicDefs?.querySelector("clipPath>g") || null; zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+      zoneHAcrylicClipId = `tk-zone-hacrylic-${Math.random().toString(36).slice(2)}`;
+      zoneHAcrylicDefs?.querySelector("clipPath")?.setAttribute("id", zoneHAcrylicClipId);
+      if (zoneHAcrylicClipGroup) {
+        zoneHAcrylicClipGroup.style.transformBox = "view-box";
+        zoneHAcrylicClipGroup.style.transformOrigin = "0 0";
+        zoneHAcrylicClipGroup.style.willChange = "transform";
+      }
       if (zoneHAcrylicLens) zoneHAcrylicLens.dataset.crmAcrylicOwner = theaterKey;
       zoneHLeftShade = zonesRoot.querySelector(".tk-zone-hshade-left"); zoneHRightShade = zonesRoot.querySelector(".tk-zone-hshade-right");
       zoneHTrack.classList.toggle("is-paged", pagedHorizontalZones);
@@ -4667,17 +4810,21 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         if (state?.releaseT) clearTimeout(state.releaseT);
       });
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf);
+      cancelZoneRailMotionAnimations();
       clearTimeout(zoneHScroll.releaseT);
       zoneHScroll.raf = 0;
       zoneHScroll.wheeling = false;
       zoneHScroll.pendingWheel = 0;
       releaseZoneRailInteraction(true);
-      zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null; zoneHPrimeSignature = "";
+      zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null;
+      zoneHPrimeMaskAnimation?.cancel?.(); zoneHPrimeMaskAnimation = null;
+      zoneHPrimeSignature = "";
       zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zoneVResizeObserver?.disconnect(); zoneVResizeObserver = null;
       if (zoneVLodFrame) cancelAnimationFrame(zoneVLodFrame); zoneVLodFrame = 0; zoneVisibleStages.clear();
       zonesRoot?.remove();
-      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHAcrylicLens = zoneHBar = zoneHThumb = zoneHLeftShade = zoneHRightShade = null;
+      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHAcrylicLens = zoneHAcrylicDefs = zoneHAcrylicClipGroup = zoneHBar = zoneHThumb = zoneHLeftShade = zoneHRightShade = null;
+      zoneHAcrylicClipId = "";
       zoneVRail = zoneVClip = zoneVTrack = zoneVBar = zoneVThumb = null;
       zoneHorizontalBounds.clear(); zoneHMetrics.view = zoneHMetrics.content = zoneHMetrics.bar = 0; zoneHThumbWidth = -1; zoneHLeftOpacity = zoneHRightOpacity = "";
       [zoneBody, zoneTrack, zoneScroll].forEach((map) => Object.keys(map).forEach((key) => { delete map[key]; }));
@@ -4943,6 +5090,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       if (zoneGeometryRefreshPending) scheduleZoneGeometryRefresh();
     } else {
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf);
+      cancelZoneRailMotionAnimations();
       clearTimeout(zoneHScroll.releaseT);
       zoneHScroll.raf = 0;
       zoneHScroll.wheeling = false;

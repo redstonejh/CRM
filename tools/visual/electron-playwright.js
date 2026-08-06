@@ -318,8 +318,15 @@ async function startEndpointProbe(page, label, room, direction) {
         const homeBucketOpacities = homeBuckets.map(opacity);
         const homeTitleOpacity = opacity(homeTitle);
         const homeHandOpacity = opacity(homeHand);
+        const expanderForeground = expander?.querySelector?.('.crm-home-preview-foreground');
+        const expanderRestingFilter = expander?.querySelector?.('.crm-home-preview-resting-filter');
+        const homeForegroundOpacity = opacity(expanderForeground);
+        const homeRestingFilterOpacity = opacity(expanderRestingFilter);
         const homeIncomingOpacities = [...homeBucketOpacities, homeTitleOpacity, homeHandOpacity];
-        const homeOutgoingOpacities = [opacity(handoffVariant), opacity(expander), opacity(acrylic), opacity(peripheralAcrylic)];
+        // The peripheral acrylic plane is not an outgoing owner: the same DOM
+        // surface becomes Home's resting shared blur and deliberately remains
+        // at opacity one across the commit.
+        const homeOutgoingOpacities = [opacity(handoffVariant), opacity(expander), opacity(acrylic)];
         const finiteIncoming = homeIncomingOpacities.filter(Number.isFinite);
         const finiteOutgoing = homeOutgoingOpacities.filter(Number.isFinite);
         const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -329,14 +336,14 @@ async function startEndpointProbe(page, label, room, direction) {
           && homeBucketOpacities.every((value) => value <= .01);
         const bucketsOwned = homeBucketOpacities.length === 6
           && homeBucketOpacities.every((value) => value >= .99);
-        const outgoingOwned = finiteOutgoing.length === 4
+        const outgoingOwned = finiteOutgoing.length === 3
           && finiteOutgoing.every((value) => value >= .99);
-        const outgoingParked = finiteOutgoing.length === 4
+        const outgoingParked = finiteOutgoing.length === 3
           && finiteOutgoing.every((value) => value <= .01);
         const homeOwnersContinuous = homeHandoff && !!cameraTarget && !!handoffVariant && !!expander
           && getComputedStyle(handoffVariant).display !== 'none'
           && finiteIncoming.length === homeBuckets.length + 2
-          && finiteOutgoing.length === 4
+          && finiteOutgoing.length === 3
           && (!homeReleasing
             ? bucketsUnderpainted && homeTitleOpacity <= .01 && homeHandOpacity <= .01 && outgoingOwned
             : (!homeCommitting
@@ -344,7 +351,6 @@ async function startEndpointProbe(page, label, room, direction) {
               : bucketsOwned && homeTitleOpacity >= .99 && homeHandOpacity >= .99 && outgoingParked));
         const homePeripheralReady = homeHandoff && peripheralAcrylicMaterialReady
           && Number(peripheralStyle.opacity) >= 0 && Number(peripheralStyle.opacity) <= 1;
-        const expanderForeground = expander?.querySelector?.('.crm-home-preview-foreground');
         const veil = document.querySelector('.crm-transit-veil');
         const ownershipFade = window.crmDeskTransit?.ownershipFadeState?.();
         const endpointCover = window.crmDeskTransit?.coverState?.();
@@ -379,6 +385,16 @@ async function startEndpointProbe(page, label, room, direction) {
           homeHandOpacity,
           homeIncomingOpacity:incomingAverage,
           homeOutgoingOpacity:outgoingAverage,
+          homeForegroundOpacity,
+          homeRestingFilterOpacity,
+          homeFilterBlendTotal:Number.isFinite(homeForegroundOpacity)
+            && Number.isFinite(homeRestingFilterOpacity)
+            ? homeForegroundOpacity + homeRestingFilterOpacity
+            : null,
+          homeFilterCoverage:Number.isFinite(homeForegroundOpacity)
+            && Number.isFinite(homeRestingFilterOpacity)
+            ? 1 - (1 - homeForegroundOpacity) * (1 - homeRestingFilterOpacity)
+            : null,
           homeSelectedAcrylicOpacity:opacity(acrylic),
           homePeripheralAcrylicOpacity:opacity(peripheralAcrylic),
           homeSelectedAcrylicPhase:acrylic?.dataset?.fractalAcrylicPhase || '',
@@ -406,6 +422,10 @@ async function startEndpointProbe(page, label, room, direction) {
           const homeCommit = homeRelease.filter((sample) => sample.homeCommitting);
           const releaseIncoming = homeRelease.map((sample) => sample.homeIncomingOpacity).filter(Number.isFinite);
           const releaseOutgoing = homeRelease.map((sample) => sample.homeOutgoingOpacity).filter(Number.isFinite);
+          const releaseForeground = homeRelease.map((sample) => sample.homeForegroundOpacity).filter(Number.isFinite);
+          const releaseRestingFilter = homeRelease.map((sample) => sample.homeRestingFilterOpacity).filter(Number.isFinite);
+          const releaseFilterBlendTotal = homeRelease.map((sample) => sample.homeFilterBlendTotal).filter(Number.isFinite);
+          const releaseFilterCoverage = homeRelease.map((sample) => sample.homeFilterCoverage).filter(Number.isFinite);
           const releaseIncomingSteps = releaseIncoming.slice(1).map((value, index) => value - releaseIncoming[index]);
           const releaseOutgoingSteps = releaseOutgoing.slice(1).map((value, index) => value - releaseOutgoing[index]);
           const movingSamples = probe.samples.filter((sample) => sample.moving);
@@ -459,7 +479,15 @@ async function startEndpointProbe(page, label, room, direction) {
             homeReleaseLastIncoming:releaseIncoming.at(-1) ?? null,
             homeReleaseFirstOutgoing:releaseOutgoing[0] ?? null,
             homeReleaseLastOutgoing:releaseOutgoing.at(-1) ?? null,
-            homeReleaseDistinctFilters:new Set(homeRelease.map((sample) => sample.homeExpanderFilter).filter(Boolean)).size,
+            homeReleaseFirstSharp:releaseForeground[0] ?? null,
+            homeReleaseLastSharp:releaseForeground.at(-1) ?? null,
+            homeReleaseFirstRestingFilter:releaseRestingFilter[0] ?? null,
+            homeReleaseLastRestingFilter:releaseRestingFilter.at(-1) ?? null,
+            homeReleaseFilterBlendFloor:Math.min(1, ...releaseFilterBlendTotal),
+            homeReleaseFilterBlendCeiling:Math.max(0, ...releaseFilterBlendTotal),
+            homeReleaseFilterCoverageFloor:Math.min(1, ...releaseFilterCoverage),
+            homeReleaseDistinctFilterBlends:new Set(homeRelease.map((sample) =>
+              `${Number(sample.homeForegroundOpacity).toFixed(3)}:${Number(sample.homeRestingFilterOpacity).toFixed(3)}`)).size,
             homeReleaseMaxStep:Math.max(0, ...releaseIncomingSteps.map(Math.abs), ...releaseOutgoingSteps.map(Math.abs)),
             homeReleaseMonotonic:releaseIncomingSteps.every((step) => step >= -.035)
               && releaseOutgoingSteps.every((step) => step <= .035),
@@ -500,7 +528,169 @@ async function startEndpointProbe(page, label, room, direction) {
 }
 
 async function finishEndpointProbe(page, label) {
-  return page.evaluate((probeLabel) => window.__crmEndpointProbes?.[probeLabel]?.promise, label);
+  return page.evaluate(async (probeLabel) => {
+    const probes = window.__crmEndpointProbes;
+    const result = await probes?.[probeLabel]?.promise;
+    if (probes) delete probes[probeLabel];
+    return result;
+  }, label);
+}
+
+async function measurePeopleRailNative(page) {
+  // Measure the renderer the way a person actually reaches it. Forcing a
+  // DevTools heap collection here leaves compositor/GPU recovery work queued
+  // inside the first rail gesture and can manufacture isolated 20 ms samples
+  // that never occur in an uninstrumented run. Endpoint probes release their
+  // own buffers now, so no synthetic collection is needed between rooms.
+  await page.evaluate(() => window.crmHomePreviews.waitForIdle());
+  const viewport = await page.evaluate(() => ({
+    width:innerWidth,
+    height:innerHeight,
+  }));
+  // Horizontal wheel input is deliberately scoped to the lower rail gutter.
+  // Put the native pointer on that real hit path as well; leaving it at the
+  // Home tile's former coordinates would make moving cards repeatedly acquire
+  // and lose their heavyweight hover shadows during a programmatic scroll.
+  await page.mouse.move(Math.round(viewport.width / 2), viewport.height - 8);
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true));
+  await page.evaluate(() => new Promise((resolve) => {
+    let previous = 0;
+    let clean = 0;
+    const started = performance.now();
+    const tick = (now) => {
+      if (previous) clean = now - previous <= 12.5 ? clean + 1 : 0;
+      previous = now;
+      if (clean >= 30 || now - started > 2000) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+  const motion = await page.evaluate(() => new Promise((resolve) => {
+    document.activeElement?.blur?.();
+    const theater = document.querySelector('[data-crm-theater="people"]:not([hidden])');
+    const mutations = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(theater, {
+      subtree:true,
+      childList:true,
+      attributes:true,
+      attributeFilter:['data-zone-lod', 'data-face-deferred', 'class'],
+    });
+    const deltas = [];
+    const over15At = [];
+    const longTasks = [];
+    let previous = performance.now();
+    const started = previous;
+    const longObserver = new PerformanceObserver((list) =>
+      list.getEntries().forEach((entry) => longTasks.push(entry.duration)));
+    try { longObserver.observe({ entryTypes:['longtask'] }); } catch {}
+    window.peopleCards.scrollZonesBy(9999);
+    const tick = (now) => {
+      const delta = now - previous;
+      deltas.push(delta);
+      previous = now;
+      if (delta > 15) {
+        const state = window.peopleCards.zoneScrollState?.() || {};
+        over15At.push({
+          index:deltas.length - 1,
+          delta,
+          x:state.x,
+          target:state.target,
+        });
+      }
+      if (now - started < 900) {
+        requestAnimationFrame(tick);
+        return;
+      }
+      observer.disconnect();
+      longObserver.disconnect();
+      const sorted = [...deltas].sort((a, b) => a - b);
+      const p95 = sorted[Math.min(
+        sorted.length - 1,
+        Math.floor(sorted.length * .95),
+      )] || 0;
+      const parked = [...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];
+      const buckets = [...theater.querySelectorAll('.tk-zone')];
+      const nonEmpty = buckets.filter((bucket) => bucket.querySelector('.tk-zcard'));
+      const readyTops = nonEmpty.filter((bucket) => {
+        const card = bucket.querySelector('.tk-zcard:last-child');
+        return card && !card.classList.contains('is-lazy-shell')
+          && !!card.querySelector('.ticket-fields');
+      });
+      const clip = theater.querySelector('.tk-zone-hclip');
+      const track = theater.querySelector('.tk-zone-htrack');
+      const acrylicClip = clip?.querySelector(':scope > .tk-zone-hacrylic-clip');
+      const lens = acrylicClip?.querySelector(':scope > .tk-zone-hacrylic-lens');
+      const clipRect = clip?.getBoundingClientRect();
+      const trackStyle = track && getComputedStyle(track);
+      const lensStyle = lens && getComputedStyle(lens);
+      const acrylicClipStyle = acrylicClip && getComputedStyle(acrylicClip);
+      const matrix = (style) => new DOMMatrix(
+        style?.transform && style.transform !== 'none' ? style.transform : undefined,
+      );
+      const trackMatrix = matrix(trackStyle);
+      const acrylicClipMatrix = matrix(acrylicClipStyle);
+      const lensMatrix = matrix(lensStyle);
+      const lodMutations = mutations.filter((record) =>
+        record.type === 'attributes' && record.attributeName === 'data-zone-lod').length;
+      const faceMutations = mutations.filter((record) =>
+        record.type === 'childList'
+          || (record.type === 'attributes' && record.target.closest?.('.tk-zcard'))).length;
+      resolve({
+        frames:deltas.length,
+        fps:deltas.length * 1000 / (now - started),
+        p95,
+        max:Math.max(...deltas),
+        over15:deltas.filter((value) => value > 15).length,
+        over15At,
+        longTasks,
+        lodMutations,
+        faceMutations,
+        parked:parked.length,
+        nonEmpty:nonEmpty.length,
+        readyTops:readyTops.length,
+        totalCards:theater.querySelectorAll('.tk-zcard').length,
+        deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,
+        sharedLens:track.classList.contains('has-shared-zone-acrylic')
+          && lensStyle?.backdropFilter.includes('blur')
+          && acrylicClipStyle?.clipPath !== 'none'
+          && acrylicClip?.parentElement === clip
+          && lens?.parentElement === acrylicClip
+          && Math.abs(trackMatrix.e - acrylicClipMatrix.e) < 1
+          && Math.abs(acrylicClipMatrix.e + lensMatrix.e) < 1
+          && buckets.every((bucket) => getComputedStyle(bucket).backdropFilter === 'none'),
+        clipped:getComputedStyle(clip).overflowX === 'hidden'
+          && trackStyle?.willChange.includes('transform')
+          && parked.every((bucket) => {
+            const style = getComputedStyle(bucket);
+            const rect = bucket.getBoundingClientRect();
+            return style.visibility === 'visible'
+              && style.contentVisibility === 'visible'
+              && !!clipRect
+              && (rect.right <= clipRect.left || rect.left >= clipRect.right);
+          }),
+      });
+    };
+    requestAnimationFrame(tick);
+  }));
+  if (motion.frames < 85 || motion.fps < 98.5 || motion.p95 > 12.5
+    || motion.max > 21 || motion.over15 > 1 || motion.longTasks.length
+    || motion.lodMutations < 1 || motion.lodMutations > 28
+    || motion.faceMutations !== 0 || motion.parked < 6
+    || motion.readyTops !== motion.nonEmpty
+    || motion.deferred !== motion.totalCards - motion.nonEmpty
+    || !motion.sharedLens || !motion.clipped) {
+    throw new Error(
+      `People horizontal LOD is not compositor-stable at native ${MOTION_TARGET.nativeHz} Hz: ${JSON.stringify(motion)}`,
+    );
+  }
+  await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true));
+  await page.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+  return motion;
 }
 
 async function sampleLayoutStability(page, rootSelector, frames = 12) {
@@ -1070,6 +1260,19 @@ async function main() {
   if(unknownRoomKeys.length)throw new Error(`CRM_VISUAL_ROOMS contains unknown rooms: ${unknownRoomKeys.join(',')}`);
   const rooms = requestedRoomKeys.size ? allRooms.filter((room)=>requestedRoomKeys.has(room.key)) : allRooms;
   if(!rooms.length)throw new Error(`CRM_VISUAL_ROOMS selected no known rooms: ${[...requestedRoomKeys].join(',')}`);
+  let isolatedPeopleRailMotion=null;
+  if(rooms.some((room)=>room.key==='people')){
+    const peopleSelector='.crm-home-grid > .crm-home-bucket[data-module="people"]';
+    await page.hover(peopleSelector);
+    await sleep(160);
+    await page.$eval(peopleSelector,(bucket)=>bucket.click());
+    await page.waitForFunction(()=>document.body.dataset.crmModule==='people'
+      &&!window.crmDeskTransit?.isBusy?.()&&!document.querySelector('.crm-transit-veil'),null,{timeout:15000});
+    isolatedPeopleRailMotion=await measurePeopleRailNative(page);
+    await page.evaluate(()=>window.crmDeskTransit.driveTo('home'));
+    await page.waitForFunction(readyHome,null,{timeout:15000});
+    await page.evaluate(()=>window.crmHome.waitForPreviewSync());
+  }
   const transitions=[];
   for (const room of rooms) {
     let inboundHeldState=null;
@@ -1332,41 +1535,10 @@ async function main() {
     const inboundEndpoint=await finishEndpointProbe(page,`in-${room.key}`);
     assertHomeFade(`${room.key} inbound visual`,inboundEndpoint,'in');
     if(inboundEndpoint.hadVeil||!inboundEndpoint.destinationDeferredThroughMotion||!inboundEndpoint.destinationPrecomposed||!inboundEndpoint.sawRoomReveal||!inboundEndpoint.roomRevealAtomic||!inboundEndpoint.ownershipFadeTimed||!inboundEndpoint.ownershipFadeAfterAcrylicWarm||!inboundEndpoint.peripheralAcrylicEveryFrame||inboundEndpoint.endpointFrames<1||inboundEndpoint.endpointSignatures!==1||inboundEndpoint.snapshotVisible||inboundEndpoint.final.materializing||inboundEndpoint.final.veil)throw new Error(`${room.key} inbound did not hand to its endpoint-precomposed live room: ${JSON.stringify({inboundEndpoint,inboundReaction})}`);
+    await page.mouse.move(1,1); await sleep(80);
+    const companyRailMotion=room.key==='people'?isolatedPeopleRailMotion:null;
     const inactiveHomeRetention=await page.evaluate((key)=>{const surface=window.crmHomeCamera?.surface?.();const root=window.crmHomeCamera?.layers?.()[0];const variant=root?.querySelector(':scope>.crm-home-motion-variant.is-active-motion-variant');const surfaceStyle=surface&&getComputedStyle(surface);const variantStyle=variant&&getComputedStyle(variant);return{hidden:surface?.hidden===true,key:surface?.dataset.crmHomeRetained||'',display:surfaceStyle?.display||'',zIndex:surfaceStyle?.zIndex||'',pointerEvents:surfaceStyle?.pointerEvents||'',gridVisibility:getComputedStyle(root?.querySelector(':scope>.crm-home-grid')).visibility,variant:variant?.dataset.motionVariant||'',variantDisplay:variantStyle?.display||'',variantOpacity:Number(variantStyle?.opacity),variantTransform:variantStyle?.transform||'',variantWillChange:variantStyle?.willChange||'',expected:key}},room.key);
     if(!inactiveHomeRetention.hidden||inactiveHomeRetention.key!==room.key||inactiveHomeRetention.display!=='block'||inactiveHomeRetention.zIndex!=='0'||inactiveHomeRetention.pointerEvents!=='none'||inactiveHomeRetention.gridVisibility!=='hidden'||inactiveHomeRetention.variant!==room.key||inactiveHomeRetention.variantDisplay==='none'||inactiveHomeRetention.variantOpacity!==.001||inactiveHomeRetention.variantTransform==='none'||!inactiveHomeRetention.variantWillChange.includes('transform'))throw new Error(`${room.key} did not leave exactly one inert Home camera bitmap resident: ${JSON.stringify(inactiveHomeRetention)}`);
-    await page.mouse.move(1,1); await sleep(80);
-    let companyRailMotion=null;
-    if(room.key==='people'){
-      // Measure the promoted rail before screenshot readback, multi-megabyte
-      // preview IPC cloning, or pixel comparison can leave delayed GC/GPU work
-      // in the renderer. Semantic idle covers both renderer maintenance and
-      // the hidden capture worker; the rail itself holds that lease in motion.
-      // Home is intentionally frozen while a room is active: new compositions
-      // remain queued until the return handoff. Only the offscreen worker must
-      // reach idle here; asking Home to flush would invalidate that invariant.
-      await page.evaluate(()=>window.crmHomePreviews.waitForIdle());
-      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));
-      // The endpoint contract above deliberately performs repeated full-room
-      // style/signature reads. Wait for a clean native cadence window before
-      // measuring the rail so its result cannot include profiler-created
-      // readback/GC maintenance that does not exist in the application.
-      await page.evaluate(()=>new Promise((resolve)=>{
-        let previous=0,clean=0;const started=performance.now();
-        const tick=(now)=>{
-          if(previous)clean=now-previous<=12.5?clean+1:0;
-          previous=now;
-          if(clean>=20||now-started>1500){resolve();return;}
-          requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      }));
-      companyRailMotion=await page.evaluate(()=>new Promise((resolve)=>{document.activeElement?.blur?.();const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');const mutations=[];const observer=new MutationObserver((records)=>mutations.push(...records));observer.observe(theater,{subtree:true,childList:true,attributes:true,attributeFilter:['data-zone-lod','data-face-deferred','class']});const deltas=[];const over15At=[];const longTasks=[];let previous=performance.now(),started=previous;const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));try{longObserver.observe({entryTypes:['longtask']})}catch{}window.peopleCards.scrollZonesBy(9999);const tick=(now)=>{const delta=now-previous;deltas.push(delta);previous=now;if(delta>15){const state=window.peopleCards.zoneScrollState?.()||{};over15At.push({index:deltas.length-1,delta,x:state.x,target:state.target});}if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')],buckets=[...theater.querySelectorAll('.tk-zone')],nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')),readyTops=nonEmpty.filter((bucket)=>{const card=bucket.querySelector('.tk-zcard:last-child');return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');}),clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),lens=clip?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),lensStyle=lens&&getComputedStyle(lens);const lodMutations=mutations.filter((record)=>record.type==='attributes'&&record.attributeName==='data-zone-lod').length;const faceMutations=mutations.filter((record)=>record.type==='childList'||(record.type==='attributes'&&record.target.closest?.('.tk-zcard'))).length;resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over15:deltas.filter((value)=>value>15).length,over15At,longTasks,lodMutations,faceMutations,parked:parked.length,nonEmpty:nonEmpty.length,readyTops:readyTops.length,totalCards:theater.querySelectorAll('.tk-zcard').length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,sharedLens:track.classList.contains('has-shared-zone-acrylic')&&lensStyle?.backdropFilter.includes('blur')&&lensStyle.clipPath!=='none'&&lens?.parentElement===clip&&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none'),clipped:getComputedStyle(clip).overflowX==='hidden'&&getComputedStyle(track).willChange.includes('transform')&&parked.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);})});};requestAnimationFrame(tick)}));
-      // Permit one isolated scheduler vblank while keeping the 900 ms sample,
-      // p95, average cadence, mutation count, and long-task gates strict.
-      if(companyRailMotion.frames<85||companyRailMotion.fps<98.5||companyRailMotion.p95>12.5||companyRailMotion.max>21||companyRailMotion.over15>1||companyRailMotion.longTasks.length||companyRailMotion.lodMutations<1||companyRailMotion.lodMutations>28||companyRailMotion.faceMutations!==0||companyRailMotion.parked<6||companyRailMotion.readyTops!==companyRailMotion.nonEmpty||companyRailMotion.deferred!==companyRailMotion.totalCards-companyRailMotion.nonEmpty||!companyRailMotion.sharedLens||!companyRailMotion.clipped)throw new Error(`People horizontal LOD is not compositor-stable at native ${MOTION_TARGET.nativeHz} Hz: ${JSON.stringify(companyRailMotion)}`);
-      await page.evaluate(()=>window.peopleCards.scrollZonesBy(-9999,true));
-      await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
-    }
     const inboundStability=await sampleLayoutStability(page,`[data-crm-theater="${room.theater}"]:not([hidden])`);
     if(inboundStability.uniqueSignatures!==1)throw new Error(`${room.key} kept shifting after inbound transition: ${JSON.stringify(inboundStability)}`);
     const state=await page.evaluate(async(config)=>{
@@ -1508,6 +1680,7 @@ async function main() {
       const clipHost=plane?.parentElement?.classList.contains('crm-home-screen-acrylic-clip')?plane.parentElement:plane;
       const peripheralPlane=surface?.querySelector('.crm-home-peripheral-screen-acrylic');
       const peripheralHost=peripheralPlane?.parentElement;
+      const peripheralClipGroup=surface?.querySelector('.crm-home-peripheral-acrylic-defs clipPath>g');
       const exact=expander?.querySelector('.crm-home-preview-exact');
       const exactHidden=!exact||getComputedStyle(exact).display==='none'||getComputedStyle(exact).visibility==='hidden'||Number(getComputedStyle(exact).opacity)<=.001;
       const target=root?.querySelector('.crm-home-bucket.is-camera-target');
@@ -1555,7 +1728,7 @@ async function main() {
       const transformAnimation=animationFor(expander,'transform');
       const clipAnimation=animationFor(clipHost,'clipPath');
       const opacityAnimation=animationFor(plane,'opacity');
-      const peripheralClipAnimation=animationFor(peripheralHost,'clipPath');
+      const peripheralClipAnimation=animationFor(peripheralClipGroup,'transform');
       const animations=[transformAnimation,clipAnimation,opacityAnimation];
       const animationTimes=animations.map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
       const animationStarts=animations.map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
@@ -1564,10 +1737,13 @@ async function main() {
         &&Number(getComputedStyle(variant).opacity)>.99
         &&variant.dataset.motionVariant===target?.dataset.module
         &&getComputedStyle(snapshot).display==='none';
+      const delegatedBackdrop=lens?.backdrop==='none'
+        &&plane?.dataset.crmAcrylicBackdropOwner==='shared'
+        &&peripheralLens?.backdrop===expected?.backdropFilter;
       const tintCopied=!!lens&&!!expected
         &&lens.backgroundColor===expected.backgroundColor
         &&lens.backgroundImage===expected.backgroundImage
-        &&lens.backdrop===expected.backdropFilter;
+        &&(lens.backdrop===expected.backdropFilter||delegatedBackdrop);
       const frameCopied=!!frame&&!!expected
         &&frame.borderColor===expected.borderColor
         &&frame.borderStyle===expected.borderStyle
@@ -1591,19 +1767,21 @@ async function main() {
         peripheralAcrylic:!!peripheralLens&&!!peripheralClip
           &&peripheralHost?.parentElement===surface
           &&surface?.classList.contains('crm-home-peripheral-acrylic-active')
-          &&peripheralState?.active&&peripheralState.phase==='motion'&&peripheralState.direction==='contract'&&peripheralState.neighborCount===3
+          &&peripheralState?.active&&peripheralState.phase==='motion'&&peripheralState.direction==='contract'
+          &&peripheralState.tileCount===root?.querySelectorAll(':scope>.crm-home-grid>.crm-home-bucket').length
+          &&peripheralState.neighborCount===peripheralState.tileCount-1
           &&peripheralLens.opacity>.99
           &&peripheralLens.backgroundColor==='rgba(0, 0, 0, 0)'
           &&peripheralLens.backgroundImage==='none'
           &&peripheralLens.scale.every((value)=>Math.abs(value-1)<.001)
           &&peripheralLens.backdrop.includes('blur(26px)')
           &&peripheralLens.backdrop.includes('saturate(1.4)')
-          &&peripheralClip.clip.startsWith('path('),
+          &&peripheralClip.clip.startsWith('url('),
         cachedLens:!!lens&&!!lensHost&&clipHost?.parentElement===surface
           &&lens.scale.every((value)=>Math.abs(value-1)<.001)
           &&lensHost.scale.every((value)=>Math.abs(value-1)<.001)
-          &&lens.backdrop.includes('blur(26px)')
-          &&lens.backdrop.includes('saturate(1.4)')
+          &&lens.backdrop==='none'
+          &&plane?.dataset.crmAcrylicBackdropOwner==='shared'
           &&lensHost.clip.startsWith('inset(')
           &&frame?.backdrop==='none'
           &&frame?.backgroundColor==='rgba(0, 0, 0, 0)'
@@ -1614,7 +1792,7 @@ async function main() {
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outboundEndpoint=await finishEndpointProbe(page,`out-${room.key}`);
     assertHomeFade(`${room.key} outbound visual`,outboundEndpoint,'out');
-    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||!outboundEndpoint.sawHomeMaterialMatch||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<8||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.homeReleaseFrames<8||outboundEndpoint.homeMatchFrames<7||outboundEndpoint.homeCommitFrames<1||outboundEndpoint.homeReleaseFirstIncoming>.2||outboundEndpoint.homeReleaseLastIncoming<.99||outboundEndpoint.homeReleaseFirstOutgoing<.99||outboundEndpoint.homeReleaseLastOutgoing>.01||outboundEndpoint.homeReleaseDistinctFilters<6||!outboundEndpoint.homeReleaseMonotonic||outboundEndpoint.homeReleaseCoverageFloor<.99||!outboundEndpoint.homeReleaseFullOwnerEveryFrame||!outboundEndpoint.homeMatchCoveredEveryFrame||!outboundEndpoint.homeCommitCoveredEveryFrame||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.homeCommitting||outboundEndpoint.final.homeSelectedAcrylicPhase!=='parked'||outboundEndpoint.final.homePeripheralAcrylicPhase!=='parked'||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not match and atomically commit to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
+    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||!outboundEndpoint.sawHomeMaterialMatch||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<8||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.homeReleaseFrames<8||outboundEndpoint.homeMatchFrames<7||outboundEndpoint.homeCommitFrames<1||outboundEndpoint.homeReleaseFirstIncoming>.2||outboundEndpoint.homeReleaseLastIncoming<.99||outboundEndpoint.homeReleaseFirstOutgoing<.99||outboundEndpoint.homeReleaseLastOutgoing>.01||outboundEndpoint.homeReleaseFirstSharp<.99||outboundEndpoint.homeReleaseLastSharp>.01||outboundEndpoint.homeReleaseFirstRestingFilter>.01||outboundEndpoint.homeReleaseLastRestingFilter<.99||outboundEndpoint.homeReleaseDistinctFilterBlends<6||outboundEndpoint.homeReleaseFilterBlendFloor<.98||outboundEndpoint.homeReleaseFilterBlendCeiling>1.02||!outboundEndpoint.homeReleaseMonotonic||outboundEndpoint.homeReleaseCoverageFloor<.99||!outboundEndpoint.homeReleaseFullOwnerEveryFrame||!outboundEndpoint.homeMatchCoveredEveryFrame||!outboundEndpoint.homeCommitCoveredEveryFrame||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.homeCommitting||outboundEndpoint.final.homeSelectedAcrylicPhase!=='parked'||outboundEndpoint.final.homePeripheralAcrylicPhase!=='parked'||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not match and atomically commit to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
     const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
     await page.waitForFunction(({key,before})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);return status?.state==='ready'&&status.capturedAt>before;},{key:room.key,before},{timeout:60000});
     const synchronizedPreview=await page.evaluate(async({key,token})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===key);const host=document.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);const image=host?.querySelector(':scope > .crm-home-preview-foreground');return{after:status?.capturedAt||0,state:status?.state,sameNode:image?.dataset.liveSyncProbe===token,hostCapturedAt:Number(host?.dataset.capturedAt||0),viewState:preview?.viewState||null,exactSrc:preview?.exactSrc||''};},{key:room.key,token:previewNodeToken});

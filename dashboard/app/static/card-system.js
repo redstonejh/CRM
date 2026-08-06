@@ -1322,8 +1322,9 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone-hrail{--tk-zone-rail-inset:clamp(22px,2.2vw,30px);position:fixed;left:0;right:0;overflow:visible;pointer-events:none}
       .tk-zone-hshade{position:fixed;z-index:3;top:0;bottom:0;width:clamp(34px,4.5vw,68px);opacity:0;pointer-events:none;transition:opacity .12s linear;will-change:opacity}.tk-zone-hshade-left{left:0;background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hshade-right{right:0;background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .tk-zone-hclip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0;pointer-events:auto}.tk-zone-hclip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
-      .tk-zone-hacrylic-defs{position:absolute;inset:0;z-index:0;width:100%;height:100%;overflow:visible;pointer-events:none}
-      .tk-zone-hacrylic-lens{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;pointer-events:none;background:transparent;-webkit-backdrop-filter:var(--bucket-acrylic-filter);backdrop-filter:var(--bucket-acrylic-filter);transform:translateZ(0);backface-visibility:hidden}
+      .tk-zone-hacrylic-defs{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
+      .tk-zone-hacrylic-clip{position:absolute;left:0;top:0;z-index:0;height:100%;pointer-events:none;will-change:transform;backface-visibility:hidden}
+      .tk-zone-hacrylic-lens{position:absolute;left:0;top:0;display:block;height:100%;pointer-events:none;background:transparent;-webkit-backdrop-filter:var(--bucket-acrylic-filter);backdrop-filter:var(--bucket-acrylic-filter);will-change:transform;backface-visibility:hidden}
       .tk-zone-htrack{position:relative;z-index:1;width:max-content;min-width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:var(--crm-object-gap,18px);padding:0 var(--tk-zone-rail-inset);will-change:transform;pointer-events:auto}
       .tk-zone-htrack.has-shared-zone-acrylic>.tk-zone{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
       .tk-zone-htrack>.tk-zone{position:relative;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 auto;z-index:1}
@@ -2781,7 +2782,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
 
   // ── Pipeline zones (glass buckets) ───────────────────────────────────────────
   let zonesRoot = null;
-  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHAcrylicLens = null, zoneHAcrylicDefs = null, zoneHAcrylicClipGroup = null, zoneHAcrylicClipId = "", zoneHBar = null, zoneHThumb = null, zoneHLeftShade = null, zoneHRightShade = null, zoneHResizeObserver = null;
+  let zoneRail = null, zoneHClip = null, zoneHTrack = null, zoneHAcrylicClip = null, zoneHAcrylicLens = null, zoneHAcrylicDefs = null, zoneHAcrylicClipGroup = null, zoneHAcrylicClipId = "", zoneHBar = null, zoneHThumb = null, zoneHLeftShade = null, zoneHRightShade = null, zoneHResizeObserver = null;
   let zoneHWindowWheelWired = false;
   let zoneHInteractionReadyWired = false;
   let zoneVRail = null, zoneVClip = null, zoneVTrack = null, zoneVBar = null, zoneVThumb = null, zoneVResizeObserver = null;
@@ -2806,7 +2807,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     pendingWheel:0,
     releaseT:0,
     motionAnimation:null,
-    maskAnimation:null,
+    acrylicClipAnimation:null,
+    acrylicLensAnimation:null,
     thumbAnimation:null,
     leftShadeAnimation:null,
     rightShadeAnimation:null,
@@ -2814,7 +2816,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     motionPositions:[],
   };
   let zoneHPrimeAnimation = null;
-  let zoneHPrimeMaskAnimation = null;
+  let zoneHPrimeClipAnimation = null;
+  let zoneHPrimeLensAnimation = null;
   let zoneHPrimeSignature = "";
   const zoneRailInteractionKey = `zone-rail:${theaterKey || apiName || "cards"}`;
   let zoneRailInteractionHeld = false;
@@ -3182,12 +3185,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     return zoneHMetrics;
   };
   const syncHorizontalZoneAcrylic = () => {
-    if (!horizontalZones || !zoneHTrack || !zoneHAcrylicLens || !zoneHAcrylicClipGroup) return;
-    // This is layout-time work only. The real filter is bounded to the visible
-    // rail viewport; an SVG union moves its bucket silhouettes across that
-    // fixed screen-space surface. The previous track-sized filter could exceed
-    // 4,000 px for People and periodically miss a native refresh despite being
-    // a single compositor layer.
+    if (!horizontalZones || !zoneHTrack || !zoneHAcrylicClip
+      || !zoneHAcrylicLens || !zoneHAcrylicClipGroup) return;
+    // This is layout-time work only. A static SVG union clips an ordinary HTML
+    // compositor surface that travels with the buckets. Its single viewport-
+    // sized live blur counter-translates by the same amount, so the filter stays
+    // in screen space. No SVG geometry or clip property changes during motion.
     const panels = STAGES.map((stage) => zoneBody[stage.key]?.parentElement).filter(Boolean);
     const shapes = panels.map((panel) => {
       const radius = parseFloat(getComputedStyle(panel).borderTopLeftRadius) || 0;
@@ -3202,16 +3205,27 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     });
     if (!shapes.length) {
       zoneHTrack.classList.remove("has-shared-zone-acrylic");
-      zoneHAcrylicLens.style.clipPath = "";
-      zoneHAcrylicLens.style.webkitClipPath = "";
+      zoneHAcrylicClip.style.clipPath = "";
+      zoneHAcrylicClip.style.webkitClipPath = "";
       zoneHAcrylicClipGroup.replaceChildren();
       return;
     }
     zoneHAcrylicClipGroup.replaceChildren(...shapes);
     const value = `url("#${zoneHAcrylicClipId}")`;
-    zoneHAcrylicLens.style.clipPath = value;
-    zoneHAcrylicLens.style.webkitClipPath = value;
-    zoneHAcrylicClipGroup.style.transform = `translate(${Math.round(zoneHScroll.x)}px, 0px)`;
+    const contentWidth = Math.max(
+      zoneHMetrics.content,
+      zoneHTrack.scrollWidth || 0,
+      zoneHTrack.offsetWidth || 0,
+    );
+    const viewWidth = zoneHMetrics.view || zoneHClip.clientWidth || innerWidth;
+    const x = Math.round(zoneHScroll.x);
+    zoneHAcrylicClip.style.width = `${Math.ceil(contentWidth)}px`;
+    zoneHAcrylicClip.style.clipPath = value;
+    zoneHAcrylicClip.style.webkitClipPath = value;
+    zoneHAcrylicClip.style.transform = `translate3d(${x}px,0,0)`;
+    zoneHAcrylicLens.style.width = `${Math.ceil(viewWidth)}px`;
+    zoneHAcrylicLens.style.transform = `translate3d(${-x}px,0,0)`;
+    zoneHAcrylicClipGroup.style.transform = "";
     zoneHTrack.classList.add("has-shared-zone-acrylic");
   };
   const primeHorizontalZoneCompositor = () => {
@@ -3219,18 +3233,23 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const signature = `${zoneHClip.clientWidth}:${zoneHTrack.scrollWidth}:${STAGES.length}`;
     if (signature === zoneHPrimeSignature) return;
     zoneHPrimeAnimation?.cancel?.();
-    zoneHPrimeMaskAnimation?.cancel?.();
+    zoneHPrimeClipAnimation?.cancel?.();
+    zoneHPrimeLensAnimation?.cancel?.();
     const x = Math.round(zoneHScroll.x);
     const base = `translate3d(${x}px,0,0)`;
     const primed = `translate3d(${x - .25}px,0,0)`;
-    const maskBase = `translate(${x}px, 0px)`;
-    const maskPrimed = `translate(${x - .25}px, 0px)`;
+    const lensBase = `translate3d(${-x}px,0,0)`;
+    const lensPrimed = `translate3d(${-x + .25}px,0,0)`;
     zoneHPrimeAnimation = zoneHTrack.animate(
       [{ transform:base }, { transform:primed, offset:.5 }, { transform:base }],
       { duration:64, easing:"linear" },
     );
-    zoneHPrimeMaskAnimation = zoneHAcrylicClipGroup?.animate?.(
-      [{ transform:maskBase }, { transform:maskPrimed, offset:.5 }, { transform:maskBase }],
+    zoneHPrimeClipAnimation = zoneHAcrylicClip?.animate?.(
+      [{ transform:base }, { transform:primed, offset:.5 }, { transform:base }],
+      { duration:64, easing:"linear" },
+    ) || null;
+    zoneHPrimeLensAnimation = zoneHAcrylicLens?.animate?.(
+      [{ transform:lensBase }, { transform:lensPrimed, offset:.5 }, { transform:lensBase }],
       { duration:64, easing:"linear" },
     ) || null;
     zoneHPrimeSignature = signature;
@@ -3238,8 +3257,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     animation.finished.catch(() => null).finally(() => {
       if (zoneHPrimeAnimation === animation) {
         zoneHPrimeAnimation = null;
-        zoneHPrimeMaskAnimation?.cancel?.();
-        zoneHPrimeMaskAnimation = null;
+        zoneHPrimeClipAnimation?.cancel?.();
+        zoneHPrimeLensAnimation?.cancel?.();
+        zoneHPrimeClipAnimation = null;
+        zoneHPrimeLensAnimation = null;
       }
     });
   };
@@ -3252,7 +3273,12 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const roundedRailX = Math.round(zoneHScroll.x);
     if (moveSurface) {
       zoneHTrack.style.transform = `translate3d(${roundedRailX}px,0,0)`;
-      if (zoneHAcrylicClipGroup) zoneHAcrylicClipGroup.style.transform = `translate(${roundedRailX}px, 0px)`;
+      if (zoneHAcrylicClip) {
+        zoneHAcrylicClip.style.transform = `translate3d(${roundedRailX}px,0,0)`;
+      }
+      if (zoneHAcrylicLens) {
+        zoneHAcrylicLens.style.transform = `translate3d(${-roundedRailX}px,0,0)`;
+      }
     }
     const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
     const view = metrics.view, content = metrics.content, minimum = Math.min(0, view - content), over = content > view + 1;
@@ -3266,7 +3292,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       zoneHScroll.x = zoneHScroll.target = 0;
       if (moveSurface) {
         zoneHTrack.style.transform = "translate3d(0,0,0)";
-        if (zoneHAcrylicClipGroup) zoneHAcrylicClipGroup.style.transform = "translate(0px, 0px)";
+        if (zoneHAcrylicClip) zoneHAcrylicClip.style.transform = "translate3d(0,0,0)";
+        if (zoneHAcrylicLens) zoneHAcrylicLens.style.transform = "translate3d(0,0,0)";
       }
       if (reconcileLod) updateHorizontalZoneLod();
       return;
@@ -3282,12 +3309,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   };
   const cancelZoneRailMotionAnimations = () => {
     zoneHScroll.motionAnimation?.cancel?.();
-    zoneHScroll.maskAnimation?.cancel?.();
+    zoneHScroll.acrylicClipAnimation?.cancel?.();
+    zoneHScroll.acrylicLensAnimation?.cancel?.();
     zoneHScroll.thumbAnimation?.cancel?.();
     zoneHScroll.leftShadeAnimation?.cancel?.();
     zoneHScroll.rightShadeAnimation?.cancel?.();
     zoneHScroll.motionAnimation = null;
-    zoneHScroll.maskAnimation = null;
+    zoneHScroll.acrylicClipAnimation = null;
+    zoneHScroll.acrylicLensAnimation = null;
     zoneHScroll.thumbAnimation = null;
     zoneHScroll.leftShadeAnimation = null;
     zoneHScroll.rightShadeAnimation = null;
@@ -3306,8 +3335,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const trackFrames = positions.map((x) => ({
       transform:`translate3d(${x}px,0,0)`,
     }));
-    const maskFrames = positions.map((x) => ({
-      transform:`translate(${x}px, 0px)`,
+    const lensFrames = positions.map((x) => ({
+      transform:`translate3d(${-x}px,0,0)`,
     }));
     const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
     const view = metrics.view;
@@ -3341,7 +3370,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       zoneHThumb.style.width = `${roundedThumbWidth}px`;
     }
     zoneHScroll.motionAnimation = zoneHTrack.animate(trackFrames, timing);
-    zoneHScroll.maskAnimation = zoneHAcrylicClipGroup?.animate?.(maskFrames, timing) || null;
+    zoneHScroll.acrylicClipAnimation = zoneHAcrylicClip?.animate?.(trackFrames, timing) || null;
+    zoneHScroll.acrylicLensAnimation = zoneHAcrylicLens?.animate?.(lensFrames, timing) || null;
     zoneHScroll.thumbAnimation = zoneHThumb.animate(thumbFrames, timing);
     zoneHScroll.leftShadeAnimation = zoneHLeftShade?.animate?.(leftShadeFrames, timing) || null;
     zoneHScroll.rightShadeAnimation = zoneHRightShade?.animate?.(rightShadeFrames, timing) || null;
@@ -3355,8 +3385,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (!horizontalZones || zoneHScroll.raf) return;
     zoneHPrimeAnimation?.cancel?.();
     zoneHPrimeAnimation = null;
-    zoneHPrimeMaskAnimation?.cancel?.();
-    zoneHPrimeMaskAnimation = null;
+    zoneHPrimeClipAnimation?.cancel?.();
+    zoneHPrimeLensAnimation?.cancel?.();
+    zoneHPrimeClipAnimation = null;
+    zoneHPrimeLensAnimation = null;
     holdZoneRailInteraction();
     const currentGoal = () => zoneHScroll.wheeling
       ? zoneHScroll.target
@@ -3945,15 +3977,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zonesRoot = document.createElement("div");
     zonesRoot.className = `tk-zones${horizontalZones ? " is-horizontal" : ""}${scrollZoneRows ? " is-vertical-scroll" : ""}`;
     if (horizontalZones) {
-      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hshade tk-zone-hshade-left"></div><div class="tk-zone-hshade tk-zone-hshade-right"></div><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><svg class="tk-zone-hacrylic-defs" aria-hidden="true" focusable="false"><defs><clipPath clipPathUnits="userSpaceOnUse"><g></g></clipPath></defs></svg><div class="tk-zone-hacrylic-lens" aria-hidden="true"></div><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
-      zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHAcrylicLens = zonesRoot.querySelector(".tk-zone-hacrylic-lens"); zoneHAcrylicDefs = zonesRoot.querySelector(".tk-zone-hacrylic-defs"); zoneHAcrylicClipGroup = zoneHAcrylicDefs?.querySelector("clipPath>g") || null; zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
+      zonesRoot.innerHTML = '<div class="tk-zone-hrail"><div class="tk-zone-hshade tk-zone-hshade-left"></div><div class="tk-zone-hshade tk-zone-hshade-right"></div><div class="tk-zone-hclip" tabindex="0" aria-label="Scrollable company buckets"><svg class="tk-zone-hacrylic-defs" aria-hidden="true" focusable="false"><defs><clipPath clipPathUnits="userSpaceOnUse"><g></g></clipPath></defs></svg><div class="tk-zone-hacrylic-clip" aria-hidden="true"><div class="tk-zone-hacrylic-lens"></div></div><div class="tk-zone-htrack"></div></div><div class="tk-zone-hsb" aria-hidden="true"><div class="tk-zone-hth"></div></div></div>';
+      zoneRail = zonesRoot.querySelector(".tk-zone-hrail"); zoneHClip = zonesRoot.querySelector(".tk-zone-hclip"); zoneHTrack = zonesRoot.querySelector(".tk-zone-htrack"); zoneHAcrylicClip = zonesRoot.querySelector(".tk-zone-hacrylic-clip"); zoneHAcrylicLens = zoneHAcrylicClip?.querySelector(":scope > .tk-zone-hacrylic-lens") || null; zoneHAcrylicDefs = zonesRoot.querySelector(".tk-zone-hacrylic-defs"); zoneHAcrylicClipGroup = zoneHAcrylicDefs?.querySelector("clipPath>g") || null; zoneHBar = zonesRoot.querySelector(".tk-zone-hsb"); zoneHThumb = zonesRoot.querySelector(".tk-zone-hth");
       zoneHAcrylicClipId = `tk-zone-hacrylic-${Math.random().toString(36).slice(2)}`;
       zoneHAcrylicDefs?.querySelector("clipPath")?.setAttribute("id", zoneHAcrylicClipId);
-      if (zoneHAcrylicClipGroup) {
-        zoneHAcrylicClipGroup.style.transformBox = "view-box";
-        zoneHAcrylicClipGroup.style.transformOrigin = "0 0";
-        zoneHAcrylicClipGroup.style.willChange = "transform";
-      }
       if (zoneHAcrylicLens) zoneHAcrylicLens.dataset.crmAcrylicOwner = theaterKey;
       zoneHLeftShade = zonesRoot.querySelector(".tk-zone-hshade-left"); zoneHRightShade = zonesRoot.querySelector(".tk-zone-hshade-right");
       zoneHTrack.classList.toggle("is-paged", pagedHorizontalZones);
@@ -4817,13 +4844,14 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       zoneHScroll.pendingWheel = 0;
       releaseZoneRailInteraction(true);
       zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null;
-      zoneHPrimeMaskAnimation?.cancel?.(); zoneHPrimeMaskAnimation = null;
+      zoneHPrimeClipAnimation?.cancel?.(); zoneHPrimeClipAnimation = null;
+      zoneHPrimeLensAnimation?.cancel?.(); zoneHPrimeLensAnimation = null;
       zoneHPrimeSignature = "";
       zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zoneVResizeObserver?.disconnect(); zoneVResizeObserver = null;
       if (zoneVLodFrame) cancelAnimationFrame(zoneVLodFrame); zoneVLodFrame = 0; zoneVisibleStages.clear();
       zonesRoot?.remove();
-      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHAcrylicLens = zoneHAcrylicDefs = zoneHAcrylicClipGroup = zoneHBar = zoneHThumb = zoneHLeftShade = zoneHRightShade = null;
+      zonesRoot = zoneRail = zoneHClip = zoneHTrack = zoneHAcrylicClip = zoneHAcrylicLens = zoneHAcrylicDefs = zoneHAcrylicClipGroup = zoneHBar = zoneHThumb = zoneHLeftShade = zoneHRightShade = null;
       zoneHAcrylicClipId = "";
       zoneVRail = zoneVClip = zoneVTrack = zoneVBar = zoneVThumb = null;
       zoneHorizontalBounds.clear(); zoneHMetrics.view = zoneHMetrics.content = zoneHMetrics.bar = 0; zoneHThumbWidth = -1; zoneHLeftOpacity = zoneHRightOpacity = "";
@@ -5087,6 +5115,17 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         // their entire tree on the user's click.
         applyActiveVisibility();
       }
+      if (horizontalZones) {
+        // Chromium may discard a hidden room's promoted layers even though its
+        // DOM and geometry remain warm. Re-prime the three synchronized rail
+        // owners while Desk Transit still covers the destination with its
+        // decoded endpoint, so the first real wheel gesture never pays that
+        // upload/promotion cost.
+        zoneHPrimeSignature = "";
+        requestAnimationFrame(() => {
+          if (active && zoneHTrack?.isConnected) primeHorizontalZoneCompositor();
+        });
+      }
       if (zoneGeometryRefreshPending) scheduleZoneGeometryRefresh();
     } else {
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf);
@@ -5097,6 +5136,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       zoneHScroll.pendingWheel = 0;
       zoneHScroll.target = zoneHScroll.x;
       releaseZoneRailInteraction(true);
+      zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null;
+      zoneHPrimeClipAnimation?.cancel?.(); zoneHPrimeClipAnimation = null;
+      zoneHPrimeLensAnimation?.cancel?.(); zoneHPrimeLensAnimation = null;
+      zoneHPrimeSignature = "";
       const hadExpandedBuckets = expandedStages.size > 0;
       expandedStages.clear();
       writeExpandedStages();

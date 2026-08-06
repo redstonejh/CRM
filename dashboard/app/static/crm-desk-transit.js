@@ -44,6 +44,7 @@
   let endpointBridgeLoadSequence = 0;
   let endpointBridgeLoadIdentity = "";
   let endpointBridgeLoadPromise = null;
+  let workspacePreviewLeaseActive = false;
 
   const ensureStyles = () => {
     if (document.getElementById("crm-desk-transit-styles")) return;
@@ -1950,12 +1951,12 @@
       }
       // The exact full-size return lid is already authoritative. Retire the
       // large outgoing room, route state, API activation and theater topology
-      // beneath that lid. Start the compositor contraction first, give its
-      // initial state one clean paint, then finish the bounded semantic route
-      // while the same lid remains the visible owner.
+      // beneath that lid. Start the compositor contraction first, then begin
+      // the staged route in this same input task. setActiveStaged() publishes
+      // the cheap route/chrome identity synchronously and yields its expensive
+      // owners across subsequent paints while the same lid remains visible.
       cam.back();     // 460ms house contract into the Home slot
       const motionPromise = Promise.resolve(cam.whenSettled?.());
-      await paint(1);
       await commitStaged("home");
       motionPromise.then(() => window.crmHome?.waitForHandoff?.()).then(() => {
         if (surface) surface.style.zIndex = "";
@@ -2006,6 +2007,21 @@
     }
     return restored;
   };
+  const syncWorkspacePreviewLease = (key) => {
+    workspacePreviewLeaseActive = String(key || "") !== "home";
+    try {
+      // A settled room must not thaw Electron's offscreen preview renderers only
+      // to freeze them again on its first scroll, drag, or nested camera move.
+      // That lifecycle round-trip competes for the GPU and can cost isolated
+      // native refreshes. Keep one document-scoped lease for the complete
+      // non-Home visit; queued preview work resumes after Home owns the window.
+      window.crmHomePreviews?.setInteraction?.(
+        workspacePreviewLeaseActive,
+        "desk-workspace",
+        false,
+      );
+    } catch {}
+  };
 
   const driveTo = (key, options = {}) => new Promise((resolve) => {
     const ws = window.crmWorkspaces;
@@ -2021,6 +2037,7 @@
     announceNavigationHistory();
     const done = (success = true) => {
       busy = false;
+      syncWorkspacePreviewLease(ws.active?.() || key);
       try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
       if (recordHistory) commitCurrentViewport(); else announceNavigationHistory();
       resolve(success);
@@ -2029,7 +2046,7 @@
       queued = null;
       if (next) driveTo(next.key, next.options).then(next.resolve);
     };
-    void Promise.resolve(interactionReady).catch(() => null).then(() => {
+    const beginRoute = () => {
       try {
         if (current === "home") diveIn(key, done);
         else if (key === "home") diveOut(current, done);
@@ -2038,7 +2055,13 @@
         commit(key);   // motion failed — state must still be correct
         done();
       }
-    });
+    };
+    // A non-Home workspace lease already positively froze every offscreen
+    // renderer before this room was exposed. Begin its exit in the input task;
+    // awaiting the old settled Promise would defer the camera until a later
+    // microtask and make the Home control feel inert for one frame.
+    if (current !== "home" && workspacePreviewLeaseActive) beginRoute();
+    else void Promise.resolve(interactionReady).catch(() => null).then(beginRoute);
   });
 
   // A dive the home camera already started (a bucket click — the camera's own
@@ -2053,6 +2076,7 @@
     announceNavigationHistory();
     const done = (success = true) => {
       busy = false;
+      syncWorkspacePreviewLease(ws.active?.() || key);
       try { window.crmHomePreviews?.setInteraction?.(false, "desk-transit"); } catch {}
       commitCurrentViewport();
       resolve(success);

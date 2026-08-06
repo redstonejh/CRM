@@ -1829,6 +1829,21 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         bucket.dataset.enabled = "true";
         bucket.dataset.homeTileRemovable = String(!isCanonicalHomeTile(module));
         if (!created) return;
+        const preflight = () => {
+          // Start the two click prerequisites at the pointer/focus boundary,
+          // before Fractal Camera spends a frame building its warm expander.
+          // The later primeExpander call joins the same retained-raster load;
+          // it no longer leaves a fast click waiting for the first upload.
+          void preparePrecomposedModule(key);
+          const preview = previews.get(key);
+          if (!isRenderablePreview(preview)) return;
+          void window.crmDeskTransit?.primeEndpointRaster?.(
+            preview.exactSrc,
+            key,
+            preview.capturedAt || 0,
+          );
+        };
+        bucket.addEventListener("pointerenter", preflight);
         // Do not activate merely because a tile finishes loading beneath an
         // already-stationary pointer. Actual pointer movement arms the reveal.
         bucket.addEventListener("pointermove", () => {
@@ -1838,7 +1853,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         bucket.addEventListener("pointerleave", () => {
           restSharpPreview(bucket);
         });
-        bucket.addEventListener("focus", () => revealSharpPreview(bucket));
+        bucket.addEventListener("focus", () => {
+          preflight();
+          revealSharpPreview(bucket);
+        });
         bucket.addEventListener("blur", () => restSharpPreview(bucket));
       },
     });

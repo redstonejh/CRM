@@ -644,6 +644,7 @@
     let transitionSeq = 0;
     let transitionWaiters = [];
     let warm = null;
+    const prefetchTimings = [];
     let active = config.active !== false;
 
     const measureTop = () => {
@@ -883,59 +884,115 @@
     };
     const dropWarm = () => {
       if (!warm) return;
+      if (warm.primeFrame) cancelAnimationFrame(warm.primeFrame);
       warm.animation?.cancel?.();
       warm.el.remove();
       warm = null;
     };
-    const buildExpander = (target) => {
+    const buildExpander = (target, contextExtras = {}) => {
+      const startedAt = performance.now();
       const E = expRect();
       const source = layoutRect(target, layers[level]);
-      const expander = config.buildExpander?.(target, { ...ctx(), sourceRect: source }) || document.createElement("div");
+      const measuredAt = performance.now();
+      const expander = config.buildExpander?.(target, {
+        ...ctx(),
+        ...contextExtras,
+        sourceRect:source,
+      }) || document.createElement("div");
+      const createdAt = performance.now();
       Object.assign(expander.style, { left: `${E.x}px`, top: `${E.y}px`, width: `${E.w}px`, height: `${E.h}px` });
       expander.dataset.fractalFrame = "viewport";
       setSourceGeometry(expander, target, E);
-      config.configureExpander?.(expander, target, { ...ctx(), sourceRect: source });
+      const styledAt = performance.now();
+      config.configureExpander?.(expander, target, {
+        ...ctx(),
+        ...contextExtras,
+        sourceRect:source,
+      });
+      const configuredAt = performance.now();
+      expander.__fractalBuildTiming = {
+        measureMs:measuredAt - startedAt,
+        createMs:createdAt - measuredAt,
+        styleMs:styledAt - createdAt,
+        configureMs:configuredAt - styledAt,
+      };
       return expander;
     };
-    const prefetch = (target) => {
+    const prefetch = (target, options = {}) => {
+      const startedAt = performance.now();
       if (config.shouldPrefetch?.(target, ctx()) === false) return;
       const key = keyOf(target);
       if (!key) return;
       if (warm && warm.key === key) return;
       dropWarm();
-      const expander = buildExpander(target);
+      const prefetchMode = String(options.mode || "intent");
+      const expander = buildExpander(target, { prefetchMode });
+      const builtAt = performance.now();
       expander.classList.add(config.warmClass || "fractal-camera-warm");
       const E = expRect();
       const rect = target.getBoundingClientRect();
       const sourceTransform = `translate(${(rect.left - E.x).toFixed(2)}px, ${(rect.top - E.y).toFixed(2)}px) scale(${(rect.width / E.w).toFixed(5)}, ${(rect.height / E.h).toFixed(5)})`;
       Object.assign(expander.style, { opacity: "0.001", zIndex: "1", transform:sourceTransform });
       surface.appendChild(expander);
-      config.primeExpander?.(expander, target, ctx());
-      const entry = { key, el:expander, animation:null };
+      const attachedAt = performance.now();
+      const entry = {
+        key,
+        el:expander,
+        animation:null,
+        primeFrame:0,
+        primed:false,
+        completePrime:null,
+      };
       warm = entry;
-      if (!animateWarmExpander) return;
-      // Exercise the exact transparent room texture through its compositor
-      // scale while the pointer is merely hovering. The first visible camera
-      // frame can then reuse an uploaded, transform-ready surface.
-      const animation = expander.animate(
-        [
-          { transform:sourceTransform, offset:0 },
-          { transform:"none", offset:.5 },
-          { transform:sourceTransform, offset:1 },
-        ],
-        { duration:96, easing:"linear", fill:"both" },
-      );
-      entry.animation = animation;
-      // Once the hover pass has exercised both compositor scales, retire the
-      // Web Animation while preserving its final source transform. Cancelling
-      // a finished fill-mode animation at click time can otherwise rebuild the
-      // promoted layer during the first visible camera frames.
-      animation.finished.then(() => {
-        if (warm !== entry || !expander.isConnected) return;
-        try { animation.commitStyles(); } catch {}
-        animation.cancel();
-        entry.animation = null;
-      }).catch(() => {});
+      const completePrime = () => {
+        entry.primeFrame = 0;
+        if (warm !== entry || entry.primed || !expander.isConnected) return false;
+        const primeStartedAt = performance.now();
+        config.primeExpander?.(expander, target, { ...ctx(), prefetchMode });
+        const primedAt = performance.now();
+        entry.primed = true;
+        const primeMs = primedAt - primeStartedAt;
+        prefetchTimings.push({
+          key,
+          totalMs:(builtAt - startedAt) + (attachedAt - builtAt) + primeMs,
+          latencyMs:primedAt - startedAt,
+          buildMs:builtAt - startedAt,
+          attachMs:attachedAt - builtAt,
+          primeMs,
+          ...(expander.__fractalBuildTiming || {}),
+        });
+        if (prefetchTimings.length > 24) prefetchTimings.splice(0, prefetchTimings.length - 24);
+        if (!animateWarmExpander) return true;
+        // Exercise the exact transparent room texture through its compositor
+        // scale while the pointer is merely hovering. The first visible camera
+        // frame can then reuse an uploaded, transform-ready surface.
+        const animation = expander.animate(
+          [
+            { transform:sourceTransform, offset:0 },
+            { transform:"none", offset:.5 },
+            { transform:sourceTransform, offset:1 },
+          ],
+          { duration:96, easing:"linear", fill:"both" },
+        );
+        entry.animation = animation;
+        // Once the hover pass has exercised both compositor scales, retire the
+        // Web Animation while preserving its final source transform. Cancelling
+        // a finished fill-mode animation at click time can otherwise rebuild the
+        // promoted layer during the first visible camera frames.
+        animation.finished.then(() => {
+          if (warm !== entry || !expander.isConnected) return;
+          try { animation.commitStyles(); } catch {}
+          animation.cancel();
+          entry.animation = null;
+        }).catch(() => {});
+        return true;
+      };
+      entry.completePrime = completePrime;
+      if (config.stagePrefetchPrime === true && prefetchMode === "intent") {
+        entry.primeFrame = requestAnimationFrame(completePrime);
+      } else {
+        completePrime();
+      }
     };
     const expandNow = (target) => {
       if (!target?.isConnected || !active || transitioning || level >= maxLevel) return;
@@ -950,6 +1007,8 @@
       let expander = null;
       let reusedWarmExpander = false;
       if (warm && warm.key === key) {
+        if (warm.primeFrame) cancelAnimationFrame(warm.primeFrame);
+        warm.completePrime?.();
         warm.animation?.cancel?.();
         expander = warm.el;
         expander.classList.remove(config.warmClass || "fractal-camera-warm");
@@ -1383,7 +1442,10 @@
     };
     const onMouseMove = (event) => {
       if (!active || !surface || surface.hidden) return;
-      const target = targetAtPoint(event.clientX, event.clientY);
+      // Pointer dispatch already performed hit testing. Prefer that exact
+      // target before falling back to geometry for synthetic/overlay events;
+      // measuring every camera tile here forced a full layout on first hover.
+      const target = targetFromEvent(event) || targetAtPoint(event.clientX, event.clientY);
       try {
         global.crmHomePreviews?.setInteraction?.(
           !!target,
@@ -1427,6 +1489,7 @@
       rebuildRoot,
       restoreRoot,
       prefetch,
+      prefetchTimings: () => prefetchTimings.map((entry) => ({ ...entry })),
       dropWarm,
       layout,
       historyState,

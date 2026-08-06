@@ -22,6 +22,45 @@ const API_PORT = Number(process.env.CRM_API_PORT || 4039);
 const STATIC_PORT = Number(process.env.CRM_STATIC_PORT || 4038);
 const ROUND_COUNT = Math.max(2, Number(process.env.CRM_HOME_ROUNDS || 2));
 const JOURNEYS_ONLY = process.env.CRM_HOME_JOURNEYS_ONLY === '1';
+const TRACE_TILE = String(process.env.CRM_HOME_TRACE || '').trim();
+
+async function startPerformanceTrace(page, outputPath) {
+  const session = await page.context().newCDPSession(page);
+  await session.send('Tracing.start', {
+    categories:[
+      '-*',
+      'blink',
+      'blink.user_timing',
+      'cc',
+      'devtools.timeline',
+      'disabled-by-default-devtools.timeline',
+      'disabled-by-default-devtools.timeline.frame',
+      'gpu',
+      'renderer.scheduler',
+      'toplevel',
+      'viz',
+    ].join(','),
+    options:'record-as-much-as-possible',
+    transferMode:'ReturnAsStream',
+  });
+  return async () => {
+    const completed = new Promise((resolve) => session.once('Tracing.tracingComplete', resolve));
+    await session.send('Tracing.end');
+    const { stream } = await completed;
+    const chunks = [];
+    for (;;) {
+      const result = await session.send('IO.read', { handle:stream });
+      chunks.push(result.base64Encoded
+        ? Buffer.from(result.data, 'base64')
+        : Buffer.from(result.data));
+      if (result.eof) break;
+    }
+    await session.send('IO.close', { handle:stream });
+    await session.detach();
+    fs.writeFileSync(outputPath, Buffer.concat(chunks));
+    console.log(`[home-transition] performance trace: ${outputPath}`);
+  };
+}
 
 async function armProbe(page, direction, tile, sampleVisual = false) {
   await page.evaluate(({ probeDirection, module, theater, readVisuals }) => {
@@ -1020,6 +1059,10 @@ async function runRoundTrip(page, tile, sampleVisual) {
   });
   await page.hover(selector);
   await sleep(160);
+  if (TRACE_TILE === tile.module) {
+    const timings = await page.evaluate(() => window.crmHomeCamera?.prefetchTimings?.().slice(-2) || []);
+    console.log(`[home-transition] prefetch timings: ${JSON.stringify(timings)}`);
+  }
   await armProbe(page, 'expand', tile, sampleVisual);
   await page.click(selector);
   const expand = await takeProbe(page);
@@ -1244,15 +1287,27 @@ async function main() {
     const outDir = path.resolve(__dirname, 'electron-actual', 'home-transition-continuity');
     fs.mkdirSync(outDir, { recursive:true });
     const evidence = { coldPrewarm, tiles:{}, handoffCrossfade:{} };
+    let traceCaptured = false;
+    const measuredRoundTrip = async (tile, sampleVisual, label) => {
+      const shouldTrace = !traceCaptured && TRACE_TILE === tile.module;
+      const tracePath = path.join(outDir, `${tile.module}-${label}-trace.json`);
+      const stopTrace = shouldTrace ? await startPerformanceTrace(page, tracePath) : null;
+      if (shouldTrace) traceCaptured = true;
+      try {
+        return await runRoundTrip(page, tile, sampleVisual);
+      } finally {
+        await stopTrace?.();
+      }
+    };
     for (const tile of TILES) {
       await waitForReadyHome(page);
-      const cold = await runRoundTrip(page, tile, false);
+      const cold = await measuredRoundTrip(tile, false, 'cold');
       await waitForReadyHome(page);
-      const repeat = await runRoundTrip(page, tile, true);
+      const repeat = await measuredRoundTrip(tile, true, 'repeat');
       const additional = [];
       for (let round = 2; round < ROUND_COUNT; round += 1) {
         await waitForReadyHome(page);
-        additional.push(await runRoundTrip(page, tile, true));
+        additional.push(await measuredRoundTrip(tile, true, `round-${round + 1}`));
       }
       evidence.tiles[tile.module] = {
         cold:{

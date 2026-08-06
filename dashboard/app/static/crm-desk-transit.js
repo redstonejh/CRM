@@ -673,6 +673,7 @@
     key = "",
     capturedAt = "",
     mode = "exact",
+    decodedImage = null,
   } = {}) => {
     const value = String(source || "");
     if (!value) return Promise.resolve(null);
@@ -699,15 +700,22 @@
       bridge.dataset.crmEndpointRasterReady = "false";
       bridge.querySelectorAll(":scope > :not(img.crm-home-endpoint-bridge-raster)").forEach((node) => node.remove());
       let image = bridge.querySelector(":scope > img.crm-home-endpoint-bridge-raster");
-      if (!image) {
+      const reusableDecodedImage = decodedImage instanceof HTMLImageElement
+        && decodedImage.complete
+        && decodedImage.naturalWidth > 0;
+      if (reusableDecodedImage && image !== decodedImage) {
+        image?.remove();
+        image = decodedImage;
+        bridge.appendChild(image);
+      } else if (!image) {
         image = document.createElement("img");
-        image.className = "crm-home-endpoint-bridge-raster";
-        image.alt = "";
-        image.draggable = false;
-        image.decoding = "sync";
         bridge.appendChild(image);
       }
-      if (image.src !== value) image.src = value;
+      image.className = "crm-home-endpoint-bridge-raster";
+      image.alt = "";
+      image.draggable = false;
+      image.decoding = "sync";
+      if (!reusableDecodedImage && image.src !== value) image.src = value;
       if (!image.complete || image.naturalWidth <= 0) {
         try { await image.decode?.(); } catch {}
       }
@@ -742,7 +750,13 @@
       ? (exact.currentSrc || exact.src)
       : (typeof sourceOrExpander === "string" ? sourceOrExpander : "");
     const stamp = capturedAt || host?.dataset?.capturedAt || "";
-    return !!await loadEndpointBridgeImage(source, { key, capturedAt:stamp, mode:"exact" });
+    const decodedImage = window.crmHome?.endpointPreview?.(key)?.raster || null;
+    return !!await loadEndpointBridgeImage(source, {
+      key,
+      capturedAt:stamp,
+      mode:"exact",
+      decodedImage,
+    });
   };
 
   const primeEndpointPreview = async (key) => {
@@ -753,7 +767,12 @@
     try { await window.crmHome?.prepareModule?.(key); } catch {}
     const preview = window.crmHome?.endpointPreview?.(key);
     if (!preview?.src) return false;
-    return primeEndpointRaster(preview.src, key, preview.capturedAt);
+    return !!await loadEndpointBridgeImage(preview.src, {
+      key,
+      capturedAt:preview.capturedAt,
+      mode:"exact",
+      decodedImage:preview.raster,
+    });
   };
 
   const buildEndpointBridge = async (stage, raster) => {

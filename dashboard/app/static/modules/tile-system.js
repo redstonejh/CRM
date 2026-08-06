@@ -257,7 +257,6 @@ export function mountTileChildren(host, parent, options = {}) {
       element,
     ]),
   );
-  const fragment = document.createDocumentFragment();
   const elements = parent.children.map((object, index) => {
     let element = existing.get(object.tile.id) || null;
     const created = !element || tileObjectForElement(element) !== object;
@@ -270,10 +269,16 @@ export function mountTileChildren(host, parent, options = {}) {
       );
     }
     options.update?.(element, object, index, { created, parent });
-    fragment.appendChild(element);
     return element;
   });
-  host.replaceChildren(fragment);
+  const current = [...host.children];
+  const alreadyReconciled = current.length === elements.length
+    && elements.every((element, index) => current[index] === element);
+  if (!alreadyReconciled) {
+    const fragment = document.createDocumentFragment();
+    elements.forEach((element) => fragment.appendChild(element));
+    host.replaceChildren(fragment);
+  }
   host.dataset.crmTileCollection = parent.tile.id;
   host.dataset.crmTileChildCount = String(parent.children.length);
   return elements;

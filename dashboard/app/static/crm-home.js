@@ -376,19 +376,21 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface[data-crm-home-retained]{
         display:block!important;
         pointer-events:none!important;visibility:visible!important}
-      .crm-home-surface[data-crm-home-retained][hidden]{z-index:0!important}
-      .crm-home-surface[data-crm-home-retained]:not([hidden]){z-index:4500!important}
+      .crm-home-surface[data-crm-home-retained][data-crm-home-inactive-retained]{z-index:0!important}
+      .crm-home-surface[data-crm-home-retained]:not([data-crm-home-inactive-retained]){z-index:4500!important}
       .crm-home-surface[data-crm-home-retained] .crm-home-level>:is(.crm-home-grid,.crm-home-title-layer,.crm-home-priority-hand){
         visibility:hidden!important;pointer-events:none!important}
       .crm-home-surface[data-crm-home-retained] .crm-home-level>.crm-home-motion-snapshot{
         display:none!important}
       .crm-home-surface[data-crm-home-retained] .crm-home-level>.crm-home-motion-variant{
         display:none!important}
-      .crm-home-surface[data-crm-home-retained][hidden] .crm-home-level>.crm-home-motion-variant.is-active-motion-variant{
+      .crm-home-surface[data-crm-home-retained][data-crm-home-inactive-retained]
+        .crm-home-level>.crm-home-motion-variant.is-active-motion-variant{
         display:block!important;visibility:visible!important;opacity:.001!important;
         transform:translateZ(0)!important;will-change:transform,opacity;
         pointer-events:none!important}
-      .crm-home-surface[data-crm-home-retained]:not([hidden]) .crm-home-level>.crm-home-motion-variant.is-active-motion-variant{
+      .crm-home-surface[data-crm-home-retained]:not([data-crm-home-inactive-retained])
+        .crm-home-level>.crm-home-motion-variant.is-active-motion-variant{
         display:block!important;visibility:visible!important;opacity:1!important;
         transform:translateZ(0)!important;will-change:transform,opacity;
         pointer-events:none!important}
@@ -1340,7 +1342,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const clearMotionPaintParking = (node) => {
     if (!node) return false;
     node.removeAttribute("data-crm-home-motion-parked");
-    motionPaintOwnersOf(node).forEach((owner) => {
+    // Acrylic prewarm temporarily exempts real shared blur planes from their
+    // parent's parked visibility, then parks those planes explicitly when the
+    // finite warm pass ends. A boxed camera surface is itself the normal paint
+    // owner, so its nested exemptions are not returned by
+    // motionPaintOwnersOf(). Clear every actual parked descendant when that
+    // surface is promoted; otherwise its room becomes visible while the one
+    // real acrylic plane remains hidden by the !important parking selector.
+    const parkedOwners = new Set([
+      ...motionPaintOwnersOf(node),
+      ...node.querySelectorAll("[data-crm-home-motion-parked-owner]"),
+    ]);
+    parkedOwners.forEach((owner) => {
       owner.removeAttribute("data-crm-home-motion-parked-owner");
     });
     return true;
@@ -1521,7 +1534,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       node.setAttribute("data-crm-home-precompose-promoted", "");
       node.removeAttribute("aria-hidden");
       clearMotionPaintParking(node);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      // Promise continuations from a single rAF still run before that frame's
+      // style/layout/paint. Two callbacks guarantee the promoted boxed room has
+      // owned one complete covered paint before endpoint staging continues.
+      await new Promise((resolve) => requestAnimationFrame(() =>
+        requestAnimationFrame(resolve)));
       return canContinue();
     }
     node.removeAttribute("data-crm-home-precompose-promoted");
@@ -1586,8 +1603,17 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const cover = await prepareFactoryAcrylicCover();
     if (!cover || !canPrewarmFactory()) return false;
     parkMotionPaint(node);
+    const boxedRoom = !node.matches?.(".crm-theater");
     const outerOwners = precomposeOwnersOf(node);
-    outerOwners.forEach((owner) => owner.setAttribute("data-crm-home-precompose-promoted", ""));
+    if (boxedRoom) node.setAttribute("data-crm-home-precompose-promoted", "");
+    else outerOwners.forEach((owner) => {
+      owner.setAttribute("data-crm-home-precompose-promoted", "");
+    });
+    // A boxed camera surface is its own paint owner. parkMotionPaint therefore
+    // marks the root (rather than its finite child owners) as hidden; clear that
+    // root marker for this covered lease or none of its real blur planes can
+    // actually reach the compositor.
+    if (boxedRoom) node.removeAttribute("data-crm-home-motion-parked-owner");
     acrylicOwners.forEach((owner) => owner.removeAttribute("data-crm-home-motion-parked-owner"));
     // Home itself remains the top visible surface. This matching raster sits
     // directly below it and above the inactive room, exactly mirroring the
@@ -1600,7 +1626,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     cover.style.opacity = "0";
     cover.style.visibility = "hidden";
     acrylicOwners.forEach((owner) => owner.setAttribute("data-crm-home-motion-parked-owner", ""));
-    outerOwners.forEach((owner) => owner.removeAttribute("data-crm-home-precompose-promoted"));
+    if (boxedRoom) node.setAttribute("data-crm-home-motion-parked-owner", "");
+    if (boxedRoom) node.removeAttribute("data-crm-home-precompose-promoted");
+    else outerOwners.forEach((owner) => {
+      owner.removeAttribute("data-crm-home-precompose-promoted");
+    });
     await new Promise((resolve) => requestAnimationFrame(resolve));
     return canPrewarmFactory();
   };
@@ -2317,6 +2347,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!retain) {
       surface.removeAttribute("data-crm-home-retained");
       surface.removeAttribute("data-crm-home-retained-tile");
+      surface.removeAttribute("data-crm-home-inactive-retained");
       return true;
     }
     const root = camera?.layers?.()[0];
@@ -2555,6 +2586,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   camera = window.createFractalCamera({
     apiName:"crmHomeCamera",theater:"home",surfaceClass:"crm-home-surface",layerClass:"crm-home-level",
     warmClass:"crm-home-warm",contractingClass:"crm-home-contracting",active:false,maxLevel:1,margin:0,
+    preserveSurfaceOnDeactivate:true,
     ignoreSelector:".window-control-cluster,.background-tone-menu,.auth-shell,.auth-modal-backdrop,.crm-home-todo-popover,.crm-home-todo-menu",
     expandFadeMs:70,belowFadeMs:70,contractFadeMs:70,keepBelowVisibleDuringTransition:true,keepBelowVisibleDuringJump:true,precomposeTransitions:true,lockInputDuringTransitions:true,delegateClickToOwner:true,measureTop:()=>0,ensureStyles,buildRoot,layout,layoutOnActivate:()=>!window.crmDeskTransit?.isBusy?.(),targetFromEvent,targetAtPoint,buildExpander,
     configureExpander:(expander,target,context)=>{
@@ -2756,7 +2788,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (!requestedActive && transitBusy) {
         inactiveCommitDeferred = true;
       } else {
-        if (!requestedActive) setInactiveMotionRetention(true);
+        if (!requestedActive) {
+          setInactiveMotionRetention(true);
+          camera.surface()?.setAttribute?.("data-crm-home-inactive-retained", "");
+        } else {
+          camera.surface()?.removeAttribute?.("data-crm-home-inactive-retained");
+        }
         inactiveCommitDeferred = false;
         camera.setActive(requestedActive);
         if (requestedActive && !transitBusy) setInactiveMotionRetention(false);
@@ -2799,6 +2836,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const finalizeInactiveSurface = () => {
     if (!inactiveCommitDeferred && !camera?.isActive?.()) return true;
     inactiveCommitDeferred = false;
+    camera?.surface?.()?.setAttribute?.("data-crm-home-inactive-retained", "");
     camera?.setActive?.(false);
     return !camera?.isActive?.();
   };
@@ -2822,7 +2860,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       cases:".tk-zone,.tk-deck",
       planner:".crm-project-bucket,.crm-planner-bucket,.crm-planner-card",
       assignments:".tk-zone,.tk-zcard",
-      calendar:".crm-calendar-tile,.fc-month,.fc-day",
+      // Calendar's own geometry waiter validates the unified tile graph and
+      // synchronized previews in parallel. Re-sampling every fake day renderer
+      // here forced 64 style/layout reads into each covered endpoint frame.
+      calendar:".fc-month",
       monitoring:".crm-monitoring-tile",
     }[key]||"*";
     let stable=0,last=""; const tick=()=>{const source=[...document.querySelectorAll(`[data-crm-theater="${theater}"]`)].find((node)=>!node.hidden||node.hasAttribute("data-crm-transit-destination"));

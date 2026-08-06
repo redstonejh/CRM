@@ -12,6 +12,8 @@ const ALL_TILES = [
   { module:'cases', theater:'tickets' },
   { module:'planner', theater:'planner' },
   { module:'assignments', theater:'assignments' },
+  { module:'calendar', theater:'calendar' },
+  { module:'monitoring', theater:'monitoring' },
 ];
 const TILES = process.env.CRM_HOME_TILE
   ? ALL_TILES.filter((tile) => tile.module === process.env.CRM_HOME_TILE)
@@ -52,6 +54,8 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       acrylicEndpointHold:[],
       homeReturnCoverage:[],
       longTasks:[],
+      transitErrors:[],
+      tickCount:0,
       sampleVisual:readVisuals,
       triggered:false,
       started:false,
@@ -81,11 +85,21 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
     window.__triggerHomeContinuity = trigger;
     const triggerTarget = home?.querySelector(`.crm-home-bucket[data-module="${module}"]`);
     const onPointerDown = (event) => {
-      if (event.target?.closest?.(`.crm-home-bucket[data-module="${module}"]`) === triggerTarget) trigger();
+      const closest = event.target?.closest?.(`.crm-home-bucket[data-module="${module}"]`);
+      probe.pointerTarget = {
+        matched:closest === triggerTarget,
+        closest:describe(closest),
+        expected:describe(triggerTarget),
+      };
+      if (closest === triggerTarget) trigger();
     };
     // Start at physical input, before the camera's document-level click
     // capture can do any synchronous setup.
     document.addEventListener('pointerdown', onPointerDown, true);
+    const onTransitError = (event) => {
+      probe.transitErrors.push(event.detail || null);
+    };
+    document.addEventListener('crm:desk-transit-error', onTransitError);
 
     const observer = new MutationObserver((records) => {
       if (!probe.triggered || (!window.crmHomeCamera?.isTransitioning?.() && !window.crmDeskTransit?.isBusy?.())) return;
@@ -160,6 +174,7 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       observer.disconnect();
       longTaskObserver?.disconnect();
       document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('crm:desk-transit-error', onTransitError);
       delete window.__triggerHomeContinuity;
       probe.destinationChildren = Object.fromEntries(observed.map((root) => [regionOf(root), root.querySelectorAll('*').length]));
       probe.transitTiming = (window.crmDeskTransit?.performanceTimings?.() || [])
@@ -167,6 +182,7 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       resolveDone(probe);
     };
     const tick = (now) => {
+      probe.tickCount += 1;
       const cameraMoving = !!window.crmHomeCamera?.isTransitioning?.();
       const motionState = window.crmDeskTransit?.motionState?.() || { active:cameraMoving };
       const visualState = window.crmDeskTransit?.visualState?.() || {
@@ -336,7 +352,36 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
 
 async function takeProbe(page) {
   return page.evaluate(async () => {
-    const probe = await window.__homeContinuityDone;
+    const probe = await Promise.race([
+      window.__homeContinuityDone,
+      new Promise((_, reject) => setTimeout(() => {
+        const preview = window.fractalCalendar?.tilePreviewStatus?.() || [];
+        const previewStates = preview.reduce((states, item) => {
+          const state = item.state || 'unknown';
+          states[state] = (states[state] || 0) + 1;
+          return states;
+        }, {});
+        reject(new Error(JSON.stringify({
+          message:'Home continuity probe timed out',
+          module:document.body.dataset.crmModule || '',
+          workspace:window.crmWorkspaces?.active?.() || '',
+          homeTransitioning:window.crmHomeCamera?.isTransitioning?.() || false,
+          homeMotion:window.crmDeskTransit?.motionState?.() || null,
+          deskBusy:window.crmDeskTransit?.isBusy?.() || false,
+          cover:window.crmDeskTransit?.coverState?.() || null,
+          transitErrors:window.__homeContinuityProbe?.transitErrors || [],
+          probe:{
+            triggered:window.__homeContinuityProbe?.triggered || false,
+            started:window.__homeContinuityProbe?.started || false,
+            tickCount:window.__homeContinuityProbe?.tickCount || 0,
+            pointerTarget:window.__homeContinuityProbe?.pointerTarget || null,
+          },
+          calendarLevel:window.fractalCalendar?.level?.() ?? null,
+          calendarTransitioning:window.fractalCalendarCamera?.isTransitioning?.() || false,
+          calendarPreview:{ count:preview.length, states:previewStates },
+        })));
+      }, 12_000)),
+    ]);
     const metrics = (deltas) => {
       const sorted = [...deltas].sort((a, b) => a - b);
       const percentile = (part) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * part) - 1))] || 0;
@@ -978,6 +1023,13 @@ async function runRoundTrip(page, tile, sampleVisual) {
   await armProbe(page, 'expand', tile, sampleVisual);
   await page.click(selector);
   const expand = await takeProbe(page);
+  const expandedModule = await page.evaluate(() => window.crmWorkspaces?.active?.() || '');
+  if (expandedModule !== tile.module) {
+    throw new Error(`Home ${tile.module} forward dive returned to ${expandedModule || 'unknown'}: ${JSON.stringify({
+      transitErrors:expand.transitErrors,
+      transitTiming:expand.transitTiming,
+    })}`);
+  }
 
   const contractIdleBaseline = await waitForPreviewIdle(page);
   if (!contractIdleBaseline.ok) {

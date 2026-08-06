@@ -512,12 +512,19 @@
   });
   const destinationAcrylicState = (stage) => {
     const root = stage?.theater || findDestinationTheater(stage?.key);
+    const marked = root
+      ? [...document.querySelectorAll(
+        `[data-crm-acrylic-owner="${stage?.key || ""}"]`,
+      )].filter((node) => node?.isConnected)
+      : [];
     const candidates = stage?.acrylicCandidates?.filter?.((node) => node?.isConnected)
       || (root
-        ? [root, ...root.querySelectorAll(
-          ".tk-zone-acrylic-plane,.tk-zone-hacrylic-lens,.tk-zone,"
-            + ".crm-planner-bucket,.crm-project-bucket,.crm-menu-surface",
-        ), ...document.querySelectorAll(`[data-crm-acrylic-owner="${stage?.key || ""}"]`)]
+        ? (marked.length
+          ? marked
+          : [root, ...root.querySelectorAll(
+            ".tk-zone-acrylic-plane,.tk-zone-hacrylic-lens,.tk-zone,"
+              + ".crm-planner-bucket,.crm-project-bucket,.crm-menu-surface",
+          )])
         : []);
     if (stage) stage.acrylicCandidates = candidates;
     const owners = [];
@@ -525,8 +532,8 @@
       if (!node?.isConnected) return false;
       const style = getComputedStyle(node);
       const filter = style.webkitBackdropFilter || style.backdropFilter || "";
-      if (!filter || filter === "none" || /blur\(\s*0(?:px)?\s*\)/i.test(filter)) return;
       const rect = node.getBoundingClientRect();
+      if (!filter || filter === "none" || /blur\(\s*0(?:px)?\s*\)/i.test(filter)) return;
       if (!(rect.width > 2 && rect.height > 2
         && rect.right > 0 && rect.bottom > 0
         && rect.left < innerWidth && rect.top < innerHeight
@@ -1357,19 +1364,27 @@
     // exact retained state it will keep while this room is active, including
     // its final z-order, before any live destination pixel can be exposed.
     if (surface) surface.style.zIndex = "";
+    stage.phase = "retiring-source-resetting-home";
     // Reset the hidden Home camera before exposing the live underpaint. The
     // destination backdrop must warm against its final, stable layer topology.
     if (cam?.restoreRoot) cam.restoreRoot();
     else cam?.rebuildRoot?.();
-    try { window.crmHome?.recycleExpander?.(stage.key, lid); } catch {}
     // Establish the lightweight reverse-camera retention in its own covered
     // refresh. Doing this inside workspace activation forced Home and the
     // incoming room through one full-document style/layout pass.
     try { window.crmHome?.retainMotionSurface?.(); } catch {}
-    await paint(1);
+    stage.phase = "retiring-source-seating-home";
+    // Close the retained bitmap/z-order paint before applying the inactive
+    // parking state. Resolving after one rAF would run the next mutation in a
+    // microtask before Chromium had painted this topology.
+    await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
+    stage.phase = "retiring-source-hiding-home";
     if (!window.crmHome?.finalizeInactiveSurface?.() && surface) surface.hidden = true;
-    await paint(1);
+    // A one-rAF promise resumes in a microtask before that refresh is painted.
+    // Close one complete Home-retirement paint before exposing destination
+    // underpaint, so two full-window property-tree changes cannot coalesce.
+    await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
     surface?.removeAttribute?.("data-crm-transit-cover");
     lid?.classList?.remove("crm-home-endpoint-cover");
@@ -1529,6 +1544,7 @@
           coverBeforeSwap:stage.coverBeforeSwap || null,
           coverAfterSettlement:stage.coverAfterSettlement || null,
           settledState:stage.settledState || null,
+          acrylicState:stage.acrylicState || null,
         },
       }));
       stage.phase = "recovering-home";

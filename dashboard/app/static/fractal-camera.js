@@ -1325,7 +1325,14 @@
     const setActive = (on) => {
       active = !!on;
       ensure();
-      surface.hidden = !active;
+      // Some coordinators retain one inert compositor texture while inactive.
+      // Let those cameras own the narrow z/opacity parking state instead of
+      // crossing the native [hidden]/display boundary for their full subtree.
+      if (active || config.preserveSurfaceOnDeactivate !== true) {
+        surface.hidden = !active;
+      } else if (surface.hidden) {
+        surface.hidden = false;
+      }
       if (!active) {
         const wasPreparing = preparing;
         preparationSeq += 1;

@@ -849,11 +849,34 @@ async function main() {
     const control = document.querySelector('.crm-viewport-date');
     const today = new Date();
     const localIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    return !!control && !control.hidden && control.querySelector('.crm-viewport-date-day')?.textContent === String(today.getDate())
+    const ok = !!control && !control.hidden && control.querySelector('.crm-viewport-date-day')?.textContent === String(today.getDate())
       && /open calendar for/i.test(control.getAttribute('aria-label') || '')
       && !document.querySelector('.crm-temporal-context')
       && document.body.dataset.crmTemporalDate === localIso;
+    const style = control && getComputedStyle(control);
+    return {
+      ok,
+      detail:JSON.stringify({
+        module:document.body.dataset.crmModule,
+        workspace:window.crmWorkspaces?.active?.(),
+        busy:window.crmDeskTransit?.isBusy?.(),
+        hidden:control?.hidden,
+        visibility:style?.visibility,
+        opacity:style?.opacity,
+        pointerEvents:style?.pointerEvents,
+        day:control?.querySelector('.crm-viewport-date-day')?.textContent,
+        ariaLabel:control?.getAttribute('aria-label'),
+        temporalDate:document.body.dataset.crmTemporalDate,
+        expected:localIso,
+      }),
+    };
   });
+  if (process.env.CRM_INTERACTION_PIPELINE_ONLY === '1') {
+    if (errors.length) { console.log(`FAIL renderer exceptions — ${errors.join(' | ')}`); failures++; }
+    console.log(`\nPipeline interaction contract: ${failures ? `${failures} failure(s)` : 'PASSED'}.`);
+    await browser.close();
+    process.exit(failures ? 1 : 0);
+  }
   await page.waitForFunction(() => !window.crmDeskTransit?.isBusy?.(), { timeout: 15000 });
   await page.keyboard.press('KeyB');
   await page.waitForFunction(() => document.body.dataset.crmModule === 'calendar' && window.fractalCalendar?.level?.() === 1, { timeout: 5000 });

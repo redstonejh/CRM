@@ -2182,6 +2182,7 @@
     historyState:navigationStatus,
     noteViewportDeparture,
     noteViewportArrival,
+    syncTemporalContext,
     zoomOutToCalendar,
     temporalModules: () => [...TEMPORAL_MODULES],
     pendingDestination: (key = "") => {

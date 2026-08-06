@@ -40,6 +40,12 @@
     active = next;
     if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(STORE_KEY, active);
     document.body.dataset.crmModule = active;
+    // Fixed, out-of-flow temporal chrome belongs to the route identity, not
+    // to the much larger theater commit below. Updating it in this same task
+    // keeps the first destination paint semantically complete without adding
+    // another style/layout boundary.
+    window.crmDeskTransit?.syncTemporalContext?.(active);
+    window.crmCardDate?.syncVisibility?.(document.querySelector(".crm-viewport-date"), active);
   }
   function closeTransientSurfaces() {
     try { window.crmSearchDeck?.close?.(); } catch {}

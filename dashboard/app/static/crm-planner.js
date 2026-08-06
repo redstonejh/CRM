@@ -389,7 +389,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     projectPreviews.set(key, preview);
     document.querySelectorAll(`.crm-home-preview[data-project-preview="${cssValue(key)}"]`).forEach((host) => mountProjectPreview(host, preview));
     document.querySelectorAll(`.crm-planner-project-world[data-project-id="${cssValue(key)}"]`).forEach((layer) => ensureProjectTransitionPreview(layer, projectById(key)));
-    camera?.layout?.(); return true;
+    // Project captures can finish after Home's idle prewarm has returned this
+    // workspace to [hidden]. Laying out that hidden surface measures a 1px
+    // viewport and destroys the native-size geometry retained for activation,
+    // forcing the complete gallery grid to rebuild at the endpoint.
+    if (active || (root?.hasAttribute?.("data-crm-home-precomposed") && !root.hidden)) {
+      camera?.layout?.();
+    }
+    return true;
   }
   const projectPreviewState = (project) => ({
     revision:1, view:"project", selectedId:project.id, signature:projectPreviewSignature(project),

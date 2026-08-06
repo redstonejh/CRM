@@ -155,6 +155,130 @@ async function main() {
     process.exit(ok && errors.length === 0 ? 0 : 1);
   }
 
+  if (process.env.CRM_INTERACTION_CALENDAR_ONLY === '1') {
+    await activate('calendar');
+    await page.waitForFunction(() => window.fractalCalendar?.level?.() === 0, { timeout: 10000 });
+    const materialState = () => page.evaluate(() => {
+      const describe = (node) => {
+        if (!node) return null;
+        const style = getComputedStyle(node);
+        return {
+          node:`${node.tagName}.${typeof node.className === 'string' ? node.className : ''}`,
+          style:(node.getAttribute('style') || '').slice(0, 180),
+          filter:style.webkitBackdropFilter || style.backdropFilter || '',
+          variable:style.getPropertyValue('--bucket-acrylic-filter').trim(),
+          opacity:style.opacity,
+          visibility:style.visibility,
+          display:style.display,
+          clipPath:String(style.clipPath || '').slice(0, 120),
+          ready:node.dataset.crmTileMaterialReady,
+          count:node.dataset.crmTileMaterialCount,
+          parked:node.dataset.crmTileMaterialParked,
+        };
+      };
+      const surface = document.querySelector('[data-crm-theater="calendar"]');
+      const root = surface?.querySelector('.fc-level[data-kind="year"]');
+      const month = root?.querySelector(':scope > .fc-grid > .fc-month');
+      const activeMonth = surface?.querySelector('.fc-expander[data-kind="month"]:not(.fc-warm)');
+      const live = activeMonth?.querySelector(':scope > .fc-expander-live');
+      return {
+        level:window.fractalCalendar?.level?.(),
+        surface:describe(surface),
+        root:describe(root),
+        month:describe(month),
+        yearMaterial:describe(surface?.querySelector(':scope > .fc-year-screen-material-owner > .fc-calendar-year-material')),
+        activeMonth:describe(activeMonth),
+        live:describe(live),
+        liveMaterial:describe(live?.querySelector(':scope > .crm-tile-material-plane')),
+        dayScreenMaterial:describe(surface?.querySelector(':scope > .fc-day-screen-material-owner > .fc-day-screen-material')),
+        allMaterials:[...(surface?.querySelectorAll('.crm-tile-material-plane') || [])].map(describe),
+      };
+    });
+    const yearState = await materialState();
+    const month = new Date().getMonth() + 1;
+    await page.click(`[data-crm-theater="calendar"] .fc-month[data-month="${month}"]`);
+    await page.waitForFunction(() => window.fractalCalendar?.level?.() === 1
+      && !window.fractalCalendarCamera?.isTransitioning?.(), { timeout: 10000 });
+    await sleep(200);
+    const monthState = await materialState();
+    console.log(`Calendar material probe — ${JSON.stringify({ yearState, monthState })}`);
+    const ok = yearState.month?.filter === 'none'
+      && yearState.yearMaterial?.ready === 'true'
+      && yearState.yearMaterial?.count === '12'
+      && yearState.yearMaterial?.filter.includes('blur(26px)')
+      && monthState.liveMaterial?.filter === 'none'
+      && monthState.dayScreenMaterial?.ready === 'true'
+      && Number(monthState.dayScreenMaterial?.count) >= 28
+      && monthState.dayScreenMaterial?.filter.includes('blur(26px)');
+    if (errors.length) console.log(`FAIL renderer exceptions — ${errors.join(' | ')}`);
+    await browser.close();
+    process.exit(ok && errors.length === 0 ? 0 : 1);
+  }
+
+  if (process.env.CRM_INTERACTION_HOME_TICKET_ONLY === '1') {
+    await activate('home');
+    const linked = await page.evaluate(async () => {
+      const ticket = (await window.crmStore.list('tickets', { includeDeleted:false }))
+        .records?.find((record) => record.id === 'tkt_bluepeak_mail');
+      if (!ticket) return null;
+      const result = await window.crmDomain.create('commitments', {
+        title:'Home ticket handoff probe',
+        kind:'ticket-work',
+        status:'open',
+        priority:'urgent',
+        dueAt:new Date().toISOString(),
+        links:[{ entityType:'tickets', recordId:ticket.id, relation:'regarding' }],
+      });
+      await window.crmHome.ensureHandReady();
+      return result?.record ? { commitmentId:result.record.id, ticketId:ticket.id } : null;
+    });
+    if (!linked) throw new Error('Could not seed Home ticket handoff probe');
+    const cardSelector = `.crm-home-hand-card[data-commitment-id="${linked.commitmentId}"]`;
+    await page.waitForSelector(cardSelector, { timeout:10000 });
+    await page.hover('.crm-home-hand-trigger');
+    await sleep(420);
+    await page.click(cardSelector);
+    await page.waitForFunction(() => document.body.dataset.crmModule === 'cases'
+      && !window.crmDeskTransit?.isBusy?.()
+      && !!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail'), { timeout:15000 });
+    const result = await page.evaluate((ticketId) => {
+      const selector = `[data-id="${CSS.escape(ticketId)}"]`;
+      const native = document.querySelector(
+        `[data-crm-theater="tickets"]:not([hidden]) .tk-zcard${selector},`
+          + `[data-crm-theater="tickets"]:not([hidden]) .tk-deck .tk-card${selector}`,
+      );
+      const describe = (node) => node ? {
+        node:`${node.tagName}.${typeof node.className === 'string' ? node.className : ''}`,
+        hidden:node.hidden,
+        inlineVisibility:node.style.visibility,
+        visibility:getComputedStyle(node).visibility,
+        opacity:getComputedStyle(node).opacity,
+        display:getComputedStyle(node).display,
+      } : null;
+      return {
+        native:describe(native),
+        overlays:[...document.querySelectorAll('.ticket-detail-overlay')].map(describe),
+        recordWorld:[...document.querySelectorAll('.record-world-shell')].map(describe),
+        externalSources:[...document.querySelectorAll('.tk-external-source')].map(describe),
+        veils:[...document.querySelectorAll('.crm-transit-veil')].map(describe),
+        expanders:[...document.querySelectorAll('.crm-home-expander:not(.crm-home-warm)')].map(describe),
+      };
+    }, linked.ticketId);
+    console.log(`Home ticket handoff probe — ${JSON.stringify(result)}`);
+    const parkedExpanders = result.expanders.every((node) =>
+      node.node.includes('crm-home-recycled-expander')
+        && Number(node.opacity) <= .001);
+    const ok = result.native?.inlineVisibility === 'hidden'
+      && result.overlays.filter((node) => !node.hidden).length === 1
+      && result.recordWorld.every((node) => node.hidden)
+      && result.externalSources.length === 0
+      && result.veils.length === 0
+      && parkedExpanders;
+    if (errors.length) console.log(`FAIL renderer exceptions — ${errors.join(' | ')}`);
+    await browser.close();
+    process.exit(ok && errors.length === 0 ? 0 : 1);
+  }
+
   await activate('home');
   await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6, { timeout: 10000 });
   await check('Non-card interface audit has complete canonical-menu coverage', () => {
@@ -2115,7 +2239,7 @@ async function main() {
       detail:`${entries.length} scheduled object(s) on ${probe.date}`,
     };
   }, calendarProjectPreview);
-  await check('Calendar year is twelve canonical tiles with inert full-render capture slots', () => {
+  await check('Calendar year is twelve canonical tiles over one true-acrylic material plane', () => {
     const surface = document.querySelector(
       '[data-crm-theater="calendar"].fc-surface, [data-crm-theater="calendar"] .fc-surface',
     );
@@ -2133,6 +2257,8 @@ async function main() {
       '.fc-expander.fc-warm[data-kind="month"] .fc-day',
     ) || [])];
     const materials = [...(grid?.querySelectorAll(':scope > .crm-tile-material-plane') || [])];
+    const yearMaterialOwner = surface?.querySelector(':scope > .fc-year-screen-material-owner');
+    const yearMaterial = yearMaterialOwner?.querySelector(':scope > .fc-calendar-year-material');
     const month = months[0];
     const preview = previews[0];
     const reference = document.querySelector('.crm-home-grid > .crm-home-bucket');
@@ -2140,6 +2266,8 @@ async function main() {
     const previewStyle = preview && getComputedStyle(preview);
     const referenceStyle = reference && getComputedStyle(reference);
     const referenceObject = window.crmTileSystem.objectFor(reference);
+    const yearMaterialStyle = yearMaterial && getComputedStyle(yearMaterial);
+    const yearMaterialOwnerStyle = yearMaterialOwner && getComputedStyle(yearMaterialOwner);
     const referenceBackdrop = referenceStyle?.webkitBackdropFilter
       || referenceStyle?.backdropFilter || '';
     const canonicalMonths = months.filter((entry, index) => {
@@ -2154,7 +2282,7 @@ async function main() {
         && entry.dataset.tileTargetId === expectedTarget
         && window.crmTileSystem.isObject(window.fractalCalendar._objectForElement(entry))
         && window.fractalCalendar._objectForElement(entry).objectKind === referenceObject?.objectKind
-        && backdrop === referenceBackdrop
+        && ['none', ''].includes(backdrop)
         && style.backgroundImage === referenceStyle?.backgroundImage;
     });
     const inertPreviews = previews.filter((entry) => {
@@ -2176,16 +2304,32 @@ async function main() {
         && realDays.length === 0
         && hiddenRealDays.length === 0
         && materials.length === 0
+        && root?.dataset.crmTileSharedMaterial === 'true'
+        && yearMaterial?.dataset.crmTileMaterialReady === 'true'
+        && Number(yearMaterial?.dataset.crmTileMaterialCount) === months.length
+        && yearMaterial?.dataset.crmTileMaterialParked === 'false'
+        && Number(yearMaterialStyle?.opacity) > .998
+        && yearMaterialStyle?.visibility === 'visible'
+        && (yearMaterialStyle?.webkitBackdropFilter || yearMaterialStyle?.backdropFilter) === referenceBackdrop
+        && !['none', ''].includes(yearMaterialStyle?.clipPath)
+        && yearMaterialOwnerStyle?.display !== 'none'
         && window.crmTileSystem.isObject(referenceObject)
         && referenceBackdrop.includes('blur(')
         && !!monthStyle && !!previewStyle && !!referenceStyle
-        && (monthStyle.webkitBackdropFilter || monthStyle.backdropFilter) === referenceBackdrop
+        && ['none', ''].includes(monthStyle.webkitBackdropFilter || monthStyle.backdropFilter)
         && monthStyle.backgroundImage === referenceStyle.backgroundImage
         && ['none', ''].includes(previewStyle.webkitBackdropFilter || previewStyle.backdropFilter)
         && ['none', ''].includes(rootStyle?.webkitBackdropFilter || rootStyle?.backdropFilter)
         && ['none', ''].includes(gridStyle?.webkitBackdropFilter || gridStyle?.backdropFilter),
       detail:JSON.stringify({
         monthBackdrop:monthStyle?.webkitBackdropFilter || monthStyle?.backdropFilter,
+        yearMaterial:[
+          yearMaterial?.dataset.crmTileMaterialReady,
+          yearMaterial?.dataset.crmTileMaterialCount,
+          yearMaterialStyle?.opacity,
+          yearMaterialStyle?.visibility,
+          yearMaterialStyle?.webkitBackdropFilter || yearMaterialStyle?.backdropFilter,
+        ],
         canonicalMonths:canonicalMonths.length,
         previews:previews.length,
         syntheticPreviews:syntheticPreviews.length,
@@ -2395,18 +2539,23 @@ async function main() {
   });
   await page.mouse.move(1, 1);
   await sleep(60);
-  await check('Expanded calendar is the same true-acrylic tile collection at month scale', () => {
+  await check('Expanded calendar keeps the same tiles on one true-acrylic screen plane', () => {
     const pane = document.querySelector(
       '[data-crm-theater="calendar"] .fc-expander[data-kind="month"]:not(.fc-warm)',
     );
     const live = pane?.querySelector(':scope > .fc-expander-live');
     const days = [...(live?.querySelectorAll('.fc-day') || [])];
     const details = [...(live?.querySelectorAll('.fc-chip, .fc-empty, .fc-day-detail') || [])];
-    const motionMaterial = live?.querySelector(':scope > .crm-tile-material-plane');
+    const localMaterial = live?.querySelector(':scope > .crm-tile-material-plane');
+    const surface = pane?.closest('.fc-surface');
+    const screenMaterialOwner = surface?.querySelector(':scope > .fc-day-screen-material-owner');
+    const screenMaterial = screenMaterialOwner?.querySelector(':scope > .fc-day-screen-material');
     const reference = document.querySelector('.crm-home-grid > .crm-home-bucket');
     const paneStyle = pane && getComputedStyle(pane);
     const referenceStyle = reference && getComputedStyle(reference);
-    const motionMaterialStyle = motionMaterial && getComputedStyle(motionMaterial);
+    const localMaterialStyle = localMaterial && getComputedStyle(localMaterial);
+    const screenMaterialStyle = screenMaterial && getComputedStyle(screenMaterial);
+    const screenMaterialOwnerStyle = screenMaterialOwner && getComputedStyle(screenMaterialOwner);
     const referenceBackdrop = referenceStyle?.webkitBackdropFilter || referenceStyle?.backdropFilter || '';
     const isObjectsOnly = (element) => {
       const style = getComputedStyle(element);
@@ -2443,12 +2592,20 @@ async function main() {
           ),
       };
     });
-    const ok = days.length >= 28 && days.length <= 31
+      const ok = days.length >= 28 && days.length <= 31
       && !!paneStyle && paneStyle.backgroundImage === 'none' && ['none', ''].includes(paneStyle.backdropFilter)
-      && motionMaterial?.dataset.crmTileMaterialReady === 'true'
-      && Number(motionMaterial.dataset.crmTileMaterialCount) === days.length
-      && Number(motionMaterialStyle?.opacity) > .998
-      && (motionMaterialStyle?.webkitBackdropFilter || motionMaterialStyle?.backdropFilter)
+      && localMaterial?.dataset.crmTileMaterialReady === 'true'
+      && Number(localMaterial.dataset.crmTileMaterialCount) === days.length
+      && localMaterial.dataset.crmTileMaterialMuted === 'true'
+      && ['none', ''].includes(localMaterialStyle?.webkitBackdropFilter || localMaterialStyle?.backdropFilter)
+      && screenMaterial?.dataset.crmTileMaterialReady === 'true'
+      && Number(screenMaterial.dataset.crmTileMaterialCount) === days.length
+      && screenMaterial.dataset.crmTileMaterialParked === 'false'
+      && Number(screenMaterialStyle?.opacity) > .998
+      && screenMaterialStyle?.visibility === 'visible'
+      && screenMaterialOwnerStyle?.display !== 'none'
+      && !['none', ''].includes(screenMaterialOwnerStyle?.clipPath)
+      && (screenMaterialStyle?.webkitBackdropFilter || screenMaterialStyle?.backdropFilter)
         ?.includes('blur(26px)')
       && !!referenceStyle && referenceBackdrop.includes('blur(26px)')
       && dayChecks.every((day) => day.ok)
@@ -2463,10 +2620,17 @@ async function main() {
           paneStyle?.webkitBackdropFilter || paneStyle?.backdropFilter,
         ],
         sharedMaterial:[
-          motionMaterial?.dataset.crmTileMaterialReady,
-          motionMaterial?.dataset.crmTileMaterialCount,
-          motionMaterialStyle?.opacity,
-          motionMaterialStyle?.webkitBackdropFilter || motionMaterialStyle?.backdropFilter,
+          screenMaterial?.dataset.crmTileMaterialReady,
+          screenMaterial?.dataset.crmTileMaterialCount,
+          screenMaterialStyle?.opacity,
+          screenMaterialStyle?.webkitBackdropFilter || screenMaterialStyle?.backdropFilter,
+          screenMaterialOwnerStyle?.clipPath,
+        ],
+        localDelegate:[
+          localMaterial?.dataset.crmTileMaterialReady,
+          localMaterial?.dataset.crmTileMaterialCount,
+          localMaterial?.dataset.crmTileMaterialMuted,
+          localMaterialStyle?.webkitBackdropFilter || localMaterialStyle?.backdropFilter,
         ],
         reference:[
           referenceStyle?.backgroundImage,
@@ -2984,9 +3148,28 @@ async function main() {
   await check('A Home ticket reveals from its native Tickets card with one detail system', (todo) => {
     const selector = `[data-id="${CSS.escape(todo.ticketId)}"]`;
     const native = document.querySelector(`[data-crm-theater="tickets"]:not([hidden]) .tk-zcard${selector}, [data-crm-theater="tickets"]:not([hidden]) .tk-deck .tk-card${selector}`);
-    return !!native && native.style.visibility === 'hidden'
+    const expanders = [...document.querySelectorAll('.crm-home-expander:not(.crm-home-warm)')];
+    const parkedExpanders = expanders.every((expander) => {
+      const style = getComputedStyle(expander);
+      return expander.classList.contains('crm-home-recycled-expander')
+        && Number(style.opacity) <= .001 && style.pointerEvents === 'none';
+    });
+    return {
+      ok:!!native && native.style.visibility === 'hidden'
       && document.querySelectorAll('.ticket-detail-overlay:not([hidden])').length === 1
-      && !document.querySelector('.record-world-shell:not([hidden]), .tk-external-source, .crm-transit-veil, .crm-home-expander:not(.crm-home-warm)');
+      && !document.querySelector('.record-world-shell:not([hidden]), .tk-external-source, .crm-transit-veil')
+      && parkedExpanders,
+      detail:JSON.stringify({
+        native:!!native,
+        nativeVisibility:native?.style.visibility || '',
+        overlays:document.querySelectorAll('.ticket-detail-overlay:not([hidden])').length,
+        expanders:expanders.map((expander) => [
+          expander.className,
+          getComputedStyle(expander).opacity,
+          getComputedStyle(expander).pointerEvents,
+        ]),
+      }),
+    };
   }, linkedHomeTodo);
   await page.keyboard.press('Escape');
   await check('No renderer exceptions during the complete scenario', () => true);

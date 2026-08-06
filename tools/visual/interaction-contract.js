@@ -29,6 +29,71 @@ async function main() {
   };
   const activate = async (key) => { await page.evaluate((value) => window.crmWorkspaces.setActive(value), key); await sleep(700); };
 
+  if (process.env.CRM_INTERACTION_HISTORY_ONLY === '1') {
+    await activate('people');
+    await page.waitForSelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]', { timeout: 10000 });
+    await page.evaluate(() => {
+      const original = window.crmPersonHistory.open;
+      window.__personHistoryProbe = [];
+      window.crmPersonHistory.open = (...args) => {
+        const entry = { invokedAt:performance.now(), id:String(args[0] || '') };
+        window.__personHistoryProbe.push(entry);
+        const result = original(...args);
+        Promise.resolve(result).then(
+          (value) => Object.assign(entry, { settledAt:performance.now(), value }),
+          (error) => Object.assign(entry, { settledAt:performance.now(), error:String(error?.message || error) }),
+        );
+        return result;
+      };
+      const card = document.querySelector('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]');
+      const rect = card.getBoundingClientRect();
+      card.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles:true,
+        cancelable:true,
+        clientX:rect.left + 20,
+        clientY:rect.top + 20,
+        button:2,
+      }));
+    });
+    await page.waitForSelector('.tk-menu .tk-menu-item[data-act^="custom-"]', { timeout: 5000 });
+    const actionHit = await page.evaluate(() => {
+      const action = document.querySelector('.tk-menu .tk-menu-item[data-act^="custom-"]');
+      const rect = action?.getBoundingClientRect();
+      const point = rect ? [rect.left + rect.width / 2, rect.top + rect.height / 2] : [0, 0];
+      return {
+        rect:rect && [rect.left, rect.top, rect.right, rect.bottom],
+        point,
+        onclick:typeof action?.onclick,
+        stack:document.elementsFromPoint(...point).slice(0, 10).map((node) => ({
+          tag:node.tagName,
+          className:typeof node.className === 'string' ? node.className : '',
+          pointerEvents:getComputedStyle(node).pointerEvents,
+          zIndex:getComputedStyle(node).zIndex,
+        })),
+      };
+    });
+    console.log(`History action hit test — ${JSON.stringify(actionHit)}`);
+    await page.click('.tk-menu .tk-menu-item[data-act^="custom-"]');
+    await sleep(3000);
+    const probe = await page.evaluate(() => {
+      const shell = document.querySelector('.crm-person-history-shell');
+      return {
+        calls:window.__personHistoryProbe,
+        shell:!!shell,
+        hidden:shell?.hidden,
+        children:shell?.childElementCount,
+        current:window.crmPersonHistory?.current?.(),
+        open:window.crmPersonHistory?.isOpen?.(),
+      };
+    });
+    const ok = probe.calls.length === 1 && probe.calls[0].settledAt && probe.open
+      && probe.shell && !probe.hidden && probe.children > 0;
+    console.log(`${ok ? ' ok ' : 'FAIL'} Conversation history menu action probe — ${JSON.stringify(probe)}`);
+    if (errors.length) console.log(`FAIL renderer exceptions — ${errors.join(' | ')}`);
+    await browser.close();
+    process.exit(ok && errors.length === 0 ? 0 : 1);
+  }
+
   await activate('home');
   await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6, { timeout: 10000 });
   await check('Non-card interface audit has complete canonical-menu coverage', () => {
@@ -1157,14 +1222,14 @@ async function main() {
 
   const assignmentCardSelector = `${assignmentScope} .tk-zone[data-stage]:has(.tk-zcard) .tk-zcard[data-id]:last-child`;
   await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
-  await page.waitForSelector(`${assignmentScope} .tk-menu.crm-menu-surface`);
+  await page.waitForSelector('body > .tk-menu.crm-menu-surface');
   await check('Assignment actions use the shared card-system menu surface', () => {
-    const menu = document.querySelector('[data-crm-theater="assignments"]:not([hidden]) .tk-menu.crm-menu-surface'); const reference = document.querySelector('.auth-profile-menu'); if (!menu || !reference) return false;
+    const menu = document.querySelector('body > .tk-menu.crm-menu-surface'); const reference = document.querySelector('.auth-profile-menu'); if (!menu || !reference) return false;
     const actual = getComputedStyle(menu); const expected = getComputedStyle(reference); const rect = menu.getBoundingClientRect();
     return rect.width < 220 && rect.height < 300 && !!menu.querySelector('[data-act="edit"]') && !!menu.querySelector('[data-act="size"]')
       && ['backgroundImage','backdropFilter','borderTopColor','borderRadius','boxShadow'].every((property) => actual[property] === expected[property]);
   });
-  await page.click(`${assignmentScope} .tk-menu [data-act="edit"]`);
+  await page.click('body > .tk-menu [data-act="edit"]');
   await page.waitForSelector('.ticket-detail-overlay[data-card-detail="assignmentDetail"]:not([hidden]) .ticket-detail');
   await sleep(760);
   await check('Assignment editing unfolds from its real card and fits every linked field without scrolling', () => {
@@ -1258,8 +1323,8 @@ async function main() {
     };
   });
   await page.evaluate((selector) => { const card = document.querySelector(selector); const rect = card?.getBoundingClientRect(); if (card && rect) card.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true, cancelable:true, button:2, clientX:rect.right - 8, clientY:rect.top + 12 })); }, assignmentCardSelector);
-  await page.waitForSelector(`${assignmentScope} .tk-menu [data-act="size"]`);
-  await page.click(`${assignmentScope} .tk-menu [data-act="size"]`);
+  await page.waitForSelector('body > .tk-menu [data-act="size"]');
+  await page.click('body > .tk-menu [data-act="size"]');
   await page.waitForFunction((before) => {
     const card = document.querySelector(`[data-crm-theater="assignments"]:not([hidden]) .tk-zcard[data-id="${CSS.escape(before.id)}"]`);
     const rect = card?.getBoundingClientRect();

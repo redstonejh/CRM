@@ -1401,7 +1401,11 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         (showActivityAction ? `<button class="tk-menu-item" data-act="activity">Activity</button>` : "") +
         (trashEnabled ? `<button class="tk-menu-item" data-act="trash">Move to trash</button>` : "");
     window.crmInterfaceParity?.scan?.(m);
-    ensureTheater().appendChild(m);
+    // Fixed command surfaces must live on the viewport overlay plane. Inside
+    // the theater's display:contents tree, Chromium can composite the promoted
+    // horizontal rail above this nominal z-index, leaving a visible menu whose
+    // buttons never own hit testing.
+    document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;
@@ -1436,7 +1440,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         ? entries.map((e) => `<div class="tk-act-row"><span class="tk-act-when">${esc(when(e.at))}</span><span class="tk-act-text">${esc(e.text)}${e.by ? ` <span class="tk-act-by">— ${esc(e.by)}</span>` : ""}</span></div>`).join("")
         : `<div class="tk-act-row tk-act-none">No activity yet</div>`);
     window.crmInterfaceParity?.scan?.(m);
-    ensureTheater().appendChild(m);
+    document.body.appendChild(m);
     m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
     m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
     ticketMenu = m;   // same dismiss wiring: outside press / Escape (wheel INSIDE it scrolls the list)

@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crm
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: ${CRM_DATABASE_PASSWORD}
+    volumes:
+      - crm-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - crm
+
+  crm-api:
+    image: crm-web:latest
+    container_name: crm-api
+    restart: unless-stopped
+    command: ["node", "server/index.js"]
+    environment:
+      PORT: "3899"
+      DATABASE_URL: postgres://crm:${CRM_DATABASE_PASSWORD}@postgres:5432/crm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3899/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - crm
+
+  crm-web:
+    image: crm-web:latest
+    container_name: crm-web
+    restart: unless-stopped
+    environment:
+      CRM_WEB_PORT: "8080"
+      CRM_API_URL: http://crm-api:3899
+      CRM_ADMIN_USERNAME: ${CRM_ADMIN_USERNAME:-admin}
+      CRM_ADMIN_PASSWORD: ${CRM_ADMIN_PASSWORD}
+      CRM_WEB_DATA_DIR: /data
+      CRM_COOKIE_SECURE: "0"
+    ports:
+      - "8081:8080"
+    volumes:
+      - crm-web-data:/data
+    depends_on:
+      crm-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - crm
+
+volumes:
+  crm-postgres-data:
+  crm-web-data:
+
+networks:
+  crm:
+    name: crm
+

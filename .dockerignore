@@ -1,0 +1,10 @@
+.git
+.github
+.vite
+node_modules
+out
+tools
+*.log
+.env
+.env.*
+

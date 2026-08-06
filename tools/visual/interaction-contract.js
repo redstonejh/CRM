@@ -94,6 +94,67 @@ async function main() {
     process.exit(ok && errors.length === 0 ? 0 : 1);
   }
 
+  if (process.env.CRM_INTERACTION_TICKETS_ONLY === '1') {
+    // First take Tickets through the real Home camera so its canonical owners
+    // are released/parked on return, then reproduce the long-journey topology:
+    // retained horizontal rooms must not steal the hit plane and the revisited
+    // Tickets room must be promoted from that parked state.
+    await page.evaluate(() => window.crmDeskTransit.driveTo('cases'));
+    await page.waitForFunction(() => document.body.dataset.crmModule === 'cases'
+      && !window.crmDeskTransit?.isBusy?.(), { timeout: 15000 });
+    await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
+    await page.waitForFunction(() => document.body.dataset.crmModule === 'home'
+      && !window.crmDeskTransit?.isBusy?.(), { timeout: 15000 });
+    await activate('assignments');
+    await page.waitForSelector('[data-crm-theater="assignments"]:not([hidden]) .tk-zone-htrack', { timeout: 10000 });
+    await activate('people');
+    await page.waitForSelector('[data-crm-theater="people"]:not([hidden]) .tk-zone-htrack', { timeout: 10000 });
+    await activate('pipeline');
+    await activate('cases');
+    const fanSelector = '[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left > .tk-arrow';
+    await page.waitForSelector(fanSelector, { timeout: 10000 });
+    const hitState = async (selector) => page.$eval(selector, (node) => {
+      const rect = node.getBoundingClientRect();
+      const point = [rect.left + rect.width / 2, rect.top + rect.height / 2];
+      return {
+        rect:[rect.left, rect.top, rect.right, rect.bottom],
+        point,
+        stack:document.elementsFromPoint(...point).slice(0, 10).map((item) => ({
+          tag:item.tagName,
+          className:typeof item.className === 'string' ? item.className : '',
+          pointerEvents:getComputedStyle(item).pointerEvents,
+          zIndex:getComputedStyle(item).zIndex,
+        })),
+      };
+    });
+    const fanBefore = await hitState(fanSelector);
+    await page.click(fanSelector);
+    await sleep(600);
+    const fanAfter = await page.evaluate(() => {
+      const deck = document.querySelector('[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left');
+      const arrow = deck?.querySelector(':scope > .tk-arrow');
+      const cards = [...(deck?.querySelectorAll('.tk-card') || [])];
+      const rects = cards.map((card) => card.getBoundingClientRect());
+      return {
+        fanned:deck?.classList.contains('is-fanned'),
+        expanded:arrow?.getAttribute('aria-expanded'),
+        span:rects.length ? Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left)) : 0,
+        cardWidth:rects[0]?.width || 0,
+        transforms:cards.slice(0, 3).map((card) => getComputedStyle(card).transform),
+      };
+    });
+    const cardSelector = '[data-crm-theater="tickets"]:not([hidden]) .tk-deck-left .tk-card';
+    const cardHit = await hitState(cardSelector);
+    console.log(`Tickets fan hit test — ${JSON.stringify({ fanBefore, fanAfter, cardHit })}`);
+    const inactiveRailHit = fanBefore.stack.some((item) =>
+      item.className.includes('tk-zone-htrack') || item.className.includes('tk-zone-hclip'));
+    const ok = fanBefore.stack[0]?.className.includes('tk-arrow') && !inactiveRailHit
+      && fanAfter.fanned && fanAfter.expanded === 'true' && fanAfter.span > fanAfter.cardWidth * 3;
+    if (errors.length) console.log(`FAIL renderer exceptions — ${errors.join(' | ')}`);
+    await browser.close();
+    process.exit(ok && errors.length === 0 ? 0 : 1);
+  }
+
   await activate('home');
   await page.waitForFunction(() => document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6, { timeout: 10000 });
   await check('Non-card interface audit has complete canonical-menu coverage', () => {

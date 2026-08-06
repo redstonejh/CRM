@@ -89,11 +89,23 @@
     document.dispatchEvent(new CustomEvent("crm:theater-switch", { detail:{ key:active } }));
   }
   function setActive(key) {
+    const previous = active;
     routeSequence += 1;
     beginRoute(moduleKey(key));
     closeTransientSurfaces();
     syncModuleApis();
+    // Direct routes (boot, automation and integrations) do not pass through
+    // Desk Transit's covered, staged promotion. Reconcile Home's retained paint
+    // owners here so a room revisited after zooming Home cannot remain at
+    // opacity:0 / clip-path:inset(50%), while the room we just left keeps only
+    // its warm .001 compositor baseline.
+    if (previous !== active && previous !== "home") {
+      window.crmHome?.setPrecomposedModulePromoted?.(previous, false);
+    }
     syncTheaters();
+    if (active !== "home") {
+      window.crmHome?.setPrecomposedModulePromoted?.(active, true);
+    }
     finishRoute();
     return active;
   }

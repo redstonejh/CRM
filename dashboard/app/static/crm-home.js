@@ -437,6 +437,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         :not(.tk-zones){opacity:.001!important;pointer-events:none!important;transition:none!important}
       html body .crm-theater[data-crm-home-precomposed]>
         .tk-zones>*{opacity:.001!important;pointer-events:none!important;transition:none!important}
+      /* pointer-events:none on a retained display:contents paint owner does
+         not fence descendants that explicitly opt back into auto. Card rails
+         do that for their clip, track, buckets and controls, so an inactive
+         transparent rail could remain above the next room and steal its clicks.
+         Gate only those finite interactive owners from the semantic [hidden]
+         state; the retained compositor tree and its .001 warm paint stay intact. */
+      html body .crm-theater[hidden][data-crm-home-precomposed] :is(
+        .tk-deck.is-fanned,.tk-card,.tk-restore,.tk-arrow,.tk-stack-btn,.tk-bar,
+        .tk-zone,.tk-zone-hd-r,.tk-zsb,
+        .tk-zone-hclip,.tk-zone-htrack,.tk-zone-hsb,.tk-zone-hth,
+        .tk-zone-vclip,.tk-zone-vtrack,.tk-zone-vsb,.tk-zone-vth
+      ){pointer-events:none!important}
       html body .crm-theater[data-crm-home-precomposed]>
         [data-crm-home-precompose-promoted],
       html body .crm-theater[data-crm-home-precomposed]>

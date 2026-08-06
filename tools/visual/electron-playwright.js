@@ -1866,10 +1866,34 @@ async function main() {
     window.__crmEndpointProbes={};
     window.__crmMotionProbes={};
   });
-  // Do not force a heap collection here. It can discard Chromium's prewarmed
-  // backdrop surface immediately before the cadence sample, turning this into
-  // a synthetic cold-allocation benchmark instead of measuring the app path.
-  await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
+  await page.requestGC();
+  await page.evaluate(()=>window.crmHome?.waitForPreviewSync?.());
+  const cleanHomeCadence=await page.evaluate(()=>new Promise((resolve)=>{
+    const requiredFrames=30;
+    const maxFrameMs=12.5;
+    const timeoutMs=2500;
+    const startedAt=performance.now();
+    let previous=0;
+    let consecutive=0;
+    let worstFrameMs=0;
+    const tick=(now)=>{
+      if(previous){
+        const frameMs=now-previous;
+        worstFrameMs=Math.max(worstFrameMs,frameMs);
+        consecutive=frameMs<=maxFrameMs?consecutive+1:0;
+      }
+      previous=now;
+      if(consecutive>=requiredFrames||now-startedAt>=timeoutMs){
+        resolve({consecutive,worstFrameMs,elapsedMs:now-startedAt});
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+  if(cleanHomeCadence.consecutive<30){
+    throw new Error(`Home compositor did not recover native cadence after test probe collection: ${JSON.stringify(cleanHomeCadence)}`);
+  }
   // Cadence gets its own transition cycles. No endpoint/style probe, screenshot,
   // layout sampler, or polling callback runs while the camera is moving.
   await installMotionProbe(page);

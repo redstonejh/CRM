@@ -1,103 +1,54 @@
 # CRM
 
-Phase 10 modular CRM build. [CRM_PLAN.md](./CRM_PLAN.md) covers the original phases 1-7; `CRM_VISION.md` in the parent CRM workspace extends the roadmap through the Money, Today, automation, and reporting phases.
+Electron desktop client and browser-deployable CRM backed by a PostgreSQL API.
+The desktop client can optionally use CDMS as its authenticated source for
+external people, company, and infrastructure records.
 
-This repo starts from the `ticketing` shell, keeps the ticket stacks/detail surface active as the regression baseline, imports `fractal-calendar.js` into the same canvas, and now routes CRM records through the Postgres API store. The decision log for each reuse verdict lives in [DECISION_LOG.md](./DECISION_LOG.md).
+## Local development
 
-## Run / build
+Install dependencies and migrate the database:
 
-```bash
+```powershell
 npm install
-npm run db:migrate   # requires DATABASE_URL, defaults to postgres://postgres:postgres@127.0.0.1:5432/crm
-npm run server       # API defaults to http://127.0.0.1:3899
-npm start
-npm run make
+npm run db:migrate
 ```
+
+Start the API and Electron client in separate terminals:
+
+```powershell
+npm run server
+npm start
+```
+
+`DATABASE_URL` defaults to
+`postgres://postgres:postgres@127.0.0.1:5432/crm`. Set it before migration and
+server startup when using another PostgreSQL instance.
 
 ## CDMS connection
 
-The Electron client connects to CDMS at `http://192.168.203.238:6030` by default.
-Override it with `CRM_CDMS_URL`, or change **Account → Backend → CDMS URL** in the
-app. Supplying a dashboard URL such as `/dashboard` is supported; the client
-normalizes it to the API origin.
+The Electron client connects to `http://192.168.203.238:6030` by default. Set
+`CRM_CDMS_URL` to override it, set `CRM_CDMS_DISABLED=1` to disable the
+integration, or change the URL in **Account → Backend**.
 
-CDMS is the source of truth for companies, people, usernames, email/phone,
-workstations, IP addresses, and infrastructure. Those records are cached only
-in main-process memory for the current authenticated session and receive stable
-`cdms-company-*`, `cdms-contact-*`, and `cdms-asset-*` ids. They are not copied
-into the CRM database. Local tickets, deals, tasks, assignments, and projects
-may reference those ids, so demo workflow remains local while its people,
-companies, hosts, and IPs are real CDMS records.
-Today and report feeds keep their CRM due dates and stages while resolving any
-displayed fixture identities to stable CDMS people, companies, owners, hosts,
-and IPs.
+CDMS credentials and secret fields are filtered in the Electron main process
+before records reach the renderer. If CDMS is unavailable, the local account
+system remains available as an offline fallback.
 
-Authentication follows CDMS:
+Run the integration checks with:
 
-- When CDMS authentication is enabled, the CRM gate calls
-  `POST /api/auth/login`; Electron's persistent session owns the httpOnly
-  cookie, and the renderer never receives it.
-- When CDMS reports `authDisabled: true`, CRM opens as the CDMS guest
-  administrator, matching CDMS itself.
-- If CDMS is unavailable, the original local account system remains available
-  as an offline fallback.
-
-Password, passcode, token, MFA, recovery-code, secret, private-key, and
-credential-note fields are removed in the main process before data reaches the
-renderer. CDMS source fields are read-only in CRM. CRM follow-up metadata such
-as next-touch dates and relationship links is stored as a small sidecar record,
-without modifying the CDMS row.
-
-Integration checks:
-
-```bash
+```powershell
 npm run test:cdms
 npm run test:cdms:electron
 npm run test:cdms:auth
 ```
 
-## Source repos
+## Build and verification
 
-- `ticketing`: base shell, ticket backend seam, card stacks/detail.
-- `fractal-calendar-planner`: calendar engine imported for Phase 1.
-- `name-and-info-cards`: People-module reference for later phases.
-
-## Current stage
-
-The dashboard shell remains the vendored canvas: auth, layout persistence, widget grid, visual tokens, glass styling, window controls, and the existing runtime modules are kept intact.
-
-Phase 12 is active. The old ticket bridge still exists as `window.tickets`, but it is now a compatibility adapter over `electron/store.js` and the Postgres API. The ticket card UI is re-instantiated through `card-system.js` and `card-detail.js`, with `ticket-stacks.js` and `ticket-detail.js` reduced to ticket-specific config wrappers. Pipeline is a Deals instance on the same factories, with deal temperature values, a Won deck, card-on-card drop-to-link, live bucket-lid value/count rollups, and a deal-only Won pile pulse. People is a Contacts instance with neutral contact cards, one attention/unbucketed deck plus recycle bin, free company-relationship buckets, and contact-to-contact linking. Money is an Invoices instance with Draft, Sent, Overdue, Paid pile semantics, and live bucket-lid value/count rollups. Today deals the API-backed `todayHand` through a deck-only `card-system.js` instance using shared card faces. Company dive is now a third `fractal-camera.js` booking fed by related CRM records, and top search deals transient results through a deck-only `card-system.js` instance. The workspace switch covers Home, Today, Tickets, People, Pipeline, Money, Calendar, and Reports. Generic entity bridges remain exposed for `window.deals`, `window.contacts`, `window.companies`, `window.tasks`, `window.invoices`, `window.interactions`, and `window.crmStore`.
-
-MQTT is fully removed from the final CRM direction. Shared truth lives in Postgres through the API in `server/`; Electron talks to it through `electron/store.js`, with `window.tickets` kept as a compatibility bridge while the card engine is generalized.
-
-The calendar now runs on the shared `fractal-camera.js` engine, has year paging, and accepts grid-card drops onto day buckets by persisting `scheduledDate` through the API-backed entity bridge. Home is also a camera instance with module buckets that activate the workspace switch.
-
-Reports are grid-resident builder widgets fed by `/api/reports/summary` through `window.crmReportsApi`; they summarize open deals, pipeline value, win rate, contacts due, tasks, scheduled items, outstanding cash, invoice aging, today-hand records, activity, and recent records without reviving the removed monitoring feed. Quick-add is a global `+` launcher that delegates to the existing Ticket, Deal, Contact, and Invoice card-system draft create flows.
-
-Interactions are API-backed records with `kind`, `note`, `at`, and related ids. Creating one fans out on the server: related records receive a `history[]` event and `lastTouchAt`, keeping relationship attention shared through Postgres instead of local-only renderer state. A server minute sweep flips sent invoices past `dueDate` to overdue and broadcasts the change.
-
-Next-Touch Law is implemented as an optional `card-detail.js` interceptor for Contacts, Deals, and sent/overdue Invoices. Closing a qualifying detail panel without a future `nextTouchAt`, direct `scheduledDate`, or future related task blooms chips for `+2d`, `+1w`, `+1m`, `pick a day`, and `let it go`; scheduling writes `nextTouchAt` and `scheduledDate`, logs an Interaction, and lets the Calendar show the card on that day.
-
-Today is now a first-class workspace fed by `/api/reports/summary`. It deals the `todayHand` once per local day as one deck from `card-system.js`: due next touches, scheduled tasks/calendar items, due or overdue invoices, and Cold Front records use the shared face pipeline and existing entity detail configs. Calendar keeps that Today deck visible so day-bucket drops persist `scheduledDate` and `nextTouchAt`. Cold Front is derived from `lastTouchAt` and stage-specific half-lives; it desaturates Contacts and Deals and pulls stale Contacts into the People attention deck without storing new state.
-
-Search now reuses the existing top search chrome as a query menu and deals results as canonical deck cards through `crm-record-search.js`; there is no result list. Result cards open existing detail configs where available, can be dragged to Calendar days, and can be dropped onto active home-module stage buckets when the entity supports that stage. `crm-company-dive.js` derives company buckets from Companies plus related records and uses `fractal-camera.js` to dive into a company world with contact/deal/invoice card faces and a merged history/interaction thread.
-
-Home buckets now render live miniatures instead of static tiles: Today/Tickets/People show small deck stacks, Pipeline and Money show bucket columns from live record counts and values, Calendar shows scheduled-day density, and Reports shows active aggregate widgets. The existing invoice aging builder chart remains the Reports aging surface.
-
-Team backend polish now lives in the account menu's Backend panel. It shows the active API endpoint, probes `/api/health`, and lets the user switch API URLs; changing the endpoint reconnects the shared store, clears stale entity caches, and reloads records from the new Postgres/API backend.
-
-## Verification
-
-The current client smoke test is the Electron Forge package build:
-
-```bash
+```powershell
+npm test
 npm run package
+npm run make
 ```
 
-The backend expects `DATABASE_URL` when not using the local default:
-
-```bash
-$env:DATABASE_URL="postgres://user:pass@host:5432/crm"
-npm run db:migrate
-npm run server
-```
+For the containerized browser deployment, see
+[PORTAINER.md](./PORTAINER.md).

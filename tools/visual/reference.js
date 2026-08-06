@@ -1,7 +1,7 @@
 // reference.js — render the ORIGINAL ticketing repo through the same harness.
 //
-// The original repo is the visual source of truth for card, deck and zone
-// anatomy (REMEDIATION_PLAN.md, ground truth). Its ticket-stacks.js +
+// The original donor repo supplies the card, deck, and zone regression fixture.
+// Its ticket-stacks.js +
 // ticket-detail.js are self-contained over window.tickets, so the CRM shim
 // drives them unmodified. Output: tools/visual/reference/tickets*.png — the
 // goldens the CRM Tickets surface is compared against.

@@ -13,8 +13,8 @@
 //   by ticket-stacks.js before this open runs.)
 //   close → the panel collapses back in, then the card flies back to its place.
 //
-// STYLING (DESIGN_SYSTEM.md §6): a MENU — the search/account/background sub-menu
-// recipe (frosted glass, flat colour-only items, no borders/blue/focus rings,
+// STYLING: uses the shared search/account/background sub-menu recipe
+// (frosted glass, flat colour-only items, no borders/blue/focus rings,
 // search-input fields). Portals to <body> so backdrop-filter isn't flattened.
 ((global) => {
 global.createCrmCardDetail = function createCrmCardDetail(config = {}) {

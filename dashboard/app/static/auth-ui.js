@@ -644,9 +644,8 @@
         -webkit-mask: url("${USER_ICON}") center / contain no-repeat;
         mask: url("${USER_ICON}") center / contain no-repeat;
       }
-      /* ⭐ THE CANONICAL MENU (see DESIGN_SYSTEM.md §6). The account dropdown and
-         background picker are the only reference look the user means by "menu".
-         Search, Desk, and every other popover consume this recipe; they never
+      /* The account dropdown and background picker share this menu recipe.
+         Search, Desk, and every other popover consume it; they never
          define it. The account menu mirrors the background dropdown EXACTLY:
          the same translucent popover shell + colour-only item hover (transparent
          background, text rgba .62 → white). Never a filled/blue hover. */

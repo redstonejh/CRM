@@ -3864,7 +3864,7 @@ body.workspace-page-swipe-dragging{
 .window-control-cluster.window-control-cluster-left{
   inset: 12px auto auto 67px;
 }
-/* ── DESIGN SYSTEM §5: the circular glass control button (top-bar icon buttons). See DESIGN_SYSTEM.md. ── */
+/* Canonical circular glass control used by top-bar and viewport buttons. */
 .window-glass-control,
 .crm-secondary-control{
   position: relative;

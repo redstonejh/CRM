@@ -555,11 +555,12 @@
         return synchronized;
       };
       const synchronized = align();
-      // When an actual transform animation supplied the anchor, re-check after
-      // pending play tasks resolve. The shared camera normally passes the
-      // resolved transform start directly; its effects are already ready then,
-      // so another promise/microtask alignment would only add moving-frame work.
-      if (transformAnimation) {
+      // The camera publishes an authoritative animation-clock anchor after its
+      // CSS transform exists. Once that first alignment succeeds, seeking the
+      // same effects again from animation.ready can resubmit their compositor
+      // surfaces in the middle of motion. Keep the deferred path only as a
+      // fallback for engines whose effects were not seekable on the first pass.
+      if (transformAnimation && !synchronized) {
         Promise.allSettled([transformAnimation, syncedClip, syncedCounter, syncedOpacity]
           .filter(Boolean).map((animation) => animation.ready)).then(align);
       }
@@ -628,6 +629,7 @@
     const holdContractEndpointFrame = config.holdContractEndpointFrame === true;
     const keepExpanderOpaque = config.keepExpanderOpaqueDuringTransition === true;
     const reuseContractedExpander = config.reuseContractedExpander === true;
+    const interactionAcknowledgement = config.interactionAcknowledgement !== false;
     const configuredMargin = Number(config.margin);
     const margin = Number.isFinite(configuredMargin) ? configuredMargin : 16;
     const ignoreSelector = config.ignoreSelector || ".window-control-cluster, .background-tone-menu, .auth-shell, .auth-modal-backdrop";
@@ -854,9 +856,21 @@
     const announceNavigation = (phase, direction) => {
       if (!apiName) return;
       if (phase === "start") {
-        try { global.crmHomePreviews?.setInteraction?.(false, hoverInteractionSource); } catch {}
+        try {
+          global.crmHomePreviews?.setInteraction?.(
+            false,
+            hoverInteractionSource,
+            false,
+          );
+        } catch {}
       }
-      try { global.crmHomePreviews?.setInteraction?.(phase === "start", navigationInteractionSource); } catch {}
+      try {
+        global.crmHomePreviews?.setInteraction?.(
+          phase === "start",
+          navigationInteractionSource,
+          interactionAcknowledgement,
+        );
+      } catch {}
       document.dispatchEvent(new CustomEvent("crm:camera-navigation", { detail:navigationDetail(phase, direction) }));
     };
     const targetFromEvent = (event) => {
@@ -1342,7 +1356,13 @@
         preparationSeq += 1;
         preparing = false;
         dropWarm();
-        try { global.crmHomePreviews?.setInteraction?.(false, hoverInteractionSource); } catch {}
+        try {
+          global.crmHomePreviews?.setInteraction?.(
+            false,
+            hoverInteractionSource,
+            false,
+          );
+        } catch {}
         if (wasPreparing && !transitioning) settleWaiters();
       }
       else if (config.layoutOnActivate?.(ctx()) !== false) layout();
@@ -1364,7 +1384,13 @@
     const onMouseMove = (event) => {
       if (!active || !surface || surface.hidden) return;
       const target = targetAtPoint(event.clientX, event.clientY);
-      try { global.crmHomePreviews?.setInteraction?.(!!target, hoverInteractionSource); } catch {}
+      try {
+        global.crmHomePreviews?.setInteraction?.(
+          !!target,
+          hoverInteractionSource,
+          false,
+        );
+      } catch {}
       if (target) prefetch(target);
     };
     const onKeyDown = (event) => {

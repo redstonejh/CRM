@@ -12,7 +12,47 @@ const EVIDENCE_PATH = path.join(OUTPUT_DIR, 'evidence.json');
 const YEAR_SCREENSHOT_PATH = path.join(OUTPUT_DIR, 'calendar-year-true-acrylic.png');
 const MONTH_SCREENSHOT_PATH = path.join(OUTPUT_DIR, 'calendar-month-true-acrylic.png');
 const MONTH_TRACE_PATH = path.join(OUTPUT_DIR, 'month-in-trace.json');
+const DAY_TRACE_PATH = path.join(OUTPUT_DIR, 'day-in-trace.json');
 const MATERIAL_HANDOFF_MS = 72;
+
+async function startTransitionTrace(page) {
+  const session = await page.context().newCDPSession(page);
+  await session.send('Tracing.start', {
+    categories:[
+      'blink',
+      'cc',
+      'devtools.timeline',
+      'gpu',
+      'toplevel',
+      'viz',
+      'disabled-by-default-devtools.timeline',
+      'disabled-by-default-devtools.timeline.frame',
+      'disabled-by-default-devtools.timeline.layers',
+    ].join(','),
+    transferMode:'ReturnAsStream',
+  });
+  return session;
+}
+
+async function saveTransitionTrace(session, outputPath) {
+  if (!session) return;
+  const complete = new Promise((resolve) => {
+    session.once('Tracing.tracingComplete', resolve);
+  });
+  await session.send('Tracing.end');
+  const { stream } = await complete;
+  const chunks = [];
+  for (;;) {
+    const result = await session.send('IO.read', { handle:stream });
+    if (result.data) chunks.push(result.base64Encoded
+      ? Buffer.from(result.data, 'base64')
+      : Buffer.from(result.data));
+    if (result.eof) break;
+  }
+  await session.send('IO.close', { handle:stream });
+  fs.writeFileSync(outputPath, Buffer.concat(chunks));
+  await session.detach();
+}
 
 function percentile(values, fraction) {
   if (!values.length) return 0;
@@ -234,6 +274,11 @@ async function installProfiler(page) {
       if (!clipOwner || !lens || lens.dataset.fractalAcrylicPhase !== 'motion') return null;
       const ownerFrames = keyframesFor(clipOwner);
       const lensFrames = keyframesFor(lens);
+      const sharedDayOwner = surface.querySelector(
+        ':scope > .fc-day-screen-material-owner',
+      );
+      const sharedDayFrames = keyframesFor(sharedDayOwner);
+      const sharedDayStyle = sharedDayOwner && getComputedStyle(sharedDayOwner);
       const ownerStyle = getComputedStyle(clipOwner);
       const lensStyle = getComputedStyle(lens);
       const cover = surface.querySelector(':scope > .fc-live-backdrop-cover');
@@ -270,6 +315,7 @@ async function installProfiler(page) {
         ownerClipIsInset:String(ownerStyle.clipPath).startsWith('inset('),
         ownerClipLength:String(ownerStyle.clipPath).length,
         lensBackdrop:lensStyle.webkitBackdropFilter || lensStyle.backdropFilter,
+        lensBackdropOwner:lens.dataset.crmAcrylicBackdropOwner || '',
         lensOpacity:Number(lensStyle.opacity),
         lensEffectiveOpacity:effectiveOpacity(lens, surface),
         ownerTransformAnimated:animatedProperty(ownerFrames, 'transform'),
@@ -278,6 +324,10 @@ async function installProfiler(page) {
           || animatedProperty(ownerFrames, 'webkitClipPath'),
         ownerAnimationCount:clipOwner.getAnimations().length,
         lensAnimationCount:lens.getAnimations().length,
+        sharedDayClipAnimated:animatedProperty(sharedDayFrames, 'clipPath')
+          || animatedProperty(sharedDayFrames, 'webkitClipPath'),
+        sharedDayClipIsPath:String(sharedDayStyle?.clipPath || '').startsWith('path('),
+        sharedDayAnimationCount:sharedDayOwner?.getAnimations?.().length || 0,
         visibleBackdropOwnerCount:backdropOwners.length,
         backdropCandidates:backdropCandidates.map(({ node:_node, ...candidate }) => candidate),
         liveBackdropCover:{
@@ -639,12 +689,16 @@ async function auditArchitecture(page, phase) {
       if (!owner || !plane) return null;
       const ownerStyle = getComputedStyle(owner);
       const planeStyle = getComputedStyle(plane);
+      const clip = String(ownerStyle.clipPath) !== 'none'
+        ? String(ownerStyle.clipPath)
+        : String(planeStyle.clipPath);
       return {
         count:Number(plane.dataset.crmTileMaterialCount || 0),
         ready:plane.dataset.crmTileMaterialReady === 'true',
         ownerHidden:owner.hidden,
-        ownerClipIsPath:String(ownerStyle.clipPath).startsWith('path('),
-        ownerClipLength:String(ownerStyle.clipPath).length,
+        ownerClipIsPath:clip.startsWith('path('),
+        ownerClipIsUrl:clip.startsWith('url('),
+        ownerClipLength:clip.length,
         backdrop:planeStyle.webkitBackdropFilter || planeStyle.backdropFilter,
         opacity:Number(planeStyle.opacity),
         visibility:planeStyle.visibility,
@@ -881,18 +935,34 @@ async function auditArchitecture(page, phase) {
         fullRenderer:activeDayLive?.dataset.tileRenderer || '',
         material:tileSurfaceAudit(activeDay),
         screenMaterial:(() => {
-          if (!retainedDayLens || !retainedDayOwner) return null;
-          const lensStyle = getComputedStyle(retainedDayLens);
-          const ownerStyle = getComputedStyle(retainedDayOwner);
+          const sharedAtEndpoint = screenDayPlane
+            && screenDayOwner
+            && !screenDayOwner.hidden
+            && Number(getComputedStyle(screenDayPlane).opacity) >= .998
+            && String(
+              getComputedStyle(screenDayPlane).webkitBackdropFilter
+                || getComputedStyle(screenDayPlane).backdropFilter,
+            ).includes('blur(');
+          const material = retainedDayLens || (sharedAtEndpoint ? screenDayPlane : null);
+          const owner = retainedDayOwner || (sharedAtEndpoint ? screenDayOwner : null);
+          if (!material || !owner) return null;
+          const lensStyle = getComputedStyle(material);
+          const ownerStyle = getComputedStyle(owner);
+          const clip = String(ownerStyle.clipPath) !== 'none'
+            ? String(ownerStyle.clipPath)
+            : String(lensStyle.clipPath);
           return {
-            phase:retainedDayLens.dataset.fractalAcrylicPhase || '',
-            direction:retainedDayLens.dataset.fractalAcrylicDirection || '',
-            ownerHidden:retainedDayOwner.hidden,
-            ownerClipIsInset:String(ownerStyle.clipPath).startsWith('inset('),
-            ownerClipIsPath:String(ownerStyle.clipPath).startsWith('path('),
+            phase:retainedDayLens
+              ? (retainedDayLens.dataset.fractalAcrylicPhase || '')
+              : 'shared-day-endpoint',
+            direction:retainedDayLens?.dataset.fractalAcrylicDirection || '',
+            ownerHidden:owner.hidden,
+            ownerClipIsInset:clip.startsWith('inset('),
+            ownerClipIsPath:clip.startsWith('path('),
+            ownerClipIsUrl:clip.startsWith('url('),
             backdrop:lensStyle.webkitBackdropFilter || lensStyle.backdropFilter,
             opacity:Number(lensStyle.opacity),
-            effectiveOpacity:effectiveOpacity(retainedDayLens, surface),
+            effectiveOpacity:effectiveOpacity(material, surface),
             visibility:lensStyle.visibility,
           };
         })(),
@@ -1015,6 +1085,7 @@ async function main() {
   fs.rmSync(YEAR_SCREENSHOT_PATH, { force:true });
   fs.rmSync(MONTH_SCREENSHOT_PATH, { force:true });
   fs.rmSync(MONTH_TRACE_PATH, { force:true });
+  fs.rmSync(DAY_TRACE_PATH, { force:true });
 
   console.log('[calendar-profiler] starting harness');
   const harness = await start({
@@ -1267,45 +1338,22 @@ async function main() {
 
     await sleep(320);
     const moves = [];
-    let traceSession = null;
-    if (process.env.CRM_CALENDAR_TRACE === '1') {
-      traceSession = await page.context().newCDPSession(page);
-      await traceSession.send('Tracing.start', {
-        categories:[
-          'blink',
-          'cc',
-          'devtools.timeline',
-          'gpu',
-          'toplevel',
-          'viz',
-          'disabled-by-default-devtools.timeline',
-          'disabled-by-default-devtools.timeline.frame',
-          'disabled-by-default-devtools.timeline.layers',
-        ].join(','),
-        transferMode:'ReturnAsStream',
-      });
-    }
+    const traceTarget = String(process.env.CRM_CALENDAR_TRACE || '');
+    let traceSession = ['1', 'month-in'].includes(traceTarget)
+      ? await startTransitionTrace(page)
+      : null;
     moves.push(await profileMove(page, 'month-in', openMonth, 1));
     if (traceSession) {
-      const complete = new Promise((resolve) => {
-        traceSession.once('Tracing.tracingComplete', resolve);
-      });
-      await traceSession.send('Tracing.end');
-      const { stream } = await complete;
-      const chunks = [];
-      for (;;) {
-        const result = await traceSession.send('IO.read', { handle:stream });
-        if (result.data) chunks.push(result.base64Encoded
-          ? Buffer.from(result.data, 'base64')
-          : Buffer.from(result.data));
-        if (result.eof) break;
-      }
-      await traceSession.send('IO.close', { handle:stream });
-      fs.writeFileSync(MONTH_TRACE_PATH, Buffer.concat(chunks));
-      await traceSession.detach();
+      await saveTransitionTrace(traceSession, MONTH_TRACE_PATH);
+      traceSession = null;
     }
     await sleep(260);
+    if (traceTarget === 'day-in') traceSession = await startTransitionTrace(page);
     moves.push(await profileMove(page, 'day-in', openDay, 2));
+    if (traceSession) {
+      await saveTransitionTrace(traceSession, DAY_TRACE_PATH);
+      traceSession = null;
+    }
     await sleep(MATERIAL_HANDOFF_MS + 40);
     moves.push(await profileMove(page, 'day-out', goBack, 1));
     await sleep(MATERIAL_HANDOFF_MS + 40);
@@ -1392,7 +1440,8 @@ async function main() {
       || monthAudit.screenPlane?.count !== monthAudit.tiles.count
       || monthAudit.screenPlane?.ready !== true
       || monthAudit.screenPlane?.ownerHidden !== false
-      || monthAudit.screenPlane?.ownerClipIsPath !== true
+      || (monthAudit.screenPlane?.ownerClipIsPath !== true
+        && monthAudit.screenPlane?.ownerClipIsUrl !== true)
       || !String(monthAudit.screenPlane?.backdrop).includes('blur(')
       || monthAudit.screenPlane?.opacity < .998
       || monthAudit.screenPlane?.visibility !== 'visible'
@@ -1421,10 +1470,14 @@ async function main() {
     const dayAudit = architecture.find((audit) => audit.phase === 'day-rest')?.activeDay;
     const dayDirectAcrylic = String(dayAudit?.material?.backdrop).includes('blur(')
       && dayAudit?.material?.opacity >= .998;
-    const dayRetainedAcrylic = dayAudit?.screenMaterial?.phase === 'retained-endpoint'
+    const dayRetainedAcrylic = [
+      'retained-endpoint',
+      'shared-day-endpoint',
+    ].includes(dayAudit?.screenMaterial?.phase)
       && !dayAudit?.screenMaterial?.ownerHidden
       && (dayAudit?.screenMaterial?.ownerClipIsInset
-        || dayAudit?.screenMaterial?.ownerClipIsPath)
+        || dayAudit?.screenMaterial?.ownerClipIsPath
+        || dayAudit?.screenMaterial?.ownerClipIsUrl)
       && String(dayAudit?.screenMaterial?.backdrop).includes('blur(')
       && dayAudit?.screenMaterial?.opacity >= .998
       && dayAudit?.screenMaterial?.effectiveOpacity >= .998
@@ -1472,11 +1525,22 @@ async function main() {
       const stationaryLensClipPath = audit?.ownerTransformAnimated === false
         && audit?.lensTransformAnimated === false
         && audit?.ownerClipAnimated === true;
+      const sharedDayBackdrop = !crossesYearBoundary
+        && audit?.lensBackdropOwner === 'day-shared'
+        && audit?.sharedDayClipAnimated === true
+        && audit?.sharedDayClipIsPath === true
+        && audit?.sharedDayAnimationCount === 1
+        && audit?.visibleBackdropOwnerCount === 1
+        && audit?.backdropCandidates?.some((candidate) => (
+          String(candidate.className).includes('fc-day-screen-material')
+            && String(candidate.backdrop).includes('blur(')
+            && candidate.effectiveOpacity > .998
+        ));
       if (!audit
         || (audit.ownerClipIsPath !== true && audit.ownerClipIsInset !== true)
-        || !String(audit.lensBackdrop).includes('blur(')
+        || (!String(audit.lensBackdrop).includes('blur(') && !sharedDayBackdrop)
         || (!transformClipPath && !stationaryLensClipPath)
-        || audit.visibleBackdropOwnerCount < 2
+        || (!sharedDayBackdrop && audit.visibleBackdropOwnerCount < 2)
         || audit.visibleBackdropOwnerCount > 3
         || audit.liveBackdropCover?.present !== true
         || audit.liveBackdropCover?.opacityAnimated !== crossesYearBoundary

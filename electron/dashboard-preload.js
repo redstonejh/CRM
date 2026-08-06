@@ -197,24 +197,45 @@ contextBridge.exposeInMainWorld('crmHomePreviews', {
     let publishedActive = false;
     let publishPromise = Promise.resolve({ ok:true, active:false });
     const sources = new Set();
-    const publish = (active) => {
+    const publish = (active, awaitLifecycle = true) => {
       const next = !!active;
-      if (publishedActive === next) return publishPromise;
+      if (publishedActive === next) {
+        return awaitLifecycle
+          ? publishPromise
+          : Promise.resolve({ ok:true, active:next });
+      }
       publishedActive = next;
-      publishPromise = ipcRenderer.invoke('home-preview:interaction:set', next)
-        .catch(() => ({ ok:false, active:next }));
+      if (!awaitLifecycle) {
+        // Internal cameras already own a fully rendered room. Their transform
+        // must not receive an Electron Promise reply halfway through motion;
+        // the one-way channel freezes workers just as promptly without
+        // scheduling reply deserialization on the visible renderer.
+        ipcRenderer.send('home-preview:interaction', next);
+        publishPromise = Promise.resolve({ ok:true, active:next });
+      } else {
+        publishPromise = ipcRenderer.invoke('home-preview:interaction:set', next)
+          .catch(() => ({ ok:false, active:next }));
+      }
       return publishPromise;
     };
-    return (active, source = 'default') => {
+    return (active, source = 'default', awaitLifecycle = true) => {
       const key = String(source || 'default');
       clearTimeout(releaseTimer);
       releaseTimer = null;
       if (active) {
         sources.add(key);
-        return publish(true);
+        return publish(true, awaitLifecycle);
       }
       sources.delete(key);
-      if (!sources.size) releaseTimer = setTimeout(() => publish(false), 140);
+      if (!sources.size) {
+        releaseTimer = setTimeout(
+          // No caller can await a delayed release: the method has already
+          // returned. Make every thaw one-way so its lifecycle completion
+          // cannot surface later inside an unrelated visible animation.
+          () => publish(false, false),
+          140,
+        );
+      }
       return Promise.resolve({ ok:true, active:publishedActive });
     };
   })(),

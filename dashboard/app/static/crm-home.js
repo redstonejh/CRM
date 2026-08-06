@@ -1027,7 +1027,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   const requestPreviews = async (reset = false) => {
     clearTimeout(retryTimer);
+    retryTimer = 0;
     if (reset) retryAttempt = 0;
+    const captureWorker = !!window.crmHomePreviews?.isCaptureWorker;
+    if (!captureWorker && previewCommitBlocked()) {
+      // Home owns no visible pixels while another room is active. Polling its
+      // multi-megabyte preview bundle there can deserialize on the renderer in
+      // the middle of Calendar/Planner motion. Activation and preview-change
+      // subscriptions are authoritative restart points; only a still-active
+      // Home camera needs a short deferred retry.
+      if (camera?.isActive?.()) {
+        retryTimer = setTimeout(() => requestPreviews(false), 180);
+      }
+      return;
+    }
     try { acceptPreviewBatch((await window.crmHomePreviews?.list?.())?.previews || []); } catch {}
     if (MODULES.every(({ key }) => isCurrentPreview(previews.get(key)))) return;
     retryTimer = setTimeout(() => requestPreviews(false), RETRY_MS[Math.min(retryAttempt++, RETRY_MS.length - 1)]);
@@ -2823,6 +2836,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       }
     }
     else {
+      clearTimeout(retryTimer); retryTimer = 0;
       clearTimeout(handRefreshTimer); handRefreshGeneration += 1;
       clearTimeout(factoryPrewarmTimer); factoryPrewarmTimer = 0;
       if (factoryPrewarmHandle) {

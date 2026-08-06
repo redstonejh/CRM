@@ -73,6 +73,10 @@ import {
   let dayScreenMaterialOwner = null;
   let dayScreenMaterial = null;
   let dayScreenMaterialMotion = null;
+  let dayMaterialBoxes = [];
+  let dayMaterialSourcePath = "none";
+  let dayMaterialGeometrySignature = "";
+  let dayMaterialEndpoint = null;
   let yearScreenMaterialOwner = null;
   let yearScreenMaterial = null;
   let yearMaterialMaskSvg = null;
@@ -352,7 +356,7 @@ import {
         will-change:opacity;contain:strict;backface-visibility:hidden}
       .fc-live-backdrop-cover[hidden]{display:none}
       .fc-day-screen-material-owner{position:absolute;inset:0;z-index:4;box-sizing:border-box;
-        pointer-events:none;transform-origin:0 0;backface-visibility:hidden}
+        pointer-events:none;transform-origin:0 0;backface-visibility:hidden;will-change:clip-path}
       .fc-day-screen-material-owner[hidden]{display:none}
       .fc-day-screen-material{position:absolute;inset:0;box-sizing:border-box;
         pointer-events:none;background:transparent;opacity:.001;transform-origin:0 0;
@@ -446,15 +450,10 @@ import {
       .fc-tile-preview-batch-stage{position:fixed;inset:0;z-index:2147480000;
         overflow:hidden;pointer-events:none;background:transparent}
       .fc-tile-preview-batch-slot{position:absolute;overflow:hidden;pointer-events:none}
-      /* Once a month owns the viewport, park the fully covered year tiles.
-         Bring them back before the month-to-year contraction begins so their
-         live acrylic and populated faces remain present throughout the visible
-         return animation. Geometry is retained because visibility does not
-         remove the canonical tiles from layout. */
-      .fc-surface[data-level="1"]:not(.fc-camera-contracting)>
-        .fc-level[data-kind="year"] .fc-month,
-      .fc-surface[data-level="2"]>.fc-level[data-kind="year"] .fc-month{
-        visibility:hidden}
+      /* The complete year layer is parked as one composited surface in script
+         after month entry. Avoid level-dependent descendant visibility here:
+         changing data-level would otherwise invalidate every month/day child
+         at the exact transition endpoint. */
       .fc-hd,.fc-dowrow,.fc-day-stage{position:relative;z-index:1;width:100%;box-sizing:border-box}
       .fc-hd{flex:0 0 9%;display:flex;align-items:center;justify-content:space-between;gap:8px;
         padding:0 1%;font-size:clamp(.98rem,8cqh,1.15rem);font-weight:700;line-height:1.05;
@@ -487,7 +486,8 @@ import {
       .fc-day:hover,.fc-day:focus-visible,
       .fc-day.is-drop-target,
       .fc-day-detail.is-drop-target,.fc-empty.is-drop-target,
-      .fc-surface[data-level="0"] .fc-month:is(:hover,:focus-visible) .fc-day{
+      .fc-level[data-kind="year"]>.fc-grid>
+        .fc-month:is(:hover,:focus-visible) .fc-day{
         background:linear-gradient(180deg,rgba(40,55,76,.27),rgba(18,26,38,.23));
         box-shadow:inset 0 0 0 1px rgba(166,196,236,.27),
           inset 0 1px rgba(255,255,255,.15),
@@ -1752,7 +1752,10 @@ import {
       return true;
     };
     const aligned = align();
-    if (transformAnimation) {
+    // Avoid a second compositor seek after motion has begun. The camera clock
+    // supplied here is already authoritative; retry only if the effects were
+    // not ready to accept that first alignment.
+    if (transformAnimation && !aligned) {
       Promise.allSettled([
         transformAnimation.ready,
         motion.transformAnimation?.ready,
@@ -1765,6 +1768,14 @@ import {
   const settleYearScreenMaterial = (context) => {
     const level = Number(context?.level ?? 0);
     stopYearMaterialMotion();
+    const root = context?.layers?.[0];
+    if (root && root.style.opacity !== (level === 0 ? "1" : "0.001")) {
+      // The full month/day viewport occludes the year after entry. Park its
+      // retained tree with one compositor property instead of changing
+      // visibility on 12 tiles and all of their descendants. Contract setup
+      // restores this layer to opacity 1 underneath the outgoing viewport.
+      root.style.opacity = level === 0 ? "1" : ".001";
+    }
     if (level === 0 && (camera?.isActive?.() ?? true)) {
       return syncYearScreenMaterial(context, { visible:true });
     }
@@ -1795,6 +1806,11 @@ import {
       && dayScreenMaterialOwner.parentElement === surface
       && dayScreenMaterial?.parentElement === dayScreenMaterialOwner) return dayScreenMaterial;
     dayScreenMaterialOwner?.remove?.();
+    surface.querySelector?.(":scope > .fc-day-material-defs")?.remove?.();
+    dayMaterialBoxes = [];
+    dayMaterialSourcePath = "none";
+    dayMaterialGeometrySignature = "";
+    dayMaterialEndpoint = null;
     dayScreenMaterialOwner = document.createElement("span");
     dayScreenMaterialOwner.className = "fc-day-screen-material-owner";
     dayScreenMaterialOwner.hidden = true;
@@ -1804,13 +1820,59 @@ import {
     dayScreenMaterial.setAttribute("aria-hidden", "true");
     dayScreenMaterial.dataset.crmAcrylicOwner = "calendar";
     dayScreenMaterialOwner.appendChild(dayScreenMaterial);
-    surface.appendChild(dayScreenMaterialOwner);
+    dayScreenMaterialOwner.style.clipPath = "none";
+    dayScreenMaterialOwner.style.webkitClipPath = "none";
+    dayScreenMaterial.style.clipPath = "none";
+    dayScreenMaterial.style.webkitClipPath = "none";
+    surface.append(dayScreenMaterialOwner);
     return dayScreenMaterial;
   };
   const stopDayScreenMaterialAnimations = () => {
-    [dayScreenMaterialOwner, dayScreenMaterial].forEach((node) => {
+    [
+      dayScreenMaterialOwner,
+      dayScreenMaterial,
+    ].forEach((node) => {
       node?.getAnimations?.().forEach?.((animation) => animation.cancel());
     });
+  };
+  const setDayMaterialClip = (value) => {
+    if (!dayScreenMaterialOwner) return false;
+    const clip = value || "none";
+    dayScreenMaterialOwner.style.clipPath = clip;
+    dayScreenMaterialOwner.style.webkitClipPath = clip;
+    return true;
+  };
+  const dayRoundedRectPath = (box) => {
+    const x = Number(box?.x) || 0;
+    const y = Number(box?.y) || 0;
+    const width = Math.max(0, Number(box?.width) || 0);
+    const height = Math.max(0, Number(box?.height) || 0);
+    const radiusX = Math.min(
+      width / 2,
+      Math.max(0, Number(box?.radiusX ?? box?.radius) || 0),
+    );
+    const radiusY = Math.min(
+      height / 2,
+      Math.max(0, Number(box?.radiusY ?? box?.radius) || 0),
+    );
+    const fixed = yearMaskNumber;
+    return [
+      `M ${fixed(x + radiusX)} ${fixed(y)}`,
+      `L ${fixed(x + width - radiusX)} ${fixed(y)}`,
+      `A ${fixed(radiusX)} ${fixed(radiusY)} 0 0 1 ${fixed(x + width)} ${fixed(y + radiusY)}`,
+      `L ${fixed(x + width)} ${fixed(y + height - radiusY)}`,
+      `A ${fixed(radiusX)} ${fixed(radiusY)} 0 0 1 ${fixed(x + width - radiusX)} ${fixed(y + height)}`,
+      `L ${fixed(x + radiusX)} ${fixed(y + height)}`,
+      `A ${fixed(radiusX)} ${fixed(radiusY)} 0 0 1 ${fixed(x)} ${fixed(y + height - radiusY)}`,
+      `L ${fixed(x)} ${fixed(y + radiusY)}`,
+      `A ${fixed(radiusX)} ${fixed(radiusY)} 0 0 1 ${fixed(x + radiusX)} ${fixed(y)} Z`,
+    ].join(" ");
+  };
+  const dayMaterialPathFor = (boxes) => {
+    const parts = boxes
+      .filter((box) => Number(box?.width) > 0 && Number(box?.height) > 0)
+      .map(dayRoundedRectPath);
+    return parts.length ? `path('${parts.join(" ")}')` : "none";
   };
   const setMonthLocalMaterialMuted = (monthLayer, muted) => {
     const live = monthLayer?.querySelector?.(":scope > .fc-expander-live");
@@ -1821,8 +1883,10 @@ import {
   };
   const hideDayScreenMaterial = () => {
     dayScreenMaterialMotion = null;
+    dayMaterialEndpoint = null;
     if (!dayScreenMaterialOwner || !dayScreenMaterial) return;
     stopDayScreenMaterialAnimations();
+    setDayMaterialClip(dayMaterialSourcePath);
     if (dayScreenMaterial.style.opacity !== "0.001") {
       dayScreenMaterial.style.opacity = ".001";
     }
@@ -1859,6 +1923,7 @@ import {
       return plane;
     }
     stopDayScreenMaterialAnimations();
+    dayMaterialEndpoint = null;
     Object.assign(dayScreenMaterialOwner.style, {
       zIndex:"2",
       inset:"auto",
@@ -1866,10 +1931,9 @@ import {
       top:"0px",
       width:"1px",
       height:"1px",
-      clipPath:"inset(0)",
-      webkitClipPath:"inset(0)",
       transform:"translateZ(0)",
     });
+    setDayMaterialClip("inset(0)");
     plane.style.transform = "translateZ(0)";
     plane.style.opacity = ".001";
     plane.style.visibility = "hidden";
@@ -1881,7 +1945,6 @@ import {
   };
   const syncDayScreenMaterial = (monthLayer, {
     zIndex = 4,
-    exclude = null,
     muteLocal = true,
   } = {}) => {
     const surface = camera?.surface?.();
@@ -1894,62 +1957,84 @@ import {
       return null;
     }
     const plane = ensureDayScreenMaterial(surface);
-    const geometrySignature = [
+    const geometryKey = [
       layoutGeometrySignature,
       monthLayer.dataset.tileObjectId || monthLayer.dataset.month || "",
-      exclude?.dataset?.tileObjectId || exclude?.dataset?.date || "",
       days.length,
     ].join("|");
-    if (plane.dataset.calendarGeometrySignature === geometrySignature
+    if (plane.dataset.calendarGeometrySignature === geometryKey
+      && dayMaterialGeometrySignature
+      && dayMaterialBoxes.length === days.length
+      && dayMaterialSourcePath !== "none"
       && plane.dataset.crmTileMaterialReady === "true") {
       if (dayScreenMaterialOwner.style.zIndex !== String(zIndex)) {
         dayScreenMaterialOwner.style.zIndex = String(zIndex);
       }
       if (dayScreenMaterialOwner.hidden) dayScreenMaterialOwner.hidden = false;
-      plane.dataset.crmTileMaterialCount = String(days.length - (exclude ? 1 : 0));
+      plane.dataset.crmTileMaterialCount = String(days.length);
       plane.dataset.crmTileMaterialParked = "false";
       setMonthLocalMaterialMuted(monthLayer, muteLocal);
       return plane;
     }
     const surfaceRect = surface.getBoundingClientRect();
-    const dayRects = days.map((day) => day.getBoundingClientRect());
-    const materialPadding = 34;
-    const materialLeft = Math.max(
-      0,
-      Math.min(...dayRects.map((rect) => rect.left)) - surfaceRect.left - materialPadding,
-    );
-    const materialTop = Math.max(
-      0,
-      Math.min(...dayRects.map((rect) => rect.top)) - surfaceRect.top - materialPadding,
-    );
-    const materialRight = Math.min(
-      surfaceRect.width,
-      Math.max(...dayRects.map((rect) => rect.right)) - surfaceRect.left + materialPadding,
-    );
-    const materialBottom = Math.min(
-      surfaceRect.height,
-      Math.max(...dayRects.map((rect) => rect.bottom)) - surfaceRect.top + materialPadding,
-    );
+    const boxes = days.map((day) => {
+      const rect = day.getBoundingClientRect();
+      const radiusParts = String(getComputedStyle(day).borderTopLeftRadius || "0")
+        .split(/\s+/)
+        .map((value) => parseFloat(value) || 0);
+      return {
+        id:day.dataset.tileObjectId || day.dataset.tileId || day.dataset.date || "",
+        date:day.dataset.date || "",
+        x:Number(yearMaskNumber(rect.left - surfaceRect.left)),
+        y:Number(yearMaskNumber(rect.top - surfaceRect.top)),
+        width:Number(yearMaskNumber(rect.width)),
+        height:Number(yearMaskNumber(rect.height)),
+        radiusX:Number(yearMaskNumber(radiusParts[0])),
+        radiusY:Number(yearMaskNumber(radiusParts[1] || radiusParts[0])),
+      };
+    });
+    const geometrySignature = [
+      layoutGeometrySignature,
+      monthLayer.dataset.tileObjectId || monthLayer.dataset.month || "",
+      yearMaskNumber(surfaceRect.width),
+      yearMaskNumber(surfaceRect.height),
+      ...boxes.flatMap((box) => [
+        box.id,
+        box.x,
+        box.y,
+        box.width,
+        box.height,
+        box.radiusX,
+        box.radiusY,
+      ]),
+    ].join("|");
     Object.assign(dayScreenMaterialOwner.style, {
       inset:"auto",
-      left:`${yearMaskNumber(materialLeft)}px`,
-      top:`${yearMaskNumber(materialTop)}px`,
-      width:`${yearMaskNumber(Math.max(1, materialRight - materialLeft))}px`,
-      height:`${yearMaskNumber(Math.max(1, materialBottom - materialTop))}px`,
+      left:"0px",
+      top:"0px",
+      width:`${yearMaskNumber(Math.max(1, surfaceRect.width))}px`,
+      height:`${yearMaskNumber(Math.max(1, surfaceRect.height))}px`,
     });
-    const materialDays = exclude ? days.filter((day) => day !== exclude) : days;
-    const path = tileUnionPath(materialDays, dayScreenMaterialOwner, { precise:true });
+    dayMaterialBoxes = boxes;
+    dayMaterialSourcePath = dayMaterialPathFor(boxes);
+    dayMaterialGeometrySignature = geometrySignature;
     Object.assign(dayScreenMaterialOwner.style, {
       zIndex:String(zIndex),
-      clipPath:path,
-      webkitClipPath:path,
+    });
+    setDayMaterialClip(dayMaterialSourcePath);
+    Object.assign(plane.style, {
+      clipPath:"none",
+      webkitClipPath:"none",
     });
     dayScreenMaterialOwner.hidden = false;
-    plane.dataset.crmTileMaterialCount = String(materialDays.length);
-    plane.dataset.crmTileMaterialReady = String(path !== "none");
+    plane.dataset.crmTileMaterialCount = String(days.length);
+    plane.dataset.crmTileMaterialReady = String(
+      dayMaterialBoxes.length === days.length && dayMaterialSourcePath !== "none",
+    );
     plane.dataset.crmTileMaterialParked = "false";
+    plane.dataset.crmTileMaterialMode = "path-subshape-clip";
     plane.dataset.calendarMonth = String(monthLayer.dataset.month || "");
-    plane.dataset.calendarGeometrySignature = geometrySignature;
+    plane.dataset.calendarGeometrySignature = geometryKey;
     setMonthLocalMaterialMuted(monthLayer, muteLocal);
     return plane;
   };
@@ -1959,6 +2044,53 @@ import {
     return context?.surface?.querySelector?.(
       ':scope > .fc-expander[data-kind="month"]:not(.fc-warm)',
     ) || null;
+  };
+  const dayMaterialIndexForTarget = (target) => {
+    const tileId = target?.dataset?.tileObjectId || target?.dataset?.tileId || "";
+    const date = target?.dataset?.date || "";
+    return dayMaterialBoxes.findIndex((box) => (
+      (tileId && box.id === tileId)
+        || (date && box.date === date)
+    ));
+  };
+  const dayMaterialGeometryForTarget = (target, context) => {
+    const index = dayMaterialIndexForTarget(target);
+    const surface = context?.surface;
+    const destination = context?.expRect?.();
+    const source = dayMaterialBoxes[index];
+    if (index < 0 || !source || !surface || !destination) return null;
+    const surfaceRect = surface.getBoundingClientRect();
+    const sourceWidth = Math.max(1, Number(source.width) || 0);
+    const sourceHeight = Math.max(1, Number(source.height) || 0);
+    const scaleX = destination.w / sourceWidth;
+    const scaleY = destination.h / sourceHeight;
+    const destinationBox = {
+      ...source,
+      x:destination.x - surfaceRect.left,
+      y:destination.y - surfaceRect.top,
+      width:destination.w,
+      height:destination.h,
+      radiusX:(Number(source.radiusX) || 0) * scaleX,
+      radiusY:(Number(source.radiusY) || 0) * scaleY,
+    };
+    const destinationBoxes = dayMaterialBoxes.map((box, boxIndex) => (
+      boxIndex === index ? destinationBox : box
+    ));
+    return {
+      sourcePath:dayMaterialSourcePath,
+      destinationPath:dayMaterialPathFor(destinationBoxes),
+      duration:Number(context.morphMs) || MORPH_MS,
+      easing:context.ease || EASE,
+      tileId:source.id || "",
+      date:source.date || "",
+      index,
+    };
+  };
+  const seatDayMaterialGeometry = (geometry, expanded) => {
+    if (!dayScreenMaterialOwner?.isConnected || !geometry) return false;
+    return setDayMaterialClip(
+      expanded ? geometry.destinationPath : geometry.sourcePath,
+    );
   };
   const prepareDayScreenMaterialTransition = (direction, context) => {
     const level = Number(context?.level) || 0;
@@ -1989,15 +2121,43 @@ import {
       hideDayScreenMaterial();
       return;
     }
+    const movingDay = (direction === "expand" && level === 1)
+      || (direction === "contract" && level === 2);
+    if (movingDay) {
+      const plane = syncDayScreenMaterial(monthLayer, { zIndex:4 });
+      const geometry = dayMaterialGeometryForTarget(activeTransition?.target, context);
+      if (!plane || !geometry) return;
+      // Filled endpoint effects are kept between journeys. Seat their exact
+      // inline value before cancellation so the next reverse/forward arm does
+      // not invalidate the already-composed blur plane.
+      seatDayMaterialGeometry(geometry, direction === "contract");
+      stopDayScreenMaterialAnimations();
+      dayScreenMaterialOwner.hidden = false;
+      plane.style.opacity = ".999";
+      plane.style.visibility = "visible";
+      plane.dataset.crmTileMaterialParked = "false";
+      setMonthLocalMaterialMuted(monthLayer, true);
+      dayMaterialEndpoint = null;
+      dayScreenMaterialMotion = {
+        direction,
+        level,
+        plane,
+        owner:dayScreenMaterialOwner,
+        geometry,
+        sharedClip:true,
+      };
+      return;
+    }
     // A completed filled opacity effect may be retained at the previous
     // endpoint to avoid a teardown hitch. Seat its matching inline value and
     // retire it now, while the outgoing full-size day still occludes the month.
     stopDayScreenMaterialAnimations();
+    dayMaterialEndpoint = null;
     const plane = syncDayScreenMaterial(monthLayer, {
       zIndex:direction === "contract" ? 5 : 4,
-      exclude:activeTransition?.kind === "day" ? activeTransition.target : null,
     });
     if (!plane) return;
+    setDayMaterialClip(dayMaterialSourcePath);
     dayScreenMaterialOwner.style.transform = "translateZ(0)";
     plane.style.transform = "translateZ(0)";
     plane.style.opacity = enteringMonth ? ".001" : ".999";
@@ -2019,24 +2179,32 @@ import {
   };
   const armDayScreenMaterialTransition = () => {
     const motion = dayScreenMaterialMotion;
-    if (!motion || motion.direction !== "expand" || motion.level !== 1) return;
-    // Once the selected day covers almost the complete month viewport, its
-    // sibling tiles are no longer visible. Retire their shared screen plane
-    // during that occluded tail instead of toggling a 30-shape blur owner in
-    // the first settled frame.
-    motion.opacityAnimation = motion.plane.animate(
+    if (!motion?.sharedClip || !motion.geometry) return;
+    const expanding = motion.direction === "expand";
+    motion.clipAnimation = motion.owner.animate(
       [
-        { opacity:.999, offset:0 },
-        { opacity:.999, offset:.72 },
-        { opacity:.001, offset:1 },
+        {
+          clipPath:expanding
+            ? motion.geometry.sourcePath
+            : motion.geometry.destinationPath,
+        },
+        {
+          clipPath:expanding
+            ? motion.geometry.destinationPath
+            : motion.geometry.sourcePath,
+        },
       ],
-      { duration:MORPH_MS, easing:"linear", fill:"forwards" },
+      {
+        duration:motion.geometry.duration,
+        easing:motion.geometry.easing,
+        fill:"forwards",
+      },
     );
   };
   const syncDayScreenMaterialTransition = (startTime) => {
     const motion = dayScreenMaterialMotion;
     if (!motion || !Number.isFinite(Number(startTime))) return;
-    [motion.opacityAnimation].forEach((animation) => {
+    [motion.clipAnimation].forEach((animation) => {
       if (animation) animation.startTime = Number(startTime);
     });
   };
@@ -2044,33 +2212,41 @@ import {
     const motion = dayScreenMaterialMotion;
     dayScreenMaterialMotion = null;
     const level = Number(context?.level) || 0;
+    if (level === 2 && motion?.sharedClip
+      && motion.plane?.isConnected && motion.owner?.isConnected) {
+      seatDayMaterialGeometry(motion.geometry, true);
+      motion.plane.style.opacity = ".999";
+      motion.plane.style.visibility = "visible";
+      motion.owner.hidden = false;
+      motion.plane.dataset.crmTileMaterialParked = "false";
+      dayMaterialEndpoint = {
+        ...motion.geometry,
+        animation:motion.clipAnimation || null,
+      };
+      return;
+    }
     if (level !== 1) {
-      if (level === 2 && motion?.opacityAnimation
-        && motion.plane?.isConnected && motion.owner?.isConnected) {
-        motion.plane.style.opacity = ".001";
-        motion.plane.style.visibility = "visible";
-        motion.owner.hidden = false;
-        motion.plane.dataset.crmTileMaterialParked = "true";
-        // Leave the completed compositor effect filled. Cancelling it in this
-        // frame rebuilds the bounded backdrop surface even though its endpoint
-        // pixels already match the parked inline state.
-        return;
-      }
       parkDayScreenMaterial({ visible:level === 2 });
       return;
     }
     const monthLayer = monthLayerForScreenMaterial(context);
     const plane = syncDayScreenMaterial(monthLayer, { zIndex:4 });
     if (plane) {
+      if (motion?.sharedClip) {
+        seatDayMaterialGeometry(motion.geometry, false);
+        dayMaterialEndpoint = null;
+      } else {
+        stopDayScreenMaterialAnimations();
+        setDayMaterialClip(dayMaterialSourcePath);
+      }
       dayScreenMaterialOwner.style.transform = "translateZ(0)";
       plane.style.transform = "translateZ(0)";
       plane.style.visibility = "visible";
       // syncDayScreenMaterial switches the identical day union from the local
-      // plane to this bounded screen plane synchronously. Keeping either owner
+      // plane to this screen plane synchronously. Keeping either owner
       // translucent during that swap creates a missing-acrylic flash; allowing
       // both to paint creates a darker double-blur flash.
       plane.style.opacity = ".999";
-      stopDayScreenMaterialAnimations();
     }
   };
   const layoutCalendar = ({ surface, layers, expRect }) => {
@@ -2122,6 +2298,15 @@ import {
           plane.style.transform = "translateZ(0)";
           plane.style.opacity = ".999";
           plane.style.visibility = "visible";
+        }
+      } else if (Number(surface.dataset.level || 0) === 2
+        && dayMaterialEndpoint) {
+        const plane = ensureDayScreenMaterial(surface);
+        if (plane) {
+          seatDayMaterialGeometry(dayMaterialEndpoint, true);
+          plane.style.opacity = ".999";
+          plane.style.visibility = "visible";
+          dayScreenMaterialOwner.hidden = false;
         }
       } else parkDayScreenMaterial();
     }
@@ -2231,6 +2416,14 @@ import {
       || target.closest(".fc-expander-live,.fc-month")
       ?.querySelector?.(":scope > .crm-tile-material-plane")
       || target;
+  };
+  const delegateDayAcrylicBackdrop = () => {
+    const lens = dayAcrylicLens?.element?.();
+    if (!lens) return false;
+    lens.style.webkitBackdropFilter = "none";
+    lens.style.backdropFilter = "none";
+    lens.dataset.crmAcrylicBackdropOwner = "day-shared";
+    return true;
   };
   const acrylicTransformGeometry = (expander, target, context) => {
     const tiles = materialTilesForTarget(target);
@@ -2373,6 +2566,7 @@ import {
       }
     }
     lens?.prepare?.(expander, target, context);
+    if (kind === "day" && context.direction) delegateDayAcrylicBackdrop();
   };
 
   const targetFromEvent = (event, context) => {
@@ -2451,11 +2645,10 @@ import {
       if (destination?.isConnected && direction === "expand") {
         clearMaterialExclusion(destination);
         destination.style.opacity = "1";
-        // The stationary screen-space lens is already the exact endpoint
-        // material. Retain that real blur at rest instead of turning on a
-        // second full-window backdrop owner and tearing the lens down in the
-        // same handoff frame.
-        lens.retainEndpoint?.();
+        // The selected native-path aperture in the shared screen plane owns the exact
+        // endpoint blur. Keep this tile-bound tint/frame owner but park its
+        // delegated (filterless) screen lens.
+        lens.park?.();
         return;
       }
       context?.outgoingLayer?.classList?.remove?.("fc-source-acrylic-owner");
@@ -2901,6 +3094,11 @@ import {
     prewarmOpacity:MATERIAL_PRIME_OPACITY,
     prewarmZIndex:2,
     clipToDestinationBounds:true,
+    // A growing clip makes Chromium resize and rerasterize the backdrop
+    // surface during entry. Keep the day cut-out immutable and move it on the
+    // compositor, just like the month lens, so both directions use one
+    // preallocated blur surface.
+    clipGeometry:acrylicTransformGeometry,
   });
 
   camera = window.createFractalCamera({
@@ -2921,6 +3119,7 @@ import {
     keepBelowRenderedAtRest:true,
     precomposeTransitions:false,
     animateWarmExpander:false,
+    interactionAcknowledgement:false,
     lockInputDuringTransitions:true,
     contractExpanderAbove:true,
     holdContractEndpointFrame:true,
@@ -2943,14 +3142,9 @@ import {
     prepareTransition:(direction, target, context) => {
       if (direction === "expand" && target) {
         if (calendarTileUnit(calendarObjectForElement(target)) === "day") {
-          // Exclude the selected day from the shared stationary plane before
-          // the navigation clock starts. The moving lens replaces it in the
-          // same task, so this is visually atomic while avoiding a 31-shape
-          // filter invalidation on an animated frame.
-          syncDayScreenMaterial(context?.layers?.[1], {
-            zIndex:4,
-            exclude:target,
-          });
+          // All stationary days and the selected moving aperture share this
+          // one true-acrylic plane. Only the selected path subshape will morph.
+          syncDayScreenMaterial(context?.layers?.[1], { zIndex:4 });
         }
         camera?.prefetch?.(target);
       }
@@ -3074,6 +3268,14 @@ import {
               plane.style.opacity = ".999";
               plane.style.visibility = "visible";
             }
+          } else if (context.level === 2 && dayMaterialEndpoint) {
+            const plane = ensureDayScreenMaterial(context.surface);
+            if (plane) {
+              seatDayMaterialGeometry(dayMaterialEndpoint, true);
+              plane.style.opacity = ".999";
+              plane.style.visibility = "visible";
+              dayScreenMaterialOwner.hidden = false;
+            }
           } else if (context.level === 0) {
             primeDayScreenMaterialSurface(context.surface);
           } else parkDayScreenMaterial();
@@ -3139,7 +3341,7 @@ import {
     // Home calls this only after temporarily seating the inactive room at its
     // native viewport size. Build every persistent Calendar compositor owner
     // and accept the synchronized month-preview batch in that idle lease, so
-    // neither SVG clip geometry nor decoded preview nodes are first created
+    // neither persistent clip geometry nor decoded preview nodes are first created
     // while the Home camera is moving.
     camera.layout();
     const layers = camera.layers();

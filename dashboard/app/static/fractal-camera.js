@@ -317,6 +317,13 @@
         frame,
         clipOwner:geometryOwner,
       };
+      // A held material owns a complete visual object from preparation onward,
+      // not only after its transform animation is armed. Leaving the real edge
+      // frame at its parked opacity produced a short lens-without-frame state
+      // whenever route preparation occupied more than one native refresh.
+      if (holdThroughMotion && direction !== "prewarm" && frame) {
+        frame.style.opacity = "1";
+      }
       lens.dataset.fractalAcrylicPhase = direction === "prewarm" ? "prewarm" : "prepared";
       lens.dataset.fractalAcrylicDirection = direction;
       return lens;

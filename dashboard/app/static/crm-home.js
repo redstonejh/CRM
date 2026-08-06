@@ -427,11 +427,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-surface[data-crm-home-retained]>
         :is(.crm-home-screen-acrylic-clip,.crm-home-peripheral-acrylic-clip){
         display:none!important}
-      /* Inactive rooms that finished their idle baseline stay rasterized behind
-         Home instead of returning to display:none and paying their first paint
-         during a camera move. The attribute is semantic-only: [hidden] remains
-         present, the room is one .001 compositor group, and no descendant can
-         enter hit testing. */
+      /* Inactive rooms that finished their idle baseline retain canonical
+         viewport geometry behind Home. Their finite paint owners are parked by
+         the selectors below, while [hidden] keeps the room out of semantics
+         and hit testing without collapsing that retained layout. */
       html body [data-crm-home-precomposed]:not(.crm-theater){
         display:block!important;position:fixed!important;inset:0!important;
         width:100vw!important;height:100vh!important;opacity:.001!important;
@@ -510,8 +509,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
          translucent acrylic scenes: complementary opacity creates a light
          trough, while overlapping complete scenes creates a dark double-glass
          pulse. Keep the moving scene fully owned while its sharp preview
-         morphs to the resting filter and the live scene precomposites beneath
-         it, then exchange the pixel-matched owners in one covered update. */
+         morphs to the resting filter. Titles are not part of that cut-out
+         raster, so introduce their real owner during the same dissolve rather
+         than instantiating all six in the final ownership frame. */
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid{z-index:1;opacity:1!important;transition:none!important}
       .crm-home-surface.crm-home-camera-handoff .crm-home-priority-hand{z-index:1}
       .crm-home-surface.crm-home-camera-handoff .crm-home-grid>.crm-home-bucket,
@@ -534,7 +534,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       .crm-home-recycled-expander .crm-home-preview-resting-filter{
         opacity:1!important}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-title-layer{
-        opacity:.001!important;transition:none!important}
+        opacity:1!important;
+        transition:opacity ${HOME_RETURN_INGRESS_MS}ms ${HOME_RETURN_HANDOFF_EASE}!important}
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-grid>.crm-home-bucket,
       .crm-home-surface.crm-home-camera-handoff.crm-home-camera-releasing .crm-home-priority-hand{
         opacity:.001!important;transition:none!important}
@@ -1420,13 +1421,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const clearMotionPaintParking = (node) => {
     if (!node) return false;
     node.removeAttribute("data-crm-home-motion-parked");
-    // Acrylic prewarm temporarily exempts real shared blur planes from their
-    // root's zero-area paint clip, then parks those planes explicitly when the
-    // finite warm pass ends. A boxed camera surface is itself the normal paint
-    // owner, so its nested exemptions are not returned by
-    // motionPaintOwnersOf(). Clear every actual parked descendant when that
-    // surface is promoted; otherwise its room becomes visible while the one
-    // real acrylic plane remains clipped by the !important parking selector.
+    // A boxed camera surface is itself the normal finite owner, while retained
+    // card rooms park granular descendants. Clear both shapes when destination
+    // promotion begins; otherwise the room can become visible while one of its
+    // real material planes remains clipped by the !important parking selector.
     const parkedOwners = new Set([
       ...motionPaintOwnersOf(node),
       ...node.querySelectorAll("[data-crm-home-motion-parked-owner]"),
@@ -1511,7 +1509,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       node.setAttribute("data-crm-home-released-owner", "");
     }
     node.hidden = true;
-    clearMotionPaintParking(node);
+    // Keep finite owners parked. Clearing hundreds of granular clip attributes
+    // here did not release any additional paint—the owners above are already
+    // at opacity zero—but it delayed cam.back() in the originating input task.
+    // The next endpoint promotion clears these clips beneath its opaque bridge.
     node.inert = false;
     node.removeAttribute("aria-hidden");
     return true;
@@ -1554,10 +1555,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         node.setAttribute("data-crm-home-released-owner", "");
       }
     });
-    // Pointer intent gives the already-built room one finite native-size paint
-    // lease before navigation starts. The complete destination remains below
-    // Home at .001, but its card/text surfaces and compositor resources no
-    // longer cold-start after the camera has landed.
+    // Pointer intent selects the already-built room and restores its canonical
+    // routing without exposing inactive paint. Destination promotion later
+    // removes these finite clips beneath the already-opaque endpoint bridge.
     if (node) {
       node.removeAttribute("data-crm-home-released-owner");
       precomposeOwnersOf(node).forEach((owner) => owner.removeAttribute("data-crm-home-released-owner"));
@@ -1666,82 +1666,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     node.removeAttribute("data-crm-home-motion-parked");
     return true;
   };
-  let factoryAcrylicCover = null;
-  const prepareFactoryAcrylicCover = async () => {
-    const deadline = performance.now() + 20_000;
-    while (!motionSnapshot?.src && canPrewarmFactory() && performance.now() < deadline) {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-    if (!motionSnapshot?.src || !canPrewarmFactory()) return null;
-    if (!factoryAcrylicCover?.isConnected) {
-      factoryAcrylicCover = imageNode("crm-home-factory-acrylic-cover", "", "sync");
-      Object.assign(factoryAcrylicCover.style, {
-        position:"fixed",
-        inset:"0",
-        zIndex:"819",
-        width:"100vw",
-        height:"100vh",
-        objectFit:"fill",
-        pointerEvents:"none",
-        opacity:"0",
-        visibility:"hidden",
-      });
-      factoryAcrylicCover.setAttribute("aria-hidden", "true");
-      document.body.appendChild(factoryAcrylicCover);
-    }
-    if (factoryAcrylicCover.src !== motionSnapshot.src) {
-      factoryAcrylicCover.src = motionSnapshot.src;
-    }
-    if (!factoryAcrylicCover.complete || factoryAcrylicCover.naturalWidth <= 0) {
-      try { await factoryAcrylicCover.decode?.(); } catch {}
-    }
-    return factoryAcrylicCover.complete && factoryAcrylicCover.naturalWidth > 0
-      ? factoryAcrylicCover
-      : null;
-  };
-  const prewarmFactoryAcrylic = async (node) => {
-    const acrylicOwners = [...(node?.querySelectorAll?.("[data-crm-acrylic-owner]") || [])];
-    if (!node || !acrylicOwners.length || !canPrewarmFactory()) return true;
-    const cover = await prepareFactoryAcrylicCover();
-    if (!cover || !canPrewarmFactory()) return false;
-    parkMotionPaint(node);
-    const boxedRoom = !node.matches?.(".crm-theater");
-    const outerOwners = precomposeOwnersOf(node);
-    if (boxedRoom) node.setAttribute("data-crm-home-precompose-promoted", "");
-    else outerOwners.forEach((owner) => {
-      owner.setAttribute("data-crm-home-precompose-promoted", "");
-    });
-    // A boxed camera surface is its own paint owner. parkMotionPaint therefore
-    // marks the root (rather than its finite child owners) as hidden; clear that
-    // root marker for this covered lease or none of its real blur planes can
-    // actually reach the compositor.
-    if (boxedRoom) node.removeAttribute("data-crm-home-motion-parked-owner");
-    acrylicOwners.forEach((owner) => owner.removeAttribute("data-crm-home-motion-parked-owner"));
-    // Home itself remains the top visible surface. This matching raster sits
-    // directly below it and above the inactive room, exactly mirroring the
-    // endpoint's 99% cover/1% live-underpaint topology without changing a
-    // visible pixel. Four closed paints allocate and raster the real blur.
-    cover.style.visibility = "visible";
-    cover.style.opacity = ".99";
-    await new Promise((resolve) => requestAnimationFrame(() =>
-      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
-    cover.style.opacity = "0";
-    cover.style.visibility = "hidden";
-    acrylicOwners.forEach((owner) => owner.setAttribute("data-crm-home-motion-parked-owner", ""));
-    if (boxedRoom) node.setAttribute("data-crm-home-motion-parked-owner", "");
-    if (boxedRoom) node.removeAttribute("data-crm-home-precompose-promoted");
-    else outerOwners.forEach((owner) => {
-      owner.removeAttribute("data-crm-home-precompose-promoted");
-    });
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    return canPrewarmFactory();
-  };
   const primeInactiveTheater = async (node, api) => {
     if (!node || api?.isActive?.() || !canPrewarmFactory()) return;
     const lease = {};
-    node.removeAttribute("data-crm-home-released-owner");
-    clearMotionPaintParking(node);
-    precomposeOwnersOf(node).forEach((owner) => owner.removeAttribute("data-crm-home-released-owner"));
     node.hidden = false;
     node.inert = !node.matches?.(".crm-theater");
     node.__crmHomeFactoryPrewarmLease = lease;
@@ -1750,6 +1677,20 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // repeated getComputedStyle reads with owner mutations.
     rememberPrecomposeOwners(node);
     node.setAttribute("data-crm-home-precomposed", moduleKeyForTheater(node));
+    // The factory needs real layout, never visible paint. Cull every finite
+    // owner before yielding the first frame; merely placing an inactive room
+    // below Home still makes that room part of Home's backdrop root and turns
+    // its acrylic tiles opaque for one compositor frame. Pointer intent and
+    // endpoint promotion remove these same non-inherited clips later beneath
+    // the already-opaque destination bridge.
+    parkMotionPaint(node);
+    if (node.matches?.(".crm-theater")) {
+      precomposeOwnersOf(node).forEach((owner) => {
+        owner.setAttribute("data-crm-home-released-owner", "");
+      });
+    } else {
+      node.setAttribute("data-crm-home-released-owner", "");
+    }
     try {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (!canPrewarmFactory()) return;
@@ -1762,12 +1703,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (!node.matches?.(".crm-theater") && settled?.stable === true) {
         node.setAttribute("data-crm-home-precompose-seated", "true");
       }
-      // Horizontal card rooms retain one real promoted track. Sweep that same
-      // hidden track through its finite bounds while Home still owns the
-      // viewport, so far-edge paint tiles are resident before any user scroll.
+      // Sweep retained scroll geometry through its finite bounds. Paint stays
+      // clipped until destination promotion, so this cannot contaminate Home's
+      // backdrop-filter while still leaving the final scroll state resident.
       try { await api?.warmViewportCompositor?.({ duration:180 }); } catch {}
-      if (!canPrewarmFactory()) return;
-      if (!await prewarmFactoryAcrylic(node)) return;
     } finally {
       // Prewarming is a finite paint/upload operation, not permanent visual
       // ownership. Retain the completed native layout, but park every finite
@@ -2754,7 +2693,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         ready = buckets.length === homeTileRecords.length
           && buckets.every((node) => Number(getComputedStyle(node).opacity) <= .002)
           && !!title
-          && Number(getComputedStyle(title).opacity) <= .002
+          && Number(getComputedStyle(title).opacity) >= .999
           && (!expander || Number(getComputedStyle(expander).opacity) >= .999)
           && (!foreground || Number(getComputedStyle(foreground).opacity) <= .002)
           && (!foreground || (!!restingFilter && Number(getComputedStyle(restingFilter).opacity) >= .999));
@@ -2799,6 +2738,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
           handoffResolve?.();
           return;
         }
+        // Seat the persistent shared acrylic plane while the complete moving
+        // scene still owns the endpoint. The ensuing title/filter dissolve now
+        // closes paints in the exact resting clip topology; the commit no
+        // longer changes blur ownership in the same frame that retires the
+        // outgoing raster.
+        homePeripheralAcrylic.rest();
         surface.classList.add("crm-home-camera-releasing");
         await waitForHomeHandoffOwners(context, "matched");
         if (sequence !== handoffSequence) {
@@ -2807,7 +2752,6 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         }
         surface.classList.add("crm-home-camera-committing");
         homeAcrylicLens.park();
-        homePeripheralAcrylic.rest();
         discardDelegatedAcrylicBackdrop();
         await waitForHomeHandoffOwners(context, "outgoing");
         if (sequence !== handoffSequence) {
@@ -2857,10 +2801,27 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       // Read the canonical bucket material before returning its backdrop to
       // the shared owner. Removing this class and restoring it below happen in
       // one task, so no intermediate double-filter frame can be presented.
+      const retainedSharedOwner = !!context.surface?.classList.contains(
+        "crm-home-shared-resting-acrylic",
+      ) && !!homePeripheralAcrylic.element?.();
       context.surface?.classList.remove("crm-home-shared-resting-acrylic");
       delegateSelectedAcrylicBackdrop(false);
       homeAcrylicLens.prepare(expander,target,context);
-      if (context.prefetchMode === "selected-material") return;
+      if (context.prefetchMode === "selected-material") {
+        // Selected-material refreshes run while the shared Home lens is already
+        // live. Restore its ownership before returning to the event loop.
+        // Deferring this until the companion peripheral-prime rAF presented one
+        // complete frame of the individual bucket filters: formed Home tiles,
+        // a flat-color flash, then the fully composed shared acrylic again.
+        if (retainedSharedOwner) {
+          context.surface?.classList.add(
+            "crm-home-peripheral-acrylic-active",
+            "crm-home-shared-resting-acrylic",
+          );
+          delegateSelectedAcrylicBackdrop(!!homeAcrylicLens.element?.());
+        }
+        return;
+      }
       homePeripheralAcrylic.prepare(expander,target,context);
     },
     primeExpander:(expander,target,context)=>{

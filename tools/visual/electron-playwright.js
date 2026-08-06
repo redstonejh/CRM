@@ -349,6 +349,9 @@ async function startEndpointProbe(page, label, room, direction) {
           && finiteOutgoing.every((value) => value >= .99);
         const outgoingParked = finiteOutgoing.length === 3
           && finiteOutgoing.every((value) => value <= .01);
+        const titleDissolving = Number.isFinite(homeTitleOpacity)
+          && homeTitleOpacity >= 0
+          && homeTitleOpacity <= 1;
         const homeOwnersContinuous = homeHandoff && !!cameraTarget && !!handoffVariant && !!expander
           && getComputedStyle(handoffVariant).display !== 'none'
           && finiteIncoming.length === homeBuckets.length + 2
@@ -356,7 +359,7 @@ async function startEndpointProbe(page, label, room, direction) {
           && (!homeReleasing
             ? bucketsUnderpainted && homeTitleOpacity <= .01 && homeHandOpacity <= .01 && outgoingOwned
             : (!homeCommitting
-              ? bucketsUnderpainted && homeHandOpacity <= .01 && outgoingOwned
+              ? bucketsUnderpainted && titleDissolving && homeHandOpacity <= .01 && outgoingOwned
               : bucketsOwned && homeTitleOpacity >= .99 && homeHandOpacity >= .99 && outgoingParked));
         const homePeripheralReady = homeHandoff && peripheralAcrylicMaterialReady
           && Number(peripheralStyle.opacity) >= 0 && Number(peripheralStyle.opacity) <= 1;

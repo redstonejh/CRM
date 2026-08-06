@@ -146,7 +146,7 @@
          raised over it while the bridge owns the viewport. */
       html.crm-transit-endpoint-covered :is(
         .window-control-cluster,.auth-profile-cluster,.dashboard-search-popover,
-        .workspace-menu-overlay-layer
+        .workspace-menu-overlay-layer,.crm-module-switch,.crm-viewport-date
       ){z-index:${TRANSIT_CHROME_Z}!important}
       [data-crm-transit-retained]{transform:translate3d(-110vw,0,0)!important;pointer-events:none!important}
     `;
@@ -1206,19 +1206,29 @@
     return true;
   };
 
-  const settleNavigationEntrance = (stage) => {
+  const settleNavigationEntrance = (stage, release = false) => {
     if (!stage?.navigationControl) return false;
     stage.navigationEntranceAnimation?.cancel?.();
     stage.navigationEntranceAnimation = null;
-    stage.navigationControl.removeAttribute("data-crm-transit-nav-entering");
-    stage.navigationControl.inert = false;
+    // Cancel onto the control's identical resting transform once workspace
+    // routing has made it semantically visible, but retain its endpoint-chrome
+    // ownership until the raster bridge is gone. Removing this marker here
+    // dropped the control beneath that bridge for the rest of materialization:
+    // it visibly entered, vanished, then reappeared during the bridge fade.
+    if (release) {
+      stage.navigationControl.removeAttribute("data-crm-transit-nav-entering");
+      stage.navigationControl.inert = false;
+    } else {
+      stage.navigationControl.setAttribute("data-crm-transit-nav-entering", "");
+      stage.navigationControl.inert = true;
+    }
     return true;
   };
 
   const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
     stage?.endpointBlendAnimation?.cancel?.();
     if (stage) stage.endpointBlendAnimation = null;
-    settleNavigationEntrance(stage);
+    settleNavigationEntrance(stage, true);
     document.documentElement.classList.remove(
       "crm-transit-materializing",
       "crm-transit-revealing",

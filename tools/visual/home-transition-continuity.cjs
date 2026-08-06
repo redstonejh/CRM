@@ -22,6 +22,7 @@ const API_PORT = Number(process.env.CRM_API_PORT || 4039);
 const STATIC_PORT = Number(process.env.CRM_STATIC_PORT || 4038);
 const ROUND_COUNT = Math.max(2, Number(process.env.CRM_HOME_ROUNDS || 2));
 const JOURNEYS_ONLY = process.env.CRM_HOME_JOURNEYS_ONLY === '1';
+const CONTINUITY_ONLY = process.env.CRM_HOME_CONTINUITY_ONLY === '1';
 const TRACE_TILE = String(process.env.CRM_HOME_TRACE || '').trim();
 const TRACE_LABEL = String(process.env.CRM_HOME_TRACE_LABEL || '').trim();
 
@@ -93,9 +94,11 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       journeyDrops:[],
       acrylic:[],
       acrylicMaterial:[],
+      acrylicPreparation:[],
       acrylicRelease:[],
       acrylicEndpointHold:[],
       homeReturnCoverage:[],
+      roomChrome:[],
       longTasks:[],
       transitErrors:[],
       tickCount:0,
@@ -238,6 +241,63 @@ async function armProbe(page, direction, tile, sampleVisual = false) {
       const moving = !!visualState.active;
       const busy = !!window.crmDeskTransit?.isBusy?.();
       const coverState = window.crmDeskTransit?.coverState?.() || null;
+      if (readVisuals && probe.triggered) {
+        const preparedLens = document.querySelector('.crm-home-screen-acrylic');
+        if (preparedLens?.dataset?.fractalAcrylicPhase === 'prepared') {
+          const preparedFrame = document.querySelector(
+            '.crm-home-expander:not(.crm-home-warm) > .crm-home-transition-acrylic',
+          );
+          const shared = preparedLens.dataset?.crmAcrylicBackdropOwner === 'shared'
+            ? document.querySelector('.crm-home-peripheral-screen-acrylic')
+            : null;
+          const materialStyle = getComputedStyle(shared || preparedLens);
+          probe.acrylicPreparation.push({
+            direction:preparedLens.dataset?.fractalAcrylicDirection || '',
+            opacity:Number(getComputedStyle(preparedLens).opacity),
+            frameOpacity:preparedFrame ? Number(getComputedStyle(preparedFrame).opacity) : NaN,
+            backdrop:materialStyle.webkitBackdropFilter || materialStyle.backdropFilter || '',
+          });
+        }
+      }
+      if (readVisuals && probe.triggered && probeDirection === 'expand') {
+        const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
+        const bridgeStyle = bridge ? getComputedStyle(bridge) : null;
+        const bridgeOpacity = Number(bridgeStyle?.opacity || 0);
+        const bridgeZ = Number(bridgeStyle?.zIndex || 0);
+        const paintState = (node) => {
+          if (!node) return { painted:false, exists:false };
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          const zIndex = Number(style.zIndex || 0);
+          const inViewport = rect.right > 0 && rect.bottom > 0
+            && rect.left < innerWidth && rect.top < innerHeight;
+          const covered = bridgeOpacity > .01 && zIndex <= bridgeZ;
+          return {
+            exists:true,
+            hidden:node.hidden === true,
+            display:style.display,
+            visibility:style.visibility,
+            opacity:Number(style.opacity),
+            zIndex,
+            inViewport,
+            covered,
+            painted:style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && Number(style.opacity) >= .99
+              && inViewport
+              && !covered,
+          };
+        };
+        probe.roomChrome.push({
+          at:now,
+          module:document.body.dataset.crmModule || '',
+          busy,
+          bridgeOpacity,
+          bridgeZ,
+          navigation:paintState(document.querySelector('.crm-module-switch')),
+          dateControl:paintState(document.querySelector('.crm-viewport-date')),
+        });
+      }
       if (probe.triggered) {
         const delta = now - previousJourneyAt;
         probe.journeyDeltas.push(delta);
@@ -482,8 +542,22 @@ async function takeProbe(page) {
       && hasMaterialClip(sample)
       && sample.frameBorder === 'solid'
       && sample.frameShadow && sample.frameShadow !== 'none');
+    const preparation = probe.acrylicPreparation
+      .filter((sample) => sample.direction === probe.direction);
     const returnCoverage = probe.homeReturnCoverage
       .map((sample) => sample.combinedCoverage).filter(Number.isFinite);
+    const returnTitleOpacity = probe.homeReturnCoverage
+      .filter((sample) => sample.matching)
+      .map((sample) => sample.titleOpacity).filter(Number.isFinite);
+    const returnTitleSteps = returnTitleOpacity
+      .slice(1).map((value, index) => value - returnTitleOpacity[index]);
+    const activeRoomChrome = (probe.roomChrome || [])
+      .filter((sample) => sample.module === probe.module);
+    const navigationContinuous = activeRoomChrome.length > 0
+      && activeRoomChrome.every((sample) => sample.navigation?.painted === true);
+    const dateContinuous = probe.module === 'calendar'
+      || (activeRoomChrome.length > 0
+        && activeRoomChrome.every((sample) => sample.dateControl?.painted === true));
     return {
       ...probe,
       ...metrics(probe.visualDeltas),
@@ -496,6 +570,12 @@ async function takeProbe(page) {
       maxOpacityStep,
       heldEveryMotionFrame:opacity.length > 0 && opacity.every((value) => value >= .99),
       realMaterialFrames:materialFrames.length,
+      preparationFrames:preparation.length,
+      preparationFullyOwned:preparation.every((sample) =>
+        sample.opacity >= .99
+        && sample.frameOpacity >= .99
+        && sample.backdrop.includes('blur(')
+        && sample.backdrop.includes('saturate(')),
       releaseFirst:releaseOpacity[0],
       releaseLast:releaseOpacity.at(-1),
       releaseFrames:releaseOpacity.length,
@@ -513,6 +593,9 @@ async function takeProbe(page) {
         && probe.homeReturnCoverage.every((sample) => sample.fullOwner),
       returnMatchFrames:probe.homeReturnCoverage.filter((sample) => sample.matching).length,
       returnCommitFrames:probe.homeReturnCoverage.filter((sample) => sample.committing).length,
+      returnTitleIntermediateFrames:returnTitleOpacity
+        .filter((value) => value > .01 && value < .99).length,
+      returnTitleMonotonic:returnTitleSteps.every((step) => step >= -.02),
       returnMatchCoveredEveryFrame:probe.homeReturnCoverage.some((sample) => sample.matching)
         && probe.homeReturnCoverage.filter((sample) => sample.matching).every((sample) =>
           sample.bucketMaxOpacity <= .01
@@ -530,6 +613,9 @@ async function takeProbe(page) {
           // boundary: it is the incoming Home buckets' one real backdrop
           // owner, not an outgoing duplicate.
           && sample.outgoingOpacityByOwner?.sharedLens >= .99),
+      activeRoomChromeFrames:activeRoomChrome.length,
+      navigationContinuous,
+      dateContinuous,
     };
   });
 }
@@ -630,6 +716,8 @@ function validateVisual(probe) {
       && probe.returnFullOwnerEveryFrame
       && probe.returnMatchFrames >= 7
       && probe.returnCommitFrames >= 1
+      && probe.returnTitleIntermediateFrames >= 2
+      && probe.returnTitleMonotonic
       && probe.returnMatchCoveredEveryFrame
       && probe.returnCommitCoveredEveryFrame;
   if (probe.childMutations.length
@@ -639,9 +727,15 @@ function validateVisual(probe) {
     || !probe.heldEveryMotionFrame
     || probe.maxOpacityStep > .02
     || probe.realMaterialFrames !== probe.acrylic.length
+    || (probe.direction === 'contract'
+      && (!probe.preparationFrames || !probe.preparationFullyOwned))
     || !releaseValid
     || !endpointHoldValid
     || !returnCoverageValid
+    || (probe.direction === 'expand'
+      && (!probe.activeRoomChromeFrames
+        || !probe.navigationContinuous
+        || !probe.dateContinuous))
   ) {
     throw new Error(`Home ${probe.direction} acrylic continuity failed: ${JSON.stringify(summary(probe))}`);
   }
@@ -698,6 +792,8 @@ const summary = (probe) => ({
   maxOpacityStep:probe.maxOpacityStep,
   heldEveryMotionFrame:probe.heldEveryMotionFrame,
   realMaterialFrames:probe.realMaterialFrames,
+  preparationFrames:probe.preparationFrames,
+  preparationFullyOwned:probe.preparationFullyOwned,
   releaseFirst:probe.releaseFirst,
   releaseLast:probe.releaseLast,
   releaseFrames:probe.releaseFrames,
@@ -714,9 +810,14 @@ const summary = (probe) => ({
   returnFullOwnerEveryFrame:probe.returnFullOwnerEveryFrame,
   returnMatchFrames:probe.returnMatchFrames,
   returnCommitFrames:probe.returnCommitFrames,
+  returnTitleIntermediateFrames:probe.returnTitleIntermediateFrames,
+  returnTitleMonotonic:probe.returnTitleMonotonic,
   returnMatchCoveredEveryFrame:probe.returnMatchCoveredEveryFrame,
   returnCommitCoveredEveryFrame:probe.returnCommitCoveredEveryFrame,
   returnCommitSamples:probe.homeReturnCoverage?.filter((sample) => sample.committing) || [],
+  activeRoomChromeFrames:probe.activeRoomChromeFrames,
+  navigationContinuous:probe.navigationContinuous,
+  dateContinuous:probe.dateContinuous,
 });
 
 const compactProbe = (probe) => ({
@@ -747,6 +848,8 @@ const compactProbe = (probe) => ({
     maxStep:probe.maxOpacityStep,
     heldEveryMotionFrame:probe.heldEveryMotionFrame,
     realMaterialFrames:probe.realMaterialFrames,
+    preparationFrames:probe.preparationFrames,
+    preparationFullyOwned:probe.preparationFullyOwned,
     releaseFirst:probe.releaseFirst,
     releaseLast:probe.releaseLast,
     releaseFrames:probe.releaseFrames,
@@ -763,6 +866,8 @@ const compactProbe = (probe) => ({
     returnFullOwnerEveryFrame:probe.returnFullOwnerEveryFrame,
     returnMatchFrames:probe.returnMatchFrames,
     returnCommitFrames:probe.returnCommitFrames,
+    returnTitleIntermediateFrames:probe.returnTitleIntermediateFrames,
+    returnTitleMonotonic:probe.returnTitleMonotonic,
     returnMatchCoveredEveryFrame:probe.returnMatchCoveredEveryFrame,
     returnCommitCoveredEveryFrame:probe.returnCommitCoveredEveryFrame,
   },
@@ -805,13 +910,42 @@ function compactEvidence(evidence) {
 }
 
 async function waitForReadyHome(page) {
-  await page.waitForFunction(() => document.body.dataset.crmModule === 'home'
-    && !window.crmDeskTransit?.isBusy?.()
-    && window.crmHome?.handStatus?.().ready
-    && window.crmHome?.motionStatus?.().ready
-    && window.crmHome?.previewStatus?.().every((item) => item.state === 'ready')
-    && !window.crmHome?.prewarmStatus?.().running
-    && window.crmHome?.prewarmStatus?.().pending?.length === 0, null, { timeout:60_000 });
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const startedAt = performance.now();
+    let observedRestingMaterial = false;
+    const tick = () => {
+      const surface = window.crmHomeCamera?.surface?.();
+      const sharedLens = surface?.querySelector?.('.crm-home-peripheral-screen-acrylic');
+      const resting = document.body.dataset.crmModule === 'home'
+        && !window.crmDeskTransit?.isBusy?.()
+        && window.crmHomeCamera?.isActive?.()
+        && window.crmHomeCamera?.level?.() === 0;
+      const materialReady = !!surface?.classList.contains('crm-home-shared-resting-acrylic')
+        && !!sharedLens
+        && Number(getComputedStyle(sharedLens).opacity) >= .99;
+      if (resting && observedRestingMaterial && !materialReady) {
+        reject(new Error('Home resting acrylic owner disappeared during post-transition preparation'));
+        return;
+      }
+      if (resting && materialReady) observedRestingMaterial = true;
+      const ready = resting
+        && window.crmHome?.handStatus?.().ready
+        && window.crmHome?.motionStatus?.().ready
+        && window.crmHome?.previewStatus?.().every((item) => item.state === 'ready')
+        && !window.crmHome?.prewarmStatus?.().running
+        && window.crmHome?.prewarmStatus?.().pending?.length === 0;
+      if (ready && materialReady) {
+        resolve(true);
+        return;
+      }
+      if (performance.now() - startedAt >= 60_000) {
+        reject(new Error('Home did not reach stable preview, prewarm, and acrylic readiness'));
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
 }
 
 async function waitForPreviewIdle(page) {
@@ -1100,8 +1234,13 @@ async function runRoundTrip(page, tile, sampleVisual) {
   if (geometryError > .75) {
     throw new Error(`Home ${tile.module} return geometry drifted by ${geometryError.toFixed(2)}px`);
   }
-  validateCadence(expand);
-  validateCadence(contract);
+  // Keep the normal contract strict. This opt-in isolates pixel ownership on
+  // busy developer desktops where an unrelated native scheduler miss would
+  // otherwise abort the cold journey before the repeated visual proof runs.
+  if (!CONTINUITY_ONLY) {
+    validateCadence(expand);
+    validateCadence(contract);
+  }
   if (sampleVisual) {
     validateVisual(expand);
     validateVisual(contract);

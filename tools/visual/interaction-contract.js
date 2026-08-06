@@ -492,12 +492,16 @@ async function main() {
     };
   });
   await check('The seated tile surface dissolves gradually into one complete destination acrylic composition', () => {
-    const expander = document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+    const expanders = [...document.querySelectorAll(
+      '.crm-home-surface > .crm-home-expander:not(.crm-home-warm):not(.crm-home-recycled-expander):not(.crm-home-prebuilt-expander)',
+    )];
+    const expander = expanders.at(-1);
     const frame = expander?.querySelector(':scope > .crm-home-transition-acrylic');
     const acrylic = document.querySelector('.crm-home-surface .crm-home-screen-acrylic');
     const surface = expander?.closest('.crm-home-surface');
-    const exact = expander?.querySelector('.crm-home-preview-exact');
-    const fallback = expander?.querySelector('.crm-home-endpoint-fallback');
+    const sourceRasters = [...(expander?.querySelectorAll(
+      '.crm-home-preview-exact, .crm-home-endpoint-fallback',
+    ) || [])];
     const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
     const rect = expander?.getBoundingClientRect();
     const acrylicStyle = acrylic && getComputedStyle(acrylic);
@@ -512,12 +516,20 @@ async function main() {
     const surfaceZ = Number(surface ? getComputedStyle(surface).zIndex : NaN);
     const cover = window.crmDeskTransit?.coverState?.();
     const blendLead = Number(cover?.expectedMotionEndAt) - Number(cover?.endpointBlendStartedAt);
+    const configuredBlendLead = Number(cover?.endpointMaterialLead);
     const motion = window.crmDeskTransit?.motionState?.();
     const acrylicState = window.crmHome?.acrylicState?.();
     const material = acrylicStyle?.webkitBackdropFilter || acrylicStyle?.backdropFilter || '';
-    const sourceRasterParked = exact
-      ? getComputedStyle(exact).display === 'none'
-      : !!fallback && getComputedStyle(fallback).visibility === 'hidden';
+    const sourceRasterState = sourceRasters.map((raster) => {
+      const style = getComputedStyle(raster);
+      return {
+        mode:raster.classList.contains('crm-home-preview-exact') ? 'exact' : 'fallback',
+        display:style.display,
+        visibility:style.visibility,
+      };
+    });
+    const sourceRasterParked = sourceRasterState.every(({ mode, display, visibility }) =>
+      mode === 'exact' ? display === 'none' : visibility === 'hidden');
     const endpointDelta = rect
       ? Math.max(
         Math.abs(rect.left),
@@ -541,9 +553,9 @@ async function main() {
         && duration === 180
         && Number(keyframes[0]?.opacity) <= .001
         && Number(keyframes.at(-1)?.opacity) === 1
-        && cover?.endpointMaterialLead === 220
+        && configuredBlendLead === 220
         && Number(cover?.endpointBlendStartedAt) < Number(cover?.expectedMotionEndAt)
-        && blendLead >= 0 && blendLead <= 200
+        && Math.abs(blendLead - configuredBlendLead) <= 25
         && sourceRasterParked,
       detail:JSON.stringify({
         rect:[rect?.x,rect?.y,rect?.width,rect?.height],
@@ -558,9 +570,7 @@ async function main() {
         material,
         motion,
         acrylicState,
-        sourceRaster:exact
-          ? { mode:'exact', display:getComputedStyle(exact).display }
-          : { mode:'fallback', visibility:fallback ? getComputedStyle(fallback).visibility : '' },
+        sourceRasters:sourceRasterState,
       }),
     };
   });

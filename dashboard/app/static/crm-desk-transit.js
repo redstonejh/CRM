@@ -120,6 +120,12 @@
         position:absolute;inset:0;z-index:1;display:block;pointer-events:none;
         background:linear-gradient(180deg,rgba(52,59,70,.16),rgba(27,32,40,.12));
         box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+      /* The fallback copied into the independent body bridge may own pixels;
+         a source copy inside the moving expander never may. Keeping it parked
+         prevents a second opaque room surface from appearing under the bridge
+         midpoint. */
+      .crm-home-surface .crm-home-expander:not(.crm-home-warm)
+        .crm-home-endpoint-fallback{visibility:hidden!important}
       /* Once the camera has reached the viewport, transfer its exact decoded
          endpoint to a body-level bridge. The source camera can then retire to
          its real inactive z-order while these unchanged pixels continue to
@@ -961,8 +967,11 @@
 
   const endpointLid = () => {
     const cam = camera();
-    return cam?.surface?.()?.querySelector?.(":scope > .crm-home-expander:not(.crm-home-warm)")
-      || (cam?.level?.() >= 1 ? cam.layers()?.[1] : null);
+    const surface = cam?.surface?.();
+    const movingLids = [...(surface?.children || [])].filter((node) => node.matches?.(
+      ".crm-home-expander:not(.crm-home-warm):not(.crm-home-recycled-expander):not(.crm-home-prebuilt-expander)",
+    ));
+    return movingLids.at(-1) || (cam?.level?.() >= 1 ? cam.layers()?.[1] : null);
   };
 
   const prepareEndpointBridge = async (stage) => {
@@ -1002,11 +1011,9 @@
       const liveLid = endpointLid();
       const liveHost = liveLid?.querySelector?.(":scope > .crm-home-preview");
       if (liveLid && liveHost) {
-        const liveFallback = liveHost.querySelector?.(":scope > .crm-home-endpoint-fallback");
-        if (liveFallback) {
-          liveFallback.style.visibility = "hidden";
-          stage.fallbackCover = liveFallback;
-        }
+        const liveFallbacks = [...liveLid.querySelectorAll(".crm-home-endpoint-fallback")];
+        liveFallbacks.forEach((fallback) => { fallback.style.visibility = "hidden"; });
+        if (liveFallbacks[0]) stage.fallbackCover = liveFallbacks[0];
         stage.lid = liveLid;
         stage.originalCoverHost = liveHost;
       }

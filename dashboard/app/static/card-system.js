@@ -1320,7 +1320,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     const style = document.createElement("style"); style.id = "crm-horizontal-zone-styles"; style.textContent = `
       .tk-zones.is-horizontal{display:block;position:fixed;inset:0;z-index:790;pointer-events:none}
       .tk-zone-hrail{--tk-zone-rail-inset:clamp(22px,2.2vw,30px);position:fixed;left:0;right:0;overflow:visible;pointer-events:none}
-      .tk-zone-hshade{position:fixed;z-index:3;top:0;bottom:0;width:clamp(34px,4.5vw,68px);opacity:0;pointer-events:none;transition:opacity .12s linear;will-change:opacity}.tk-zone-hshade-left{left:0;background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hshade-right{right:0;background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
+      .tk-zone-hshade{position:fixed;z-index:3;top:0;bottom:0;width:clamp(34px,4.5vw,68px);opacity:0;pointer-events:none;will-change:opacity}.tk-zone-hshade-left{left:0;background:linear-gradient(90deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}.tk-zone-hshade-right{right:0;background:linear-gradient(270deg,rgba(1,9,14,.46) 0,rgba(1,9,14,.14) 40%,rgba(1,9,14,0) 100%)}
       .tk-zone-hclip{position:absolute;inset:0 0 20px;overflow:hidden;outline:0;pointer-events:auto}.tk-zone-hclip:focus-visible{box-shadow:inset 0 -1px rgba(190,220,255,.22)}
       .tk-zone-hacrylic-defs{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
       .tk-zone-hacrylic-clip{position:absolute;left:0;top:0;z-index:0;height:100%;pointer-events:none;will-change:transform;backface-visibility:hidden}
@@ -1330,10 +1330,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       .tk-zone-htrack>.tk-zone{position:relative;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;flex:0 0 auto;z-index:1}
       .tk-zone-htrack.is-paged{display:block;width:100%;min-width:0;padding:0}
       .tk-zone-htrack.is-paged>.tk-zone{position:absolute;left:var(--tk-zone-page-left)!important;right:auto!important;top:var(--tk-zone-page-top)!important;bottom:auto!important}
-      .tk-zone-htrack.has-zone-lod>.tk-zone{content-visibility:visible;visibility:visible;contain:layout paint style;contain-intrinsic-size:245px 359px}
-      /* Horizontal LOD is semantic only. The one promoted, clipped track owns
-         viewport paint culling and hit clipping, so travel never cold-activates
-         or restyles the parked bucket trees. */
+      .tk-zone-htrack.has-zone-lod>.tk-zone{content-visibility:visible;visibility:visible;contain:layout style;contain-intrinsic-size:245px 359px}
+      /* Horizontal LOD is semantic only. Keep layout/style containment, but
+         deliberately let the promoted track own one retained paint surface.
+         Per-bucket paint containment made Chromium raster each clipped region
+         only as it entered, turning the first two far-edge traversals into GPU
+         warm-up passes. The rail is bounded (17 lightweight/Lazy faces), so a
+         single retained texture is both smaller and cadence-stable. */
       .tk-zone-hsb{position:absolute;z-index:4;left:var(--tk-zone-rail-inset);right:var(--tk-zone-rail-inset);bottom:4px;height:8px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);opacity:0;transition:opacity .2s ease;pointer-events:none}.tk-zone-hsb.is-on{opacity:1;pointer-events:auto}.tk-zone-hth{position:absolute;left:0;top:0;height:8px;border-radius:999px;background:rgba(255,255,255,.66);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:grab;touch-action:none;transition:background .15s ease;will-change:transform,width}.tk-zone-hth:hover{background:rgba(255,255,255,.88)}.tk-zone-hth:active{cursor:grabbing;background:#fff}
     `; document.head.appendChild(style);
   };
@@ -1408,8 +1411,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // horizontal rail above this nominal z-index, leaving a visible menu whose
     // buttons never own hit testing.
     document.body.appendChild(m);
-    m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
-    m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
+    m.style.left = `${Math.round(Math.max(8, Math.min(x, window.innerWidth - m.offsetWidth - 8)))}px`;
+    m.style.top = `${Math.round(Math.max(8, Math.min(y, window.innerHeight - m.offsetHeight - 8)))}px`;
     ticketMenu = m;
     const on = (act, fn) => { const b = m.querySelector(`[data-act="${act}"]`); if (b) b.onclick = () => { hideTicketMenu(); fn(); }; };
     customActions.forEach((action, index) => on(`custom-${index}`, () => Promise.resolve(action.run(t, card)).catch((error) => console.error("[CRM] context action failed", error))));
@@ -1443,8 +1446,8 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         : `<div class="tk-act-row tk-act-none">No activity yet</div>`);
     window.crmInterfaceParity?.scan?.(m);
     document.body.appendChild(m);
-    m.style.left = `${Math.round(Math.min(x, window.innerWidth - m.offsetWidth - 8))}px`;
-    m.style.top = `${Math.round(Math.min(y, window.innerHeight - m.offsetHeight - 8))}px`;
+    m.style.left = `${Math.round(Math.max(8, Math.min(x, window.innerWidth - m.offsetWidth - 8)))}px`;
+    m.style.top = `${Math.round(Math.max(8, Math.min(y, window.innerHeight - m.offsetHeight - 8)))}px`;
     ticketMenu = m;   // same dismiss wiring: outside press / Escape (wheel INSIDE it scrolls the list)
   };
 
@@ -2814,11 +2817,67 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     rightShadeAnimation:null,
     motionTarget:0,
     motionPositions:[],
+    motionRetargetedAt:0,
   };
   let zoneHPrimeAnimation = null;
   let zoneHPrimeClipAnimation = null;
   let zoneHPrimeLensAnimation = null;
+  let zoneHPrimeThumbAnimation = null;
+  let zoneHPrimeLeftShadeAnimation = null;
+  let zoneHPrimeRightShadeAnimation = null;
   let zoneHPrimeSignature = "";
+  let zoneHTravelWarmAnimation = null;
+  let zoneHTravelWarmAnimations = [];
+  let zoneHTravelWarmPromise = null;
+  let zoneHTravelWarmActiveSignature = "";
+  let zoneHTravelWarmSignature = "";
+  let zoneHRenderEpoch = 0;
+  const retireZoneRailPrimeAnimations = () => {
+    zoneHPrimeAnimation?.cancel?.();
+    zoneHPrimeClipAnimation?.cancel?.();
+    zoneHPrimeLensAnimation?.cancel?.();
+    zoneHPrimeThumbAnimation?.cancel?.();
+    zoneHPrimeLeftShadeAnimation?.cancel?.();
+    zoneHPrimeRightShadeAnimation?.cancel?.();
+    zoneHPrimeAnimation = null;
+    zoneHPrimeClipAnimation = null;
+    zoneHPrimeLensAnimation = null;
+    zoneHPrimeThumbAnimation = null;
+    zoneHPrimeLeftShadeAnimation = null;
+    zoneHPrimeRightShadeAnimation = null;
+  };
+  const takeZoneRailPrimeAnimations = () => {
+    if (!zoneHPrimeAnimation) {
+      retireZoneRailPrimeAnimations();
+      return null;
+    }
+    const animations = {
+      motion:zoneHPrimeAnimation,
+      acrylicClip:zoneHPrimeClipAnimation,
+      acrylicLens:zoneHPrimeLensAnimation,
+      thumb:zoneHPrimeThumbAnimation,
+      leftShade:zoneHPrimeLeftShadeAnimation,
+      rightShade:zoneHPrimeRightShadeAnimation,
+    };
+    // Transfer ownership without canceling the compositor effects. Canceling
+    // the stationary lease and allocating six replacements on the first wheel
+    // packet caused the only missed native frames in an otherwise warm room.
+    zoneHPrimeAnimation = null;
+    zoneHPrimeClipAnimation = null;
+    zoneHPrimeLensAnimation = null;
+    zoneHPrimeThumbAnimation = null;
+    zoneHPrimeLeftShadeAnimation = null;
+    zoneHPrimeRightShadeAnimation = null;
+    zoneHPrimeSignature = "";
+    return animations;
+  };
+  const retireZoneRailTravelWarm = () => {
+    zoneHTravelWarmAnimations.forEach((animation) => animation?.cancel?.());
+    zoneHTravelWarmAnimation = null;
+    zoneHTravelWarmAnimations = [];
+    zoneHTravelWarmPromise = null;
+    zoneHTravelWarmActiveSignature = "";
+  };
   const zoneRailInteractionKey = `zone-rail:${theaterKey || apiName || "cards"}`;
   let zoneRailInteractionHeld = false;
   let zoneRailInteractionReleaseFrame = 0;
@@ -3228,41 +3287,152 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneHAcrylicClipGroup.style.transform = "";
     zoneHTrack.classList.add("has-shared-zone-acrylic");
   };
-  const primeHorizontalZoneCompositor = () => {
+  const primeHorizontalZoneCompositor = (force = false) => {
     if (!horizontalZones || !zoneHTrack || !zoneHClip) return;
+    if (zoneHScroll.raf || zoneHScroll.motionAnimation) return;
     const signature = `${zoneHClip.clientWidth}:${zoneHTrack.scrollWidth}:${STAGES.length}`;
-    if (signature === zoneHPrimeSignature) return;
-    zoneHPrimeAnimation?.cancel?.();
-    zoneHPrimeClipAnimation?.cancel?.();
-    zoneHPrimeLensAnimation?.cancel?.();
+    if (!force && signature === zoneHPrimeSignature && zoneHPrimeAnimation) return;
+    retireZoneRailPrimeAnimations();
     const x = Math.round(zoneHScroll.x);
     const base = `translate3d(${x}px,0,0)`;
-    const primed = `translate3d(${x - .25}px,0,0)`;
     const lensBase = `translate3d(${-x}px,0,0)`;
-    const lensPrimed = `translate3d(${-x + .25}px,0,0)`;
+    const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
+    const minimum = Math.min(0, metrics.view - metrics.content);
+    const trackWidth = Math.max(1, metrics.bar);
+    const thumbWidth = Math.max(28, trackWidth * (metrics.view / metrics.content));
+    const thumbTravel = Math.max(0, trackWidth - thumbWidth);
+    const thumbLeft = (minimum ? clamp(x, minimum, 0) / minimum : 0) * thumbTravel;
+    const fade = Math.min(72, Math.max(42, metrics.view * .06));
+    const leftOpacity = clamp(-x / fade, 0, 1);
+    const rightOpacity = clamp((x - minimum) / fade, 0, 1);
+    // Keep an exact-position transform effect alive while the retained room is
+    // revealed beneath Desk Transit's endpoint cover. Chromium can otherwise
+    // discard the hidden room's promoted acrylic surfaces and charge their
+    // first real traversal for allocation. Identical keyframes preserve every
+    // bucket coordinate while leasing the same transform compositor paths.
+    const timing = { duration:1000, iterations:Infinity, easing:"linear", fill:"both" };
     zoneHPrimeAnimation = zoneHTrack.animate(
-      [{ transform:base }, { transform:primed, offset:.5 }, { transform:base }],
-      { duration:64, easing:"linear" },
+      [{ transform:base }, { transform:base }],
+      timing,
     );
     zoneHPrimeClipAnimation = zoneHAcrylicClip?.animate?.(
-      [{ transform:base }, { transform:primed, offset:.5 }, { transform:base }],
-      { duration:64, easing:"linear" },
+      [{ transform:base }, { transform:base }],
+      timing,
     ) || null;
     zoneHPrimeLensAnimation = zoneHAcrylicLens?.animate?.(
-      [{ transform:lensBase }, { transform:lensPrimed, offset:.5 }, { transform:lensBase }],
-      { duration:64, easing:"linear" },
+      [{ transform:lensBase }, { transform:lensBase }],
+      timing,
     ) || null;
+    zoneHPrimeThumbAnimation = zoneHThumb?.animate?.(
+      [{ transform:`translate3d(${thumbLeft}px,0,0)` }, { transform:`translate3d(${thumbLeft}px,0,0)` }],
+      timing,
+    ) || null;
+    zoneHPrimeLeftShadeAnimation = zoneHLeftShade?.animate?.(
+      [{ opacity:leftOpacity }, { opacity:leftOpacity }],
+      timing,
+    ) || null;
+    zoneHPrimeRightShadeAnimation = zoneHRightShade?.animate?.(
+      [{ opacity:rightOpacity }, { opacity:rightOpacity }],
+      timing,
+    ) || null;
+    const timelineTime = document.timeline?.currentTime;
+    if (Number.isFinite(timelineTime)) {
+      [
+        zoneHPrimeAnimation,
+        zoneHPrimeClipAnimation,
+        zoneHPrimeLensAnimation,
+        zoneHPrimeThumbAnimation,
+        zoneHPrimeLeftShadeAnimation,
+        zoneHPrimeRightShadeAnimation,
+      ].filter(Boolean).forEach((animation) => { animation.startTime = timelineTime; });
+    }
     zoneHPrimeSignature = signature;
-    const animation = zoneHPrimeAnimation;
-    animation.finished.catch(() => null).finally(() => {
-      if (zoneHPrimeAnimation === animation) {
-        zoneHPrimeAnimation = null;
-        zoneHPrimeClipAnimation?.cancel?.();
-        zoneHPrimeLensAnimation?.cancel?.();
-        zoneHPrimeClipAnimation = null;
-        zoneHPrimeLensAnimation = null;
+  };
+  const horizontalZoneTravelSignature = () => (
+    `${zoneHMetrics.view}:${zoneHMetrics.content}:${STAGES.length}:${zoneHRenderEpoch}`
+  );
+  const warmHorizontalZoneTravel = (options = {}) => {
+    if (!horizontalZones || !zoneHTrack || !zoneHClip) return Promise.resolve(false);
+    const metrics = cacheZoneRailMetrics();
+    const minimum = Math.min(0, metrics.view - metrics.content);
+    if (minimum >= 0) return Promise.resolve(false);
+    const signature = horizontalZoneTravelSignature();
+    if (signature === zoneHTravelWarmSignature) return Promise.resolve(true);
+    if (zoneHTravelWarmAnimation && zoneHTravelWarmActiveSignature === signature
+      && zoneHTravelWarmPromise) return zoneHTravelWarmPromise;
+    retireZoneRailTravelWarm();
+    retireZoneRailPrimeAnimations();
+    const x = Math.round(zoneHScroll.x);
+    const positions = [x, Math.round(minimum), 0, x];
+    const trackFrames = positions.map((position, index) => ({
+      transform:`translate3d(${position}px,0,0)`,
+      offset:index / (positions.length - 1),
+    }));
+    const lensFrames = positions.map((position, index) => ({
+      transform:`translate3d(${-position}px,0,0)`,
+      offset:index / (positions.length - 1),
+    }));
+    const trackWidth = Math.max(1, metrics.bar);
+    const thumbWidth = Math.max(28, trackWidth * (metrics.view / metrics.content));
+    const thumbTravel = Math.max(0, trackWidth - thumbWidth);
+    const fade = Math.min(72, Math.max(42, metrics.view * .06));
+    const thumbFrames = positions.map((position, index) => ({
+      transform:`translate3d(${(minimum ? clamp(position, minimum, 0) / minimum : 0) * thumbTravel}px,0,0)`,
+      offset:index / (positions.length - 1),
+    }));
+    const leftShadeFrames = positions.map((position, index) => ({
+      opacity:clamp(-position / fade, 0, 1),
+      offset:index / (positions.length - 1),
+    }));
+    const rightShadeFrames = positions.map((position, index) => ({
+      opacity:clamp((position - minimum) / fade, 0, 1),
+      offset:index / (positions.length - 1),
+    }));
+    // Exercise every raster tile of the bounded card track while Home or Desk
+    // Transit's exact endpoint owns the visible pixels. The rail remains the
+    // same real DOM/acrylic surface; this finite covered pass only fills
+    // Chromium's retained paint tiles before the first user traversal.
+    const timing = {
+      duration:Math.max(120, Number(options.duration) || 180),
+      easing:"linear",
+      fill:"both",
+    };
+    const animation = zoneHTrack.animate(trackFrames, timing);
+    zoneHTravelWarmAnimations = [
+      animation,
+      zoneHAcrylicClip?.animate?.(trackFrames, timing),
+      zoneHAcrylicLens?.animate?.(lensFrames, timing),
+      zoneHThumb?.animate?.(thumbFrames, timing),
+      zoneHLeftShade?.animate?.(leftShadeFrames, timing),
+      zoneHRightShade?.animate?.(rightShadeFrames, timing),
+    ].filter(Boolean);
+    const timelineTime = document.timeline?.currentTime;
+    if (Number.isFinite(timelineTime)) {
+      zoneHTravelWarmAnimations.forEach((owner) => { owner.startTime = timelineTime; });
+    }
+    zoneHTravelWarmAnimation = animation;
+    zoneHTravelWarmActiveSignature = signature;
+    const pending = Promise.all(zoneHTravelWarmAnimations.map((owner) => owner.finished)).then(() => {
+      if (zoneHTravelWarmAnimation !== animation) return false;
+      zoneHTravelWarmAnimations.forEach((owner) => owner.cancel());
+      zoneHTravelWarmAnimation = null;
+      zoneHTravelWarmAnimations = [];
+      zoneHTravelWarmPromise = null;
+      zoneHTravelWarmActiveSignature = "";
+      zoneHTravelWarmSignature = signature;
+      return true;
+    }).catch(() => {
+      if (zoneHTravelWarmAnimation === animation) {
+        zoneHTravelWarmAnimations.forEach((owner) => owner.cancel());
+        zoneHTravelWarmAnimation = null;
+        zoneHTravelWarmAnimations = [];
+        zoneHTravelWarmPromise = null;
+        zoneHTravelWarmActiveSignature = "";
       }
+      return false;
     });
+    zoneHTravelWarmPromise = pending;
+    return pending;
   };
   const zoneHMin = () => {
     const metrics = zoneHMetrics.view && zoneHMetrics.content ? zoneHMetrics : cacheZoneRailMetrics();
@@ -3322,7 +3492,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     zoneHScroll.rightShadeAnimation = null;
     zoneHScroll.motionPositions = [];
   };
-  const startZoneRailMotionAnimations = (goal) => {
+  const startZoneRailMotionAnimations = (goal, reusableAnimations = null) => {
     cancelZoneRailMotionAnimations();
     const start = zoneHScroll.x;
     const positions = [start];
@@ -3364,65 +3534,122 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     };
     zoneHScroll.motionTarget = goal;
     zoneHScroll.motionPositions = positions;
+    zoneHScroll.motionRetargetedAt = performance.now();
     const roundedThumbWidth = Math.round(thumbWidth);
     if (roundedThumbWidth !== zoneHThumbWidth) {
       zoneHThumbWidth = roundedThumbWidth;
       zoneHThumb.style.width = `${roundedThumbWidth}px`;
     }
-    zoneHScroll.motionAnimation = zoneHTrack.animate(trackFrames, timing);
-    zoneHScroll.acrylicClipAnimation = zoneHAcrylicClip?.animate?.(trackFrames, timing) || null;
-    zoneHScroll.acrylicLensAnimation = zoneHAcrylicLens?.animate?.(lensFrames, timing) || null;
-    zoneHScroll.thumbAnimation = zoneHThumb.animate(thumbFrames, timing);
-    zoneHScroll.leftShadeAnimation = zoneHLeftShade?.animate?.(leftShadeFrames, timing) || null;
-    zoneHScroll.rightShadeAnimation = zoneHRightShade?.animate?.(rightShadeFrames, timing) || null;
-    // Buffered entry input is observable in the same task that releases it.
-    // Advance only the logical value to the first canonical physics sample;
-    // the synchronized compositor animations present that same sample on the
-    // next native paint.
-    if (positions.length > 1) zoneHScroll.x = positions[1];
+    const reuseOrAnimate = (animation, target, frames) => {
+      if (!target?.animate) return null;
+      if (animation?.effect?.setKeyframes && animation?.effect?.updateTiming) {
+        try {
+          animation.effect.setKeyframes(frames);
+          animation.effect.updateTiming(timing);
+          animation.playbackRate = 1;
+          animation.currentTime = 0;
+          if (animation.playState !== "running") animation.play();
+          return animation;
+        } catch {
+          animation.cancel?.();
+        }
+      }
+      return target.animate(frames, timing);
+    };
+    zoneHScroll.motionAnimation = reuseOrAnimate(reusableAnimations?.motion, zoneHTrack, trackFrames);
+    zoneHScroll.acrylicClipAnimation = reuseOrAnimate(
+      reusableAnimations?.acrylicClip,
+      zoneHAcrylicClip,
+      trackFrames,
+    );
+    zoneHScroll.acrylicLensAnimation = reuseOrAnimate(
+      reusableAnimations?.acrylicLens,
+      zoneHAcrylicLens,
+      lensFrames,
+    );
+    zoneHScroll.thumbAnimation = reuseOrAnimate(reusableAnimations?.thumb, zoneHThumb, thumbFrames);
+    zoneHScroll.leftShadeAnimation = reuseOrAnimate(
+      reusableAnimations?.leftShade,
+      zoneHLeftShade,
+      leftShadeFrames,
+    );
+    zoneHScroll.rightShadeAnimation = reuseOrAnimate(
+      reusableAnimations?.rightShade,
+      zoneHRightShade,
+      rightShadeFrames,
+    );
+    // All owners share one literal timeline. Calling animate() repeatedly in a
+    // task normally gives each effect a subtly different pending start time;
+    // pinning them to the same document time keeps the bucket surface, its
+    // screen-space blur, scrollbar, and edge shadows physically locked.
+    const timelineTime = document.timeline?.currentTime;
+    if (Number.isFinite(timelineTime)) {
+      [
+        zoneHScroll.motionAnimation,
+        zoneHScroll.acrylicClipAnimation,
+        zoneHScroll.acrylicLensAnimation,
+        zoneHScroll.thumbAnimation,
+        zoneHScroll.leftShadeAnimation,
+        zoneHScroll.rightShadeAnimation,
+      ].filter(Boolean).forEach((animation) => { animation.startTime = timelineTime; });
+    }
+    return zoneHScroll.motionAnimation;
+  };
+  const sampleZoneRailMotion = () => {
+    const animation = zoneHScroll.motionAnimation;
+    const positions = zoneHScroll.motionPositions;
+    const progress = Number(animation?.effect?.getComputedTiming?.().progress);
+    if (!Number.isFinite(progress) || !positions.length) return false;
+    const scaled = progress * (positions.length - 1);
+    const index = Math.min(positions.length - 1, Math.floor(scaled));
+    const nextIndex = Math.min(positions.length - 1, index + 1);
+    const fraction = scaled - index;
+    zoneHScroll.x = positions[index] + (positions[nextIndex] - positions[index]) * fraction;
+    return true;
   };
   const runZoneRailScroll = () => {
     if (!horizontalZones || zoneHScroll.raf) return;
-    zoneHPrimeAnimation?.cancel?.();
-    zoneHPrimeAnimation = null;
-    zoneHPrimeClipAnimation?.cancel?.();
-    zoneHPrimeLensAnimation?.cancel?.();
-    zoneHPrimeClipAnimation = null;
-    zoneHPrimeLensAnimation = null;
     holdZoneRailInteraction();
+    retireZoneRailTravelWarm();
+    const reusableAnimations = takeZoneRailPrimeAnimations();
     const currentGoal = () => zoneHScroll.wheeling
       ? zoneHScroll.target
       : clamp(zoneHScroll.target, zoneHMin(), 0);
-    startZoneRailMotionAnimations(currentGoal());
-    const tick = () => {
-      const goal = currentGoal();
+    startZoneRailMotionAnimations(currentGoal(), reusableAnimations);
+    const tick = (now) => {
+      sampleZoneRailMotion();
+      const goal = zoneHScroll.wheeling
+        ? zoneHScroll.target
+        : clamp(zoneHScroll.target, zoneHMin(), 0);
       const animation = zoneHScroll.motionAnimation;
-      const positions = zoneHScroll.motionPositions;
-      const progress = Number(animation?.effect?.getComputedTiming?.().progress);
-      if (Number.isFinite(progress) && positions.length) {
-        const scaled = progress * (positions.length - 1);
-        const index = Math.min(positions.length - 1, Math.floor(scaled));
-        const nextIndex = Math.min(positions.length - 1, index + 1);
-        const fraction = scaled - index;
-        const sampled = positions[index] + (positions[nextIndex] - positions[index]) * fraction;
-        zoneHScroll.x = positions.at(-1) < positions[0]
-          ? Math.min(zoneHScroll.x, sampled)
-          : Math.max(zoneHScroll.x, sampled);
-      }
-      if (Math.abs(goal - zoneHScroll.motionTarget) >= .4) {
+      const targetChanged = Math.abs(goal - zoneHScroll.motionTarget) >= .4;
+      const oldDirection = Math.sign(zoneHScroll.motionTarget - zoneHScroll.x);
+      const newDirection = Math.sign(goal - zoneHScroll.x);
+      const directionChanged = oldDirection && newDirection && oldDirection !== newDirection;
+      const animationFinished = animation?.playState === "finished";
+      // Wheel devices commonly deliver several deltas inside one display
+      // frame. The first delta starts motion immediately; later deltas update
+      // the live goal, but compositor keyframes are retargeted at most once
+      // every three native 100 Hz frames. This preserves the bucket scroller's
+      // exact 22%/frame response without cancelling and reallocating six GPU
+      // effects on every wheel packet.
+      if (targetChanged && (
+        directionChanged
+        || animationFinished
+        || now - zoneHScroll.motionRetargetedAt >= 30
+      )) {
         startZoneRailMotionAnimations(goal);
-      } else if (!zoneHScroll.wheeling
-        && (animation?.playState === "finished" || Math.abs(goal - zoneHScroll.x) < 1.5)) {
+      } else if (!zoneHScroll.wheeling && !targetChanged
+        && (animationFinished || Math.abs(goal - zoneHScroll.x) < .4)) {
         zoneHScroll.x = zoneHScroll.target = goal;
         cancelZoneRailMotionAnimations();
-        positionZoneRail(true);
+        positionZoneRail();
         zoneHScroll.raf = 0;
         releaseZoneRailInteraction();
         return;
+      } else if (!animation && Math.abs(goal - zoneHScroll.x) >= .4) {
+        startZoneRailMotionAnimations(goal);
       }
-      // Track, acrylic mask, scrollbar and adaptive edge shadows travel through
-      // synchronized compositor animations. This callback updates logical
-      // state only; it performs no per-frame DOM writes.
       zoneHScroll.raf = requestAnimationFrame(tick);
     };
     zoneHScroll.raf = requestAnimationFrame(tick);
@@ -3432,6 +3659,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     if (immediate) {
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf);
       zoneHScroll.raf = 0;
+      retireZoneRailTravelWarm();
       cancelZoneRailMotionAnimations();
       zoneHScroll.x = zoneHScroll.target = clamp(zoneHScroll.x - delta, minimum, 0);
       positionZoneRail();
@@ -3439,7 +3667,13 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       return true;
     }
     if (!zoneHScroll.raf) zoneHScroll.target = zoneHScroll.x;
-    zoneHScroll.target = damp(zoneHScroll.target - delta, minimum);
+    // The outer rail has six synchronized compositor owners (track, acrylic
+    // clip/lens, thumb, and two edge shades). Letting a wheel target rubber-
+    // band past the edge forced all six animations to be cancelled and rebuilt
+    // again when the 90 ms gesture lease ended. Clamp this viewport rail at its
+    // real bounds so one gesture is one uninterrupted compositor submission.
+    // Individual bucket/card scrollers retain their tactile edge recoil.
+    zoneHScroll.target = clamp(zoneHScroll.target - delta, minimum, 0);
     zoneHScroll.wheeling = true;
     clearTimeout(zoneHScroll.releaseT);
     zoneHScroll.releaseT = setTimeout(() => {
@@ -3545,9 +3779,6 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       const bounds = zoneHorizontalBounds.get(stage.key);
       if (!bounds) return;
       const near = bounds.right >= viewLeft && bounds.left <= viewRight;
-      const nextLod = near ? "full" : "parked";
-      if (panel.dataset.zoneLod === nextLod) return;
-      panel.dataset.zoneLod = nextLod;
       if (!near) {
         zoneVisibleStages.delete(stage.key);
         return;
@@ -3907,7 +4138,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
   // while a scroll animation owns st.sy (its own loop clamps). Runs on every resize/reflow → live update.
   const clampZoneScroll = (s) => {
     const st = zoneScroll[s];
-    if (lazyZoneCards && zoneBody[s]?.parentElement?.dataset.zoneLod === "parked") return;
+    if (scrollZoneRows && lazyZoneCards && zoneBody[s]?.parentElement?.dataset.zoneLod === "parked") return;
     if (st && !st.raf) { st.sy = clamp(st.sy, zMin(s), 0); st.ty = st.sy; }
     positionZone(s);
   };
@@ -4507,6 +4738,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     // real stacks are seated so bucket scrollbars and the outer rail use the
     // final card geometry instead of a temporary empty-state measurement.
     if (horizontalZones || scrollZoneRows) layoutZones();
+    if (horizontalZones) zoneHRenderEpoch += 1;
   };
 
   const reflowObjectSizes = (detail = null) => {
@@ -4843,10 +5075,10 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
       zoneHScroll.wheeling = false;
       zoneHScroll.pendingWheel = 0;
       releaseZoneRailInteraction(true);
-      zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null;
-      zoneHPrimeClipAnimation?.cancel?.(); zoneHPrimeClipAnimation = null;
-      zoneHPrimeLensAnimation?.cancel?.(); zoneHPrimeLensAnimation = null;
+      retireZoneRailTravelWarm();
+      retireZoneRailPrimeAnimations();
       zoneHPrimeSignature = "";
+      zoneHTravelWarmSignature = "";
       zoneHResizeObserver?.disconnect(); zoneHResizeObserver = null;
       zoneVResizeObserver?.disconnect(); zoneVResizeObserver = null;
       if (zoneVLodFrame) cancelAnimationFrame(zoneVLodFrame); zoneVLodFrame = 0; zoneVisibleStages.clear();
@@ -4870,6 +5102,7 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
     scrollZonesBy: scrollZoneRailBy,
     scrollZoneIntoView: revealZoneHorizontally,
     zoneScrollState: () => ({ x:zoneHScroll.x, target:zoneHScroll.target, min:zoneHMin() }),
+    warmViewportCompositor: warmHorizontalZoneTravel,
     scrollRowsBy: scrollZoneRowsBy,
     scrollRowIntoView: revealZoneVertically,
     rowScrollState: () => ({ y:zoneVClip?.scrollTop || 0, max:zoneVMax() }),
@@ -5116,30 +5349,32 @@ global.createCrmCardSystem = function createCrmCardSystem(config = {}) {
         applyActiveVisibility();
       }
       if (horizontalZones) {
-        // Chromium may discard a hidden room's promoted layers even though its
-        // DOM and geometry remain warm. Re-prime the three synchronized rail
-        // owners while Desk Transit still covers the destination with its
-        // decoded endpoint, so the first real wheel gesture never pays that
-        // upload/promotion cost.
-        zoneHPrimeSignature = "";
+        // Hidden retained rooms can lose GPU promotion across reloads or long
+        // Home sessions. Reacquire it at the exact settled coordinates while
+        // Desk Transit still owns the opaque destination handoff.
         requestAnimationFrame(() => {
-          if (active && zoneHTrack?.isConnected) primeHorizontalZoneCompositor();
+          if (!active || !zoneHTrack?.isConnected) return;
+          const pendingDestination = window.crmDeskTransit?.pendingDestination?.(theaterKey) === true;
+          if (pendingDestination && zoneHTravelWarmSignature !== horizontalZoneTravelSignature()) {
+            void warmHorizontalZoneTravel().finally(() => {
+              if (active && zoneHTrack?.isConnected) primeHorizontalZoneCompositor(true);
+            });
+          } else primeHorizontalZoneCompositor(true);
         });
       }
       if (zoneGeometryRefreshPending) scheduleZoneGeometryRefresh();
     } else {
       if (zoneHScroll.raf) cancelAnimationFrame(zoneHScroll.raf);
       cancelZoneRailMotionAnimations();
+      retireZoneRailTravelWarm();
+      retireZoneRailPrimeAnimations();
+      zoneHPrimeSignature = "";
       clearTimeout(zoneHScroll.releaseT);
       zoneHScroll.raf = 0;
       zoneHScroll.wheeling = false;
       zoneHScroll.pendingWheel = 0;
       zoneHScroll.target = zoneHScroll.x;
       releaseZoneRailInteraction(true);
-      zoneHPrimeAnimation?.cancel?.(); zoneHPrimeAnimation = null;
-      zoneHPrimeClipAnimation?.cancel?.(); zoneHPrimeClipAnimation = null;
-      zoneHPrimeLensAnimation?.cancel?.(); zoneHPrimeLensAnimation = null;
-      zoneHPrimeSignature = "";
       const hadExpandedBuckets = expandedStages.size > 0;
       expandedStages.clear();
       writeExpandedStages();

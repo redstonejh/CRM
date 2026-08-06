@@ -168,9 +168,12 @@
     let top = topEdge;
     const liveRect = anchorElement?.isConnected ? anchorElement.getBoundingClientRect() : anchorRect;
     if (liveRect) {
+      const maxLeft = Math.max(edge, innerWidth - bounds.width - edge);
       const right = liveRect.right + gap;
       const leftSide = liveRect.left - gap - bounds.width;
-      left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, liveRect.left));
+      left = right >= edge && right <= maxLeft ? right
+        : leftSide >= edge && leftSide <= maxLeft ? leftSide
+          : Math.max(edge, Math.min(maxLeft, liveRect.left));
       top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, liveRect.top));
     }
     panel.style.left = `${Math.round(left)}px`;

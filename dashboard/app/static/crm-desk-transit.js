@@ -800,7 +800,7 @@
     });
   };
 
-  const primeEndpointPreview = async (key) => {
+  const endpointPreflightState = (key) => {
     const theaterKey = key === "cases" ? "tickets" : key;
     const preparedModule = document.querySelector(
       `[data-crm-theater="${CSS.escape(theaterKey)}"]`
@@ -821,6 +821,23 @@
       && retainedBridge.dataset.crmEndpointRasterReady === "true"
       && retainedRaster?.complete
       && retainedRaster.naturalWidth > 0;
+    return {
+      preparedModule,
+      preview,
+      retainedBridge,
+      retainedRaster,
+      retainedExactReady,
+    };
+  };
+
+  const primeEndpointPreview = async (key) => {
+    let {
+      preparedModule,
+      preview,
+      retainedBridge,
+      retainedRaster,
+      retainedExactReady,
+    } = endpointPreflightState(key);
     if (window.__crmDeskPerformanceTrace === true) {
       performance.mark(
         `crm-desk-transit:prime:${key}:module-${preparedModule ? "ready" : "cold"}`
@@ -840,13 +857,14 @@
     if (window.__crmDeskPerformanceTrace === true) {
       performance.mark(`crm-desk-transit:prime:${key}:module-complete`);
     }
-    preview = window.crmHome?.endpointPreview?.(key);
+    ({
+      preview,
+      retainedBridge,
+      retainedRaster,
+      retainedExactReady,
+    } = endpointPreflightState(key));
     if (!preview?.src) return false;
-    const identity = endpointImageIdentity(preview.src, key, preview.capturedAt);
-    if (retainedBridge?.dataset?.crmEndpointIdentity === identity
-      && retainedBridge.dataset.crmEndpointRasterReady === "true"
-      && retainedRaster?.complete
-      && retainedRaster.naturalWidth > 0) return true;
+    if (retainedExactReady) return true;
     const loaded = !!await loadEndpointBridgeImage(preview.src, {
       key,
       capturedAt:preview.capturedAt,
@@ -1894,6 +1912,36 @@
     traceStagePoint(stage, "click-stage-ready");
     const surface = cam.surface();
     if (surface) surface.style.zIndex = TRANSIT_Z;
+    const launchExpand = () => {
+      if (stage.sequence !== activeDive?.sequence) { done(false); return false; }
+      if (cam.level() > 0) cam.rebuildRoot();
+      // Fractal camera's transform-start hook can arrive after its internal
+      // staging while carrying the earlier motion timestamp. Arm the two lead
+      // animations at this real expand boundary so they cannot inherit that
+      // callback latency and slip past the visual landing.
+      if (!Number.isFinite(stage.motionStartedAt)) {
+        stage.motionIntentAt = performance.now();
+        stage.morphMs = 460;
+      }
+      traceStagePoint(stage, "click-expand-begin");
+      cam.expand(bucket);
+      traceStagePoint(stage, "click-expand-end");
+      return true;
+    };
+    const preflight = endpointPreflightState(key);
+    if (expandFirst && preflight.preparedModule && preflight.retainedExactReady) {
+      // Pointer intent already prepared both the retained room and exact body
+      // raster. Bind that bridge to this stage synchronously and begin camera
+      // motion in the click task; awaiting an already-resolved async helper
+      // would still postpone the first transform to a microtask.
+      traceStagePoint(stage, "click-prime-begin");
+      traceStagePoint(stage, "click-prime-end");
+      void prepareEndpointBridge(stage);
+      traceStagePoint(stage, "click-bridge-ready");
+      launchExpand();
+      Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
+      return;
+    }
     void (async () => {
       if (expandFirst) {
         traceStagePoint(stage, "click-prime-begin");
@@ -1908,19 +1956,7 @@
         // endpoint instead of uploading a viewport surface during motion.
         try { await prepareEndpointBridge(stage); } catch {}
         traceStagePoint(stage, "click-bridge-ready");
-        if (stage.sequence !== activeDive?.sequence) { done(false); return; }
-        if (cam.level() > 0) cam.rebuildRoot();
-        // Fractal camera's transform-start hook can arrive after its internal
-        // staging while carrying the earlier motion timestamp. Arm the two
-        // lead animations at this real expand boundary so they cannot inherit
-        // that callback latency and slip past the visual landing.
-        if (!Number.isFinite(stage.motionStartedAt)) {
-          stage.motionIntentAt = performance.now();
-          stage.morphMs = 460;
-        }
-        traceStagePoint(stage, "click-expand-begin");
-        cam.expand(bucket);
-        traceStagePoint(stage, "click-expand-end");
+        if (!launchExpand()) return;
       }
       Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
     })();
@@ -1945,19 +1981,25 @@
     // The full-size return lid is now the exact visible room. Retaining the
     // complete outgoing .001 module underneath only asks Viz to raster both
     // scenes during the first reverse frame.
+    const routePromise = commitStaged("home");
     void (async () => {
+      // Publish the cheap Home route identity in the originating input task,
+      // then yield the geometry-heavy camera preparation to the microtask
+      // checkpoint. Microtasks still close before the next paint, so the
+      // contraction starts in the same visual frame without making the Home
+      // control synchronously absorb layout/style work from the outgoing room.
+      await Promise.resolve();
       if (!window.crmHome?.releasePrecomposedModule?.(fromKey)) {
         window.crmHome?.setPrecomposedModulePromoted?.(fromKey, false);
       }
       // The exact full-size return lid is already authoritative. Retire the
-      // large outgoing room, route state, API activation and theater topology
-      // beneath that lid. Start the compositor contraction first, then begin
-      // the staged route in this same input task. setActiveStaged() publishes
-      // the cheap route/chrome identity synchronously and yields its expensive
-      // owners across subsequent paints while the same lid remains visible.
+      // large outgoing room beneath that lid. The staged route's expensive
+      // API/theater owners begin at their first paint; this microtask starts
+      // the compositor contraction before that boundary while the same lid
+      // remains the visible owner.
       cam.back();     // 460ms house contract into the Home slot
       const motionPromise = Promise.resolve(cam.whenSettled?.());
-      await commitStaged("home");
+      await routePromise;
       motionPromise.then(() => window.crmHome?.waitForHandoff?.()).then(() => {
         if (surface) surface.style.zIndex = "";
         done();
@@ -2033,7 +2075,17 @@
     if (recordHistory) noteViewportDeparture();
     busy = true;
     let interactionReady = null;
-    try { interactionReady = window.crmHomePreviews?.setInteraction?.(true, "desk-transit"); } catch {}
+    try {
+      // A Home pointer click already owns decoded endpoint pixels and needs
+      // motion in its originating frame. Freeze preview workers one-way so an
+      // IPC reply cannot defer the camera; cold routes remain guarded by
+      // diveIn's explicit raster-preparation Promise.
+      interactionReady = window.crmHomePreviews?.setInteraction?.(
+        true,
+        "desk-transit",
+        current !== "home",
+      );
+    } catch {}
     announceNavigationHistory();
     const done = (success = true) => {
       busy = false;
@@ -2060,7 +2112,8 @@
     // renderer before this room was exposed. Begin its exit in the input task;
     // awaiting the old settled Promise would defer the camera until a later
     // microtask and make the Home control feel inert for one frame.
-    if (current !== "home" && workspacePreviewLeaseActive) beginRoute();
+    if (current === "home") beginRoute();
+    else if (workspacePreviewLeaseActive) beginRoute();
     else void Promise.resolve(interactionReady).catch(() => null).then(beginRoute);
   });
 

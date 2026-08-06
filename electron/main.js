@@ -134,6 +134,7 @@ let homePreviewRefreshTimer = null;
 let homePreviewStartupTimer = null;
 let projectGalleryHomeRefreshTimer = null;
 let projectPreviewCaptureCount = 0;
+const projectPreviewPriorityJobs = [];
 let plannerHomeCaptureRequestGeneration = 0;
 let projectPreviewBatchPlannerGeneration = 0;
 let homePreviewActivityGeneration = 0;
@@ -1324,39 +1325,109 @@ async function waitForProjectGalleryImages(worker) {
   })`, true);
 }
 
+async function captureProjectPreviewWithWorker(worker, key, viewState = {}, refreshModel = true) {
+  await waitForHomePreviewInteraction();
+  if (refreshModel) {
+    // The preview renderer is deliberately retained between captures. Its
+    // in-memory planner model can therefore predate a project created by the
+    // visible window. Refresh that canonical model before selecting the
+    // requested project; otherwise the worker waits for a project world it
+    // cannot build until the 30 second renderer guard expires.
+    await worker.webContents.executeJavaScript(`(async () => {
+      window.crmWorkspaces.setActive('planner');
+      await window.crmPlanner?.refresh?.(true, 'project-preview-worker');
+      return true;
+    })()`, true);
+  } else {
+    await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('planner')`, true);
+  }
+  await waitForRenderer(worker, `document.body.dataset.crmModule === 'planner' && !!window.crmPlanner`);
+  const state = { ...viewState, view:'project', selectedId:key };
+  await worker.webContents.executeJavaScript(
+    `window.crmHome?.applyCaptureState?.('planner', ${JSON.stringify(state)})`,
+    true,
+  );
+  await waitForRenderer(worker, `window.crmPlanner?.view?.() === 'project'
+    && !!document.querySelector('.crm-planner-project-world .crm-planner-buckets')`);
+  await worker.webContents.executeJavaScript(
+    `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`,
+    true,
+  );
+  return publishProjectPreview(key, await captureRoom(worker), state);
+}
+
+function finishProjectPreviewCapture(worker) {
+  projectPreviewCaptureCount = Math.max(0, projectPreviewCaptureCount - 1);
+  if (projectPreviewCaptureCount) return;
+  // Leave the parsed renderer parked rather than recreating the entire
+  // application for the next project/Home refresh.
+  syncPreviewWorkerFrameRate(worker);
+  if (plannerHomeCaptureRequestGeneration === projectPreviewBatchPlannerGeneration) {
+    scheduleProjectGalleryHomeRefresh();
+  }
+}
+
+async function drainProjectPreviewPriorityJobs(worker) {
+  if (!projectPreviewPriorityJobs.length) return worker;
+  let captureWorker = worker;
+  let refreshedModel = false;
+  while (projectPreviewPriorityJobs.length) {
+    const job = projectPreviewPriorityJobs.shift();
+    let preview = null;
+    try {
+      await waitForHomePreviewInteraction();
+      captureWorker ||= await createPreviewWindow();
+      preview = await captureProjectPreviewWithWorker(
+        captureWorker,
+        job.key,
+        job.viewState,
+        !refreshedModel,
+      );
+      refreshedModel = true;
+    } catch (error) {
+      console.error(`[project-preview] capture failed at ${job.key}:`, error?.message || error);
+    } finally {
+      finishProjectPreviewCapture(captureWorker);
+      job.resolve(preview);
+    }
+  }
+  return captureWorker;
+}
+
 function captureProjectPreview(projectId, viewState = {}) {
   const key = String(projectId || '').trim();
   if (!key) return Promise.resolve(null);
   clearTimeout(projectGalleryHomeRefreshTimer);
   projectGalleryHomeRefreshTimer = null;
-  if (!projectPreviewCaptureCount) projectPreviewBatchPlannerGeneration = plannerHomeCaptureRequestGeneration;
+  if (!projectPreviewCaptureCount) {
+    projectPreviewBatchPlannerGeneration = plannerHomeCaptureRequestGeneration;
+  }
   projectPreviewCaptureCount += 1;
   homePreviewActivityGeneration += 1;
+
+  // A full Home refresh can be repeatedly paused by visible navigation and may
+  // take seconds to visit every room. Insert project tiles between its room
+  // captures using the same worker instead of appending them behind the whole
+  // batch or launching a competing GPU renderer.
+  if (homePreviewBroadCaptureActive || homePreviewBroadCaptureQueued > 0) {
+    return new Promise((resolve) => {
+      projectPreviewPriorityJobs.push({ key, viewState, resolve });
+    });
+  }
+
   homePreviewQueue = homePreviewQueue.catch(() => null).then(async () => {
     let worker;
+    let preview = null;
     try {
       await waitForHomePreviewInteraction();
       worker = await createPreviewWindow();
-      await worker.webContents.executeJavaScript(`window.crmWorkspaces.setActive('planner')`, true);
-      await waitForRenderer(worker, `document.body.dataset.crmModule === 'planner' && !!window.crmPlanner`);
-      const state = { ...viewState, view:'project', selectedId:key };
-      await worker.webContents.executeJavaScript(`window.crmHome?.applyCaptureState?.('planner', ${JSON.stringify(state)})`, true);
-      await waitForRenderer(worker, `window.crmPlanner?.view?.() === 'project'
-        && !!document.querySelector('.crm-planner-project-world .crm-planner-buckets')`);
-      await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
-      return publishProjectPreview(key, await captureRoom(worker), state);
+      preview = await captureProjectPreviewWithWorker(worker, key, viewState, true);
     } catch (error) {
       console.error(`[project-preview] capture failed at ${key}:`, error?.message || error);
-      return null;
     } finally {
-      projectPreviewCaptureCount = Math.max(0, projectPreviewCaptureCount - 1);
-      if (!projectPreviewCaptureCount) {
-        // Leave the parsed renderer parked rather than recreating the entire
-        // application for the next project/Home refresh.
-        syncPreviewWorkerFrameRate(worker);
-        if (plannerHomeCaptureRequestGeneration === projectPreviewBatchPlannerGeneration) scheduleProjectGalleryHomeRefresh();
-      }
+      finishProjectPreviewCapture(worker);
     }
+    return preview;
   });
   return homePreviewQueue;
 }
@@ -1364,6 +1435,15 @@ function captureProjectPreview(projectId, viewState = {}) {
 async function captureHomeMotionSnapshot(worker) {
   homeMotionSnapshotError = null;
   await waitForHomePreviewInteraction();
+  let homeTiles = null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      homeTiles = await mainWindow.webContents.executeJavaScript(
+        `window.crmHome?.tiles?.() || null`,
+        true,
+      );
+    } catch {}
+  }
   await worker.webContents.executeJavaScript(`(async () => {
     const captureStyle = document.getElementById('crm-preview-capture-style');
     if (captureStyle) captureStyle.textContent = '';
@@ -1374,13 +1454,34 @@ async function captureHomeMotionSnapshot(worker) {
       document.body.classList.toggle('webgl-glass-on', original.webgl);
     }
     window.crmWorkspaces.setActive('home');
+    // The retained preview worker stays alive between captures, so its module
+    // state predates Home tile additions/removals. Re-seat the exact canonical
+    // tile records from the visible renderer before measuring/capturing every
+    // physical motion variant.
+    window.crmHome?.syncTileRecordsForCapture?.(${JSON.stringify(homeTiles)});
     window.crmHome?.refresh?.();
     await window.crmHome?.ensureHandReady?.();
   })()`, true);
   await waitForRenderer(worker, `document.body.dataset.crmModule === 'home'
     && window.crmHome?.handStatus?.().ready
     && window.crmHome?.previewStatus?.().every((item) => item.state === 'ready')`);
-  await worker.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`, true);
+  await worker.webContents.executeJavaScript(`new Promise((resolve) => {
+    let previous = '';
+    let stableFrames = 0;
+    let frames = 0;
+    const settle = () => {
+      const signature = window.crmHome?.motionLayoutSignature?.() || '';
+      stableFrames = signature && signature === previous ? stableFrames + 1 : 0;
+      previous = signature;
+      frames += 1;
+      if (stableFrames >= 3 || frames >= 60) {
+        setTimeout(resolve, 24);
+        return;
+      }
+      requestAnimationFrame(settle);
+    };
+    requestAnimationFrame(settle);
+  })`, true);
   const layoutSignature = await worker.webContents.executeJavaScript(`window.crmHome?.motionLayoutSignature?.() || ''`, true);
   if (!layoutSignature) throw new Error('Home motion layout signature unavailable');
   // Capture Home's objects plus each tile's translucent coat, never the fixed
@@ -1457,6 +1558,9 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
       // from the camera before the worker could be throttled.
       await waitForHomePreviewInteraction();
       worker = await createPreviewWindow();
+      if (broadCapture && projectPreviewPriorityJobs.length) {
+        worker = await drainProjectPreviewPriorityJobs(worker);
+      }
       for (const key of requested) {
         await waitForHomePreviewInteraction();
         activeCaptureKey = key;
@@ -1499,6 +1603,9 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
         // the queued stateful capture must be the observable handoff.
         if ((homePreviewViewStateGenerations.get(key) || 0) !== viewStateGeneration) continue;
         captured.push({ key, capture, layoutSignature, viewState });
+        if (broadCapture && projectPreviewPriorityJobs.length) {
+          worker = await drainProjectPreviewPriorityJobs(worker);
+        }
       }
       if (captured.length > 1) publishHomePreviewBatch(captured);
       else if (captured.length === 1) {
@@ -1509,6 +1616,9 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
       // refresh the resting Home composite. Otherwise the reverse camera would
       // briefly fly toward the old-size snapshot before handing off to Home.
       if (requested.length) {
+        if (broadCapture && projectPreviewPriorityJobs.length) {
+          worker = await drainProjectPreviewPriorityJobs(worker);
+        }
         activeCaptureKey = 'home-motion';
         homePreviewCaptureStatus.key = activeCaptureKey;
         await captureHomeMotionSnapshot(worker);
@@ -1517,6 +1627,11 @@ function capturePreviewKeys(keys, label = 'refresh', viewStates = {}) {
       homeMotionSnapshotError = `${activeCaptureKey}: ${String(error?.stack || error?.message || error)}`;
       console.error(`[home-preview] ${label} capture failed at ${activeCaptureKey}:`, error?.message || error);
     } finally {
+      if (broadCapture && projectPreviewPriorityJobs.length) {
+        try {
+          worker = await drainProjectPreviewPriorityJobs(worker);
+        } catch {}
+      }
       if (broadCapture) {
         homePreviewBroadCaptureActive = false;
         homePreviewBroadCaptureQueued = Math.max(
@@ -2474,6 +2589,9 @@ ipcMain.handle('home-preview:diagnostics', (event) => {
     startupScheduled:!!homePreviewStartupTimer,
     refreshScheduled:!!homePreviewRefreshTimer,
     resizeScheduled:!!homePreviewResizeTimer,
+    interactionActive:homePreviewInteractionActive,
+    interactionWaiters:homePreviewInteractionWaiters.length,
+    projectCaptureCount:projectPreviewCaptureCount,
     worker:(homePreviewCaptureStatus.active || projectPreviewCaptureCount > 0)
       && !!previewWindow
       && !previewWindow.isDestroyed(),

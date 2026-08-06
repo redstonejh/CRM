@@ -201,6 +201,26 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     homeTileRecords = homeRootObject.children;
     return homeTileRecords;
   };
+  const syncHomeTileRecords = (sourceRecords = null) => {
+    const sources = Array.isArray(sourceRecords) ? sourceRecords : readHomeTiles();
+    const seen = new Set();
+    const stored = sources.map(normalizeHomeTile).filter((tile) => {
+      if (!tile || seen.has(tile.tile.id)) return false;
+      seen.add(tile.tile.id);
+      return true;
+    });
+    if (!stored.length) return false;
+    const currentSignature = JSON.stringify(homeTileRecords);
+    const storedSignature = JSON.stringify(stored);
+    if (storedSignature === currentSignature) return false;
+    replaceHomeTileRecords(stored);
+    camera?.rebuildRoot?.();
+    const hand = camera?.layers?.()[0]?.querySelector?.(".crm-home-priority-hand");
+    if (window.crmHomePreviews?.isCaptureWorker) hand?.classList?.add("is-seating");
+    camera?.layout?.();
+    mountAll();
+    return true;
+  };
   // A workspace may be represented by several independently placed Home
   // tiles. Remember the exact physical tile that opened it: desk transit still
   // resolves its return lid through data-module, while data-viewport-module
@@ -636,9 +656,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         transform-origin:50% 108%;transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-rest-y,180px)) rotate(var(--hand-rot,0deg));
         transition:transform .38s cubic-bezier(.22,1,.26,1),box-shadow .18s ease}
       .crm-home-priority-hand.is-seating>.crm-home-hand-card.tk-card{transition:none}
-      .crm-home-priority-hand:is(:hover,:focus-within)>.crm-home-hand-card.tk-card{
+      .crm-home-priority-hand:is(.is-pointer-open,:focus-within)>.crm-home-hand-card.tk-card{
         transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(var(--hand-open-y,0px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.9)}
-      .crm-home-priority-hand:is(:hover,:focus-within)>.crm-home-hand-card.tk-card:is(:hover,:focus-visible){z-index:1000;
+      .crm-home-priority-hand:is(.is-pointer-open,:focus-within)>.crm-home-hand-card.tk-card:is(:hover,:focus-visible){z-index:1000;
         transform:translateX(calc(-50% + var(--hand-x,0px))) translateY(calc(var(--hand-open-y,0px) - 6px)) rotate(var(--hand-open-rot,var(--hand-rot,0deg))) scale(.92);
         box-shadow:inset 0 0 0 9999px rgba(255,255,255,.12),inset 0 1px rgba(255,255,255,.34),0 22px 48px rgba(0,0,0,.44)}
       .crm-home-hand-empty{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);font-size:9px;letter-spacing:.1em;
@@ -1564,6 +1584,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // selector change; rerunning the geometry stability sampler can otherwise
     // spill into the click's pre-motion interval on the first large room.
     if (prewarmedFactories.has(FACTORY_API_BY_MODULE[key])) {
+      try { await api?.warmViewportCompositor?.({ duration:180 }); } catch {}
+      if (camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) return node;
       parkMotionPaint(node);
       await new Promise((resolve) => requestAnimationFrame(resolve));
       return node;
@@ -1574,6 +1596,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!node.matches?.(".crm-theater") && settled?.stable === true) {
       node.setAttribute("data-crm-home-precompose-seated", "true");
     }
+    try { await api?.warmViewportCompositor?.({ duration:180 }); } catch {}
+    if (camera?.isTransitioning?.() || window.crmDeskTransit?.isBusy?.()) return node;
     // The geometry/data factory is retained; only its offscreen paint is
     // culled. Close that non-inherited clip change before a click can begin the
     // camera so no material initialization lands in the first motion frame.
@@ -1738,6 +1762,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       if (!node.matches?.(".crm-theater") && settled?.stable === true) {
         node.setAttribute("data-crm-home-precompose-seated", "true");
       }
+      // Horizontal card rooms retain one real promoted track. Sweep that same
+      // hidden track through its finite bounds while Home still owns the
+      // viewport, so far-edge paint tiles are resident before any user scroll.
+      try { await api?.warmViewportCompositor?.({ duration:180 }); } catch {}
+      if (!canPrewarmFactory()) return;
       if (!await prewarmFactoryAcrylic(node)) return;
     } finally {
       // Prewarming is a finite paint/upload operation, not permanent visual
@@ -1861,6 +1890,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       },
     });
     const hand = document.createElement("section"); hand.className = "crm-home-priority-hand"; hand.setAttribute("aria-label", "Important linked work due today");
+    // A room's lower rail and Home's priority-hand trigger occupy the same
+    // screen-space band. Returning Home beneath a stationary pointer must not
+    // synthesize an open hand and invalidate the already-captured Home motion
+    // composition. Arm hover only after real pointer movement within Home.
+    hand.addEventListener("pointermove", () => hand.classList.add("is-pointer-open"));
+    hand.addEventListener("pointerleave", () => hand.classList.remove("is-pointer-open"));
     fillPriorityHand(hand); root.append(grid, titleLayer, hand);
     const activeModule = String(document.body.dataset.crmModule || "");
     const returnTile = returnTileFor(activeModule);
@@ -1989,13 +2024,59 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     let surface = null;
     let state = null;
     let clipAnimation = null;
+    let clipAnimationSignature = "";
     let releaseAnimation = null;
 
-    const stop = () => {
-      clipAnimation?.cancel?.();
+    const stop = (keepClip = false) => {
+      if (!keepClip) clipAnimation?.cancel?.();
       releaseAnimation?.cancel?.();
-      clipAnimation = null;
+      if (!keepClip) {
+        clipAnimation = null;
+        clipAnimationSignature = "";
+      }
       releaseAnimation = null;
+    };
+    const pauseClipAt = (direction = state?.direction) => {
+      if (!clipAnimation || !state) return false;
+      try {
+        clipAnimation.pause();
+        clipAnimation.playbackRate = direction === "contract" ? -1 : 1;
+        clipAnimation.currentTime = direction === "contract" ? state.duration : 0;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const configureClipAnimation = (direction = state?.direction) => {
+      if (!clipGroup || !state || !["expand", "contract"].includes(direction)) return null;
+      const keyframes = [
+        { transform:state.sourceTransform },
+        { transform:state.destinationTransform },
+      ];
+      const timing = {
+        duration:state.duration,
+        easing:state.easing,
+        fill:"both",
+      };
+      const signature = `${state.sourceTransform}|${state.destinationTransform}|${state.duration}|${state.easing}`;
+      if (!clipAnimation || clipAnimation.effect?.target !== clipGroup) {
+        clipAnimation?.cancel?.();
+        clipAnimation = clipGroup.animate(keyframes, timing);
+        clipAnimationSignature = signature;
+      } else if (clipAnimationSignature !== signature) {
+        try {
+          clipAnimation.pause();
+          clipAnimation.effect.setKeyframes(keyframes);
+          clipAnimation.effect.updateTiming(timing);
+          clipAnimationSignature = signature;
+        } catch {
+          clipAnimation.cancel?.();
+          clipAnimation = clipGroup.animate(keyframes, timing);
+          clipAnimationSignature = signature;
+        }
+      }
+      pauseClipAt(direction);
+      return clipAnimation;
     };
     const finish = () => {
       stop();
@@ -2012,7 +2093,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     };
     const park = () => {
       if (!lens) return false;
-      stop();
+      stop(true);
+      if (state?.direction === "expand") {
+        try {
+          clipAnimation?.pause?.();
+          if (clipAnimation) clipAnimation.currentTime = state.duration;
+        } catch {}
+      }
       lens.style.opacity = "0";
       lens.dataset.crmPeripheralAcrylicPhase = "parked";
       surface?.classList?.remove("crm-home-peripheral-acrylic-active","crm-home-shared-resting-acrylic");
@@ -2095,7 +2182,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
           height:destination.h,
         })
         : sourceTransform;
-      stop();
+      stop(true);
       if (!clipHost || clipHost.parentElement !== context.surface) {
         finish();
         surface = context.surface;
@@ -2185,9 +2272,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     };
     const arm = (direction = "expand") => {
       if (!lens || !state || !["expand", "contract"].includes(direction)) return null;
-      stop();
+      stop(true);
       state.direction = direction;
       setClipTransform(direction === "expand" ? state.sourceTransform : state.destinationTransform);
+      configureClipAnimation(direction);
       lens.dataset.crmPeripheralAcrylicDirection = direction;
       setEnabled(true);
       return lens;
@@ -2197,15 +2285,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
         setEnabled(false);
         return null;
       }
-      stop();
+      stop(true);
       setEnabled(true);
       lens.dataset.crmPeripheralAcrylicPhase = "motion";
-      const from = direction === "expand" ? state.sourceTransform : state.destinationTransform;
-      const to = direction === "expand" ? state.destinationTransform : state.sourceTransform;
-      clipAnimation = clipGroup.animate(
-        [{ transform:from }, { transform:to }],
-        { duration:state.duration, easing:state.easing, fill:"forwards" },
-      );
+      configureClipAnimation(direction);
+      try { clipAnimation?.play?.(); } catch {}
       return lens;
     };
     const sync = (transformAnimation, startTime) => {
@@ -2220,9 +2304,16 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
           || syncedAnimation.replaceState === "removed") return false;
         const liveStart = Number(transformAnimation?.startTime);
         const liveTime = Number(transformAnimation?.currentTime);
+        const contract = state?.direction === "contract";
         try {
-          syncedAnimation.startTime = Number.isFinite(liveStart) ? liveStart : initialAnchor;
-          if (Number.isFinite(liveTime)) syncedAnimation.currentTime = liveTime;
+          const anchor = Number.isFinite(liveStart) ? liveStart : initialAnchor;
+          syncedAnimation.playbackRate = contract ? -1 : 1;
+          syncedAnimation.startTime = contract ? anchor + state.duration : anchor;
+          if (Number.isFinite(liveTime)) {
+            syncedAnimation.currentTime = contract
+              ? Math.max(0, state.duration - liveTime)
+              : Math.min(state.duration, liveTime);
+          }
           return true;
         } catch {
           return false;
@@ -2249,8 +2340,15 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     };
     const rest = () => {
       if (!lens || !state) return false;
-      stop();
+      stop(true);
       setClipTransform(state.sourceTransform);
+      try {
+        clipAnimation?.pause?.();
+        if (clipAnimation) {
+          clipAnimation.playbackRate = 1;
+          clipAnimation.currentTime = 0;
+        }
+      } catch {}
       lens.style.opacity = "1";
       lens.dataset.crmPeripheralAcrylicPhase = "resting";
       surface?.classList?.add("crm-home-peripheral-acrylic-active","crm-home-shared-resting-acrylic");
@@ -2259,7 +2357,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const release = () => {
       if (!lens || !state) return Promise.resolve(false);
       const releaseLens = lens;
-      stop();
+      stop(true);
       setClipTransform(state.direction === "contract" ? state.sourceTransform : state.destinationTransform);
       releaseLens.style.opacity = "1";
       releaseLens.dataset.crmPeripheralAcrylicPhase = "release";
@@ -2279,8 +2377,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     };
     const holdEndpoint = () => {
       if (!lens || !state) return false;
-      stop();
+      stop(true);
       setClipTransform(state.direction === "contract" ? state.sourceTransform : state.destinationTransform);
+      try {
+        clipAnimation?.pause?.();
+        if (clipAnimation) {
+          clipAnimation.currentTime = state.direction === "contract" ? 0 : state.duration;
+        }
+      } catch {}
       lens.style.opacity = "1";
       lens.dataset.crmPeripheralAcrylicPhase = "endpoint-held";
       return true;
@@ -2331,7 +2435,11 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     // The camera's normal warm path prepares both the selected and shared
     // acrylic geometry. Its shell has already been built in prior 100 Hz slices;
     // create the two real material owners in separate refreshes.
-    camera.prefetch(target, { mode:"selected-material" });
+    camera.prefetch(target, {
+      mode:"selected-material",
+      animate:false,
+      retain:false,
+    });
     restingAcrylicFrame = requestAnimationFrame(primeRestingPeripheralAcrylic);
     return homeAcrylicLens.status().phase === "prewarm";
   };
@@ -2891,6 +2999,10 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const target = event.target?.closest?.(".crm-home-bucket[data-viewport-module]");
     if (!target || !camera.surface()?.contains(target)) return;
     const key = moduleKeyOf(target);
+    // Desk transit routes by semantic workspace key. Publish the exact physical
+    // source tile first so duplicate Home placements keep their own camera
+    // origin and the reverse trip lands in the cell the user actually clicked.
+    routeModuleReturnTo(camera.layers?.()[0], key, target.dataset.tileId);
     event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation();
     if (camera.isTransitioning()) return;
     if (window.crmDeskTransit?.driveTo) void window.crmDeskTransit.driveTo(key);
@@ -3153,7 +3265,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       scheduleRestingAcrylic();
     });
   });
-  window.crmHome={setActive,isActive:()=>camera.isActive()&&!inactiveCommitDeferred,refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,setPrecomposedModulePromoted,promotePrecomposedModule,prepareModule:preparePrecomposedModule,
+  window.crmHome={setActive,isActive:()=>camera.isActive()&&!inactiveCommitDeferred,refresh:()=>{camera.layout();mountAll();requestPreviews(false);syncMotionSnapshot()},syncTileRecordsForCapture:syncHomeTileRecords,captureBaseline,captureDisplayedState,applyCaptureState,refreshDisplayedPreview,waitForPreviewSync,waitForModuleSettled,waitForModuleReady,waitForHandoff:()=>handoffPromise,noteModuleReady,recycleExpander,acceptPreview,setPrecomposedModulePromoted,promotePrecomposedModule,prepareModule:preparePrecomposedModule,
     endpointPreview:(key)=>{
       const preview=previews.get(key);
       const decoded=decodedPreviewSources.get(`${key}:exact`);

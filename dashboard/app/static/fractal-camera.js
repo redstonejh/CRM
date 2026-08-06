@@ -962,7 +962,15 @@
           ...(expander.__fractalBuildTiming || {}),
         });
         if (prefetchTimings.length > 24) prefetchTimings.splice(0, prefetchTimings.length - 24);
-        if (!animateWarmExpander) return true;
+        if (!animateWarmExpander || options.animate === false) {
+          // Material-only primes need the real, attached expander while their
+          // acrylic planes are measured, but keeping that transparent shell
+          // around would make it animate after the visible route has settled.
+          // Retire it immediately so the next genuine pointer intent can build
+          // and exercise its own reusable warm expander.
+          if (options.retain === false && warm === entry) dropWarm();
+          return true;
+        }
         // Exercise the exact transparent room texture through its compositor
         // scale while the pointer is merely hovering. The first visible camera
         // frame can then reuse an uploaded, transform-ready surface.

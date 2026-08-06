@@ -10,17 +10,23 @@ const MOTION_TARGET = { nativeHz: 100, maxFrameMs: 15, maxOver15Ms: 0, maxLongTa
 const HOME_PREVIEW_VERSION = 'filtered-home-v49';
 const HOME_PREVIEW_REST_FILTER = 'blur(0.65px)';
 let nativeRefreshCalibration = null;
-const readyHome = () => document.body.dataset.crmModule === 'home'
-  && !document.querySelector('.crm-home-surface')?.hidden
-  && document.querySelectorAll('.crm-home-grid > .crm-home-bucket').length === 6
-  && window.crmHome?.handStatus?.().ready
-  && window.crmHome?.motionStatus?.().ready
-  && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
+const readyHome = () => {
+  const canonicalModules = ['people', 'cases', 'planner', 'assignments', 'calendar', 'monitoring'];
+  const buckets = [...document.querySelectorAll('.crm-home-grid > .crm-home-bucket')];
+  const modules = new Set(buckets.map((bucket) => bucket.dataset.viewportModule || bucket.dataset.module));
+  return document.body.dataset.crmModule === 'home'
+    && !document.querySelector('.crm-home-surface')?.hidden
+    && buckets.length >= canonicalModules.length
+    && canonicalModules.every((module) => modules.has(module))
+    && window.crmHome?.handStatus?.().ready
+    && window.crmHome?.motionStatus?.().ready
+    && [...document.querySelectorAll('.crm-home-grid .crm-home-preview')].every((host) => {
     const image = host.querySelector(':scope > .crm-home-preview-foreground');
     return host.dataset.previewState === 'ready'
       && !!host.querySelector(':scope > .crm-home-preview-state[role="status"]')
       && image?.complete && image.naturalWidth > 0;
   });
+};
 
 async function frameRate(page, duration = 1200) {
   return page.evaluate((ms) => new Promise((resolve) => {
@@ -301,11 +307,14 @@ async function startEndpointProbe(page, label, room, direction) {
         const homeTitle = root?.querySelector?.('.crm-home-title-layer');
         const homeHand = root?.querySelector?.('.crm-home-priority-hand');
         const homeBuckets = root ? [...root.querySelectorAll('.crm-home-grid > .crm-home-bucket')] : [];
+        const homeModules = new Set(homeBuckets.map((bucket) => bucket.dataset.viewportModule || bucket.dataset.module));
+        const homeTilesReady = ['people', 'cases', 'planner', 'assignments', 'calendar', 'monitoring']
+          .every((module) => homeModules.has(module));
         const homeNodes = homeHandoff && root ? [homeGrid, ...root.querySelectorAll('.crm-home-grid > .crm-home-bucket, .crm-home-priority-hand, .crm-home-hand-card')].filter(Boolean) : [];
         const snapshot = root?.querySelector?.(':scope > .crm-home-motion-snapshot');
         const homeBucket = homeHandoff ? root?.querySelector?.('.crm-home-grid > .crm-home-bucket') : null;
         const handoffVariant = homeHandoff ? root?.querySelector?.(':scope > .crm-home-motion-variant.is-active-motion-variant') : null;
-        const homeMaterialsReady = homeHandoff && homeBuckets.length === 6
+        const homeMaterialsReady = homeHandoff && homeTilesReady
           && peripheralAcrylicMaterialReady
           && Number(peripheralStyle.opacity) > .99
           && homeBuckets.every((bucket) => {
@@ -332,9 +341,9 @@ async function startEndpointProbe(page, label, room, direction) {
         const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
         const incomingAverage = finiteIncoming.length ? average(finiteIncoming) : NaN;
         const outgoingAverage = finiteOutgoing.length ? average(finiteOutgoing) : NaN;
-        const bucketsUnderpainted = homeBucketOpacities.length === 6
+        const bucketsUnderpainted = homeTilesReady
           && homeBucketOpacities.every((value) => value <= .01);
-        const bucketsOwned = homeBucketOpacities.length === 6
+        const bucketsOwned = homeTilesReady
           && homeBucketOpacities.every((value) => value >= .99);
         const outgoingOwned = finiteOutgoing.length === 3
           && finiteOutgoing.every((value) => value >= .99);
@@ -625,6 +634,10 @@ async function measurePeopleRailNative(page) {
       const acrylicClip = clip?.querySelector(':scope > .tk-zone-hacrylic-clip');
       const lens = acrylicClip?.querySelector(':scope > .tk-zone-hacrylic-lens');
       const clipRect = clip?.getBoundingClientRect();
+      const offscreen = buckets.filter((bucket) => {
+        const rect = bucket.getBoundingClientRect();
+        return !!clipRect && (rect.right <= clipRect.left || rect.left >= clipRect.right);
+      });
       const trackStyle = track && getComputedStyle(track);
       const lensStyle = lens && getComputedStyle(lens);
       const acrylicClipStyle = acrylicClip && getComputedStyle(acrylicClip);
@@ -650,6 +663,7 @@ async function measurePeopleRailNative(page) {
         lodMutations,
         faceMutations,
         parked:parked.length,
+        offscreen:offscreen.length,
         nonEmpty:nonEmpty.length,
         readyTops:readyTops.length,
         totalCards:theater.querySelectorAll('.tk-zcard').length,
@@ -664,7 +678,7 @@ async function measurePeopleRailNative(page) {
           && buckets.every((bucket) => getComputedStyle(bucket).backdropFilter === 'none'),
         clipped:getComputedStyle(clip).overflowX === 'hidden'
           && trackStyle?.willChange.includes('transform')
-          && parked.every((bucket) => {
+          && offscreen.every((bucket) => {
             const style = getComputedStyle(bucket);
             const rect = bucket.getBoundingClientRect();
             return style.visibility === 'visible'
@@ -678,8 +692,8 @@ async function measurePeopleRailNative(page) {
   }));
   if (motion.frames < 85 || motion.fps < 98.5 || motion.p95 > 12.5
     || motion.max > 21 || motion.over15 > 1 || motion.longTasks.length
-    || motion.lodMutations < 1 || motion.lodMutations > 28
-    || motion.faceMutations !== 0 || motion.parked < 6
+    || motion.lodMutations !== 0
+    || motion.faceMutations !== 0 || motion.parked !== 0 || motion.offscreen < 6
     || motion.readyTops !== motion.nonEmpty
     || motion.deferred !== motion.totalCards - motion.nonEmpty
     || !motion.sharedLens || !motion.clipped) {
@@ -899,6 +913,15 @@ async function main() {
   await page.waitForLoadState('load');
   await page.waitForFunction(() => !document.documentElement.hasAttribute('data-dashboard-booting') && window.crmWorkspaces, null, { timeout: 30000 });
   await page.evaluate(() => window.crmWorkspaces.setActive('home'));
+  // A prior interrupted run can leave this test-owned duplicate in the
+  // persistent Electron profile. Remove only that fixture; real user-created
+  // Home tiles remain valid and the readiness checks deliberately allow them.
+  await page.evaluate(async (tileId) => {
+    if (window.crmHome?.canRemoveTile?.(tileId)) {
+      window.crmHome.removeTile(tileId);
+      await window.crmHome.waitForPreviewSync?.();
+    }
+  }, 'native-duplicate-people-tile');
   try { await page.waitForFunction(readyHome, null, { timeout: 60000 }); }
   catch (error) {
     const bootState = await page.evaluate(async () => ({
@@ -951,7 +974,7 @@ async function main() {
       const style = getComputedStyle(bucket);
       const titleStyle = title && getComputedStyle(title);
       const rect = bucket.getBoundingClientRect();
-      return { key: bucket.dataset.module, version: host.dataset.previewVersion, images: host.querySelectorAll(':scope > img').length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
+      return { key: bucket.dataset.viewportModule || bucket.dataset.module, tileId:bucket.dataset.tileId, version: host.dataset.previewVersion, images: host.querySelectorAll(':scope > img').length, tag: image?.tagName, width: image?.naturalWidth, height: image?.naturalHeight,
         renderedWidth:rect.width, renderedHeight:rect.height, aspectError:Math.abs(rect.width / rect.height - image.naturalWidth / image.naturalHeight),
         loader: { exists: !!loader, role: loader?.getAttribute('role'), hiddenAtReady: loader ? getComputedStyle(loader).visibility === 'hidden' : false },
         variant: image?.dataset.previewVariant, previewFilter: getComputedStyle(image).filter, titleOpacity: Number(getComputedStyle(titleGlass).opacity),
@@ -1005,8 +1028,11 @@ async function main() {
     },
     drag: (() => { const node = document.querySelector('.app-window-drag-region'); const style = getComputedStyle(node); return { region: style.webkitAppRegion, top: document.elementsFromPoint(520,20)[0] === node }; })(),
   }));
-  if (startup.buckets.length !== 6 || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.shift || item.liveTrees)) {
-    throw new Error(`Home is not six inert native captures: ${JSON.stringify(startup)}`);
+  const canonicalHomeModules = ['people', 'cases', 'planner', 'assignments', 'calendar', 'monitoring'];
+  if (startup.buckets.length < canonicalHomeModules.length
+    || canonicalHomeModules.some((module) => !startup.buckets.some((item) => item.key === module))
+    || startup.buckets.some((item) => item.version !== HOME_PREVIEW_VERSION || item.images !== 1 || item.tag !== 'IMG' || item.width < 880 || item.height < 600 || item.aspectError > .01 || item.shift || item.liveTrees)) {
+    throw new Error(`Home is not a complete set of inert native captures: ${JSON.stringify(startup)}`);
   }
   if (startup.buckets.some((item) => item.variant !== 'filtered' || !item.previewFilter.includes(HOME_PREVIEW_REST_FILTER)
     || !item.loader.exists || item.loader.role !== 'status' || !item.loader.hiddenAtReady
@@ -1015,8 +1041,8 @@ async function main() {
     throw new Error(`Home tiles do not rest with filtered previews and emphasized titles: ${JSON.stringify(startup.buckets)}`);
   }
   if (startup.homeLayers.levels !== 1 || startup.homeLayers.hands !== 1
-    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== 6
-     || !startup.homeLayers.rootWillChange.includes('transform') || startup.homeLayers.snapshots !== 1 || startup.homeLayers.motionVariants !== 6 || startup.homeLayers.snapshotDisplay !== 'none'
+    || startup.homeLayers.cards !== startup.homeLayers.uniqueCards || startup.homeLayers.titleLayers !== 1 || startup.homeLayers.titles !== startup.buckets.length
+     || !startup.homeLayers.rootWillChange.includes('transform') || startup.homeLayers.snapshots !== 1 || startup.homeLayers.motionVariants !== startup.buckets.length || startup.homeLayers.snapshotDisplay !== 'none'
     || startup.homeLayers.sceneBackdrops !== 0 || startup.homeLayers.workspaceBackdrops !== 1 || startup.homeLayers.backgroundMode !== 'shared'
     || startup.homeLayers.sharedAcrylic.hosts !== 1 || startup.homeLayers.sharedAcrylic.lenses !== 1
     || !startup.homeLayers.sharedAcrylic.backdrop.includes('blur(26px)')
@@ -1159,7 +1185,7 @@ async function main() {
     nativeDrag.syntheticMissAllowed = false;
     await app.evaluate(({ BrowserWindow }, position) => BrowserWindow.getAllWindows().find((win) => win.isVisible())?.setPosition(position[0], position[1]), dragStart);
   }
-  const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length===6&&after.length===6&&before.every((node,index)=>node===after[index]); });
+  const sameNodes = await page.evaluate(() => { const selector='.crm-home-grid > .crm-home-bucket .crm-home-preview > .crm-home-preview-foreground'; const before=[...document.querySelectorAll(selector)]; for(let i=0;i<20;i+=1)window.crmHome.refresh(); const after=[...document.querySelectorAll(selector)]; return before.length>=6&&after.length===before.length&&before.every((node,index)=>node===after[index]); });
   if (!sameNodes) throw new Error('Home refresh recreated screenshot objects');
   const homeComposition = await page.evaluate(() => {
     const grid = document.querySelector('.crm-home-grid');
@@ -1189,7 +1215,7 @@ async function main() {
       ),
     };
   });
-  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== 6 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
+  if (motionSnapshotResult?.snapshot?.version !== HOME_PREVIEW_VERSION || motionSnapshotResult?.snapshot?.backgroundMode !== 'shared' || motionSnapshotResult?.snapshot?.materialMode !== 'live-peripheral-acrylic' || motionVariants.length !== (motionLayout.buckets || []).length || motionVariants.length < 6 || motionVariantCutouts.some((item)=>item.maxAlpha>2) || homeMotionAlpha.transparentRatio < .2 || homeMotionAlpha.partialRatio < .02) {
     throw new Error(`Home transition texture is not the current cached cutout architecture: ${JSON.stringify({ snapshot:motionSnapshotResult?.snapshot && { version:motionSnapshotResult.snapshot.version, backgroundMode:motionSnapshotResult.snapshot.backgroundMode, materialMode:motionSnapshotResult.snapshot.materialMode, foregroundBounds:motionSnapshotResult.snapshot.foregroundBounds }, alpha:homeMotionAlpha })}`);
   }
   const homeFps = await frameRate(page); if (homeFps < 45) throw new Error(`Home FPS ${homeFps}`);
@@ -1490,6 +1516,7 @@ async function main() {
       const peripheralState=window.crmHome?.peripheralAcrylicState?.();
       const peripheralTimes=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
       const peripheralStarts=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
+      const peripheralDuration=Number(peripheralClipAnimation?.effect?.getTiming?.().duration);
       return{
         frame:expander?.dataset.fractalFrame||'',
         lid,lens,lensHost,edge:frame,exact:material(exact),peripheralLens,peripheralClip,peripheralState,
@@ -1502,7 +1529,12 @@ async function main() {
         sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&exactHidden&&!!expander?.querySelector('.crm-home-preview-foreground'),
         tintCopied,
         frameCopied,
-        peripheralTimelineAligned:!!peripheralClipAnimation&&aligned(peripheralTimes)&&aligned(peripheralStarts),
+        peripheralTimelineAligned:!!peripheralClipAnimation
+          &&aligned(peripheralTimes)&&aligned(peripheralStarts)
+          &&peripheralClipAnimation.playbackRate===1,
+        peripheralTimes,
+        peripheralStarts,
+        peripheralDuration,
         peripheralAcrylic:!!peripheralLens&&!!peripheralClip
           &&peripheralHost?.parentElement===surface
           &&surface?.classList.contains('crm-home-peripheral-acrylic-active')
@@ -1751,6 +1783,7 @@ async function main() {
       const peripheralState=window.crmHome?.peripheralAcrylicState?.();
       const peripheralTimes=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.currentTime==null?NaN:Number(animation.currentTime));
       const peripheralStarts=[transformAnimation,peripheralClipAnimation].map((animation)=>animation?.startTime==null?NaN:Number(animation.startTime));
+      const peripheralDuration=Number(peripheralClipAnimation?.effect?.getTiming?.().duration);
       return{
         frame:expander?.dataset.fractalFrame||'',
         lid,lens,lensHost,edge:frame,exact:material(exact),peripheralLens,peripheralClip,peripheralState,
@@ -1763,7 +1796,15 @@ async function main() {
         sharedWallpaper:document.querySelectorAll('body>.workspace-photo-backdrop:not([hidden])').length===1&&exactHidden&&!!expander?.querySelector('.crm-home-preview-foreground'),
         tintCopied,
         frameCopied,
-        peripheralTimelineAligned:!!peripheralClipAnimation&&aligned(peripheralTimes)&&aligned(peripheralStarts),
+        peripheralTimelineAligned:!!peripheralClipAnimation
+          &&peripheralTimes.every(Number.isFinite)&&peripheralStarts.every(Number.isFinite)
+          &&Number.isFinite(peripheralDuration)
+          &&Math.abs(peripheralTimes[0]+peripheralTimes[1]-peripheralDuration)<=1.5
+          &&Math.abs(peripheralStarts[1]-peripheralStarts[0]-peripheralDuration)<=1.5
+          &&peripheralClipAnimation.playbackRate===-1,
+        peripheralTimes,
+        peripheralStarts,
+        peripheralDuration,
         peripheralAcrylic:!!peripheralLens&&!!peripheralClip
           &&peripheralHost?.parentElement===surface
           &&surface?.classList.contains('crm-home-peripheral-acrylic-active')
@@ -1792,7 +1833,7 @@ async function main() {
     await page.evaluate(()=>window.__homeDrive); await page.waitForFunction(readyHome,null,{timeout:15000});
     const outboundEndpoint=await finishEndpointProbe(page,`out-${room.key}`);
     assertHomeFade(`${room.key} outbound visual`,outboundEndpoint,'out');
-    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||!outboundEndpoint.sawHomeMaterialMatch||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<8||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.homeReleaseFrames<8||outboundEndpoint.homeMatchFrames<7||outboundEndpoint.homeCommitFrames<1||outboundEndpoint.homeReleaseFirstIncoming>.2||outboundEndpoint.homeReleaseLastIncoming<.99||outboundEndpoint.homeReleaseFirstOutgoing<.99||outboundEndpoint.homeReleaseLastOutgoing>.01||outboundEndpoint.homeReleaseFirstSharp<.99||outboundEndpoint.homeReleaseLastSharp>.01||outboundEndpoint.homeReleaseFirstRestingFilter>.01||outboundEndpoint.homeReleaseLastRestingFilter<.99||outboundEndpoint.homeReleaseDistinctFilterBlends<6||outboundEndpoint.homeReleaseFilterBlendFloor<.98||outboundEndpoint.homeReleaseFilterBlendCeiling>1.02||!outboundEndpoint.homeReleaseMonotonic||outboundEndpoint.homeReleaseCoverageFloor<.99||!outboundEndpoint.homeReleaseFullOwnerEveryFrame||!outboundEndpoint.homeMatchCoveredEveryFrame||!outboundEndpoint.homeCommitCoveredEveryFrame||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.homeCommitting||outboundEndpoint.final.homeSelectedAcrylicPhase!=='parked'||outboundEndpoint.final.homePeripheralAcrylicPhase!=='parked'||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not match and atomically commit to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
+    if(outboundEndpoint.hadVeil||!outboundEndpoint.homePrecomposed||!outboundEndpoint.sawHomeHandoff||!outboundEndpoint.sawHomeMaterialMatch||outboundEndpoint.snapshotVisible||!outboundEndpoint.peripheralAcrylicEveryFrame||outboundEndpoint.endpointFrames<8||outboundEndpoint.endpointSignatures!==1||!outboundEndpoint.endpointShadowsReady||outboundEndpoint.endpointShadowSignatures!==1||!outboundEndpoint.endpointHomeMaterialsReady||!outboundEndpoint.endpointOwnersContinuous||!outboundEndpoint.endpointPeripheralAcrylicReady||outboundEndpoint.homeReleaseFrames<8||outboundEndpoint.homeMatchFrames<7||outboundEndpoint.homeCommitFrames<1||outboundEndpoint.homeReleaseFirstIncoming>.2||outboundEndpoint.homeReleaseLastIncoming<.99||outboundEndpoint.homeReleaseFirstOutgoing<.99||outboundEndpoint.homeReleaseLastOutgoing>.01||outboundEndpoint.homeReleaseFirstSharp<.9||outboundEndpoint.homeReleaseLastSharp>.01||outboundEndpoint.homeReleaseFirstRestingFilter>.1||outboundEndpoint.homeReleaseLastRestingFilter<.99||outboundEndpoint.homeReleaseDistinctFilterBlends<6||outboundEndpoint.homeReleaseFilterBlendFloor<.98||outboundEndpoint.homeReleaseFilterBlendCeiling>1.02||!outboundEndpoint.homeReleaseMonotonic||outboundEndpoint.homeReleaseCoverageFloor<.99||!outboundEndpoint.homeReleaseFullOwnerEveryFrame||!outboundEndpoint.homeMatchCoveredEveryFrame||!outboundEndpoint.homeCommitCoveredEveryFrame||outboundEndpoint.final.homeHandoff||outboundEndpoint.final.homeReleasing||outboundEndpoint.final.homeCommitting||outboundEndpoint.final.homeSelectedAcrylicPhase!=='parked'||outboundEndpoint.final.homePeripheralAcrylicPhase!=='resting'||outboundEndpoint.final.snapshotDisplay!=='none')throw new Error(`${room.key} outbound did not match and atomically commit to precomposed Home: ${JSON.stringify(outboundEndpoint)}`);
     const outboundStability=await sampleLayoutStability(page,'.crm-home-surface:not([hidden])');
     await page.waitForFunction(({key,before})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);return status?.state==='ready'&&status.capturedAt>before;},{key:room.key,before},{timeout:60000});
     const synchronizedPreview=await page.evaluate(async({key,token})=>{const status=window.crmHome.previewStatus().find((item)=>item.key===key);const preview=(await window.crmHomePreviews.list()).previews.find((item)=>item.key===key);const host=document.querySelector(`.crm-home-bucket[data-module="${key}"] .crm-home-preview`);const image=host?.querySelector(':scope > .crm-home-preview-foreground');return{after:status?.capturedAt||0,state:status?.state,sameNode:image?.dataset.liveSyncProbe===token,hostCapturedAt:Number(host?.dataset.capturedAt||0),viewState:preview?.viewState||null,exactSrc:preview?.exactSrc||''};},{key:room.key,token:previewNodeToken});
@@ -1934,8 +1975,15 @@ async function main() {
   if(handTicketEarly.module!=='home'||!handTicketEarly.busy||!handTicketEarly.moving||handTicketEarly.detail||handTicketEarly.recordWorld)throw new Error(`Home ticket opened before its world handoff: ${JSON.stringify(handTicketEarly)}`);
   await page.waitForFunction((ticketId)=>document.body.dataset.crmModule==='cases'&&!window.crmDeskTransit?.isBusy?.()&&!!document.querySelector('.ticket-detail-overlay:not([hidden]) .ticket-detail')&&[...document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-zcard,[data-crm-theater="tickets"]:not([hidden]) .tk-deck .tk-card')].some((card)=>card.dataset.id===ticketId&&card.style.visibility==='hidden'),handTicket.ticketId,{timeout:15000});
   const handTicketMotion=null;
-  const handTicketSettled=await page.evaluate((ticketId)=>({module:document.body.dataset.crmModule,details:document.querySelectorAll('.ticket-detail-overlay:not([hidden])').length,nativeSources:[...document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-zcard,[data-crm-theater="tickets"]:not([hidden]) .tk-deck .tk-card')].filter((card)=>card.dataset.id===ticketId).map((card)=>({className:card.className,visibility:card.style.visibility})),transient:document.querySelectorAll('.tk-external-source').length,recordWorld:!!document.querySelector('.record-world-shell:not([hidden])'),veil:document.querySelectorAll('.crm-transit-veil').length,expander:document.querySelectorAll('.crm-home-expander:not(.crm-home-warm)').length}),handTicket.ticketId);
-  if(handTicketSettled.module!=='cases'||handTicketSettled.details!==1||!handTicketSettled.nativeSources.some((source)=>source.visibility==='hidden')||handTicketSettled.transient||handTicketSettled.recordWorld||handTicketSettled.veil||handTicketSettled.expander)throw new Error(`Home ticket did not settle into one native reveal: ${JSON.stringify(handTicketSettled)}`);
+  const handTicketSettled=await page.evaluate((ticketId)=>{
+    const cachedSelector='.crm-home-expander.crm-home-recycled-expander,.crm-home-expander.crm-home-prebuilt-expander';
+    const cachedExpanders=[...document.querySelectorAll(cachedSelector)].map((expander)=>{
+      const style=getComputedStyle(expander);
+      return{className:expander.className,opacity:Number(style.opacity),visibility:style.visibility,pointerEvents:style.pointerEvents};
+    });
+    return{module:document.body.dataset.crmModule,details:document.querySelectorAll('.ticket-detail-overlay:not([hidden])').length,nativeSources:[...document.querySelectorAll('[data-crm-theater="tickets"]:not([hidden]) .tk-zcard,[data-crm-theater="tickets"]:not([hidden]) .tk-deck .tk-card')].filter((card)=>card.dataset.id===ticketId).map((card)=>({className:card.className,visibility:card.style.visibility})),transient:document.querySelectorAll('.tk-external-source').length,recordWorld:!!document.querySelector('.record-world-shell:not([hidden])'),veil:document.querySelectorAll('.crm-transit-veil').length,activeExpanders:document.querySelectorAll('.crm-home-expander:not(.crm-home-warm):not(.crm-home-recycled-expander):not(.crm-home-prebuilt-expander)').length,cachedExpanders,cachedExpandersInert:cachedExpanders.every((expander)=>expander.opacity<=.001&&expander.pointerEvents==='none')};
+  },handTicket.ticketId);
+  if(handTicketSettled.module!=='cases'||handTicketSettled.details!==1||!handTicketSettled.nativeSources.some((source)=>source.visibility==='hidden')||handTicketSettled.transient||handTicketSettled.recordWorld||handTicketSettled.veil||handTicketSettled.activeExpanders||!handTicketSettled.cachedExpandersInert)throw new Error(`Home ticket did not settle into one native reveal: ${JSON.stringify(handTicketSettled)}`);
   await page.screenshot({path:path.join(out,'ticket-hand-detail.png')});
   await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('.ticket-detail-overlay:not([hidden])'),null,{timeout:5000});
   await page.evaluate(()=>window.crmDeskTransit.driveTo('home'));await page.waitForFunction(readyHome,null,{timeout:15000});
@@ -2083,9 +2131,10 @@ async function main() {
   await page.click('[data-person-history-close]');
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:15000});
   const duplicateHomeTileId='native-duplicate-people-tile';
+  const canonicalHomeTileCount=await page.evaluate(()=>document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length);
   await page.evaluate((tileId)=>window.crmHome.createTile('people',{id:tileId,label:'People alternate view'}),duplicateHomeTileId);
-  await page.waitForFunction((tileId)=>document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===5
-    &&!!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),duplicateHomeTileId,{timeout:10000});
+  await page.waitForFunction(({tileId,expected})=>document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===expected
+    &&!!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),{tileId:duplicateHomeTileId,expected:canonicalHomeTileCount+1},{timeout:10000});
   await page.evaluate(()=>window.crmHome.waitForPreviewSync());
   const duplicateHomeSource=await page.$eval(`.crm-home-bucket[data-tile-id="${duplicateHomeTileId}"]`,(bucket)=>{
     const rect=bucket.getBoundingClientRect();
@@ -2118,16 +2167,17 @@ async function main() {
     button.click();
     requestAnimationFrame(()=>{
       const root=window.crmHomeCamera?.layers?.()[0];
-      const expander=document.querySelector('.crm-home-expander:not(.crm-home-warm)');
+      const expander=document.querySelector('.crm-home-expander.crm-home-contracting')
+        ||window.crmHomeCamera?.layers?.()[1];
       resolve({expanderTile:expander?.dataset.tileId||'',returnTile:root?.dataset.returnTileId||''});
     });
   }));
   if(duplicateHomeReturnStart.expanderTile!==duplicateHomeTileId||duplicateHomeReturnStart.returnTile!==duplicateHomeTileId){
     throw new Error(`Duplicate Home return targeted another copy: ${JSON.stringify(duplicateHomeReturnStart)}`);
   }
-  await page.waitForFunction((tileId)=>document.body.dataset.crmModule==='home'&&!window.crmDeskTransit?.isBusy?.()
-    &&document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===5
-    &&!!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),duplicateHomeTileId,{timeout:15000});
+  await page.waitForFunction(({tileId,expected})=>document.body.dataset.crmModule==='home'&&!window.crmDeskTransit?.isBusy?.()
+    &&document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===expected
+    &&!!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),{tileId:duplicateHomeTileId,expected:canonicalHomeTileCount+1},{timeout:15000});
   const duplicateHomeReturned=await page.evaluate((tileId)=>{
     const buckets=[...document.querySelectorAll('.crm-home-bucket[data-viewport-module="people"]')];
     const tile=buckets.find((bucket)=>bucket.dataset.tileId===tileId);
@@ -2143,11 +2193,31 @@ async function main() {
     throw new Error(`Duplicate Home tile did not return to its unchanged source cell: ${JSON.stringify({duplicateHomeSource,duplicateHomeReturned})}`);
   }
   await page.evaluate((tileId)=>window.crmHome.removeTile(tileId),duplicateHomeTileId);
-  await page.waitForFunction(readyHome,null,{timeout:15000});
+  await page.waitForFunction(({tileId,expected})=>document.body.dataset.crmModule==='home'
+    &&!window.crmDeskTransit?.isBusy?.()
+    &&document.querySelectorAll('.crm-home-grid>.crm-home-bucket').length===expected
+    &&!document.querySelector(`.crm-home-bucket[data-tile-id="${CSS.escape(tileId)}"]`),{tileId:duplicateHomeTileId,expected:canonicalHomeTileCount},{timeout:15000});
   await page.evaluate(()=>window.crmHome.waitForPreviewSync());
   const duplicateHomeTile={id:duplicateHomeTileId,source:duplicateHomeSource,retained:duplicateHomeRetained,returnStart:duplicateHomeReturnStart,returned:duplicateHomeReturned};
   const settledFps=await frameRate(page); if(settledFps<45)throw new Error(`Settled Home FPS ${settledFps}`);
-  await page.evaluate(()=>window.crmHome.waitForPreviewSync()); await sleep(100); const windowDetails=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).map((win)=>({id:win.id,url:win.webContents.getURL(),visible:win.isVisible(),loading:win.webContents.isLoading(),bounds:win.getBounds()}))); const windows=windowDetails.length; if(windows!==1)throw new Error(`${windows} BrowserWindows remain after preview synchronization: ${JSON.stringify(windowDetails)}`);
+  await page.evaluate(()=>window.crmHome.waitForPreviewSync()); await sleep(100);
+  const windowDetails=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter((win)=>!win.isDestroyed()).map((win)=>{
+    const url=win.webContents.getURL();
+    const role=url.includes('crmTilePreviewWorker=1')?'tile-preview'
+      :url.includes('crmPreviewWorker=1')?'home-preview':'app';
+    return{id:win.id,url,role,visible:win.isVisible(),loading:win.webContents.isLoading(),bounds:win.getBounds()};
+  }));
+  const windows=windowDetails.length;
+  const visibleWindows=windowDetails.filter((win)=>win.visible);
+  const hiddenWorkers=windowDetails.filter((win)=>!win.visible&&win.role!=='app');
+  const workerRoles=new Set(hiddenWorkers.map((win)=>win.role));
+  const appBounds=visibleWindows[0]?.bounds;
+  const retainedWorkerPoolValid=windowDetails.length===3&&visibleWindows.length===1
+    &&visibleWindows[0].role==='app'&&hiddenWorkers.length===2
+    &&workerRoles.has('home-preview')&&workerRoles.has('tile-preview')
+    &&windowDetails.every((win)=>!win.loading)
+    &&hiddenWorkers.every((win)=>win.bounds.width===appBounds?.width&&win.bounds.height===appBounds?.height);
+  if(!retainedWorkerPoolValid)throw new Error(`Retained preview worker pool is unbounded or visible: ${JSON.stringify(windowDetails)}`);
   const finalChrome=await page.evaluate(()=>{const drag=document.querySelector('.app-window-drag-region');return{drag:getComputedStyle(drag).webkitAppRegion,top:document.elementsFromPoint(520,20)[0]===drag,controls:document.querySelectorAll('.window-control-cluster .window-glass-control').length}});
   if(finalChrome.drag!=='drag'||!finalChrome.top||finalChrome.controls<3)throw new Error(`Chrome stale after camera cycles: ${JSON.stringify(finalChrome)}`);
   await page.click('.window-add-control');
@@ -2157,12 +2227,32 @@ async function main() {
     ids:[...document.querySelectorAll('#context-add-menu [data-context-add-action]')].map((item)=>item.dataset.contextAddAction),
     labels:[...document.querySelectorAll('#context-add-menu [data-context-add-action]')].map((item)=>item.querySelector('.context-add-action-label')?.textContent.trim()),
   }));
-  if(homeAddMenu.heading!=='Add to Home'||homeAddMenu.ids.length!==4||homeAddMenu.ids.some((id)=>!id.startsWith('home-tile-'))||homeAddMenu.labels.some((label)=>!/ tile$/i.test(label)))throw new Error(`Home add menu exposed an irrelevant object: ${JSON.stringify(homeAddMenu)}`);
+  const canonicalHomeAddIds=['home-tile-people','home-tile-cases','home-tile-planner','home-tile-assignments','home-tile-calendar','home-tile-monitoring'];
+  if(homeAddMenu.heading!=='Add to Home'
+    ||homeAddMenu.ids.length!==canonicalHomeAddIds.length
+    ||canonicalHomeAddIds.some((id)=>!homeAddMenu.ids.includes(id))
+    ||homeAddMenu.labels.some((label)=>!/ tile$/i.test(label))){
+    throw new Error(`Home add menu exposed an irrelevant object: ${JSON.stringify(homeAddMenu)}`);
+  }
   await page.keyboard.press('Escape');
   await page.click('.window-close-control');await sleep(250);
-  const trayState=await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find((item)=>!item.isDestroyed());return{hidden:!!win&&!win.isVisible(),minimized:!!win&&win.isMinimized(),live:!!win&&!win.isDestroyed()}});
+  const trayState=await app.evaluate(({BrowserWindow})=>{
+    const win=BrowserWindow.getAllWindows().find((item)=>{
+      if(item.isDestroyed())return false;
+      const url=item.webContents.getURL();
+      return !url.includes('crmPreviewWorker=1')&&!url.includes('crmTilePreviewWorker=1');
+    });
+    return{hidden:!!win&&!win.isVisible(),minimized:!!win&&win.isMinimized(),live:!!win&&!win.isDestroyed()};
+  });
   if(!trayState.hidden||trayState.minimized||!trayState.live)throw new Error(`Close control did not hide the live window to tray: ${JSON.stringify(trayState)}`);
-  await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows().find((item)=>!item.isDestroyed());win?.show();win?.focus()});await sleep(250);
+  await app.evaluate(({BrowserWindow})=>{
+    const win=BrowserWindow.getAllWindows().find((item)=>{
+      if(item.isDestroyed())return false;
+      const url=item.webContents.getURL();
+      return !url.includes('crmPreviewWorker=1')&&!url.includes('crmTilePreviewWorker=1');
+    });
+    win?.show();win?.focus();
+  });await sleep(250);
   await Promise.all([page.waitForEvent('load',{timeout:10000}),page.click('.window-refresh-control')]);
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dashboard-booting')&&window.crmWorkspaces,null,{timeout:30000});
   await page.evaluate(()=>window.crmWorkspaces.setActive('home'));await page.waitForFunction(readyHome,null,{timeout:30000});

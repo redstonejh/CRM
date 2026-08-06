@@ -99,9 +99,12 @@
     let left = innerWidth - bounds.width - 42;
     let top = topEdge;
     if (anchorRect) {
+      const maxLeft = Math.max(edge, innerWidth - bounds.width - edge);
       const right = anchorRect.right + gap;
       const leftSide = anchorRect.left - gap - bounds.width;
-      left = right + bounds.width <= innerWidth - edge ? right : leftSide >= edge ? leftSide : Math.max(edge, Math.min(innerWidth - bounds.width - edge, anchorRect.left));
+      left = right >= edge && right <= maxLeft ? right
+        : leftSide >= edge && leftSide <= maxLeft ? leftSide
+          : Math.max(edge, Math.min(maxLeft, anchorRect.left));
       top = Math.max(topEdge, Math.min(innerHeight - bounds.height - bottomEdge, anchorRect.top));
     }
     panel.style.left = `${Math.round(left)}px`;

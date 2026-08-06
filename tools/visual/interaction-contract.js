@@ -1660,14 +1660,14 @@ async function main() {
     const geometry=buckets.map((bucket)=>{const br=bucket.getBoundingClientRect(),bar=bucket.querySelector('.tk-zsb')?.getBoundingClientRect(),card=bucket.querySelector('.tk-zcard')?.getBoundingClientRect();return{lod:bucket.dataset.zoneLod,on:bucket.querySelector('.tk-zsb')?.classList.contains('is-on'),hasCard:!!card,inset:bar?br.right-bar.right:null,gap:bar&&card?bar.left-card.right:null};});
     return { ok:geometry.length===17&&geometry.every((item)=>item.lod==='parked'||(!item.hasCard&&!item.on)||(item.inset>=9&&item.inset<=13&&Math.abs(item.inset-item.gap)<=1&&item.on)), detail:JSON.stringify(geometry) };
   });
-  await check('People LOD paints only the continuous viewport and parks the rest', () => {
+  await check('People LOD keeps one stable hydrated face per bucket and defers the rest', () => {
     const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const cards=[...theater.querySelectorAll('.tk-zcard')]; const deferred=cards.filter((card)=>card.classList.contains('is-lazy-shell')); const full=cards.filter((card)=>!card.classList.contains('is-lazy-shell'));
-    const perf=window.peopleCards.performanceState(); const buckets=[...theater.querySelectorAll('.tk-zone')]; const nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')); const parked=buckets.filter((bucket)=>bucket.dataset.zoneLod==='parked'); const active=buckets.length-parked.length; const clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),acrylicClip=clip?.querySelector(':scope > .tk-zone-hacrylic-clip'),lens=acrylicClip?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),lensStyle=lens&&getComputedStyle(lens),acrylicClipStyle=acrylicClip&&getComputedStyle(acrylicClip),trackMatrix=new DOMMatrix(getComputedStyle(track).transform),acrylicClipMatrix=new DOMMatrix(acrylicClipStyle?.transform||''),lensMatrix=new DOMMatrix(lensStyle?.transform||'');
+    const perf=window.peopleCards.performanceState(); const buckets=[...theater.querySelectorAll('.tk-zone')]; const nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')); const parked=buckets.filter((bucket)=>bucket.dataset.zoneLod==='parked'); const clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),acrylicClip=clip?.querySelector(':scope > .tk-zone-hacrylic-clip'),lens=acrylicClip?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),offscreen=buckets.filter((bucket)=>{const rect=bucket.getBoundingClientRect();return !!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);}),lensStyle=lens&&getComputedStyle(lens),acrylicClipStyle=acrylicClip&&getComputedStyle(acrylicClip),trackMatrix=new DOMMatrix(getComputedStyle(track).transform),acrylicClipMatrix=new DOMMatrix(acrylicClipStyle?.transform||''),lensMatrix=new DOMMatrix(lensStyle?.transform||'');
     const readyTops=nonEmpty.filter((bucket)=>{const card=bucket.querySelector('.tk-zcard:last-child');return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');});
-    return { ok:cards.length===160&&active===10&&full.length===nonEmpty.length&&readyTops.length===nonEmpty.length&&deferred.length===cards.length-nonEmpty.length&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===7&&perf.theaterElements<1500
+    return { ok:cards.length===160&&parked.length===0&&offscreen.length>=7&&full.length===nonEmpty.length&&readyTops.length===nonEmpty.length&&deferred.length===cards.length-nonEmpty.length&&perf.deferredFaces===deferred.length&&perf.parkedBuckets===0&&perf.theaterElements<1500
       && deferred.every((card)=>!card.querySelector('.ticket-fields,.ticket-host'))&&getComputedStyle(clip).overflowX==='hidden'&&getComputedStyle(track).willChange.includes('transform')&&track.classList.contains('has-shared-zone-acrylic')
       && lensStyle?.backdropFilter.includes('blur')&&acrylicClipStyle?.clipPath!=='none'&&acrylicClip?.parentElement===clip&&lens?.parentElement===acrylicClip&&Math.abs(trackMatrix.e-acrylicClipMatrix.e)<1&&Math.abs(acrylicClipMatrix.e+lensMatrix.e)<1&&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none')
-      && parked.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);}), detail:JSON.stringify({deferred:deferred.length,full:full.length,readyTops:readyTops.length,nonEmpty:nonEmpty.length,parked:perf.parkedBuckets,elements:perf.theaterElements}) };
+      && offscreen.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);}), detail:JSON.stringify({deferred:deferred.length,full:full.length,readyTops:readyTops.length,nonEmpty:nonEmpty.length,parked:perf.parkedBuckets,offscreen:offscreen.length,elements:perf.theaterElements}) };
   });
   const peopleShell = await page.$eval('[data-crm-theater="people"] .tk-zcard.is-lazy-shell', (card) => { card.dataset.hydrationProbe='same-node'; return card.dataset.id; });
   await page.focus(`[data-crm-theater="people"] .tk-zcard[data-id="${peopleShell}"]`);
@@ -1699,14 +1699,76 @@ async function main() {
   await page.evaluate(() => window.crmHomePreviews?.waitForIdle?.());
   const companyLodMotion = await page.evaluate(() => new Promise((resolve) => {
     document.activeElement?.blur?.();
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const identity=theater.querySelector('.tk-zcard'); identity.dataset.companyLodIdentity='retained';
-    const mutations=[]; const observer=new MutationObserver((records)=>mutations.push(...records)); observer.observe(theater,{subtree:true,childList:true,attributes:true,attributeFilter:['data-zone-lod','data-face-deferred','class']});
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])');
+    const identity=theater.querySelector('.tk-zcard');
+    identity.dataset.companyLodIdentity='retained';
+    const mutations=[];
+    const observer=new MutationObserver((records)=>mutations.push(...records));
+    observer.observe(theater,{subtree:true,childList:true,attributes:true,attributeFilter:['data-zone-lod','data-face-deferred','class']});
     const deltas=[]; const longTasks=[]; let previous=performance.now(),started=previous;
-    const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration))); try{longObserver.observe({entryTypes:['longtask']});}catch{}
+    const longObserver=new PerformanceObserver((list)=>list.getEntries().forEach((entry)=>longTasks.push(entry.duration)));
+    try{longObserver.observe({entryTypes:['longtask']});}catch{}
     window.peopleCards.scrollZonesBy(9999);
-    const tick=(now)=>{deltas.push(now-previous);previous=now;if(now-started<900){requestAnimationFrame(tick);return;}observer.disconnect();longObserver.disconnect();const sorted=[...deltas].sort((a,b)=>a-b);const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')],full=[...theater.querySelectorAll('.tk-zone[data-zone-lod="full"]')],buckets=[...theater.querySelectorAll('.tk-zone')],nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard')),readyTops=nonEmpty.filter((bucket)=>{const card=bucket.querySelector('.tk-zcard:last-child');return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');}),clip=theater.querySelector('.tk-zone-hclip'),track=theater.querySelector('.tk-zone-htrack'),acrylicClip=clip?.querySelector(':scope > .tk-zone-hacrylic-clip'),lens=acrylicClip?.querySelector(':scope > .tk-zone-hacrylic-lens'),clipRect=clip?.getBoundingClientRect(),trackStyle=track&&getComputedStyle(track),lensStyle=lens&&getComputedStyle(lens),acrylicClipStyle=acrylicClip&&getComputedStyle(acrylicClip),trackMatrix=new DOMMatrix(trackStyle?.transform&&trackStyle.transform!=='none'?trackStyle.transform:undefined),acrylicClipMatrix=new DOMMatrix(acrylicClipStyle?.transform&&acrylicClipStyle.transform!=='none'?acrylicClipStyle.transform:undefined),lensMatrix=new DOMMatrix(lensStyle?.transform&&lensStyle.transform!=='none'?lensStyle.transform:undefined);const lodMutations=mutations.filter((record)=>record.type==='attributes'&&record.attributeName==='data-zone-lod').length;const faceMutations=mutations.filter((record)=>record.type==='childList'||(record.type==='attributes'&&record.target.closest?.('.tk-zcard'))).length;resolve({frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),over15:deltas.filter((value)=>value>15).length,longTasks,lodMutations,faceMutations,buckets:buckets.length,active:full.length,parked:parked.length,nonEmpty:nonEmpty.length,readyTops:readyTops.length,deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,totalCards:theater.querySelectorAll('.tk-zcard').length,sharedLens:track.classList.contains('has-shared-zone-acrylic')&&lensStyle?.backdropFilter.includes('blur')&&acrylicClipStyle?.clipPath!=='none'&&acrylicClip?.parentElement===clip&&lens?.parentElement===acrylicClip&&Math.abs(trackMatrix.e-acrylicClipMatrix.e)<1&&Math.abs(acrylicClipMatrix.e+lensMatrix.e)<1&&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none'),clipped:getComputedStyle(clip).overflowX==='hidden'&&trackStyle?.willChange.includes('transform')&&parked.every((bucket)=>{const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);}),identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained'});};requestAnimationFrame(tick);
+    const tick=(now)=>{
+      deltas.push(now-previous); previous=now;
+      if(now-started<900){requestAnimationFrame(tick);return;}
+      observer.disconnect(); longObserver.disconnect();
+      const sorted=[...deltas].sort((a,b)=>a-b);
+      const p95=sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]||0;
+      const parked=[...theater.querySelectorAll('.tk-zone[data-zone-lod="parked"]')];
+      const buckets=[...theater.querySelectorAll('.tk-zone')];
+      const nonEmpty=buckets.filter((bucket)=>bucket.querySelector('.tk-zcard'));
+      const readyTops=nonEmpty.filter((bucket)=>{
+        const card=bucket.querySelector('.tk-zcard:last-child');
+        return card&&!card.classList.contains('is-lazy-shell')&&!!card.querySelector('.ticket-fields');
+      });
+      const clip=theater.querySelector('.tk-zone-hclip');
+      const track=theater.querySelector('.tk-zone-htrack');
+      const acrylicClip=clip?.querySelector(':scope > .tk-zone-hacrylic-clip');
+      const lens=acrylicClip?.querySelector(':scope > .tk-zone-hacrylic-lens');
+      const clipRect=clip?.getBoundingClientRect();
+      const offscreen=buckets.filter((bucket)=>{
+        const rect=bucket.getBoundingClientRect();
+        return !!clipRect&&(rect.right<=clipRect.left||rect.left>=clipRect.right);
+      });
+      const trackStyle=track&&getComputedStyle(track);
+      const lensStyle=lens&&getComputedStyle(lens);
+      const acrylicClipStyle=acrylicClip&&getComputedStyle(acrylicClip);
+      const matrix=(style)=>new DOMMatrix(style?.transform&&style.transform!=='none'?style.transform:undefined);
+      const trackMatrix=matrix(trackStyle),acrylicClipMatrix=matrix(acrylicClipStyle),lensMatrix=matrix(lensStyle);
+      const lodMutations=mutations.filter((record)=>record.type==='attributes'&&record.attributeName==='data-zone-lod').length;
+      const faceMutations=mutations.filter((record)=>record.type==='childList'||(record.type==='attributes'&&record.target.closest?.('.tk-zcard'))).length;
+      resolve({
+        frames:deltas.length,fps:deltas.length*1000/(now-started),p95,max:Math.max(...deltas),
+        over15:deltas.filter((value)=>value>15).length,longTasks,lodMutations,faceMutations,
+        buckets:buckets.length,parked:parked.length,offscreen:offscreen.length,
+        nonEmpty:nonEmpty.length,readyTops:readyTops.length,
+        deferred:theater.querySelectorAll('.tk-zcard.is-lazy-shell').length,
+        totalCards:theater.querySelectorAll('.tk-zcard').length,
+        sharedLens:track.classList.contains('has-shared-zone-acrylic')
+          &&lensStyle?.backdropFilter.includes('blur')&&acrylicClipStyle?.clipPath!=='none'
+          &&acrylicClip?.parentElement===clip&&lens?.parentElement===acrylicClip
+          &&Math.abs(trackMatrix.e-acrylicClipMatrix.e)<1&&Math.abs(acrylicClipMatrix.e+lensMatrix.e)<1
+          &&buckets.every((bucket)=>getComputedStyle(bucket).backdropFilter==='none'),
+        clipped:getComputedStyle(clip).overflowX==='hidden'&&trackStyle?.willChange.includes('transform')
+          &&offscreen.every((bucket)=>{
+            const style=getComputedStyle(bucket),rect=bucket.getBoundingClientRect();
+            return style.visibility==='visible'&&style.contentVisibility==='visible'&&!!clipRect
+              &&(rect.right<=clipRect.left||rect.left>=clipRect.right);
+          }),
+        identity:identity.isConnected&&identity.dataset.companyLodIdentity==='retained',
+      });
+    };
+    requestAnimationFrame(tick);
   }));
-  await check('Company LOD crosses the continuous rail at native 100 Hz without face churn', (motion) => ({ ok:motion.fps>=98.5&&motion.p95<=12.5&&motion.max<=22&&motion.over15<=2&&motion.longTasks.length===0&&motion.lodMutations>0&&motion.lodMutations<=28&&motion.faceMutations===0&&motion.buckets===17&&motion.active>=8&&motion.active<=10&&motion.parked===motion.buckets-motion.active&&motion.readyTops===motion.nonEmpty&&motion.deferred===motion.totalCards-motion.nonEmpty&&motion.sharedLens&&motion.clipped&&motion.identity, detail:JSON.stringify(motion) }), companyLodMotion);
+  await check('Company LOD crosses the continuous rail at native 100 Hz without face churn', (motion) => ({
+    ok:motion.fps>=98.5&&motion.p95<=12.5&&motion.max<=21&&motion.over15<=1
+      &&motion.longTasks.length===0&&motion.lodMutations===0&&motion.faceMutations===0
+      &&motion.buckets===17&&motion.parked===0&&motion.offscreen>=6
+      &&motion.readyTops===motion.nonEmpty&&motion.deferred===motion.totalCards-motion.nonEmpty
+      &&motion.sharedLens&&motion.clipped&&motion.identity,
+    detail:JSON.stringify(motion),
+  }), companyLodMotion);
   await page.evaluate(() => window.peopleCards.scrollZonesBy(-9999, true)); await sleep(100);
   const companyRailBefore = await page.evaluate(() => { const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const clip=theater?.querySelector('.tk-zone-hclip'); const thumb=theater?.querySelector('.tk-zone-hth'); return{state:window.peopleCards.zoneScrollState(),thumbLeft:thumb?.getBoundingClientRect().left||0,scrollWidth:clip?.scrollWidth||0,clientWidth:clip?.clientWidth||0}; });
   await page.evaluate(() => {
@@ -1732,11 +1794,15 @@ async function main() {
   }, { before:companyRailBefore, point:companyGutterPoint });
   await page.evaluate(() => window.peopleCards.scrollZonesBy(9999, true));
   await sleep(160);
-  await check('The horizontal company rail reaches its far edge and transfers LOD cleanly', () => {
-    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastHydratable=[...buckets].reverse().find((bucket)=>bucket.querySelector('.tk-zcard')); const lastTop=lastHydratable?.querySelector('.tk-zcard:last-child');
+  await check('The horizontal company rail reaches its far edge without DOM LOD churn', () => {
+    const theater=document.querySelector('[data-crm-theater="people"]:not([hidden])'); const rail=theater?.querySelector('.tk-zone-hrail'); const clip=theater?.querySelector('.tk-zone-hclip'); const clipRect=clip?.getBoundingClientRect(); const buckets=[...(theater?.querySelectorAll('.tk-zone')||[])]; const state=window.peopleCards.zoneScrollState(); const first=buckets[0],last=buckets.at(-1); const lastHydratable=[...buckets].reverse().find((bucket)=>bucket.querySelector('.tk-zcard')); const lastTop=lastHydratable?.querySelector('.tk-zcard:last-child'); const firstRect=first?.getBoundingClientRect(),lastRect=last?.getBoundingClientRect(),lastHydratableRect=lastHydratable?.getBoundingClientRect();
     const leftShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-left')).opacity); const rightShadow=Number(getComputedStyle(rail.querySelector('.tk-zone-hshade-right')).opacity);
-    return { ok:Math.abs(state.x-state.min)<1&&first?.dataset.zoneLod==='parked'&&last?.dataset.zoneLod==='full'&&lastHydratable?.dataset.zoneLod==='full'&&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
-      detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],lod:[first?.dataset.zoneLod,last?.dataset.zoneLod,lastHydratable?.dataset.zoneLod]}) };
+    return { ok:Math.abs(state.x-state.min)<1&&!!clipRect&&firstRect?.right<=clipRect.left
+      &&lastRect?.right<=clipRect.right+1&&lastRect?.left<clipRect.right
+      &&lastHydratableRect?.right>clipRect.left&&lastHydratableRect?.left<clipRect.right
+      &&buckets.every((bucket)=>!bucket.hasAttribute('data-zone-lod'))
+      &&lastTop&&!lastTop.classList.contains('is-lazy-shell')&&leftShadow>.9&&rightShadow<.05,
+      detail:JSON.stringify({state,shadows:[leftShadow,rightShadow],first:firstRect&&[firstRect.left,firstRect.right],last:lastRect&&[lastRect.left,lastRect.right],lastHydratable:lastHydratableRect&&[lastHydratableRect.left,lastHydratableRect.right],clip:clipRect&&[clipRect.left,clipRect.right]}) };
   });
   const companyHistoryViewport = await page.evaluate(() => window.peopleCards.zoneScrollState());
   await page.evaluate(() => window.crmDeskTransit.driveTo('home'));
@@ -1779,6 +1845,20 @@ async function main() {
     });
   });
   await page.evaluate(() => window.crmCompanyDive.setActive(false));
+  await page.evaluate((id) => new Promise((resolve) => {
+    const card=document.querySelector(`[data-crm-theater="people"] .tk-zcard[data-id="${CSS.escape(id)}"]`);
+    const stage=card?.closest('.tk-zone[data-stage]')?.dataset.stage;
+    if(stage) window.peopleCards.scrollZoneIntoView(stage);
+    let stable=0,previous=NaN; const started=performance.now();
+    const settle=()=>{
+      const state=window.peopleCards.zoneScrollState();
+      stable=Math.abs(state.x-state.target)<.5&&Math.abs(state.x-previous)<.1?stable+1:0;
+      previous=state.x;
+      if(stable>=3||performance.now()-started>1500)resolve();
+      else requestAnimationFrame(settle);
+    };
+    requestAnimationFrame(settle);
+  }), 'ct_marta');
 
   await page.$eval('[data-crm-theater="people"] .tk-zcard[data-id="ct_marta"]', (card) => {
     const rect = card.getBoundingClientRect();
@@ -1807,11 +1887,13 @@ async function main() {
     if (!history || !shell || !source) return false;
     const rect = history.getBoundingClientRect(); const sourceRect = source.getBoundingClientRect(); const shellStyle = getComputedStyle(shell);
     const adjacent = Math.abs(rect.left - sourceRect.right) <= 12 || Math.abs(sourceRect.left - rect.right) <= 12;
+    const sourceVisible=sourceRect.right>0&&sourceRect.left<innerWidth&&sourceRect.bottom>0&&sourceRect.top<innerHeight;
     const kinds = new Set(events.map((event) => event.dataset.historyKind));
     const checks = {
       canonical: history.classList.contains('crm-menu-surface'),
       compact: rect.width <= 370 && rect.height <= 540,
-      adjacent,
+      anchored: !sourceVisible || adjacent,
+      inBounds: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
       clearHeading: history.querySelector('.crm-person-history-kicker')?.textContent.trim() === 'Conversation history',
       noRepeatedIdentity: !history.querySelector('.crm-person-history-title'),
       noSeedNoise: !events.some((event) => /^seed(?:ed|ing)?\b/i.test(event.querySelector('.crm-person-history-event-content')?.textContent.trim() || '')),
@@ -1854,7 +1936,9 @@ async function main() {
     if (!shell || !panel || !source || !reference) return false;
     const rect = panel.getBoundingClientRect(); const sourceRect = source.getBoundingClientRect(); const actual = getComputedStyle(panel); const expected = getComputedStyle(reference); const shellStyle = getComputedStyle(shell);
     const adjacent = Math.abs(rect.left - sourceRect.right) <= 12 || Math.abs(sourceRect.left - rect.right) <= 12;
-    return panel.classList.contains('crm-menu-surface') && rect.width <= 300 && rect.height <= 420 && adjacent
+    const sourceVisible=sourceRect.right>0&&sourceRect.left<innerWidth&&sourceRect.bottom>0&&sourceRect.top<innerHeight;
+    return panel.classList.contains('crm-menu-surface') && rect.width <= 300 && rect.height <= 420
+      &&(!sourceVisible||adjacent)&&rect.left>=0&&rect.top>=0&&rect.right<=innerWidth&&rect.bottom<=innerHeight
       && shellStyle.backgroundColor === 'rgba(0, 0, 0, 0)' && ['none', ''].includes(shellStyle.backdropFilter)
       && panel.querySelectorAll('.record-world-fact').length > 0 && panel.querySelectorAll('.record-world-fact').length <= 4
       && panel.querySelectorAll('.record-world-actions > button').length === 3

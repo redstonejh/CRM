@@ -117,7 +117,9 @@ async function main() {
   });
   await check('Home has no calendar control', () => {
     const control = document.querySelector('.crm-viewport-date');
-    return !!control && control.hidden && getComputedStyle(control).display === 'none';
+    const style = control && getComputedStyle(control);
+    return !!control && control.hidden && style.visibility === 'hidden'
+      && Number(style.opacity) === 0 && style.pointerEvents === 'none';
   });
   await check('Legacy status company tabs never mount inside the CRM shell', () => (
     document.body.dataset.appShell === 'crm'
@@ -226,11 +228,49 @@ async function main() {
   await page.hover('.crm-home-hand-trigger');
   await sleep(460);
   await check('Hovering the hand reveals every priority card', () => {
+    const hand = document.querySelector('.crm-home-priority-hand');
+    const trigger = hand?.querySelector('.crm-home-hand-trigger');
     const cards = [...document.querySelectorAll('.crm-home-hand-card.tk-card')];
-    const rects = cards.map((card) => { const rect=card.getBoundingClientRect(); return { top:rect.top,bottom:rect.bottom }; });
+    const rects = cards.map((card) => {
+      const rect = card.getBoundingClientRect();
+      const style = getComputedStyle(card);
+      return {
+        top:rect.top,
+        bottom:rect.bottom,
+        height:rect.height,
+        offsetHeight:card.offsetHeight,
+        transform:style.transform,
+        openY:style.getPropertyValue('--hand-open-y'),
+        restY:style.getPropertyValue('--hand-rest-y'),
+      };
+    });
+    const triggerRect = trigger?.getBoundingClientRect();
+    const triggerCenter = triggerRect
+      ? [triggerRect.left + triggerRect.width / 2, triggerRect.top + triggerRect.height / 2]
+      : [0, 0];
+    const hitStack = document.elementsFromPoint(...triggerCenter).slice(0, 8).map((node) => ({
+      tag:node.tagName,
+      className:typeof node.className === 'string' ? node.className : '',
+      pointerEvents:getComputedStyle(node).pointerEvents,
+      zIndex:getComputedStyle(node).zIndex,
+    }));
     return { ok:cards.length > 0 && rects.every((rect) => rect.top > 0 && rect.bottom <= innerHeight + 1)
-      && Math.min(...rects.map((rect) => rect.top)) < innerHeight - 150, detail:JSON.stringify(rects) };
+      && Math.min(...rects.map((rect) => rect.top)) < innerHeight - 150,
+      detail:JSON.stringify({
+        handHovered:hand?.matches(':hover'),
+        triggerHovered:trigger?.matches(':hover'),
+        triggerRect:triggerRect && [triggerRect.left, triggerRect.top, triggerRect.right, triggerRect.bottom],
+        triggerCenter,
+        hitStack,
+        rects,
+      }) };
   });
+  if (process.env.CRM_INTERACTION_HOME_ONLY === '1') {
+    if (errors.length) { console.log(`FAIL renderer exceptions — ${errors.join(' | ')}`); failures++; }
+    console.log(`\nHome interaction contract: ${failures ? `${failures} failure(s)` : 'PASSED'}.`);
+    await browser.close();
+    process.exit(failures ? 1 : 0);
+  }
   await page.evaluate(() => { window.__homeHandTargetTop = document.querySelector('.crm-home-hand-card.tk-card')?.getBoundingClientRect().top || 0; });
   await page.hover('.crm-home-hand-card.tk-card');
   await sleep(360);
@@ -1144,7 +1184,8 @@ async function main() {
       // material so a hovered replacement is still the same control species.
       && ['backgroundImage','backdropFilter','borderTopColor','borderRadius']
         .every((property) => faceStyle[property] === controlStyle[property]);
-    const ok = !!control && control.hidden && getComputedStyle(control).display === 'none'
+    const ok = !!control && control.hidden && controlStyle?.visibility === 'hidden'
+      && Number(controlStyle.opacity) === 0 && controlStyle.pointerEvents === 'none'
       && !!strip && !strip.classList.contains('crm-menu-surface') && getComputedStyle(strip).backgroundImage === 'none'
       // The pointer that opened Calendar remains over the replacement face,
       // so the canonical top-control hover press may reduce 46px to 45.31px.

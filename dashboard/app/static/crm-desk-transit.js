@@ -78,6 +78,7 @@
         display:grid!important;opacity:1!important;
         transform:translateX(-50%) translateY(calc(100% + 36px)) translateZ(0)!important;
         pointer-events:none!important;will-change:transform}
+      .crm-module-switch[hidden]>*{pointer-events:none!important}
       .crm-module-switch[data-crm-transit-nav-entering][hidden]{
         display:grid!important;opacity:1!important}
       .crm-module-switch[data-crm-transit-nav-entering]{

@@ -35,7 +35,10 @@
     if (document.getElementById("crm-viewport-date-styles")) return;
     const style = document.createElement("style"); style.id = "crm-viewport-date-styles"; style.textContent = `
       .crm-viewport-date{appearance:none;box-sizing:border-box;position:fixed;z-index:9400;left:50%;top:12px;translate:-50% 0;width:46px;height:46px;padding:6px 0 3px;color:rgba(245,249,255,.84);display:grid;grid-template-rows:9px 1fr;place-items:center;cursor:pointer;font:700 var(--crm-type-micro,9px)/1 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;-webkit-app-region:no-drag}
-      .crm-viewport-date[hidden]{display:none}
+      /* Keep the fixed date control in layout while it is semantically hidden.
+         Switching display:none off at a room boundary invalidates the complete
+         viewport layout even though this control never participates in flow. */
+      .crm-viewport-date[hidden]{display:grid!important;visibility:hidden;opacity:0;pointer-events:none}
       .crm-viewport-date:before,.crm-viewport-date-rings{display:none}
       .crm-viewport-date-month{text-transform:uppercase;font-size:7px;letter-spacing:.08em;opacity:.62}.crm-viewport-date-day{align-self:start;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.04em}
     `; document.head.appendChild(style);

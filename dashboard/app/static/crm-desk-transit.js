@@ -98,6 +98,12 @@
         visibility:hidden!important}
       .crm-home-surface[data-crm-transit-cover][hidden]>.crm-home-expander{
         visibility:visible!important}
+      /* The body-level endpoint bridge is the exact visible frame while Home
+         returns to its retained level-zero topology. Masking that offscreen
+         property-tree rewrite keeps Viz from submitting a duplicate full-size
+         Home frame; the parked bitmap is restored before the mask is removed. */
+      html body .crm-home-surface[data-crm-transit-retirement-masked]{
+        visibility:hidden!important}
       /* A first-run browser/Electron session may not have decoded the exact
          room capture yet. Its fallback is a real opaque copy of the unchanged
          workspace backdrop with the canonical neutral bucket tint—not the
@@ -591,6 +597,27 @@
       ? stage.finalDestinationLayers
       : destinationLayers),
   });
+  const traceStagePoint = (stage, point) => {
+    if (!stage) return point;
+    if (window.__crmDeskPerformanceTrace === true) {
+      performance.mark(`crm-desk-transit:${stage.sequence}:${point}`);
+    }
+    return point;
+  };
+  const setStagePhase = (stage, phase) => {
+    if (!stage) return phase;
+    stage.phase = phase;
+    traceStagePoint(stage, phase);
+    return phase;
+  };
+  const markInteractionReady = (stage) => {
+    if (!stage || stage.interactionReadyAt) return false;
+    stage.interactionReadyAt = performance.now();
+    document.dispatchEvent(new CustomEvent("crm:desk-interaction-ready", {
+      detail:{ key:stage.key, sequence:stage.sequence, phase:stage.phase },
+    }));
+    return true;
+  };
   const holdProbePhase = async (stage, phase) => {
     const detail = phaseDetail(stage, phase);
     document.dispatchEvent(new CustomEvent("crm:desk-transit-phase", { detail }));
@@ -740,6 +767,12 @@
   };
 
   const primeEndpointRaster = async (sourceOrExpander, key = "", capturedAt = "") => {
+    if (activeDive?.key === key
+      && activeDive.endpointBridgeReady
+      && activeDive.coverBridge?.isConnected
+      && activeDive.coverRaster?.isConnected) {
+      return true;
+    }
     const host = sourceOrExpander instanceof Element
       ? (sourceOrExpander.matches?.(".crm-home-preview")
         ? sourceOrExpander
@@ -781,13 +814,31 @@
     let bridgeRaster = null;
     if (raster instanceof HTMLImageElement) {
       const source = raster.currentSrc || raster.src;
-      const loaded = await loadEndpointBridgeImage(source, {
-        key:stage.key,
-        capturedAt:stage.originalCoverHost?.dataset?.capturedAt || "",
-        mode:stage.coverMode || "exact",
-      });
-      bridge = loaded?.bridge;
-      bridgeRaster = loaded?.raster;
+      const retainedRaster = bridge.querySelector(":scope > img.crm-home-endpoint-bridge-raster");
+      const retainedSource = retainedRaster?.currentSrc || retainedRaster?.src || "";
+      const retainedKey = `${stage.key}|`;
+      // Pointer/programmatic intent already decoded and uploaded this exact
+      // endpoint before motion. The expander and preview can carry different
+      // capture timestamps while referencing the same pixels; source + module
+      // are the authoritative identity here. Reusing the retained image avoids
+      // a second decode and two full-screen upload paints during the camera.
+      if (bridge.dataset.crmEndpointRasterReady === "true"
+        && bridge.dataset.crmEndpointIdentity?.startsWith(retainedKey)
+        && retainedRaster?.complete
+        && retainedRaster.naturalWidth > 0
+        && retainedSource === source) {
+        parkEndpointBridge(bridge);
+        bridge.dataset.crmEndpointBridge = stage.coverMode || "exact";
+        bridgeRaster = retainedRaster;
+      } else {
+        const loaded = await loadEndpointBridgeImage(source, {
+          key:stage.key,
+          capturedAt:stage.originalCoverHost?.dataset?.capturedAt || "",
+          mode:stage.coverMode || "exact",
+        });
+        bridge = loaded?.bridge;
+        bridgeRaster = loaded?.raster;
+      }
     } else {
       parkEndpointBridge(bridge);
       bridge.dataset.crmEndpointBridge = stage.coverMode || "fallback";
@@ -814,18 +865,20 @@
       && bridgeRaster.isConnected;
   };
 
-  const runEndpointMaterialBlend = async (stage) => {
+  const runEndpointMaterialBlend = async (stage, delayMs = 0) => {
     const bridge = stage?.coverBridge;
     if (!bridge?.isConnected || stage.sequence !== activeDive?.sequence) return false;
+    const delay = Math.max(0, Number(delayMs) || 0);
     bridge.getAnimations?.().forEach((animation) => animation.cancel());
     bridge.style.transition = "none";
     bridge.style.opacity = String(ENDPOINT_PARKED_OPACITY);
-    stage.endpointBlendStartedAt = performance.now();
+    stage.endpointBlendStartedAt = performance.now() + delay;
     stage.phase = "endpoint-material-blend";
     const animation = bridge.animate(
       [{ opacity:ENDPOINT_PARKED_OPACITY }, { opacity:1 }],
       {
         duration:ENDPOINT_MATERIAL_BLEND_MS,
+        delay,
         easing:ENDPOINT_MATERIAL_BLEND_EASE,
         fill:"both",
       },
@@ -845,8 +898,13 @@
     if (typeof window.__crmDeskTransitProbe?.hold === "function") {
       await new Promise((resolve) => {
         const sample = async () => {
-          const current = Number(animation.currentTime) || 0;
-          if (current >= ENDPOINT_MATERIAL_BLEND_MS / 2 || animation.playState === "finished") {
+          const progress = Number(animation.effect?.getComputedTiming?.().progress);
+          if (progress >= .5 || animation.playState === "finished") {
+            // The production animation is compositor-driven. If an instrumented
+            // main thread cannot sample until later, seek the probe back to the
+            // exact midpoint before pausing so pixel verification observes the
+            // intended 50/50 composition rather than a near-finished frame.
+            animation.currentTime = delay + ENDPOINT_MATERIAL_BLEND_MS / 2;
             animation.pause();
             stage.phase = "endpoint-material-blend-mid";
             await holdProbePhase(stage, "endpoint-material-blend-mid");
@@ -885,7 +943,7 @@
       && Number(getComputedStyle(bridge).opacity) >= .999;
   };
 
-  const blendEndpointMaterial = (stage) => {
+  const blendEndpointMaterial = (stage, delayMs = 0) => {
     if (!stage) return Promise.resolve(false);
     if (stage.endpointBlendFinishedAt
       && stage.coverBridge?.isConnected
@@ -893,7 +951,7 @@
       return Promise.resolve(true);
     }
     if (stage.endpointBlendPromise) return stage.endpointBlendPromise;
-    const promise = runEndpointMaterialBlend(stage);
+    const promise = runEndpointMaterialBlend(stage, delayMs);
     stage.endpointBlendPromise = promise;
     void promise.then((ready) => {
       if (!ready && stage.endpointBlendPromise === promise) stage.endpointBlendPromise = null;
@@ -909,13 +967,58 @@
 
   const prepareEndpointBridge = async (stage) => {
     if (!stage) return false;
+    const retainedBridge = persistentEndpointBridge?.isConnected
+      ? persistentEndpointBridge
+      : document.querySelector("body > .crm-home-endpoint-bridge[data-crm-persistent-bridge]");
+    const retainedRaster = retainedBridge?.querySelector?.(
+      ":scope > .crm-home-endpoint-bridge-raster",
+    );
+    if (!stage.endpointBridgeReady
+      && retainedBridge?.dataset?.crmEndpointRasterReady === "true"
+      && retainedBridge.dataset.crmEndpointIdentity?.startsWith(`${stage.key}|`)
+      && retainedRaster?.isConnected) {
+      const retainedLid = endpointLid() || bucketFor(stage.key);
+      const retainedHost = retainedLid?.querySelector?.(":scope > .crm-home-preview");
+      if (retainedLid && retainedHost) {
+        stage.lid = retainedLid;
+        stage.originalCoverHost = retainedHost;
+        stage.originalCoverRaster = retainedRaster;
+        stage.coverBridge = retainedBridge;
+        stage.coverHost = retainedBridge;
+        stage.coverRaster = retainedRaster;
+        stage.coverMode = retainedBridge.dataset.crmEndpointBridge || "exact";
+        stage.coverSource = retainedRaster instanceof HTMLImageElement
+          ? (retainedRaster.currentSrc || retainedRaster.src)
+          : coverSourceOf(retainedRaster);
+        stage.endpointBridgeReady = true;
+      }
+    }
     if (stage.endpointBridgeReady
       && stage.coverBridge?.isConnected
-      && stage.coverRaster?.isConnected) return true;
+      && stage.coverRaster?.isConnected) {
+      // Pre-motion fallback preparation can use the selected Home tile before
+      // the camera creates its live expander. Rebind ownership to that expander
+      // once it exists without rebuilding the already-painted body bridge.
+      const liveLid = endpointLid();
+      const liveHost = liveLid?.querySelector?.(":scope > .crm-home-preview");
+      if (liveLid && liveHost) {
+        const liveFallback = liveHost.querySelector?.(":scope > .crm-home-endpoint-fallback");
+        if (liveFallback) {
+          liveFallback.style.visibility = "hidden";
+          stage.fallbackCover = liveFallback;
+        }
+        stage.lid = liveLid;
+        stage.originalCoverHost = liveHost;
+      }
+      return true;
+    }
     if (stage.endpointBridgePromise) return stage.endpointBridgePromise;
     stage.endpointBridgePromise = (async () => {
       ensureStyles();
-      const lid = endpointLid();
+      // Before expand(), use the selected canonical tile as the source host.
+      // buildFallbackCover is viewport-sized and source-geometry independent;
+      // the persistent bridge is rebound to the expander above at landing.
+      const lid = endpointLid() || bucketFor(stage.key);
       const host = lid?.querySelector?.(":scope > .crm-home-preview");
       const exact = host?.querySelector?.(":scope > .crm-home-preview-exact");
       if (exact && (!exact.complete || exact.naturalWidth <= 0)) {
@@ -951,30 +1054,17 @@
     return ready;
   };
 
-  const waitForMotionLead = (stage, leadMs) => new Promise((resolve) => {
-    const deadline = stage.motionStartedAt + stage.morphMs - leadMs;
-    const sample = (now) => {
-      if (stage.sequence !== activeDive?.sequence) {
-        resolve(false);
-        return;
-      }
-      if (now >= deadline) {
-        resolve(true);
-        return;
-      }
-      requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  });
-
   const armNavigationEntrance = (stage) => {
     if (!stage) return Promise.resolve(false);
     if (stage.navigationEntrancePromise) return stage.navigationEntrancePromise;
     stage.navigationEntrancePromise = (async () => {
-      if (!await waitForMotionLead(stage, NAVIGATION_ENTRANCE_LEAD_MS)) return false;
       if (stage.sequence !== activeDive?.sequence) return false;
       const navigation = document.querySelector(".crm-module-switch");
       if (!navigation) return false;
+      const delay = Math.max(
+        0,
+        stage.motionStartedAt + stage.morphMs - NAVIGATION_ENTRANCE_LEAD_MS - performance.now(),
+      );
       navigation.setAttribute("data-crm-transit-nav-entering", "");
       navigation.inert = true;
       // The control is permanently prepainted at this same offscreen transform.
@@ -982,7 +1072,7 @@
       // avoids decoding its acrylic/icon resources during the camera move.
       const travel = "calc(100% + 36px)";
       stage.navigationControl = navigation;
-      stage.navigationEntranceStartedAt = performance.now();
+      stage.navigationEntranceStartedAt = performance.now() + delay;
       stage.navigationEntranceTravel = 82;
       stage.navigationEntranceAnimation?.cancel?.();
       const animation = navigation.animate(
@@ -992,6 +1082,7 @@
         ],
         {
           duration:NAVIGATION_ENTRANCE_MS,
+          delay,
           easing:NAVIGATION_ENTRANCE_EASE,
           fill:"both",
         },
@@ -1013,27 +1104,51 @@
       // the final portion of the transform. The unchanged 180 ms dissolve then
       // overlaps the landing instead of waiting several paints after it.
       if (!await prepareEndpointBridge(stage)) return false;
-      if (!await waitForMotionLead(stage, ENDPOINT_MATERIAL_LEAD_MS)) return false;
       if (stage.sequence !== activeDive?.sequence) return false;
-      stage.originalCoverHost.style.transition = "none";
-      stage.originalCoverHost.style.opacity = "1";
-      document.documentElement.classList.add("crm-transit-endpoint-covered");
+      const delay = Math.max(
+        0,
+        stage.motionStartedAt + stage.morphMs - ENDPOINT_MATERIAL_LEAD_MS - performance.now(),
+      );
+      // Keep the document and live cover topology untouched until seating.
+      // The compositor-owned bridge can remain parked through its delay
+      // without forcing a full-page style invalidation into the first camera
+      // frame.
       stage.endpointLeadArmedAt = performance.now();
-      return blendEndpointMaterial(stage);
+      return blendEndpointMaterial(stage, delay);
     })();
     return stage.endpointLeadPromise;
+  };
+
+  const scheduleHomeMotionLeads = (stage) => {
+    if (!stage || stage.motionLeadsScheduled) return false;
+    stage.motionLeadsScheduled = true;
+    // Camera setup swaps the already-decoded Home owner during the next paint.
+    // Creating two unrelated WAAPI effects in the click task forces Chromium to
+    // resolve that pending scene immediately. Arm them at the following paint
+    // boundary instead; their absolute delays still preserve the same 260/220
+    // ms landing leads, while the click task stays below one 100 Hz interval.
+    requestAnimationFrame(() => {
+      if (stage.sequence !== activeDive?.sequence) return;
+      traceStagePoint(stage, "motion-leads-arming");
+      void armNavigationEntrance(stage);
+      void armEndpointMaterialLead(stage);
+    });
+    return true;
+  };
+
+  const settleNavigationEntrance = (stage) => {
+    if (!stage?.navigationControl) return false;
+    stage.navigationEntranceAnimation?.cancel?.();
+    stage.navigationEntranceAnimation = null;
+    stage.navigationControl.removeAttribute("data-crm-transit-nav-entering");
+    stage.navigationControl.inert = false;
+    return true;
   };
 
   const cleanupEndpointCover = (stage, { preserveOpacity = false } = {}) => {
     stage?.endpointBlendAnimation?.cancel?.();
     if (stage) stage.endpointBlendAnimation = null;
-    stage?.navigationEntranceAnimation?.cancel?.();
-    if (stage) stage.navigationEntranceAnimation = null;
-    const navigation = stage?.navigationControl;
-    if (navigation) {
-      navigation.removeAttribute("data-crm-transit-nav-entering");
-      navigation.inert = false;
-    }
+    settleNavigationEntrance(stage);
     document.documentElement.classList.remove(
       "crm-transit-materializing",
       "crm-transit-revealing",
@@ -1042,12 +1157,19 @@
     clearDestinationLayers();
     const surface = camera()?.surface?.();
     surface?.removeAttribute?.("data-crm-transit-cover");
+    surface?.removeAttribute?.("data-crm-transit-retirement-masked");
     const lid = stage?.lid;
     lid?.classList?.remove("crm-home-endpoint-cover");
     if (lid?.dataset) delete lid.dataset.crmEndpointCover;
     stage?.fallbackCover?.remove?.();
-    parkEndpointBridge(stage?.coverBridge);
-    if (!preserveOpacity) {
+    if (stage?.coverBridge) {
+      // A successful dissolve already left this persistent compositor surface
+      // at its parked opacity with no live animation. Avoid getAnimations() and
+      // duplicate style writes here: either one forces all pending cleanup
+      // selectors to resolve in this final frame.
+      stage.coverBridge.dataset.crmEndpointBridge = "parked";
+    }
+    if (!preserveOpacity && !stage?.sourceRetired) {
       [stage?.originalCoverHost, lid].filter(Boolean).forEach((node) => {
         node.style.removeProperty("opacity");
         node.style.removeProperty("transition");
@@ -1064,8 +1186,6 @@
     const coverHost = stage.originalCoverHost;
     if (!lid || !coverHost) return false;
     if (stage.sequence !== activeDive?.sequence) return false;
-    coverHost.style.transition = "none";
-    coverHost.style.opacity = "1";
     document.documentElement.classList.add("crm-transit-endpoint-covered");
     if (!stage.endpointBlendStartedAt) stage.phase = "preparing-endpoint-material";
     // The bridge was decoded during motion and its full-duration dissolve was
@@ -1082,7 +1202,7 @@
     stage.coverStart = inspectRasterCover(stage);
     stage.coverSeatedAt = performance.now();
     stage.coverInvariant = stage.coverStart.ready;
-    stage.phase = "covered";
+    setStagePhase(stage, "covered");
     await holdProbePhase(stage, "covered");
     // The blend's final opaque paints already close a clean raster-owned
     // refresh interval before live-room ownership work begins.
@@ -1090,7 +1210,7 @@
     // Close the cover-selector invalidations before retiring the moving Home
     // acrylic. Awaiting the probe alone resumes in the same microtask and used
     // to combine both full-window layer updates into one missed refresh.
-    await paint(1);
+    await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
     // The camera's full-viewport acrylic stayed fully composited until this
     // independent raster had owned completed opaque paints. Retire it only
@@ -1119,7 +1239,7 @@
           && layer.opacity === 1);
       stage.liveReady = stage.preSwapLiveReady;
       stage.liveReadyAt = performance.now();
-      stage.phase = "live-ready-covered";
+      setStagePhase(stage, "live-ready-covered");
       await holdProbePhase(stage, "before-swap");
       if (stage.sequence !== activeDive?.sequence) return;
       if (!stage.coverInvariant) {
@@ -1138,21 +1258,18 @@
         && stage.liveLayersAfterSwap.every((layer) =>
           layer.display !== "none" && layer.visibility !== "hidden" && layer.opacity === 1);
       stage.liveReady = stage.preSwapLiveReady && stage.postSwapLiveReady;
-      stage.phase = "crossfade-ready";
+      setStagePhase(stage, "crossfade-ready");
       await holdProbePhase(stage, "crossfade-ready");
       if (stage.sequence !== activeDive?.sequence) return;
       if (!stage.postSwapLiveReady) {
         throw new Error("Destination compositor was not opaque before endpoint release");
       }
 
-      stage.interactionReadyAt = performance.now();
-      document.dispatchEvent(new CustomEvent("crm:desk-interaction-ready", {
-        detail:{ key:stage.key, sequence:stage.sequence, phase:stage.phase },
-      }));
+      markInteractionReady(stage);
       const host = stage.coverHost;
       if (!host) throw new Error("Exact endpoint raster host is unavailable");
       stage.releaseAt = performance.now();
-      stage.phase = "crossfading";
+      setStagePhase(stage, "crossfading");
       ownershipFadeState = {
         active:true,
         startedAt:stage.releaseAt,
@@ -1177,9 +1294,9 @@
             const current = Number(stage.coverAnimation?.currentTime) || 0;
             if (current >= STATIC_CROSSFADE_MS / 2 || stage.coverAnimation?.playState === "finished") {
               stage.coverAnimation?.pause?.();
-              stage.phase = "crossfade-mid";
+              setStagePhase(stage, "crossfade-mid");
               await holdProbePhase(stage, "crossfade-mid");
-              stage.phase = "crossfading";
+              setStagePhase(stage, "crossfading");
               stage.coverAnimation?.play?.();
               resolve();
               return;
@@ -1196,7 +1313,7 @@
       stage.coverAnimation?.cancel?.();
       stage.coverAnimation = null;
       stage.swappedAt = performance.now();
-      stage.phase = "swapped";
+      setStagePhase(stage, "swapped");
       ownershipFadeState = {
         ...ownershipFadeState,
         active:false,
@@ -1205,11 +1322,11 @@
       document.dispatchEvent(new CustomEvent("crm:desk-ownership-fade", {
         detail:{ phase:"end", ...ownershipFadeState },
       }));
-      await paint(1);
+      await paint(2);
       if (stage.sequence !== activeDive?.sequence) return;
       stage.revealedAt = performance.now();
       stage.coverAfterSwap = inspectRasterCover(stage);
-      stage.phase = "live";
+      setStagePhase(stage, "live");
       await holdProbePhase(stage, "after-swap");
     })().catch((error) => {
       stage.revealError = String(error?.message || error || "destination reveal failed");
@@ -1260,7 +1377,7 @@
     if (!stage || stage.ready || stage.sequence !== activeDive?.sequence) return;
     ensureStyles();
     stage.materializeAt = performance.now();
-    stage.phase = "materializing-covered";
+    setStagePhase(stage, "materializing-covered");
     if (typeof window.crmHome?.promotePrecomposedModule === "function") {
       await window.crmHome.promotePrecomposedModule(stage.key, {
         canContinue:() => stage.sequence === activeDive?.sequence,
@@ -1269,8 +1386,10 @@
       window.crmHome?.setPrecomposedModulePromoted?.(stage.key, true);
     }
     if (stage.sequence !== activeDive?.sequence) return;
+    setStagePhase(stage, "promoted-covered");
     stage.theater?.removeAttribute?.("data-crm-transit-retained");
     primeDestinationLayers(stage.key, stage.theater || findDestinationTheater(stage.key));
+    setStagePhase(stage, "primed-covered");
     document.documentElement.classList.remove("crm-transit-revealing");
     document.documentElement.classList.add("crm-transit-materializing");
     stageDestinationLayers(stage.key, destinationRoot);
@@ -1280,6 +1399,7 @@
     if (stage.sequence !== activeDive?.sequence) return;
     stage.readyAt = performance.now();
     stage.ready = true;
+    setStagePhase(stage, "materialized-covered");
   };
 
   const settleDiveDestination = async (stage) => {
@@ -1296,8 +1416,13 @@
       stage.committed = true;
       // Close the workspace switch before the baseline starts reading final
       // geometry. Those reads must not force the whole style tree in this task.
-      await paint(1);
+      await paint(2);
       if (stage.sequence !== activeDive?.sequence) return false;
+      // The workspace is now semantically visible and the animation's endpoint
+      // equals its resting transform. Retire this effect here, in the route's
+      // existing covered paint window, instead of combining it with the final
+      // raster/class/history cleanup.
+      settleNavigationEntrance(stage);
     }
     try {
       await destinationFor(stage.key)?.baseline?.({
@@ -1313,12 +1438,17 @@
     }
     stage.theater = theater;
     stageDestinationLayers(stage.key, theater);
+    // Activation and the destination's awaited baseline are complete here;
+    // scroll geometry is authoritative even though visual ownership is still
+    // parked beneath the endpoint. Start buffered input now so the rail can
+    // settle in parallel with final topology/acrylic preparation.
+    markInteractionReady(stage);
 
     // First promote the complete destination under the opaque raster. Then
     // remove every transit-owned display/grouping/class attribute and measure
     // the natural resting tree. The cover remains unchanged for all of it.
     document.documentElement.classList.add("crm-transit-revealing");
-    stage.phase = "live-opaque-covered";
+    setStagePhase(stage, "live-opaque-covered");
     stage.liveOpaqueAt = performance.now();
     // The natural tree is now final. Do not insert a second full-room paint
     // barrier here: geometry stability and acrylic warm-up immediately below
@@ -1331,11 +1461,23 @@
     // both full-window invalidations into a single 13–20 ms renderer task.
     await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
-    stage.phase = "settling-covered";
+    setStagePhase(stage, "settling-covered");
     // The room now owns its final natural layer topology under the opaque
     // endpoint. Warm its acrylic while geometry stability is sampled instead
     // of paying those two independent frame waits back-to-back.
     stage.sourceRetirementPromise ||= retireDiveSource(stage).catch(() => false);
+    // Source retirement changes Home's retained root and property tree during
+    // its first covered paints. A geometry read in those same refreshes forces
+    // both scenes through one lifecycle pass. Start the destination sampler
+    // only after retirement has entered its existing eight-frame acrylic warm
+    // window; the checks still finish before release and add no serial wait.
+    for (let frame = 0; frame < 12
+      && stage.sequence === activeDive?.sequence
+      && stage.phase !== "warming-acrylic-underpaint"
+      && !stage.acrylicState; frame += 1) {
+      await paint(1);
+    }
+    if (stage.sequence !== activeDive?.sequence) return false;
     let geometryState = null;
     let moduleState = null;
     const destinationApi = destinationFor(stage.key);
@@ -1383,26 +1525,29 @@
     // exact retained state it will keep while this room is active, including
     // its final z-order, before any live destination pixel can be exposed.
     if (surface) surface.style.zIndex = "";
-    stage.phase = "retiring-source-resetting-home";
-    // Reset the hidden Home camera before exposing the live underpaint. The
+    setStagePhase(stage, "retiring-source-seating-home");
+    // Install the one retained reverse-camera bitmap before restoring level
+    // zero. That parks the complete Home grid first, so root restoration never
+    // briefly rebuilds the heavy scene only to remove it one frame later.
+    try { window.crmHome?.retainMotionSurface?.(); } catch {}
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    setStagePhase(stage, "retiring-source-resetting-home");
+    surface?.setAttribute?.("data-crm-transit-retirement-masked", "");
+    await paint(2);
+    if (stage.sequence !== activeDive?.sequence) return false;
+    // Reset the parked Home camera before exposing the live underpaint. The
     // destination backdrop must warm against its final, stable layer topology.
     if (cam?.restoreRoot) cam.restoreRoot();
     else cam?.rebuildRoot?.();
-    // Establish the lightweight reverse-camera retention in its own covered
-    // refresh. Doing this inside workspace activation forced Home and the
-    // incoming room through one full-document style/layout pass.
-    try { window.crmHome?.retainMotionSurface?.(); } catch {}
-    stage.phase = "retiring-source-seating-home";
-    // Close the retained bitmap/z-order paint before applying the inactive
-    // parking state. Resolving after one rAF would run the next mutation in a
-    // microtask before Chromium had painted this topology.
+    setStagePhase(stage, "retiring-source-hiding-home");
+    if (!window.crmHome?.finalizeInactiveSurface?.() && surface) surface.hidden = true;
+    // Restore and semantic parking now happen while the complete Home surface
+    // is absent from paint. Close that topology, then reintroduce only its one
+    // retained .001 bitmap in an independent compositor refresh.
     await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
-    stage.phase = "retiring-source-hiding-home";
-    if (!window.crmHome?.finalizeInactiveSurface?.() && surface) surface.hidden = true;
-    // A one-rAF promise resumes in a microtask before that refresh is painted.
-    // Close one complete Home-retirement paint before exposing destination
-    // underpaint, so two full-window property-tree changes cannot coalesce.
+    surface?.removeAttribute?.("data-crm-transit-retirement-masked");
     await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
     surface?.removeAttribute?.("data-crm-transit-cover");
@@ -1410,7 +1555,7 @@
     if (lid?.dataset) delete lid.dataset.crmEndpointCover;
     stage.sourceRetiredAt = performance.now();
     stage.sourceRetired = true;
-    stage.phase = "unoccluding-acrylic";
+    setStagePhase(stage, "unoccluding-acrylic");
 
     // A fully opaque cover lets Chromium occlusion-cull every live blur plane,
     // even though computed styles claim the filters are ready. Preserve 99% of
@@ -1421,7 +1566,7 @@
     stage.acrylicUnderpaintAt = performance.now();
     await paint(2);
     if (stage.sequence !== activeDive?.sequence) return false;
-    stage.phase = "warming-acrylic-underpaint";
+    setStagePhase(stage, "warming-acrylic-underpaint");
 
     // Backdrop filters are sensitive to the set of layers behind them. Require
     // repeated identical native paints after Home has moved behind the
@@ -1473,11 +1618,12 @@
     document.dispatchEvent(new CustomEvent("crm:home-transform-phase", {
       detail:{ phase:"start", ...homeMotionState },
     }));
-    if (direction !== "expand" || !activeDive || Number.isFinite(activeDive.motionStartedAt)) return true;
+    if (direction !== "expand" || !activeDive) return true;
     activeDive.motionStartedAt = start;
     activeDive.morphMs = Math.max(1, Number(morphMs) || 460);
-    void armNavigationEntrance(activeDive);
-    void armEndpointMaterialLead(activeDive);
+    if (!activeDive.motionLeadsScheduled) {
+      scheduleHomeMotionLeads(activeDive);
+    }
     return true;
   };
   const noteHomeTransformEnd = (direction, endedAt = performance.now()) => {
@@ -1527,14 +1673,14 @@
       // Source-acrylic retirement and destination promotion each affect a
       // complete viewport compositor owner. Keep them in adjacent 100 Hz
       // refreshes beneath the already-opaque endpoint bridge.
-      await paint(1);
+      await paint(2);
       if (stage.sequence !== activeDive?.sequence) return;
       try { await materializeDiveDestination(stage); } catch {}
       if (!stage.ready) { stage.ready = true; stage.readyAt = performance.now(); }
       // Destination promotion, workspace activation and source retirement each
       // own a bounded covered frame. Coalescing them made one 20–35 ms frame
       // even though the user still saw the same static endpoint raster.
-      await paint(1);
+      await paint(2);
       if (stage.sequence !== activeDive?.sequence) return;
       try { await settleDiveDestination(stage); } catch {}
       await paint(1);
@@ -1693,17 +1839,36 @@
     const bucket = bucketFor(key);
     if (!cam || !bucket) { commit(key); done(); return; }
     const stage = beginDiveDestination(key);
+    traceStagePoint(stage, "click-stage-ready");
     const surface = cam.surface();
     if (surface) surface.style.zIndex = TRANSIT_Z;
     void (async () => {
       if (expandFirst) {
+        traceStagePoint(stage, "click-prime-begin");
         // Programmatic navigation has no pointer-hover interval. Seat the same
         // parked texture before starting its camera so cold launches retain
         // the exact compositor-only cadence of ordinary prewarmed clicks.
         try { await primeEndpointPreview(key); } catch {}
+        traceStagePoint(stage, "click-prime-end");
+        // Cold/progressive sessions may not have an exact capture yet. Build
+        // and paint the deterministic fallback here as well, before transform
+        // start, so both paths arm their material lead from an already-retained
+        // endpoint instead of uploading a viewport surface during motion.
+        try { await prepareEndpointBridge(stage); } catch {}
+        traceStagePoint(stage, "click-bridge-ready");
         if (stage.sequence !== activeDive?.sequence) { done(false); return; }
         if (cam.level() > 0) cam.rebuildRoot();
+        // Fractal camera's transform-start hook can arrive after its internal
+        // staging while carrying the earlier motion timestamp. Arm the two
+        // lead animations at this real expand boundary so they cannot inherit
+        // that callback latency and slip past the visual landing.
+        if (!Number.isFinite(stage.motionStartedAt)) {
+          stage.motionIntentAt = performance.now();
+          stage.morphMs = 460;
+        }
+        traceStagePoint(stage, "click-expand-begin");
         cam.expand(bucket);
+        traceStagePoint(stage, "click-expand-end");
       }
       Promise.resolve(cam.whenSettled?.()).then(() => finishDiveIn(key, done, stage));
     })();
@@ -1734,18 +1899,16 @@
       }
       // The exact full-size return lid is already authoritative. Retire the
       // large outgoing room, route state, API activation and theater topology
-      // in their own covered paints just as the forward endpoint does.
+      // beneath that lid. Start the compositor contraction first, give its
+      // initial state one clean paint, then finish the bounded semantic route
+      // while the same lid remains the visible owner.
+      cam.back();     // 460ms house contract into the Home slot
+      const motionPromise = Promise.resolve(cam.whenSettled?.());
       await paint(1);
       await commitStaged("home");
-      await paint(1);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          cam.back();     // 460ms house contract into the Home slot
-          Promise.resolve(cam.whenSettled?.()).then(() => window.crmHome?.waitForHandoff?.()).then(() => {
-            if (surface) surface.style.zIndex = "";
-            done();
-          });
-        });
+      motionPromise.then(() => window.crmHome?.waitForHandoff?.()).then(() => {
+        if (surface) surface.style.zIndex = "";
+        done();
       });
     })();
   };

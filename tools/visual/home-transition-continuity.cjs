@@ -23,8 +23,10 @@ const STATIC_PORT = Number(process.env.CRM_STATIC_PORT || 4038);
 const ROUND_COUNT = Math.max(2, Number(process.env.CRM_HOME_ROUNDS || 2));
 const JOURNEYS_ONLY = process.env.CRM_HOME_JOURNEYS_ONLY === '1';
 const TRACE_TILE = String(process.env.CRM_HOME_TRACE || '').trim();
+const TRACE_LABEL = String(process.env.CRM_HOME_TRACE_LABEL || '').trim();
 
 async function startPerformanceTrace(page, outputPath) {
+  await page.evaluate(() => { window.__crmDeskPerformanceTrace = true; });
   const session = await page.context().newCDPSession(page);
   await session.send('Tracing.start', {
     categories:[
@@ -34,6 +36,7 @@ async function startPerformanceTrace(page, outputPath) {
       'cc',
       'devtools.timeline',
       'disabled-by-default-devtools.timeline',
+      'disabled-by-default-devtools.timeline.invalidationTracking',
       'disabled-by-default-devtools.timeline.frame',
       'gpu',
       'renderer.scheduler',
@@ -57,6 +60,7 @@ async function startPerformanceTrace(page, outputPath) {
     }
     await session.send('IO.close', { handle:stream });
     await session.detach();
+    await page.evaluate(() => { delete window.__crmDeskPerformanceTrace; }).catch(() => {});
     fs.writeFileSync(outputPath, Buffer.concat(chunks));
     console.log(`[home-transition] performance trace: ${outputPath}`);
   };
@@ -1289,7 +1293,9 @@ async function main() {
     const evidence = { coldPrewarm, tiles:{}, handoffCrossfade:{} };
     let traceCaptured = false;
     const measuredRoundTrip = async (tile, sampleVisual, label) => {
-      const shouldTrace = !traceCaptured && TRACE_TILE === tile.module;
+      const shouldTrace = !traceCaptured
+        && TRACE_TILE === tile.module
+        && (!TRACE_LABEL || TRACE_LABEL === label);
       const tracePath = path.join(outDir, `${tile.module}-${label}-trace.json`);
       const stopTrace = shouldTrace ? await startPerformanceTrace(page, tracePath) : null;
       if (shouldTrace) traceCaptured = true;

@@ -18,7 +18,16 @@
   let root = null;
   let routeSequence = 0;
   const apiStates = new WeakMap();
+  // Staged routing is entered from desk transit's rAF continuation. Scheduling
+  // one subsequent callback therefore closes the current mutation's paint
+  // before the next route owner runs, while avoiding an unnecessary blank
+  // refresh between every activation step.
   const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
+  const traceRoutePhase = (sequence, phase) => {
+    if (window.__crmDeskPerformanceTrace === true) {
+      performance.mark(`crm-workspaces:${sequence}:${phase}`);
+    }
+  };
   const moduleKey = (key) => MODULES.some((module) => module.key === key) ? key : "home";
   function styles(){if(document.getElementById("crm-workspace-switch-styles"))return;const s=document.createElement("style");s.id="crm-workspace-switch-styles";s.textContent=`
     .crm-module-switch{position:fixed;left:50%;bottom:18px;z-index:4600;transform:translateX(-50%) translateZ(0);will-change:transform;width:154px;height:46px;display:grid;grid-template-columns:repeat(3,46px);align-items:center;gap:8px;-webkit-app-region:no-drag}.crm-module-switch[hidden]{display:none}
@@ -59,6 +68,13 @@
     document.querySelectorAll("[data-crm-theater]").forEach((element) => {
       if (element.dataset.crmSubtheater) return;
       const hidden = !allowed.has(element.dataset.crmTheater);
+      // Forward desk transit still needs Home's decoded endpoint owner while
+      // the incoming room is committed beneath it. Home finalization applies
+      // the semantic hidden state after reducing that camera to one retained
+      // bitmap; doing it here lays out the complete Home scene unnecessarily.
+      if (hidden
+        && element.dataset.crmTheater === "home"
+        && element.hasAttribute("data-crm-transit-cover")) return;
       if (element.hidden !== hidden) element.hidden = hidden;
     });
   }
@@ -77,7 +93,9 @@
   }
   async function setActiveStaged(key) {
     const sequence = ++routeSequence;
+    traceRoutePhase(sequence, "begin");
     beginRoute(moduleKey(key));
+    traceRoutePhase(sequence, "begun");
     // Each of these operations can invalidate a viewport-sized selector tree.
     // Desk transit calls this only beneath its decoded opaque endpoint raster,
     // so give every owner one closed 100 Hz paint instead of combining them
@@ -86,12 +104,15 @@
     if (sequence !== routeSequence) return active;
     closeTransientSurfaces();
     syncModuleApis();
+    traceRoutePhase(sequence, "apis-synced");
     await nextPaint();
     if (sequence !== routeSequence) return active;
     syncTheaters();
+    traceRoutePhase(sequence, "theaters-synced");
     await nextPaint();
     if (sequence !== routeSequence) return active;
     finishRoute();
+    traceRoutePhase(sequence, "finished");
     return active;
   }
   function mount(){styles();root=document.createElement("nav");root.className="crm-module-switch";root.setAttribute("aria-label","Viewport navigation");root.innerHTML=`<div class="crm-home-control-deadzone" aria-hidden="true"></div><button type="button" class="crm-history-control crm-secondary-control" data-crm-history-back aria-label="Back" title="Back · Mouse 4"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 6-6 6 6 6"></path></svg></button><button type="button" class="crm-home-control crm-secondary-control" aria-label="Return Home" title="Home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5 12 3.8l8.5 6.7"></path><path d="M5.8 9.3v10.2h12.4V9.3"></path><path d="M9.4 19.5v-5.7h5.2v5.7"></path></svg></button><button type="button" class="crm-history-control crm-secondary-control" data-crm-history-forward aria-label="Forward" title="Forward · Mouse 5"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 6 6 6-6 6"></path></svg></button>`;root.querySelector("[data-crm-history-back]")?.addEventListener("click",()=>window.crmDeskTransit?.back?.());root.querySelector(".crm-home-control")?.addEventListener("click",()=>window.crmDeskTransit?.driveTo?.("home")||setActive("home"));root.querySelector("[data-crm-history-forward]")?.addEventListener("click",()=>window.crmDeskTransit?.forward?.());document.body.appendChild(root);setActive(active);syncNavigationControls()}

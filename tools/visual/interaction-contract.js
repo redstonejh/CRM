@@ -432,12 +432,31 @@ async function main() {
       && getComputedStyle(lid).webkitAppRegion !== 'no-drag'
       && exclusions.length === 0;
   });
-  await page.waitForFunction(() => {
-    const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
-    const opacity = bridge ? Number(getComputedStyle(bridge).opacity) : 0;
-    return window.__homeEndpointAcrylicGate?.phase === 'endpoint-material-blend-mid'
-      && opacity > .08 && opacity < .98;
-  }, { timeout:5000 });
+  try {
+    await page.waitForFunction(() => {
+      const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
+      const opacity = bridge ? Number(getComputedStyle(bridge).opacity) : 0;
+      return window.__homeEndpointAcrylicGate?.phase === 'endpoint-material-blend-mid'
+        && opacity > .08 && opacity < .98;
+    }, { timeout:5000 });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => {
+      const bridge = document.querySelector('body > .crm-home-endpoint-bridge');
+      const animations = bridge?.getAnimations?.().map((animation) => ({
+        currentTime:animation.currentTime,
+        playState:animation.playState,
+        timing:animation.effect?.getComputedTiming?.(),
+      })) || [];
+      return {
+        gate:window.__homeEndpointAcrylicGate,
+        cover:window.crmDeskTransit?.coverState?.(),
+        opacity:bridge ? Number(getComputedStyle(bridge).opacity) : 0,
+        bridge:bridge?.dataset,
+        animations,
+      };
+    });
+    throw new Error(`Endpoint material midpoint did not arrive: ${JSON.stringify(diagnostic)} (${error.message})`);
+  }
   await check('Viewport navigation rises into place before the tile finishes landing', () => {
     const navigation = document.querySelector('.crm-module-switch');
     const style = navigation && getComputedStyle(navigation);
@@ -685,11 +704,28 @@ async function main() {
     const style = acrylic && getComputedStyle(acrylic);
     const frameStyle = frame && getComputedStyle(frame);
     const material = style?.webkitBackdropFilter || style?.backdropFilter || '';
-    return !!expander && window.crmHome?.acrylicState?.().phase === 'motion'
+    const state = window.crmHome?.acrylicState?.();
+    const ok = !!expander && state?.phase === 'motion'
       && window.crmHome?.acrylicState?.().direction === 'contract'
       && Number(style?.opacity) > .99 && Number(frameStyle?.opacity) > .99
       && material.includes('blur(') && material.includes('saturate(')
       && !expander.style.transition.includes('opacity');
+    return {
+      ok,
+      detail:JSON.stringify({
+        expander:!!expander,
+        frame:!!frame,
+        state,
+        acrylicDisplay:style?.display,
+        acrylicVisibility:style?.visibility,
+        acrylicOpacity:Number(style?.opacity || 0),
+        frameOpacity:Number(frameStyle?.opacity || 0),
+        material,
+        transition:expander?.style?.transition || '',
+        surface:window.crmHomeCamera?.surface?.()?.getAttributeNames?.()
+          .filter((name) => name.startsWith('data-crm-home')),
+      }),
+    };
   });
   await check('Every non-focused Home tile keeps one real screen-space acrylic plane during zoom-out', () => {
     const surface = window.crmHomeCamera?.surface?.();

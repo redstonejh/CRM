@@ -1608,11 +1608,25 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!canContinue()) return false;
     const parkedOwners = motionPaintOwnersOf(node).filter((owner) =>
       owner.hasAttribute("data-crm-home-motion-parked-owner"));
-    for (const owner of parkedOwners) {
-      owner.removeAttribute("data-crm-home-motion-parked-owner");
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      if (!canContinue()) return false;
-    }
+    await new Promise((resolve) => {
+      let index = 0;
+      const promoteNext = () => {
+        if (!canContinue() || index >= parkedOwners.length) {
+          resolve();
+          return;
+        }
+        const owner = parkedOwners[index];
+        if (window.__crmDeskPerformanceTrace === true) {
+          const ownerName = [...owner.classList].slice(0, 2).join(".") || owner.tagName.toLowerCase();
+          performance.mark(`crm-home-promote:${key}:${index}:${ownerName}`);
+        }
+        index += 1;
+        owner.removeAttribute("data-crm-home-motion-parked-owner");
+        requestAnimationFrame(promoteNext);
+      };
+      requestAnimationFrame(promoteNext);
+    });
+    if (!canContinue()) return false;
     node.removeAttribute("data-crm-home-motion-parked");
     return true;
   };
@@ -2894,7 +2908,13 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
           setInactiveMotionRetention(true);
           camera.surface()?.setAttribute?.("data-crm-home-inactive-retained", "");
         } else {
-          camera.surface()?.removeAttribute?.("data-crm-home-inactive-retained");
+          const surface = camera.surface?.();
+          // Forward retirement applies the theater's semantic [hidden] only
+          // after its retained bitmap owns the scene. Reverse navigation must
+          // restore that same surface before jumpTo() measures the source tile;
+          // workspace routing follows under the already-seated return lid.
+          if (surface) surface.hidden = false;
+          surface?.removeAttribute?.("data-crm-home-inactive-retained");
         }
         inactiveCommitDeferred = false;
         camera.setActive(requestedActive);
@@ -2939,8 +2959,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const finalizeInactiveSurface = () => {
     if (!inactiveCommitDeferred && !camera?.isActive?.()) return true;
     inactiveCommitDeferred = false;
-    camera?.surface?.()?.setAttribute?.("data-crm-home-inactive-retained", "");
+    const surface = camera?.surface?.();
+    surface?.setAttribute?.("data-crm-home-inactive-retained", "");
     camera?.setActive?.(false);
+    // Workspace routing deliberately defers this semantic boundary until the
+    // retained-bitmap selectors have removed the complete Home object tree.
+    // The retained surface's author display rule keeps that one reverse-camera
+    // texture compositor-resident while [hidden] excludes Home from routing.
+    if (surface) surface.hidden = true;
     return !camera?.isActive?.();
   };
   document.addEventListener("crm:desk-transit-settled", (event) => {

@@ -569,13 +569,13 @@ import {
       @keyframes fc-live-in{0%{opacity:0}54%{opacity:0}100%{opacity:1}}
       @keyframes fc-copy-in{0%{opacity:0}46%{opacity:1}100%{opacity:1}}
       @keyframes fc-live-out{0%{opacity:1}38%{opacity:0}100%{opacity:0}}
-      .fc-surface.fc-camera-expanding>.fc-expander:not(.fc-warm)>.fc-transition-copy{
+      .fc-expander.fc-frame-expanding:not(.fc-warm)>.fc-transition-copy{
         animation:fc-copy-out ${MORPH_MS}ms linear both}
-      .fc-surface.fc-camera-expanding>.fc-expander:not(.fc-warm)>.fc-expander-live{
+      .fc-expander.fc-frame-expanding:not(.fc-warm)>.fc-expander-live{
         animation:fc-live-in ${MORPH_MS}ms linear both}
-      .fc-surface.fc-camera-contracting>.fc-expander:not(.fc-warm)>.fc-transition-copy{
+      .fc-expander.fc-frame-contracting:not(.fc-warm)>.fc-transition-copy{
         animation:fc-copy-in ${MORPH_MS}ms linear both}
-      .fc-surface.fc-camera-contracting>.fc-expander:not(.fc-warm)>.fc-expander-live{
+      .fc-expander.fc-frame-contracting:not(.fc-warm)>.fc-expander-live{
         animation:fc-live-out ${MORPH_MS}ms linear both}
 
       .fc-source-screen-acrylic,.fc-source-screen-acrylic-clip{
@@ -1894,6 +1894,23 @@ import {
       return null;
     }
     const plane = ensureDayScreenMaterial(surface);
+    const geometrySignature = [
+      layoutGeometrySignature,
+      monthLayer.dataset.tileObjectId || monthLayer.dataset.month || "",
+      exclude?.dataset?.tileObjectId || exclude?.dataset?.date || "",
+      days.length,
+    ].join("|");
+    if (plane.dataset.calendarGeometrySignature === geometrySignature
+      && plane.dataset.crmTileMaterialReady === "true") {
+      if (dayScreenMaterialOwner.style.zIndex !== String(zIndex)) {
+        dayScreenMaterialOwner.style.zIndex = String(zIndex);
+      }
+      if (dayScreenMaterialOwner.hidden) dayScreenMaterialOwner.hidden = false;
+      plane.dataset.crmTileMaterialCount = String(days.length - (exclude ? 1 : 0));
+      plane.dataset.crmTileMaterialParked = "false";
+      setMonthLocalMaterialMuted(monthLayer, muteLocal);
+      return plane;
+    }
     const surfaceRect = surface.getBoundingClientRect();
     const dayRects = days.map((day) => day.getBoundingClientRect());
     const materialPadding = 34;
@@ -1932,6 +1949,7 @@ import {
     plane.dataset.crmTileMaterialReady = String(path !== "none");
     plane.dataset.crmTileMaterialParked = "false";
     plane.dataset.calendarMonth = String(monthLayer.dataset.month || "");
+    plane.dataset.calendarGeometrySignature = geometrySignature;
     setMonthLocalMaterialMuted(monthLayer, muteLocal);
     return plane;
   };
@@ -2296,6 +2314,10 @@ import {
         canonicalClass:false,
         ariaLabel:`Open ${object.tile.label}`,
       });
+    }
+    if (context.direction) {
+      expander.classList.toggle("fc-frame-expanding", context.direction === "expand");
+      expander.classList.toggle("fc-frame-contracting", context.direction === "contract");
     }
     expander.dataset.kind = kind;
     if (kind === "month") {
@@ -2852,6 +2874,7 @@ import {
     ownerClass:"fc-source-acrylic-owner",
     lensClass:"fc-source-screen-acrylic",
     materialTarget:sourceMaterialTarget,
+    clipGeometry:options.clipGeometry,
     holdThroughMotion:true,
     hideWhenParked:true,
     retainOwnerWhenParked:true,
@@ -2868,6 +2891,11 @@ import {
   monthAcrylicLens = createCalendarAcrylicLens({
     motionHandoffStart:.54,
     clipToDestinationBounds:true,
+    // The month lens covers most of the viewport. Move its immutable rounded
+    // clip on the compositor and counter-transform the full-screen material;
+    // expanding a backdrop-filter clip itself forces repeated large blur
+    // reallocations late in the zoom.
+    clipGeometry:acrylicTransformGeometry,
   });
   dayAcrylicLens = createCalendarAcrylicLens({
     prewarmOpacity:MATERIAL_PRIME_OPACITY,
@@ -2897,6 +2925,7 @@ import {
     contractExpanderAbove:true,
     holdContractEndpointFrame:true,
     keepExpanderOpaqueDuringTransition:true,
+    reuseContractedExpander:true,
     ensureStyles,
     buildRoot:buildYear,
     layout:layoutCalendar,
@@ -2905,13 +2934,11 @@ import {
     primeExpander:(expander, target, context) => {
       monthAcrylicLens?.prime?.();
       dayAcrylicLens?.prime?.();
-      if (calendarTileUnit(calendarObjectForElement(target)) === "month") {
-        const plane = syncDayScreenMaterial(expander, {
-          zIndex:2,
-          muteLocal:false,
-        });
-        if (plane && Number(context?.level) === 0) parkDayScreenMaterial();
-      }
+      // The day-grid plane is screen-space material. A warm month shell is
+      // still source-transformed here, so deriving its clip now caches the
+      // miniature coordinates and makes the entered days lose real acrylic.
+      // The persistent 1x1 plane is already compositor-primed; exact viewport
+      // geometry is seated once, at the first covered month endpoint.
     },
     prepareTransition:(direction, target, context) => {
       if (direction === "expand" && target) {

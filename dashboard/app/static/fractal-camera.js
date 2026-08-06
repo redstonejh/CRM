@@ -1124,22 +1124,26 @@
               opacity:".001",
             });
             const sourceTransform = expander.style.transform;
-            const animation = expander.animate(
-              [
-                { transform:sourceTransform, offset:0 },
-                { transform:"none", offset:.5 },
-                { transform:sourceTransform, offset:1 },
-              ],
-              { duration:96, easing:"linear", fill:"both" },
-            );
+            const animation = animateWarmExpander
+              ? expander.animate(
+                [
+                  { transform:sourceTransform, offset:0 },
+                  { transform:"none", offset:.5 },
+                  { transform:sourceTransform, offset:1 },
+                ],
+                { duration:96, easing:"linear", fill:"both" },
+              )
+              : null;
             const entry = { key:warmKey, el:expander, animation };
             warm = entry;
-            animation.finished.then(() => {
-              if (warm !== entry || !expander.isConnected) return;
-              try { animation.commitStyles(); } catch {}
-              animation.cancel();
-              entry.animation = null;
-            }).catch(() => {});
+            if (animation) {
+              animation.finished.then(() => {
+                if (warm !== entry || !expander.isConnected) return;
+                try { animation.commitStyles(); } catch {}
+                animation.cancel();
+                entry.animation = null;
+              }).catch(() => {});
+            }
           } else expander.remove();
         });
         const transitionContext = {

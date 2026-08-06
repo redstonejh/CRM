@@ -11,6 +11,7 @@ const OUTPUT_DIR = path.resolve(__dirname, 'electron-actual', 'calendar-transiti
 const EVIDENCE_PATH = path.join(OUTPUT_DIR, 'evidence.json');
 const YEAR_SCREENSHOT_PATH = path.join(OUTPUT_DIR, 'calendar-year-true-acrylic.png');
 const MONTH_SCREENSHOT_PATH = path.join(OUTPUT_DIR, 'calendar-month-true-acrylic.png');
+const MONTH_TRACE_PATH = path.join(OUTPUT_DIR, 'month-in-trace.json');
 const MATERIAL_HANDOFF_MS = 72;
 
 function percentile(values, fraction) {
@@ -242,19 +243,35 @@ async function installProfiler(page) {
       const coverPhotoPanels = [...(cover?.querySelectorAll(
         '.fc-live-backdrop-wallpaper > .workspace-photo-backdrop .workspace-photo-panel',
       ) || [])];
-      const backdropOwners = [...surface.querySelectorAll(
+      const backdropCandidates = [...surface.querySelectorAll(
         '.crm-tile-material-plane,.fc-day-screen-material,.fc-source-screen-acrylic',
-      )].filter((node) => {
+      )].map((node) => {
         const style = getComputedStyle(node);
-        return String(style.webkitBackdropFilter || style.backdropFilter).includes('blur(')
-          && effectiveOpacity(node, surface) > 0;
+        return {
+          node,
+          className:node.className,
+          phase:node.dataset.fractalAcrylicPhase || '',
+          backdrop:style.webkitBackdropFilter || style.backdropFilter,
+          opacity:Number(style.opacity),
+          effectiveOpacity:effectiveOpacity(node, surface),
+          visibility:style.visibility,
+          display:style.display,
+        };
       });
+      const backdropOwners = backdropCandidates.filter((candidate) => (
+        String(candidate.backdrop).includes('blur(')
+          && candidate.effectiveOpacity > 0
+      ));
       return {
         lensPhase:lens.dataset.fractalAcrylicPhase,
         lensDirection:lens.dataset.fractalAcrylicDirection,
+        ownerClip:String(ownerStyle.clipPath),
         ownerClipIsPath:String(ownerStyle.clipPath).startsWith('path('),
+        ownerClipIsInset:String(ownerStyle.clipPath).startsWith('inset('),
         ownerClipLength:String(ownerStyle.clipPath).length,
         lensBackdrop:lensStyle.webkitBackdropFilter || lensStyle.backdropFilter,
+        lensOpacity:Number(lensStyle.opacity),
+        lensEffectiveOpacity:effectiveOpacity(lens, surface),
         ownerTransformAnimated:animatedProperty(ownerFrames, 'transform'),
         lensTransformAnimated:animatedProperty(lensFrames, 'transform'),
         ownerClipAnimated:animatedProperty(ownerFrames, 'clipPath')
@@ -262,6 +279,7 @@ async function installProfiler(page) {
         ownerAnimationCount:clipOwner.getAnimations().length,
         lensAnimationCount:lens.getAnimations().length,
         visibleBackdropOwnerCount:backdropOwners.length,
+        backdropCandidates:backdropCandidates.map(({ node:_node, ...candidate }) => candidate),
         liveBackdropCover:{
           present:!!cover,
           opacity:Number(getComputedStyle(cover).opacity),
@@ -471,6 +489,16 @@ async function auditArchitecture(page, phase) {
   return page.evaluate((auditPhase) => {
     const camera = window.fractalCalendarCamera;
     const surface = camera.surface();
+    const effectiveOpacity = (node, stop) => {
+      let opacity = 1;
+      for (let cursor = node; cursor; cursor = cursor.parentElement) {
+        const style = getComputedStyle(cursor);
+        if (style.display === 'none' || style.visibility !== 'visible') return 0;
+        opacity *= Number(style.opacity);
+        if (cursor === stop) break;
+      }
+      return opacity;
+    };
     const root = surface.querySelector(':scope > .fc-level[data-kind="year"]');
     const rootMonths = [...root.querySelectorAll(':scope > .fc-grid > .fc-month')];
     const rootPreviews = [...root.querySelectorAll(
@@ -483,6 +511,9 @@ async function auditArchitecture(page, phase) {
       ':scope > .fc-grid .fc-day-preview-cell',
     )];
     const rootDays = [...root.querySelectorAll(':scope > .fc-grid > .fc-month .fc-day')];
+    const warmMonthShells = [...surface.querySelectorAll(
+      ':scope > .fc-expander.fc-warm[data-kind="month"]',
+    )];
     const warmMonthDays = [...surface.querySelectorAll(
       ':scope > .fc-expander.fc-warm[data-kind="month"] .fc-day',
     )];
@@ -515,6 +546,9 @@ async function auditArchitecture(page, phase) {
       ':scope > .fc-expander[data-kind="day"]:not(.fc-warm)',
     );
     const activeDayLive = activeDay?.querySelector(':scope > .fc-expander-live');
+    const retainedDayLens = [...surface.querySelectorAll('.fc-source-screen-acrylic')]
+      .find((lens) => lens.dataset.fractalAcrylicPhase === 'retained-endpoint');
+    const retainedDayOwner = retainedDayLens?.parentElement || null;
     const objectFor = window.fractalCalendar._objectForElement;
     const objectGraph = window.fractalCalendar._objectGraph();
     const graphDays = objectGraph.children.flatMap((month) => month.children || []);
@@ -676,6 +710,25 @@ async function auditArchitecture(page, phase) {
         realDayCount:rootDays.length,
         warmRealDayCount:warmMonthDays.length,
       },
+      warmMonthCache:{
+        shellCount:warmMonthShells.length,
+        inertShellCount:warmMonthShells.filter((shell) => {
+          const style = getComputedStyle(shell);
+          return Number(style.opacity) <= .001
+            && style.pointerEvents === 'none';
+        }).length,
+        shellSharesGraphObject:warmMonthShells.every((shell) => (
+          objectGraph.children.includes(objectFor(shell))
+        )),
+        tiles:tileAudit(warmMonthDays),
+        graphOwnedDayCount:warmMonthDays.filter((day) => (
+          graphDays.includes(objectFor(day))
+        )).length,
+        readyPreviewCount:warmMonthDays.filter((day) => (
+          day.querySelector(':scope > .fc-calendar-tile-preview')
+            ?.dataset.previewState === 'ready'
+        )).length,
+      },
       rootMaterials:{
         planeCount:rootPlaneAudits.length,
         tileCount:rootPlaneAudits.reduce((sum, plane) => sum + plane.count, 0),
@@ -827,6 +880,22 @@ async function auditArchitecture(page, phase) {
         fullRendererView:activeDayLive?.dataset.tileObjectView || '',
         fullRenderer:activeDayLive?.dataset.tileRenderer || '',
         material:tileSurfaceAudit(activeDay),
+        screenMaterial:(() => {
+          if (!retainedDayLens || !retainedDayOwner) return null;
+          const lensStyle = getComputedStyle(retainedDayLens);
+          const ownerStyle = getComputedStyle(retainedDayOwner);
+          return {
+            phase:retainedDayLens.dataset.fractalAcrylicPhase || '',
+            direction:retainedDayLens.dataset.fractalAcrylicDirection || '',
+            ownerHidden:retainedDayOwner.hidden,
+            ownerClipIsInset:String(ownerStyle.clipPath).startsWith('inset('),
+            ownerClipIsPath:String(ownerStyle.clipPath).startsWith('path('),
+            backdrop:lensStyle.webkitBackdropFilter || lensStyle.backdropFilter,
+            opacity:Number(lensStyle.opacity),
+            effectiveOpacity:effectiveOpacity(retainedDayLens, surface),
+            visibility:lensStyle.visibility,
+          };
+        })(),
       } : null,
       yearChromeCount:document.querySelectorAll('body > .fc-year-strip').length,
       legacyNodeCount:surface.querySelectorAll(legacySelector).length,
@@ -870,9 +939,27 @@ function architectureFailures(audit, expectedLevel) {
     || audit.rootPreview?.inertCount !== audit.rootPreview?.count
     || audit.rootPreview?.backdropCount !== 0
     || audit.rootPreview?.syntheticDayCount !== 0
-    || audit.rootPreview?.realDayCount !== 0
-    || (expectedLevel === 0 && audit.rootPreview?.warmRealDayCount !== 0)) {
+    || audit.rootPreview?.realDayCount !== 0) {
     failures.push(`${audit.phase} year tiles did not use twelve canonical full-render captures`);
+  }
+  const expectedWarmMonthDays = audit.phase === 'year-return' ? 31 : 0;
+  const expectedWarmMonthShells = expectedWarmMonthDays ? 1 : 0;
+  if (audit.warmMonthCache?.shellCount !== expectedWarmMonthShells
+    || audit.warmMonthCache?.inertShellCount !== expectedWarmMonthShells
+    || audit.warmMonthCache?.shellSharesGraphObject !== true
+    || audit.warmMonthCache?.tiles?.count !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.buttonCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.sharedClassCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.canonicalClassCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.viewportInstanceCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.schemaCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.identityCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.objectBoundCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.canonicalObjectCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.tiles?.objectIdentityCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.graphOwnedDayCount !== expectedWarmMonthDays
+    || audit.warmMonthCache?.readyPreviewCount !== expectedWarmMonthDays) {
+    failures.push(`${audit.phase} retained month cache was not one inert canonical tile view`);
   }
   if (audit.rootMaterials?.planeCount !== 1
     || audit.rootMaterials?.tileCount !== expectedRootMonths
@@ -927,6 +1014,7 @@ async function main() {
   fs.rmSync(EVIDENCE_PATH, { force:true });
   fs.rmSync(YEAR_SCREENSHOT_PATH, { force:true });
   fs.rmSync(MONTH_SCREENSHOT_PATH, { force:true });
+  fs.rmSync(MONTH_TRACE_PATH, { force:true });
 
   console.log('[calendar-profiler] starting harness');
   const harness = await start({
@@ -1179,7 +1267,43 @@ async function main() {
 
     await sleep(320);
     const moves = [];
+    let traceSession = null;
+    if (process.env.CRM_CALENDAR_TRACE === '1') {
+      traceSession = await page.context().newCDPSession(page);
+      await traceSession.send('Tracing.start', {
+        categories:[
+          'blink',
+          'cc',
+          'devtools.timeline',
+          'gpu',
+          'toplevel',
+          'viz',
+          'disabled-by-default-devtools.timeline',
+          'disabled-by-default-devtools.timeline.frame',
+          'disabled-by-default-devtools.timeline.layers',
+        ].join(','),
+        transferMode:'ReturnAsStream',
+      });
+    }
     moves.push(await profileMove(page, 'month-in', openMonth, 1));
+    if (traceSession) {
+      const complete = new Promise((resolve) => {
+        traceSession.once('Tracing.tracingComplete', resolve);
+      });
+      await traceSession.send('Tracing.end');
+      const { stream } = await complete;
+      const chunks = [];
+      for (;;) {
+        const result = await traceSession.send('IO.read', { handle:stream });
+        if (result.data) chunks.push(result.base64Encoded
+          ? Buffer.from(result.data, 'base64')
+          : Buffer.from(result.data));
+        if (result.eof) break;
+      }
+      await traceSession.send('IO.close', { handle:stream });
+      fs.writeFileSync(MONTH_TRACE_PATH, Buffer.concat(chunks));
+      await traceSession.detach();
+    }
     await sleep(260);
     moves.push(await profileMove(page, 'day-in', openDay, 2));
     await sleep(MATERIAL_HANDOFF_MS + 40);
@@ -1295,6 +1419,16 @@ async function main() {
       failures.push('calendar tile previews are not fast atomic scope commits');
     }
     const dayAudit = architecture.find((audit) => audit.phase === 'day-rest')?.activeDay;
+    const dayDirectAcrylic = String(dayAudit?.material?.backdrop).includes('blur(')
+      && dayAudit?.material?.opacity >= .998;
+    const dayRetainedAcrylic = dayAudit?.screenMaterial?.phase === 'retained-endpoint'
+      && !dayAudit?.screenMaterial?.ownerHidden
+      && (dayAudit?.screenMaterial?.ownerClipIsInset
+        || dayAudit?.screenMaterial?.ownerClipIsPath)
+      && String(dayAudit?.screenMaterial?.backdrop).includes('blur(')
+      && dayAudit?.screenMaterial?.opacity >= .998
+      && dayAudit?.screenMaterial?.effectiveOpacity >= .998
+      && dayAudit?.screenMaterial?.visibility === 'visible';
     if (dayAudit?.date !== '2026-07-15'
       || !dayAudit?.isSharedTile
       || dayAudit.sharesMonthDayObject !== true
@@ -1304,8 +1438,7 @@ async function main() {
       || dayAudit.material?.sharedComponent !== true
       || dayAudit.material?.previewChildren !== 0
       || dayAudit.material?.otherChildren < 2
-      || !String(dayAudit.material?.backdrop).includes('blur(')
-      || dayAudit.material?.opacity < .998) {
+      || (!dayDirectAcrylic && !dayRetainedAcrylic)) {
       failures.push('day detail endpoint is not a shared tile with the canonical material');
     }
 
@@ -1333,12 +1466,16 @@ async function main() {
     auditMoves.forEach((move) => {
       const audit = move.motionAudit;
       const crossesYearBoundary = move.startLevel === 0 || move.endLevel === 0;
+      const transformClipPath = audit?.ownerTransformAnimated === true
+        && audit?.lensTransformAnimated === true
+        && audit?.ownerClipAnimated === false;
+      const stationaryLensClipPath = audit?.ownerTransformAnimated === false
+        && audit?.lensTransformAnimated === false
+        && audit?.ownerClipAnimated === true;
       if (!audit
-        || audit.ownerClipIsPath !== true
+        || (audit.ownerClipIsPath !== true && audit.ownerClipIsInset !== true)
         || !String(audit.lensBackdrop).includes('blur(')
-        || audit.ownerTransformAnimated !== true
-        || audit.lensTransformAnimated !== true
-        || audit.ownerClipAnimated !== false
+        || (!transformClipPath && !stationaryLensClipPath)
         || audit.visibleBackdropOwnerCount < 2
         || audit.visibleBackdropOwnerCount > 3
         || audit.liveBackdropCover?.present !== true
@@ -1350,7 +1487,7 @@ async function main() {
         || audit.liveBackdropCover?.rasterNodeCount !== 0
         || audit.legacyNodeCount
         || audit.rasterNodeCount) {
-        failures.push(`${move.label} did not use the static-clip transform acrylic path`);
+        failures.push(`${move.label} did not use a canonical single-owner acrylic path`);
       }
     });
     moves.forEach((move) => {
@@ -1379,8 +1516,27 @@ async function main() {
       }
     });
 
+    evidence.failures = failures;
     fs.writeFileSync(EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
-    console.log(JSON.stringify(evidence, null, 2));
+    console.log(JSON.stringify({
+      displayHz:evidence.displayHz,
+      idle:evidence.idle,
+      surfaceCadence:evidence.surfaceCadence,
+      auditMoves:evidence.auditMoves.map((move) => ({
+        label:move.label,
+        cadence:move.cadence,
+        motionAudit:move.motionAudit,
+      })),
+      moves:evidence.moves.map((move) => ({
+        label:move.label,
+        firstFrameLatencyMs:move.firstFrameLatencyMs,
+        cadence:move.cadence,
+        transformCadence:move.transformCadence,
+        handoffCadence:move.handoffCadence,
+        longTasks:move.longTasks,
+      })),
+      failures,
+    }, null, 2));
     if (failures.length) {
       throw new Error(`Calendar true-acrylic tile budget missed: ${failures.join('; ')}`);
     }

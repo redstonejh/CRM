@@ -6,9 +6,11 @@ const http = require('node:http');
 const path = require('node:path');
 const { URL } = require('node:url');
 const { WebSocket, WebSocketServer } = require('ws');
+const { redactDatasetPayload, valueAtPath } = require('../electron/cdms-client.cjs');
 
 const PORT = Number(process.env.CRM_WEB_PORT || 8080);
 const API_URL = String(process.env.CRM_API_URL || 'http://crm-api:3899').replace(/\/+$/, '');
+const CDMS_URL = String(process.env.CRM_CDMS_URL || process.env.CDMS_API_URL || 'http://192.168.203.238:6030').replace(/\/+$/, '');
 const DASHBOARD_DIR = path.resolve(__dirname, '..', 'dashboard');
 const DATA_DIR = path.resolve(process.env.CRM_WEB_DATA_DIR || '/data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
@@ -17,6 +19,14 @@ const COOKIE_SECURE = process.env.CRM_COOKIE_SECURE === '1';
 const DEFAULT_ADMIN_USERNAME = String(process.env.CRM_ADMIN_USERNAME || 'admin').trim() || 'admin';
 const DEFAULT_ADMIN_PASSWORD = String(process.env.CRM_ADMIN_PASSWORD || 'admin1');
 const sessions = new Map();
+const cdmsDatasetCache = new Map();
+const CDMS_SECRET_FIELD = /(password|passwd|passcode|(?:^|[\s_-])(?:pass|pw)(?:$|[\s_-])|secret|token|private[\s_-]*key|recovery[\s_-]*code|one[\s_-]*time|otp)/i;
+const CDMS_DATA_ENDPOINTS = new Set([
+  'clients', 'companies', 'core', 'workstations-users', 'external-info',
+  'managed-info', 'admin-credentials', 'guacamole', 'devices', 'containers',
+  'vms', 'daemons', 'services', 'domains', 'cameras', 'emails', 'users',
+  'workstations', 'phone-numbers', 'websites',
+]);
 
 const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -164,6 +174,177 @@ function requireSession(req, res) {
 
 function canManage(session) {
   return !!(session?.user?.isAdmin || session?.user?.permissions?.canManageUsers);
+}
+
+function cdmsSessionState(session) {
+  return session?.token ? sessions.get(session.token) || null : null;
+}
+
+async function cdmsRequest(session, pathname, options = {}) {
+  const target = new URL(pathname, CDMS_URL);
+  const state = cdmsSessionState(session);
+  const headers = { accept:'application/json', ...(options.headers || {}) };
+  if (state?.cdmsCookie) headers.cookie = state.cdmsCookie;
+  const init = {
+    method:options.method || 'GET',
+    headers,
+    cache:'no-store',
+    signal:AbortSignal.timeout(Number(options.timeoutMs) || 15000),
+  };
+  if (options.body !== undefined) {
+    headers['content-type'] = 'application/json';
+    init.body = JSON.stringify(options.body);
+  }
+  const response = await fetch(target, init);
+  const setCookie = response.headers.get('set-cookie');
+  if (state && setCookie) state.cdmsCookie = setCookie.split(';')[0];
+  const raw = await response.text();
+  let payload = {};
+  if (raw) {
+    try { payload = JSON.parse(raw); } catch { payload = { raw }; }
+  }
+  if (!response.ok) {
+    const error = new Error(payload?.error || payload?.message || `CDMS returned ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+function cdmsDataPath(endpoint, client = '', query = {}) {
+  const key = String(endpoint || '').trim();
+  if (key === 'misc' || key.startsWith('misc/')) {
+    const selected = String(client || key.slice(5) || '').trim();
+    if (!selected) throw new Error('A client is required for Misc data');
+    return `/api/data/misc/${encodeURIComponent(selected)}`;
+  }
+  if (!CDMS_DATA_ENDPOINTS.has(key)) throw new Error(`Unsupported CDMS data endpoint: ${key}`);
+  const params = new URLSearchParams();
+  if (client) params.set('client', String(client));
+  Object.entries(query && typeof query === 'object' ? query : {}).forEach(([name, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(name, String(value));
+  });
+  return `/api/data/${key}${params.size ? `?${params}` : ''}`;
+}
+
+function cdmsCacheKey(session, endpoint, client, query) {
+  return `${session?.token || '_public'}|${endpoint}|${client || ''}|${JSON.stringify(query || {})}`;
+}
+
+async function cdmsDataset(session, endpoint, options = {}) {
+  const client = String(options.client || '').trim();
+  const query = options.query && typeof options.query === 'object' ? options.query : {};
+  const key = cdmsCacheKey(session, endpoint, client, query);
+  const cached = cdmsDatasetCache.get(key);
+  if (!options.force && cached && Date.now() - cached.loadedAt < 5 * 60 * 1000) {
+    return { ok:true, cached:true, endpoint, client, payload:redactDatasetPayload(cached.payload), loadedAt:cached.loadedAt };
+  }
+  const payload = await cdmsRequest(session, cdmsDataPath(endpoint, client, query));
+  const loadedAt = Date.now();
+  cdmsDatasetCache.set(key, { payload, loadedAt });
+  return { ok:true, endpoint, client, payload:redactDatasetPayload(payload), loadedAt };
+}
+
+function clearCdmsCache(session) {
+  const prefix = `${session?.token || '_public'}|`;
+  for (const key of cdmsDatasetCache.keys()) {
+    if (key.startsWith(prefix)) cdmsDatasetCache.delete(key);
+  }
+}
+
+async function cdmsRoute(req, res, url) {
+  const session = requireSession(req, res);
+  if (!session) return;
+  const action = url.pathname.slice('/web/cdms/'.length);
+  const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readJson(req) : {};
+  try {
+    if (action === 'status' && req.method === 'GET') {
+      const config = await cdmsRequest(session, '/api/config', { timeoutMs:5000 });
+      return sendJson(res, 200, {
+        ok:true,
+        provider:'cdms',
+        baseUrl:CDMS_URL,
+        connection:'live',
+        authDisabled:!!config.authDisabled,
+        appName:config.appName,
+        version:config.version,
+        user:publicUser(session.user),
+      });
+    }
+    if (action === 'dataset' && req.method === 'POST') {
+      return sendJson(res, 200, await cdmsDataset(session, String(body.endpoint || ''), body.options || {}));
+    }
+    if (action === 'catalog' && req.method === 'GET') {
+      const result = await cdmsDataset(session, 'clients');
+      const clients = Array.isArray(result.payload?.clients) ? result.payload.clients : [];
+      const companies = clients.map((client, index) => ({
+        id:`cdms-company-${String(client.value || index).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        source:'cdms',
+        sourceId:String(client.value || ''),
+        cdmsClient:String(client.value || ''),
+        readOnly:true,
+        name:String(client.label || client.value || 'Client').replace(/\s*\([^)]*\)\s*$/, ''),
+        title:String(client.label || client.value || 'Client'),
+        companyCode:String(client.value || ''),
+        group:String(client.group || ''),
+        state:'active',
+      }));
+      return sendJson(res, 200, { ok:true, companies, contacts:[], assets:[] });
+    }
+    if (action === 'refresh' && req.method === 'POST') {
+      clearCdmsCache(session);
+      const result = await cdmsDataset(session, 'clients', { force:true });
+      return sendJson(res, 200, { ok:true, clients:Array.isArray(result.payload?.clients) ? result.payload.clients.length : 0 });
+    }
+    if (action === 'mutate' && req.method === 'POST') {
+      const kind = String(body.kind || 'update');
+      let pathname = '/api/data/update';
+      if (kind === 'company') pathname = '/api/data/companies';
+      else if (kind === 'misc') {
+        if (!body.client) return sendJson(res, 400, { ok:false, error:'A client is required for Misc changes' });
+        pathname = `/api/data/misc/${encodeURIComponent(String(body.client))}`;
+      } else if (kind !== 'update') {
+        return sendJson(res, 400, { ok:false, error:'Unsupported CDMS mutation kind' });
+      }
+      const result = await cdmsRequest(session, pathname, { method:'POST', body:body.body || {}, timeoutMs:20000 });
+      clearCdmsCache(session);
+      return sendJson(res, 200, { ok:true, ...redactDatasetPayload(result) });
+    }
+    if (action === 'reveal-secret' && req.method === 'POST') {
+      const endpoint = String(body.endpoint || '');
+      const client = String(body.client || '');
+      const query = body.query && typeof body.query === 'object' ? body.query : {};
+      const key = cdmsCacheKey(session, endpoint, client, query);
+      if (!cdmsDatasetCache.has(key)) await cdmsDataset(session, endpoint, { client, query, force:true });
+      const record = valueAtPath(cdmsDatasetCache.get(key)?.payload, body.path);
+      const field = String(body.field || '');
+      if (!record || !CDMS_SECRET_FIELD.test(field) || !Object.prototype.hasOwnProperty.call(record, field)) {
+        return sendJson(res, 404, { ok:false, error:'That credential is no longer available' });
+      }
+      return sendJson(res, 200, { ok:true, value:String(record[field] ?? '') });
+    }
+    if (action === 'preferences' && ['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) {
+      const key = String(body.key || url.searchParams.get('key') || '');
+      const pathname = key ? `/api/preferences/${encodeURIComponent(key)}` : '/api/preferences';
+      const result = await cdmsRequest(session, pathname, {
+        method:req.method,
+        body:['POST', 'PUT'].includes(req.method) ? (body.body || {}) : undefined,
+      });
+      return sendJson(res, 200, { ok:true, ...redactDatasetPayload(result) });
+    }
+    if (action === 'whois' && req.method === 'POST') {
+      const params = new URLSearchParams({ action:String(body.action || 'check') });
+      if (body.domain) params.set('domain', String(body.domain));
+      const result = await cdmsRequest(session, `/api/whois?${params}`, { timeoutMs:20000 });
+      return sendJson(res, 200, { ok:true, ...redactDatasetPayload(result) });
+    }
+    if (action === 'health' && req.method === 'GET') {
+      return sendJson(res, 200, { ok:true, ...redactDatasetPayload(await cdmsRequest(session, '/api/health')) });
+    }
+    return sendJson(res, 404, { ok:false, error:'Not found' });
+  } catch (error) {
+    return sendJson(res, error.status || 502, { ok:false, error:error.message });
+  }
 }
 
 function authSession(req, res) {
@@ -343,6 +524,7 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (url.pathname === '/healthz') return health(req, res);
     if (url.pathname.startsWith('/web/auth/')) return authRoute(req, res, url);
+    if (url.pathname.startsWith('/web/cdms/')) return cdmsRoute(req, res, url);
     if (url.pathname.startsWith('/api/')) return proxyHttp(req, res, url);
     if (!['GET', 'HEAD'].includes(req.method)) return sendJson(res, 405, { ok: false, error: 'Method not allowed' });
     return serveStatic(req, res, url);

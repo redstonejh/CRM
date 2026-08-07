@@ -33,7 +33,14 @@ const PROFILE_ENDPOINTS = [
 
 // Do not weaken this to a display-only mask. These keys are removed before the
 // renderer sees the object, so secrets cannot be recovered from devtools.
-const SECRET_FIELD = /(password|passwd|passcode|secret|token|private[\s_-]*key|recovery[\s_-]*code|mfa|one[\s_-]*time|otp)/i;
+const SECRET_FIELD = /(password|passwd|passcode|(?:^|[\s_-])(?:pass|pw)(?:$|[\s_-])|secret|token|private[\s_-]*key|recovery[\s_-]*code|one[\s_-]*time|otp)/i;
+const INLINE_SECRET = /\b(password|passwd|passcode|pass|pw|secret|token|private[\s_-]*key|recovery[\s_-]*code|otp)\b(\s*[:=]\s*)\S+/ig;
+const DATA_ENDPOINTS = new Set([
+  'clients', 'companies', 'core', 'workstations-users', 'external-info',
+  'managed-info', 'admin-credentials', 'guacamole', 'devices', 'containers',
+  'vms', 'daemons', 'services', 'domains', 'cameras', 'emails', 'users',
+  'workstations', 'phone-numbers', 'websites',
+]);
 const LEGACY_DEMO_ID = /^(co|ct|dl|tk|tkt|task|cal|inv|bill|ix|proj|project|wi|com|flow|item|work|case|job)[_-]/i;
 const DEMO_ENTITY = new Set([
   'tickets', 'deals', 'jobs', 'cases', 'tasks', 'calendarItems',
@@ -132,6 +139,37 @@ function sanitizeForRenderer(value, seen = new WeakSet()) {
   return clean;
 }
 
+function redactDatasetPayload(value, path = [], seen = new WeakSet()) {
+  if (typeof value === 'string') return value.replace(INLINE_SECRET, '$1$2[redacted]');
+  if (value == null || typeof value !== 'object') return value;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((item, index) => redactDatasetPayload(item, [...path, index], seen));
+  }
+  const clean = {};
+  const secretFields = [];
+  Object.entries(value).forEach(([key, item]) => {
+    if (SECRET_FIELD.test(key)) {
+      secretFields.push(key);
+      return;
+    }
+    clean[key] = redactDatasetPayload(item, [...path, key], seen);
+  });
+  if (secretFields.length) clean._secretFields = secretFields;
+  if (path.length) clean._cdmsPath = path;
+  return clean;
+}
+
+function valueAtPath(value, path = []) {
+  let current = value;
+  for (const part of Array.isArray(path) ? path : []) {
+    if (current == null || (typeof current !== 'object' && !Array.isArray(current))) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
 function sanitizeProfileRow(value, seen = new WeakSet()) {
   if (typeof value === 'string') {
     return value.replace(/\b(password|passwd|passcode|secret|token|mfa|otp)\b\s*[:=]\s*\S+/ig, '$1 [redacted]');
@@ -219,6 +257,7 @@ function createCdmsClient(options = {}) {
   let requestGeneration = 0;
   let refreshPromise = null;
   let profileCache = new Map();
+  let datasetCache = new Map();
   let catalog = { companies: [], contacts: [], assets: [] };
   let state = {
     connection: disabled ? 'disabled' : 'idle',
@@ -265,8 +304,150 @@ function createCdmsClient(options = {}) {
   function clearCatalog() {
     catalog = { companies: [], contacts: [], assets: [] };
     profileCache = new Map();
+    datasetCache = new Map();
     state.syncedAt = 0;
     state.partialFailures = 0;
+  }
+
+  function dataPath(endpoint, client = '', query = {}) {
+    const key = text(endpoint);
+    if (key.startsWith('misc/')) {
+      const requestedClient = text(client || key.slice(5));
+      if (!requestedClient) throw new Error('A client is required for Misc data');
+      return `/api/data/misc/${encodeURIComponent(requestedClient)}`;
+    }
+    if (!DATA_ENDPOINTS.has(key)) throw new Error(`Unsupported CDMS data endpoint: ${key}`);
+    const params = new URLSearchParams();
+    if (client) params.set('client', text(client));
+    Object.entries(query && typeof query === 'object' ? query : {}).forEach(([name, value]) => {
+      if (value !== undefined && value !== null && value !== '') params.set(name, String(value));
+    });
+    return `/api/data/${key}${params.size ? `?${params}` : ''}`;
+  }
+
+  function datasetCacheKey(endpoint, client = '', query = {}) {
+    return `${text(endpoint)}|${text(client)}|${JSON.stringify(query || {})}`;
+  }
+
+  async function dataset(endpoint, options = {}) {
+    const client = text(options.client);
+    const query = options.query && typeof options.query === 'object' ? options.query : {};
+    const key = datasetCacheKey(endpoint, client, query);
+    const cached = datasetCache.get(key);
+    if (!options.force && cached && Date.now() - cached.loadedAt < 5 * 60 * 1000) {
+      return {
+        ok: true,
+        cached: true,
+        endpoint:text(endpoint),
+        client,
+        payload:redactDatasetPayload(cached.payload),
+        loadedAt:cached.loadedAt,
+      };
+    }
+    const payload = await request(dataPath(endpoint, client, query), {
+      timeoutMs:Number(options.timeoutMs) || 15000,
+    });
+    const loadedAt = Date.now();
+    datasetCache.set(key, { payload, loadedAt });
+    return {
+      ok: true,
+      endpoint:text(endpoint),
+      client,
+      payload:redactDatasetPayload(payload),
+      loadedAt,
+    };
+  }
+
+  function invalidateDatasets() {
+    datasetCache = new Map();
+    profileCache = new Map();
+    state.syncedAt = 0;
+  }
+
+  async function mutateData(options = {}) {
+    const kind = text(options.kind || 'update');
+    let path = '/api/data/update';
+    let body = options.body && typeof options.body === 'object' ? options.body : {};
+    if (kind === 'company') path = '/api/data/companies';
+    else if (kind === 'misc') {
+      const client = text(options.client);
+      if (!client) return { ok:false, error:'A client is required for Misc changes' };
+      path = `/api/data/misc/${encodeURIComponent(client)}`;
+    } else if (kind !== 'update') {
+      return { ok:false, error:`Unsupported CDMS mutation kind: ${kind}` };
+    }
+    const allowedActions = kind === 'company'
+      ? new Set(['add', 'update'])
+      : kind === 'misc'
+        ? new Set(['updateCell', 'addRow', 'deleteRow'])
+        : new Set(['updateCell', 'updateRow', 'addRow', 'deleteRow', 'setInactive']);
+    if (!allowedActions.has(text(body.action))) {
+      return { ok:false, error:`Unsupported CDMS mutation action: ${text(body.action)}` };
+    }
+    try {
+      const result = await request(path, { method:'POST', body, timeoutMs:20000 });
+      invalidateDatasets();
+      notify('dataset-mutation');
+      return { ok:true, ...sanitizeForRenderer(result) };
+    } catch (error) {
+      return { ok:false, error:error.message, status:error.status || 0 };
+    }
+  }
+
+  async function revealSecret(options = {}) {
+    const endpoint = text(options.endpoint);
+    const client = text(options.client);
+    const query = options.query && typeof options.query === 'object' ? options.query : {};
+    const key = datasetCacheKey(endpoint, client, query);
+    if (!datasetCache.has(key)) await dataset(endpoint, { client, query, force:true });
+    const cached = datasetCache.get(key);
+    const field = text(options.field);
+    if (!cached || !field || !SECRET_FIELD.test(field)) {
+      return { ok:false, error:'That field cannot be revealed' };
+    }
+    const record = valueAtPath(cached.payload, options.path);
+    if (!record || typeof record !== 'object' || !Object.prototype.hasOwnProperty.call(record, field)) {
+      return { ok:false, error:'The credential is no longer available; refresh the record' };
+    }
+    return { ok:true, value:String(record[field] ?? '') };
+  }
+
+  async function preferences(options = {}) {
+    const key = text(options.key);
+    const path = key ? `/api/preferences/${encodeURIComponent(key)}` : '/api/preferences';
+    const method = text(options.method || 'GET').toUpperCase();
+    if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) {
+      return { ok:false, error:'Unsupported preference operation' };
+    }
+    try {
+      const payload = await request(path, {
+        method,
+        body:['POST', 'PUT'].includes(method) ? (options.body || {}) : undefined,
+      });
+      return { ok:true, ...sanitizeForRenderer(payload) };
+    } catch (error) {
+      return { ok:false, error:error.message, status:error.status || 0 };
+    }
+  }
+
+  async function whois(options = {}) {
+    const action = text(options.action || 'check');
+    if (!['check', 'lookup'].includes(action)) return { ok:false, error:'Unsupported WHOIS action' };
+    const params = new URLSearchParams({ action });
+    if (options.domain) params.set('domain', text(options.domain));
+    try {
+      return { ok:true, ...sanitizeForRenderer(await request(`/api/whois?${params}`, { timeoutMs:20000 })) };
+    } catch (error) {
+      return { ok:false, error:error.message, status:error.status || 0 };
+    }
+  }
+
+  async function health() {
+    try {
+      return { ok:true, ...sanitizeForRenderer(await request('/api/health', { timeoutMs:10000 })) };
+    } catch (error) {
+      return { ok:false, error:error.message, status:error.status || 0 };
+    }
   }
 
   async function request(path, requestOptions = {}) {
@@ -911,6 +1092,12 @@ function createCdmsClient(options = {}) {
     overlayRecords,
     decorateRecord,
     companyProfile,
+    dataset,
+    mutateData,
+    revealSecret,
+    preferences,
+    whois,
+    health,
     clear: () => {
       clearCatalog();
       notify('clear');
@@ -926,6 +1113,8 @@ module.exports = {
   normalizeCdmsUrl,
   normalizeUser,
   sanitizeForRenderer,
+  redactDatasetPayload,
+  valueAtPath,
   sanitizeProfileRow,
   stableHash,
 };

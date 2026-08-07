@@ -192,8 +192,9 @@
 
   const settings = { apiUrl: `${location.origin}/api`, cdmsUrl: '', web: true };
   window.crmBackend = {
-    connection: () => Promise.resolve({
-      ok: true, settings, connection: { apiUrl: settings.apiUrl, connection: connectionState }, cdms: { connection: 'disabled' },
+    connection: async () => ({
+      ok: true, settings, connection: { apiUrl: settings.apiUrl, connection: connectionState },
+      cdms: await request('/web/cdms/status'),
     }),
     status: async () => {
       const health = await request('/healthz');
@@ -201,7 +202,7 @@
         ok: health.ok, settings,
         connection: { apiUrl: settings.apiUrl, connection: health.ok ? 'live' : 'offline' },
         health: { ...health, apiUrl: settings.apiUrl, connection: health.ok ? 'live' : 'offline' },
-        cdms: { connection: 'disabled' },
+        cdms: await request('/web/cdms/status'),
         error: health.error || null,
       };
     },
@@ -210,10 +211,40 @@
     onChanged,
   };
   window.crmCdms = {
-    status: () => Promise.resolve({ connection: 'disabled', error: 'CDMS integration is not configured for the web deployment' }),
-    refresh: () => Promise.resolve({ ok: false, error: 'CDMS integration is disabled' }),
-    catalog: () => Promise.resolve({ ok: false, companies: [], contacts: [], assets: [] }),
-    companyProfile: () => Promise.resolve({ ok: false, error: 'CDMS integration is disabled' }),
+    status: () => request('/web/cdms/status'),
+    refresh: () => request('/web/cdms/refresh', { method:'POST', body:{} }),
+    catalog: () => request('/web/cdms/catalog'),
+    dataset: (endpoint, options = {}) => request('/web/cdms/dataset', {
+      method:'POST', body:{ endpoint, options },
+    }),
+    mutate: (options = {}) => request('/web/cdms/mutate', { method:'POST', body:options }),
+    revealSecret: (options = {}) => request('/web/cdms/reveal-secret', { method:'POST', body:options }),
+    preferences: (options = {}) => request(`/web/cdms/preferences${options.key ? `?key=${encodeURIComponent(options.key)}` : ''}`, {
+      method:String(options.method || 'GET').toUpperCase(),
+      body:['POST', 'PUT'].includes(String(options.method || 'GET').toUpperCase()) ? options : undefined,
+    }),
+    whois: (options = {}) => request('/web/cdms/whois', { method:'POST', body:options }),
+    health: () => request('/web/cdms/health'),
+    companyProfile: async (companyId) => {
+      const catalog = await request('/web/cdms/catalog');
+      const company = (catalog.companies || []).find((record) => String(record.id) === String(companyId));
+      if (!company) return { ok:false, error:'CDMS company not found' };
+      const endpoints = [
+        ['external-info', 'External access'], ['core', 'Core infrastructure'],
+        ['workstations-users', 'People and workstations'], ['managed-info', 'Managed services'],
+        ['guacamole', 'Remote access'], ['devices', 'Devices'], ['containers', 'Containers'],
+        ['vms', 'Virtual machines'], ['daemons', 'Daemons'], ['services', 'Services'],
+        ['domains', 'Domains'], ['cameras', 'Cameras'], ['emails', 'Email accounts'],
+        ['users', 'Users'], ['workstations', 'Workstations'], ['phone-numbers', 'Phone numbers'],
+        ['websites', 'Websites'],
+      ];
+      const sections = await Promise.all(endpoints.map(async ([endpoint, label]) => {
+        const result = await window.crmCdms.dataset(endpoint, { client:company.cdmsClient });
+        const rows = Array.isArray(result.payload?.data) ? result.payload.data : [];
+        return { key:endpoint, label, rows, ok:result.ok !== false, error:result.error };
+      }));
+      return { ok:true, company, sections };
+    },
     onChanged: () => () => {},
   };
   window.dashboard = {

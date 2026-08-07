@@ -1991,6 +1991,14 @@ ipcMain.handle('cdms:catalog', () => cdms.catalog());
 ipcMain.handle('cdms:company-profile', (_event, { companyId, force = false } = {}) => (
   cdms.companyProfile(String(companyId || ''), { force: !!force })
 ));
+ipcMain.handle('cdms:dataset', (_event, { endpoint, options = {} } = {}) => (
+  cdms.dataset(String(endpoint || ''), options)
+));
+ipcMain.handle('cdms:mutate', (_event, options = {}) => cdms.mutateData(options));
+ipcMain.handle('cdms:reveal-secret', (_event, options = {}) => cdms.revealSecret(options));
+ipcMain.handle('cdms:preferences', (_event, options = {}) => cdms.preferences(options));
+ipcMain.handle('cdms:whois', (_event, options = {}) => cdms.whois(options));
+ipcMain.handle('cdms:health', () => cdms.health());
 
 // ─── IPC: window controls ────────────────────────────────────────────────────────
 

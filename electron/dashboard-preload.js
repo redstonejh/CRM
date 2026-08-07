@@ -113,6 +113,12 @@ contextBridge.exposeInMainWorld('crmCdms', {
   status: () => ipcRenderer.invoke('cdms:status'),
   refresh: () => ipcRenderer.invoke('cdms:refresh'),
   catalog: () => ipcRenderer.invoke('cdms:catalog'),
+  dataset: (endpoint, options = {}) => ipcRenderer.invoke('cdms:dataset', { endpoint, options }),
+  mutate: (options = {}) => ipcRenderer.invoke('cdms:mutate', options),
+  revealSecret: (options = {}) => ipcRenderer.invoke('cdms:reveal-secret', options),
+  preferences: (options = {}) => ipcRenderer.invoke('cdms:preferences', options),
+  whois: (options = {}) => ipcRenderer.invoke('cdms:whois', options),
+  health: () => ipcRenderer.invoke('cdms:health'),
   companyProfile: (companyId, options = {}) => ipcRenderer.invoke('cdms:company-profile', {
     companyId,
     force: !!options.force,

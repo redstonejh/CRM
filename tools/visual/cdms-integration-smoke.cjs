@@ -9,7 +9,7 @@ const {
 } = require(path.resolve(__dirname, '..', '..', 'electron', 'cdms-client.cjs'));
 
 const LIVE_URL = process.env.CRM_CDMS_URL || 'http://192.168.203.238:6030';
-const secretKey = /(password|passwd|passcode|secret|token|private[\s_-]*key|recovery[\s_-]*code|mfa|one[\s_-]*time|otp)/i;
+const secretKey = /(password|passwd|passcode|(?:^|[\s_-])(?:pass|pw)(?:$|[\s_-])|secret|token|private[\s_-]*key|recovery[\s_-]*code|one[\s_-]*time|otp)/i;
 
 function forbiddenPaths(value, prefix = 'root', output = []) {
   if (Array.isArray(value)) {

@@ -5,11 +5,12 @@ import {
   ensureTileMaterialPlane,
   indexTileTree,
   mountTileChildren,
+  normalizeTileRecord,
+  reconcileTileChildren,
   syncTileMaterialPlane,
   tileObjectForElement,
 } from "./modules/tile-system.js";
 import {
-  CDMS_DATASETS,
   CDMS_REPORTS,
   CDMS_ROOMS,
   datasetByKey,
@@ -74,13 +75,18 @@ import {
 
   let active = false;
   let camera = null;
-  let rootObject = createTileObject({
-    tile:{ id:"cdms-clients-root", key:"clients", title:"Clients", label:"Clients", kind:"cdms-clients-root" },
-    data:{ domain:"cdms", unit:"clients" },
+  const rootObject = createTileObject({
+    tile:{
+      id:"clients", key:"clients", title:"Clients", label:"Clients", kind:"cdms-clients-root",
+      target:{ type:"workspace", id:"clients" },
+    },
+    data:{
+      domain:"cdms", unit:"clients", moduleKey:"clients", key:"clients", label:"Clients",
+      loadedAt:0,
+    },
     children:[],
   });
   let objectIndex = indexTileTree(rootObject);
-  let clients = [];
   let loadPromise = null;
   let loadedAt = 0;
   let detailShell = null;
@@ -90,77 +96,191 @@ import {
   const roomStateByHost = new WeakMap();
   const roomLoads = new WeakMap();
   const dataCache = new Map();
-  const clientCounts = new Map();
   let clientMenu = null;
 
-  const roomChildren = (client, room) => {
-    const code = clientCode(client);
+  const canonicalSignature = (value) => {
+    try { return JSON.stringify(value); } catch { return String(value ?? ""); }
+  };
+  const syncObject = (object, tile, data, signature) => {
+    const nextTile = normalizeTileRecord(tile, object.tile);
+    const nextSignature = canonicalSignature(signature);
+    if (object.data.canonicalSignature !== nextSignature) object.revision += 1;
+    object.tile = nextTile;
+    Object.assign(object.data, data, { canonicalSignature:nextSignature });
+    return object;
+  };
+  const notifyTreeChanged = (reason) => {
+    objectIndex = indexTileTree(rootObject);
+    document.dispatchEvent(new CustomEvent("crm:canonical-tree-changed", {
+      detail:{ root:rootObject, moduleKey:"clients", reason },
+    }));
+  };
+  const clientObjects = () => rootObject.children;
+  const clientRecords = () => clientObjects().map((object) => object.data.record);
+
+  const OVERVIEW_OBJECTS = [
+    { key:"core", label:"Core", unit:"overview-metric", note:"servers, routers, switches" },
+    { key:"workstationsUsers", label:"Workstations & users", unit:"overview-metric" },
+    { key:"externalInfo", label:"External", unit:"overview-metric", note:"firewalls and VPN" },
+    { key:"managedInfo", label:"Contacts", unit:"overview-metric" },
+    { key:"adminEmails", label:"Admin credentials", unit:"overview-metric" },
+    { key:"status", label:"Status", unit:"overview-metric" },
+    { key:"domain", label:"Domain", unit:"overview-link" },
+    { key:"phone", label:"Call", unit:"overview-link" },
+    { key:"guacamole", label:"Open Guacamole", unit:"overview-link" },
+    { key:"attend", label:"Open Attend", unit:"overview-link", url:"http://192.168.203.241:6029/attendance" },
+  ];
+
+  const roomChildDefinitions = (room) => {
+    if (room.key === "overview") return OVERVIEW_OBJECTS;
+    if (!["overview", "reports", "work", "monitoring"].includes(room.key)) {
+      return datasetsForRoom(room.key).map((definition) => ({
+        key:definition.key,
+        label:definition.label,
+        unit:"dataset",
+        definition,
+      }));
+    }
     if (room.key === "work") {
-      return WORK_ROOMS.map(([key, label], rank) => createTileObject({
-        tile:{
-          id:`cdms-${stableHash(code)}-work-${key}`, key, title:label, label,
-          kind:"cdms-work-room", rank, target:{ type:"workspace", id:key },
-        },
-        data:{ domain:"cdms", unit:"work-room", clientCode:code, workspace:key },
+      return WORK_ROOMS.map(([key, label]) => ({
+        key, label, unit:"workspace-route", workspace:key,
+        target:{ type:"workspace", id:key },
       }));
     }
     if (room.key === "monitoring") {
-      return [["live", "Live Status"], ["history", "History & Incidents"]].map(([key, label], rank) => createTileObject({
-        tile:{
-          id:`cdms-${stableHash(code)}-monitor-${key}`, key, title:label, label,
-          kind:"cdms-monitor-view", rank, target:{ type:"monitoring-view", id:key },
-        },
-        data:{ domain:"cdms", unit:"monitor-view", clientCode:code, monitorView:key },
+      return [["live", "Live Status"], ["history", "History & Incidents"]].map(([key, label]) => ({
+        key, label, unit:"monitoring-route", monitorView:key,
+        target:{ type:"monitoring-view", id:key },
       }));
     }
     if (room.key === "reports") {
-      return CDMS_REPORTS.map((report, rank) => createTileObject({
-        tile:{
-          id:`cdms-${stableHash(code)}-report-${report.key}`, key:report.key,
-          title:report.label, label:report.label, kind:"cdms-report", rank,
-          target:{ type:"cdms-report", id:report.key },
-        },
-        data:{ domain:"cdms", unit:"report", clientCode:code, reportKey:report.key },
+      return CDMS_REPORTS.map((report) => ({
+        key:report.key, label:report.label, unit:"report", reportKey:report.key,
+        target:{ type:"cdms-report", id:report.key },
       }));
     }
     return [];
   };
 
-  const createClientObject = (client, rank) => {
+  const roomChildId = (code, roomKey, key) => (
+    `cdms-${stableHash(code.toLowerCase())}-${roomKey}-${key}`
+  );
+  const reconcileRoomChildren = (roomObject, client, room) => {
     const code = clientCode(client);
-    const rooms = CDMS_ROOMS.map((room, roomRank) => createTileObject({
-      tile:{
-        id:`cdms-${stableHash(code)}-room-${room.key}`, key:room.key,
-        title:room.label, label:room.label, kind:"cdms-client-room", rank:roomRank,
-        target:{ type:"cdms-client-room", id:room.key },
-      },
-      data:{ domain:"cdms", unit:"room", room:room.key, clientCode:code, client:clone(client) },
-      children:roomChildren(client, room),
-    }));
-    return createTileObject({
-      tile:{
-        id:`cdms-client-${stableHash(code)}`, key:code, title:clientLabel(client),
-        label:clientLabel(client), kind:"cdms-client", rank,
-        target:{ type:"cdms-client", id:code },
-      },
-      data:{ domain:"cdms", unit:"client", clientCode:code, client:clone(client) },
-      children:rooms,
+    const definitions = roomChildDefinitions(room);
+    reconcileTileChildren(roomObject, definitions, {
+      keyOf:(definition) => roomChildId(code, room.key, definition.key),
+      create:(definition, rank) => createTileObject({
+        tile:{
+          id:roomChildId(code, room.key, definition.key),
+          key:definition.key,
+          title:definition.label,
+          label:definition.label,
+          kind:`cdms-${definition.unit}`,
+          rank,
+          target:definition.target || { type:`cdms-${definition.unit}`, id:definition.key },
+        },
+        data:{
+          domain:"cdms", unit:definition.unit, clientCode:code, room:room.key,
+          definition:definition.definition || null,
+          workspace:definition.workspace || "",
+          monitorView:definition.monitorView || "",
+          reportKey:definition.reportKey || "",
+          value:definition.unit === "overview-metric" ? "—" : "",
+          note:definition.note || "",
+          url:definition.url || "",
+          loadState:definition.unit === "dataset" || definition.unit === "report" ? "idle" : "ready",
+          error:"",
+        },
+        children:[],
+      }),
+      update:(object, definition, rank) => syncObject(object, {
+        ...object.tile,
+        title:definition.label,
+        label:definition.label,
+        rank,
+        target:definition.target || object.tile.target,
+      }, {
+        clientCode:code,
+        room:room.key,
+        definition:definition.definition || object.data.definition || null,
+        workspace:definition.workspace || "",
+        monitorView:definition.monitorView || "",
+        reportKey:definition.reportKey || "",
+      }, [code, room.key, definition.key, definition.label]),
     });
   };
 
-  const rebuildObjectTree = (records) => {
-    rootObject = createTileObject({
-      tile:rootObject.tile,
-      data:rootObject.data,
-      revision:rootObject.revision + 1,
-      children:records.map(createClientObject),
+  const createRoomObject = (client, room, rank) => {
+    const code = clientCode(client);
+    const object = createTileObject({
+      tile:{
+        id:`cdms-${stableHash(code.toLowerCase())}-room-${room.key}`, key:room.key,
+        title:room.label, label:room.label, kind:"cdms-client-room", rank,
+        target:{ type:"cdms-client-room", id:room.key },
+      },
+      data:{ domain:"cdms", unit:"room", room:room.key, clientCode:code },
+      children:[],
     });
-    objectIndex = indexTileTree(rootObject);
+    reconcileRoomChildren(object, client, room);
+    return object;
+  };
+
+  const createClientObject = (client, rank) => {
+    const code = clientCode(client);
+    const object = createTileObject({
+      tile:{
+        id:`cdms-client-${stableHash(code.toLowerCase())}`, key:code, title:clientLabel(client),
+        label:clientLabel(client), kind:"cdms-client", rank,
+        target:{ type:"cdms-client", id:code },
+      },
+      data:{ domain:"cdms", unit:"client", clientCode:code, record:client, counts:{} },
+      children:CDMS_ROOMS.map((room, roomRank) => createRoomObject(client, room, roomRank)),
+    });
+    return object;
+  };
+
+  const reconcileObjectTree = (records, countsByCode) => {
+    reconcileTileChildren(rootObject, records, {
+      keyOf:(client) => `cdms-client-${stableHash(clientCode(client).toLowerCase())}`,
+      create:createClientObject,
+      update:(object, client, rank) => {
+        const code = clientCode(client);
+        syncObject(object, {
+          ...object.tile,
+          key:code,
+          title:clientLabel(client),
+          label:clientLabel(client),
+          rank,
+          target:{ type:"cdms-client", id:code },
+        }, {
+          clientCode:code,
+          record:client,
+          counts:countsByCode.get(code.toLowerCase()) || {},
+        }, [code, client, countsByCode.get(code.toLowerCase()) || {}]);
+        reconcileTileChildren(object, CDMS_ROOMS, {
+          keyOf:(room) => `cdms-${stableHash(code.toLowerCase())}-room-${room.key}`,
+          create:(room, roomRank) => createRoomObject(client, room, roomRank),
+          update:(roomObject, room, roomRank) => {
+            syncObject(roomObject, {
+              ...roomObject.tile,
+              title:room.label,
+              label:room.label,
+              rank:roomRank,
+            }, { clientCode:code, room:room.key }, [code, room.key, room.label]);
+            reconcileRoomChildren(roomObject, client, room);
+          },
+        });
+      },
+    });
+    rootObject.data.loadedAt = Date.now();
+    rootObject.revision += 1;
+    notifyTreeChanged("clients-reconciled");
   };
 
   const loadClients = async ({ force = false } = {}) => {
     if (!force && loadPromise) return loadPromise;
-    if (!force && loadedAt && Date.now() - loadedAt < 5 * 60 * 1000) return clients;
+    if (!force && loadedAt && Date.now() - loadedAt < 5 * 60 * 1000) return clientRecords();
     loadPromise = (async () => {
       const [result, catalog] = await Promise.all([
         window.crmCdms?.dataset?.("clients", { force }),
@@ -169,16 +289,17 @@ import {
       if (result?.ok === false) throw new Error(result.error || "CDMS clients could not be loaded");
       const records = Array.isArray(result?.payload?.clients) ? result.payload.clients : [];
       const companies = Array.isArray(catalog?.companies) ? catalog.companies : [];
-      clientCounts.clear();
-      companies.forEach((company) => clientCounts.set(
+      const countsByCode = new Map();
+      companies.forEach((company) => countsByCode.set(
         clientCode(company).toLowerCase(),
         { people:Number(company.contactCount) || 0, assets:Number(company.assetCount) || 0 },
       ));
-      clients = records.filter((record) => clientCode(record)).sort((a, b) => clientLabel(a).localeCompare(clientLabel(b)));
-      rebuildObjectTree(clients);
+      const sorted = records.filter((record) => clientCode(record))
+        .sort((a, b) => clientLabel(a).localeCompare(clientLabel(b)));
+      reconcileObjectTree(sorted, countsByCode);
       loadedAt = Date.now();
       if (camera?.level?.() === 0) camera.rebuildRoot?.();
-      return clients;
+      return clientRecords();
     })().finally(() => { loadPromise = null; });
     return loadPromise;
   };
@@ -193,14 +314,14 @@ import {
     }
     return null;
   };
-  const selectedClient = () => clone(clientObjectFor(selectedObject)?.data?.client || window.crmClientContext?.current?.());
+  const selectedClient = () => clone(clientObjectFor(selectedObject)?.data?.record || window.crmClientContext?.current?.());
 
   const tilePreviewHTML = (object) => {
     const data = object.data || {};
     if (data.unit === "client") {
-      const client = data.client || {};
+      const client = data.record || {};
       const code = data.clientCode;
-      const counts = clientCounts.get(code.toLowerCase()) || {};
+      const counts = data.counts || {};
       return `<span class="crm-client-tile-content">
         <span class="crm-client-tile-kicker">${esc(code)}</span>
         <span class="crm-client-tile-title">${esc(clientLabel(client))}</span>
@@ -256,13 +377,13 @@ import {
       <button type="button" class="crm-menu-action" data-client-add>Add client</button>
       <button type="button" class="crm-menu-action" data-client-refresh>Refresh</button>
     </header><div class="crm-client-scroll"><section class="crm-client-grid" aria-label="CDMS clients"></section></div>
-    <div class="crm-client-root-state" data-client-state ${clients.length ? "hidden" : ""}>${clients.length ? "" : "Loading clients…"}</div>`;
+    <div class="crm-client-root-state" data-client-state ${clientObjects().length ? "hidden" : ""}>${clientObjects().length ? "" : "Loading clients…"}</div>`;
     const grid = layer.querySelector(".crm-client-grid");
     mountObjectGrid(grid, rootObject, {
       className:"crm-client-company-tile",
       filter:(object) => {
         const query = rootQuery.toLowerCase();
-        return !query || [object.tile.label, object.data?.clientCode, object.data?.client?.group]
+        return !query || [object.tile.label, object.data?.clientCode, object.data?.record?.group]
           .some((value) => String(value || "").toLowerCase().includes(query));
       },
     });
@@ -275,7 +396,7 @@ import {
       tile.hidden = !!query && ![
         object?.tile?.label,
         object?.data?.clientCode,
-        object?.data?.client?.group,
+        object?.data?.record?.group,
       ].some((value) => String(value || "").toLowerCase().includes(query));
     });
     syncMaterial(layer?.querySelector?.(".crm-client-grid"));
@@ -284,7 +405,7 @@ import {
   const buildRoot = () => {
     const layer = document.createElement("section");
     rootMarkup(layer);
-    if (!clients.length) {
+    if (!clientObjects().length) {
       void loadClients().then(() => {
         if (camera?.level?.() === 0) camera.rebuildRoot?.();
       }).catch((error) => {
@@ -296,7 +417,7 @@ import {
   };
 
   const renderClientWorld = (host, object) => {
-    const client = object.data?.client || {};
+    const client = object.data?.record || {};
     const code = object.data?.clientCode || "";
     host.innerHTML = `<header class="crm-client-world-head">
       <div><span class="crm-clients-kicker">${esc(code)}</span><h1>${esc(clientLabel(client))}</h1>
@@ -344,66 +465,163 @@ import {
     return true;
   };
 
-  const renderRecordCard = (definition, record, index) => {
+  const recordObjectId = (datasetObject, definition, record, index, duplicate) => {
+    const identifiers = rowIdentifier(definition, record);
+    const identity = text(record?._cdmsPath)
+      || (Object.keys(identifiers).length ? canonicalSignature(identifiers) : "")
+      || canonicalSignature(Object.fromEntries(businessKeys(record).map((key) => [key, record[key]])))
+      || String(index);
+    const suffix = duplicate > 0 ? `-${duplicate + 1}` : "";
+    return `${datasetObject.tile.id}-record-${stableHash(identity)}${suffix}`;
+  };
+  const reconcileDatasetRecords = (datasetObject, definition, rows) => {
+    const duplicates = new Map();
+    const records = (Array.isArray(rows) ? rows : []).map((record, index) => {
+      const identifiers = rowIdentifier(definition, record);
+      const identity = text(record?._cdmsPath)
+        || (Object.keys(identifiers).length ? canonicalSignature(identifiers) : "")
+        || canonicalSignature(Object.fromEntries(businessKeys(record).map((key) => [key, record[key]])))
+        || String(index);
+      const duplicate = duplicates.get(identity) || 0;
+      duplicates.set(identity, duplicate + 1);
+      return { id:recordObjectId(datasetObject, definition, record, index, duplicate), record };
+    });
+    reconcileTileChildren(datasetObject, records, {
+      keyOf:(entry) => entry.id,
+      create:(entry, rank) => createTileObject({
+        tile:{
+          id:entry.id,
+          key:entry.id,
+          title:recordTitle(definition, entry.record),
+          label:recordTitle(definition, entry.record),
+          kind:"cdms-record",
+          rank,
+          target:{ type:"cdms-record", id:entry.id },
+        },
+        data:{
+          domain:"cdms", unit:"record", clientCode:datasetObject.data.clientCode,
+          room:datasetObject.data.room, definition, record:entry.record,
+        },
+        children:[],
+      }),
+      update:(object, entry, rank) => syncObject(object, {
+        ...object.tile,
+        title:recordTitle(definition, entry.record),
+        label:recordTitle(definition, entry.record),
+        rank,
+      }, { definition, record:entry.record }, [entry.id, entry.record]),
+    });
+    datasetObject.data.loadState = "ready";
+    datasetObject.data.error = "";
+    datasetObject.data.loadedAt = Date.now();
+    return datasetObject.children;
+  };
+  const updateRecordCard = (element, object) => {
+    const definition = object.data.definition;
+    const record = object.data.record;
+    const revision = String(object.revision);
+    if (element.dataset.cdmsRecordRevision === revision) return element;
+    element.dataset.cdmsRecordRevision = revision;
+    element.setAttribute("aria-label", `Open ${object.tile.label}`);
     const subtitle = recordSubtitle(definition, record);
     const facts = businessKeys(record)
       .filter((field) => !definition.titleFields?.includes(field) && !definition.subtitleFields?.includes(field))
       .map((field) => [field, valueText(record[field])]).filter(([, value]) => value).slice(0, 3);
-    return `<button type="button" class="crm-client-record-card ticket-widget-card" data-cdms-record="${index}" data-cdms-dataset="${esc(definition.key)}">
-      <span class="crm-client-record-title">${esc(recordTitle(definition, record))}</span>
+    element.dataset.cdmsDataset = definition.key;
+    element.innerHTML = `<span class="crm-client-record-title">${esc(recordTitle(definition, record))}</span>
       ${subtitle ? `<span class="crm-client-record-subtitle">${esc(subtitle)}</span>` : ""}
       <span class="crm-client-record-facts">${facts.map(([field, value]) => `<span><b>${esc(field)}</b>${esc(value)}</span>`).join("")}</span>
       ${secretFields(record).length ? '<span class="crm-client-secret-chip">Credentials</span>' : ""}
-    </button>`;
+    `;
+    return element;
   };
 
-  const filteredRows = (definition, rows, state) => {
+  const filteredRecordObjects = (definition, datasetObject, state) => {
     const query = state.query.toLowerCase();
-    const filtered = !query ? rows : rows.filter((record) => (
-      businessKeys(record).some((field) => valueText(record[field]).toLowerCase().includes(query))
+    const filtered = !query ? datasetObject.children.slice() : datasetObject.children.filter((object) => (
+      businessKeys(object.data.record).some((field) => valueText(object.data.record[field]).toLowerCase().includes(query))
     ));
     const direction = state.sorts.get(definition.key) || "none";
     if (direction === "none") return filtered.slice();
-    return filtered.slice().sort((a, b) => {
-      const left = recordTitle(definition, a);
-      const right = recordTitle(definition, b);
+    return filtered.slice().sort((leftObject, rightObject) => {
+      const left = recordTitle(definition, leftObject.data.record);
+      const right = recordTitle(definition, rightObject.data.record);
       return direction === "desc" ? right.localeCompare(left, undefined, { numeric:true }) : left.localeCompare(right, undefined, { numeric:true });
     });
   };
 
-  const renderDatasetBucket = (bucket, definition, state) => {
-    const entry = state.datasets.get(definition.key) || { rows:[], error:null };
-    const rows = filteredRows(definition, entry.rows, state);
-    const pageSize = state.pageSizes.get(definition.key) || PAGE_SIZE;
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const page = Math.max(0, Math.min(pageCount - 1, state.pages.get(definition.key) || 0));
-    state.pages.set(definition.key, page);
-    const visible = rows.slice(page * pageSize, page * pageSize + pageSize);
-    state.visibleRows.set(definition.key, visible);
-    const sort = state.sorts.get(definition.key) || "none";
+  const ensureDatasetBucketStructure = (bucket, definition) => {
+    if (bucket.querySelector(":scope > .crm-client-bucket-head")) return;
     bucket.innerHTML = `<header class="crm-client-bucket-head">
-      <div><span class="crm-client-bucket-title">${esc(definition.label)}</span><span class="crm-client-bucket-count">${rows.length.toLocaleString()}</span></div>
+      <div><span class="crm-client-bucket-title"></span><span class="crm-client-bucket-count"></span></div>
       <div class="crm-client-bucket-actions">
-        <button type="button" class="crm-menu-action" data-dataset-sort="${esc(definition.key)}" aria-label="Sort ${esc(definition.label)}">${sort === "desc" ? "Z–A" : sort === "asc" ? "A–Z" : "Source"}</button>
-        <select class="crm-menu-input crm-client-page-size" data-page-size="${esc(definition.key)}" aria-label="Rows per page">${[25, 50, 100, 200].map((size) => `<option value="${size}" ${size === pageSize ? "selected" : ""}>${size}</option>`).join("")}</select>
+        <button type="button" class="crm-menu-action" data-dataset-sort="${esc(definition.key)}" aria-label="Sort ${esc(definition.label)}"></button>
+        <select class="crm-menu-input crm-client-page-size" data-page-size="${esc(definition.key)}" aria-label="Rows per page">${[25, 50, 100, 200].map((size) => `<option value="${size}">${size}</option>`).join("")}</select>
         ${definition.exportable ? `<button type="button" class="crm-menu-action" data-dataset-export="${esc(definition.key)}">CSV</button>` : ""}
         ${definition.addable ? `<button type="button" class="crm-menu-action" data-dataset-add="${esc(definition.key)}">Add</button>` : ""}
       </div>
-    </header><div class="crm-client-card-list">
-      ${entry.error ? `<div class="crm-client-empty">${esc(entry.error)}</div>`
-        : visible.length ? visible.map((record, index) => renderRecordCard(definition, record, index)).join("")
-          : `<div class="crm-client-empty">No ${esc(definition.label.toLowerCase())}</div>`}
-    </div>${pageCount > 1 ? `<footer class="crm-client-page">
-      <button type="button" class="crm-menu-action" data-page-step="-1" data-page-dataset="${esc(definition.key)}" ${page === 0 ? "disabled" : ""}>Previous</button>
-      <span>${page + 1} / ${pageCount}</span>
-      <button type="button" class="crm-menu-action" data-page-step="1" data-page-dataset="${esc(definition.key)}" ${page + 1 >= pageCount ? "disabled" : ""}>Next</button>
-    </footer>` : ""}`;
+    </header><div class="crm-client-card-list"></div><footer class="crm-client-page">
+      <button type="button" class="crm-menu-action" data-page-step="-1" data-page-dataset="${esc(definition.key)}">Previous</button>
+      <span></span>
+      <button type="button" class="crm-menu-action" data-page-step="1" data-page-dataset="${esc(definition.key)}">Next</button>
+    </footer>`;
+  };
+  const renderDatasetBucket = (bucket, datasetObject, state) => {
+    const definition = datasetObject.data.definition;
+    ensureDatasetBucketStructure(bucket, definition);
+    const records = filteredRecordObjects(definition, datasetObject, state);
+    const pageSize = state.pageSizes.get(definition.key) || PAGE_SIZE;
+    const pageCount = Math.max(1, Math.ceil(records.length / pageSize));
+    const page = Math.max(0, Math.min(pageCount - 1, state.pages.get(definition.key) || 0));
+    state.pages.set(definition.key, page);
+    const visible = records.slice(page * pageSize, page * pageSize + pageSize);
+    const sort = state.sorts.get(definition.key) || "none";
+    bucket.dataset.datasetBucket = definition.key;
+    bucket.querySelector(".crm-client-bucket-title").textContent = definition.label;
+    bucket.querySelector(".crm-client-bucket-count").textContent = records.length.toLocaleString();
+    bucket.querySelector("[data-dataset-sort]").textContent = sort === "desc" ? "Z–A" : sort === "asc" ? "A–Z" : "Source";
+    bucket.querySelector("[data-page-size]").value = String(pageSize);
+    const list = bucket.querySelector(".crm-client-card-list");
+    mountTileChildren(list, datasetObject, {
+      selectChildren:() => visible,
+      elementOptions:(recordObject) => ({
+        tagName:"button",
+        className:"crm-client-record-card ticket-widget-card",
+        canonicalClass:false,
+        preview:false,
+        view:"record-card",
+        ariaLabel:`Open ${recordObject.tile.label}`,
+      }),
+      update:(element, recordObject) => {
+        updateRecordCard(element, recordObject);
+      },
+    });
+    if (!visible.length) {
+      const empty = document.createElement("div");
+      empty.className = "crm-client-empty";
+      empty.textContent = datasetObject.data.error
+        || (datasetObject.data.loadState === "loading" ? `Loading ${definition.label}…` : `No ${definition.label.toLowerCase()}`);
+      list.appendChild(empty);
+    }
+    const footer = bucket.querySelector(".crm-client-page");
+    footer.hidden = pageCount <= 1;
+    footer.querySelector("span").textContent = `${page + 1} / ${pageCount}`;
+    footer.querySelector('[data-page-step="-1"]').disabled = page === 0;
+    footer.querySelector('[data-page-step="1"]').disabled = page + 1 >= pageCount;
   };
 
   const renderAllBuckets = (state) => {
-    state.host.querySelectorAll("[data-dataset-bucket]").forEach((bucket) => {
-      const definition = datasetByKey(bucket.dataset.datasetBucket);
-      if (definition) renderDatasetBucket(bucket, definition, state);
+    const strip = state.host.querySelector(".crm-client-dataset-strip");
+    if (!strip) return;
+    mountTileChildren(strip, state.object, {
+      elementOptions:(datasetObject) => ({
+        tagName:"section",
+        className:"crm-client-dataset-bucket crm-menu-surface",
+        preview:false,
+        view:"dataset-bucket",
+        ariaLabel:datasetObject.tile.label,
+      }),
+      update:(bucket, datasetObject) => renderDatasetBucket(bucket, datasetObject, state),
     });
     window.crmObjectSizing?.scan?.(state.host);
   };
@@ -414,14 +632,21 @@ import {
     const definitions = datasetsForRoom(room);
     const state = roomStateByHost.get(host) || {
       host, object, room, code, query:"", sorts:new Map(), pages:new Map(),
-      pageSizes:new Map(), datasets:new Map(), visibleRows:new Map(),
+      pageSizes:new Map(),
     };
     state.object = object; state.room = room; state.code = code;
     roomStateByHost.set(host, state);
-    host.innerHTML = `<header class="crm-client-room-head"><div><span class="crm-clients-kicker">${esc(code)}</span><h1>${esc(object.tile.label)}</h1></div>
-      <label class="crm-client-search"><span class="sr-only">Search ${esc(object.tile.label)}</span><input class="crm-menu-input" data-room-search value="${esc(state.query)}" placeholder="Search all fields"></label>
-      <button type="button" class="crm-menu-action" data-client-refresh-room>Refresh</button>
-    </header><div class="crm-client-dataset-strip">${definitions.map((definition) => `<section class="crm-client-dataset-bucket crm-menu-surface" data-dataset-bucket="${esc(definition.key)}"><div class="crm-client-empty">Loading ${esc(definition.label)}…</div></section>`).join("")}</div>`;
+    if (!host.querySelector(":scope > .crm-client-dataset-strip")) {
+      host.innerHTML = `<header class="crm-client-room-head"><div><span class="crm-clients-kicker">${esc(code)}</span><h1>${esc(object.tile.label)}</h1></div>
+        <label class="crm-client-search"><span class="sr-only">Search ${esc(object.tile.label)}</span><input class="crm-menu-input" data-room-search value="${esc(state.query)}" placeholder="Search all fields"></label>
+        <button type="button" class="crm-menu-action" data-client-refresh-room>Refresh</button>
+      </header><div class="crm-client-dataset-strip"></div>`;
+    }
+    object.children.forEach((datasetObject) => {
+      datasetObject.data.loadState = "loading";
+      datasetObject.data.error = "";
+    });
+    renderAllBuckets(state);
     const unique = new Map();
     definitions.forEach((definition) => {
       if (!unique.has(definition.endpoint)) unique.set(definition.endpoint, loadDataset(definition, code, { force }));
@@ -437,19 +662,45 @@ import {
     });
     definitions.forEach((definition) => {
       const endpoint = byEndpoint.get(definition.endpoint);
-      state.datasets.set(definition.key, endpoint?.error
-        ? { rows:[], error:endpoint.error }
-        : { rows:payloadRows(endpoint?.result, definition), error:null });
+      const datasetObject = object.children.find((child) => child.data.definition?.key === definition.key);
+      if (!datasetObject) return;
+      if (endpoint?.error) {
+        reconcileDatasetRecords(datasetObject, definition, []);
+        datasetObject.data.loadState = "error";
+        datasetObject.data.error = endpoint.error;
+      } else reconcileDatasetRecords(datasetObject, definition, payloadRows(endpoint?.result, definition));
     });
+    notifyTreeChanged("dataset-records-reconciled");
     renderAllBuckets(state);
     return state;
   };
 
-  const overviewStat = (label, value, note = "") => `<article class="crm-client-overview-card crm-menu-surface"><span>${esc(label)}</span><strong>${esc(value)}</strong>${note ? `<small>${esc(note)}</small>` : ""}</article>`;
+  const mountOverviewObjects = (host, object) => {
+    const grid = host.querySelector(".crm-client-overview-grid");
+    if (!grid) return [];
+    return mountTileChildren(grid, object, {
+      elementOptions:(child) => ({
+        tagName:child.data.unit === "overview-link" ? "button" : "article",
+        className:`crm-client-overview-card crm-menu-surface ${child.data.unit === "overview-link" ? "crm-client-overview-link" : ""}`,
+        preview:false,
+        view:"overview-object",
+        ariaLabel:child.tile.label,
+      }),
+      update:(element, child) => {
+        const link = child.data.unit === "overview-link";
+        element.hidden = link && !child.data.url;
+        if (link) element.dataset.openUrl = child.data.url || "";
+        element.innerHTML = `<span>${esc(child.tile.label)}</span><strong>${esc(child.data.value || (link ? "Open" : "—"))}</strong>${child.data.note ? `<small>${esc(child.data.note)}</small>` : ""}`;
+      },
+    });
+  };
   const loadOverview = async (host, object, { force = false } = {}) => {
     const code = object.data?.clientCode;
-    const client = object.data?.client || {};
-    host.innerHTML = `<header class="crm-client-room-head"><div><span class="crm-clients-kicker">${esc(code)}</span><h1>Overview</h1></div><button type="button" class="crm-menu-action" data-client-refresh-room>Refresh</button></header><div class="crm-client-overview-grid"><div class="crm-client-empty">Loading client overview…</div></div>`;
+    const client = clientObjectFor(object)?.data?.record || {};
+    if (!host.querySelector(":scope > .crm-client-overview-grid")) {
+      host.innerHTML = `<header class="crm-client-room-head"><div><span class="crm-clients-kicker">${esc(code)}</span><h1>Overview</h1></div><button type="button" class="crm-menu-action" data-client-refresh-room>Refresh</button></header><div class="crm-client-overview-grid"></div>`;
+    }
+    mountOverviewObjects(host, object);
     const definitions = ["core", "workstationsUsers", "externalInfo", "managedInfo", "domains", "phoneNumbers", "guacamole", "adminEmails"].map(datasetByKey);
     const settled = await Promise.allSettled(definitions.map((definition) => loadDataset(definition, code, { force })));
     const counts = {};
@@ -462,20 +713,26 @@ import {
     const domain = valueText(rows.domains?.[0]?.["Domain Name"]);
     const phone = valueText(rows.phoneNumbers?.[0]?.Number);
     const guac = valueText(rows.guacamole?.[0]?.["Cloud Name"]);
-    const grid = host.querySelector(".crm-client-overview-grid");
-    grid.innerHTML = [
-      overviewStat("Core", counts.core || 0, "servers, routers, switches"),
-      overviewStat("Workstations & users", counts.workstationsUsers || 0),
-      overviewStat("External", counts.externalInfo || 0, "firewalls and VPN"),
-      overviewStat("Contacts", counts.managedInfo || 0),
-      overviewStat("Admin credentials", counts.adminEmails || 0),
-      overviewStat("Status", statusLabel(client.status) || "Good", text(client.group)),
-    ].join("") + `<section class="crm-client-overview-links crm-menu-surface">
-      ${domain ? `<button type="button" class="crm-menu-action" data-open-url="${esc(/^https?:/i.test(domain) ? domain : `https://${domain}`)}">Domain · ${esc(domain)}</button>` : ""}
-      ${phone ? `<button type="button" class="crm-menu-action" data-open-url="tel:${esc(phone)}">Call · ${esc(phone)}</button>` : ""}
-      ${guac ? `<button type="button" class="crm-menu-action" data-open-url="${esc(guac)}">Open Guacamole</button>` : ""}
-      <button type="button" class="crm-menu-action" data-open-url="http://192.168.203.241:6029/attendance">Open Attend</button>
-    </section>`;
+    const values = {
+      core:{ value:counts.core || 0, note:"servers, routers, switches" },
+      workstationsUsers:{ value:counts.workstationsUsers || 0, note:"" },
+      externalInfo:{ value:counts.externalInfo || 0, note:"firewalls and VPN" },
+      managedInfo:{ value:counts.managedInfo || 0, note:"" },
+      adminEmails:{ value:counts.adminEmails || 0, note:"" },
+      status:{ value:statusLabel(client.status) || "Good", note:text(client.group) },
+      domain:{ value:domain || "", note:domain ? `Open ${domain}` : "", url:domain ? (/^https?:/i.test(domain) ? domain : `https://${domain}`) : "" },
+      phone:{ value:phone || "", note:phone ? `Call ${phone}` : "", url:phone ? `tel:${phone}` : "" },
+      guacamole:{ value:guac || "", note:guac ? "Remote access" : "", url:guac || "" },
+      attend:{ value:"Attend", note:"Attendance", url:"http://192.168.203.241:6029/attendance" },
+    };
+    object.children.forEach((child) => {
+      const value = values[child.tile.key] || { value:"", note:"", url:"" };
+      syncObject(child, child.tile, value, [child.tile.key, value]);
+    });
+    object.revision += 1;
+    notifyTreeChanged("overview-objects-reconciled");
+    mountOverviewObjects(host, object);
+    return object.children;
   };
 
   const dateFromExcel = (value) => {
@@ -483,9 +740,108 @@ import {
     const parsed = Date.parse(value || "");
     return Number.isFinite(parsed) ? new Date(parsed) : null;
   };
+  const reconcileReportResult = (reportObject, result) => {
+    const duplicates = new Map();
+    const entries = (Array.isArray(result.items) ? result.items : []).map((item, index) => {
+      const sourceIdentity = item.record && item.definition
+        ? canonicalSignature(rowIdentifier(item.definition, item.record))
+        : "";
+      const identity = sourceIdentity || canonicalSignature([item.label, item.detail]);
+      const duplicate = duplicates.get(identity) || 0;
+      duplicates.set(identity, duplicate + 1);
+      return {
+        ...item,
+        id:`${reportObject.tile.id}-result-${stableHash(identity || String(index))}${duplicate ? `-${duplicate + 1}` : ""}`,
+      };
+    });
+    reconcileTileChildren(reportObject, entries, {
+      keyOf:(entry) => entry.id,
+      create:(entry, rank) => createTileObject({
+        tile:{
+          id:entry.id, key:entry.id, title:entry.label, label:entry.label,
+          kind:"cdms-report-result", rank,
+          target:{ type:"cdms-report-result", id:entry.id },
+        },
+        data:{
+          domain:"cdms", unit:"report-result", clientCode:reportObject.data.clientCode,
+          reportKey:reportObject.data.reportKey, label:entry.label, detail:entry.detail,
+          record:entry.record || null, definition:entry.definition || null,
+        },
+        children:[],
+      }),
+      update:(object, entry, rank) => syncObject(object, {
+        ...object.tile, title:entry.label, label:entry.label, rank,
+      }, {
+        label:entry.label, detail:entry.detail,
+        record:entry.record || null, definition:entry.definition || null,
+      }, [entry.id, entry.label, entry.detail, entry.record || null]),
+    });
+    syncObject(reportObject, reportObject.tile, {
+      value:result.value,
+      note:result.note,
+      loadState:"ready",
+      error:"",
+      loadedAt:Date.now(),
+    }, [reportObject.data.reportKey, result.value, result.note, entries.map((entry) => entry.id)]);
+    return reportObject;
+  };
+  const mountReportObjects = (host, object) => {
+    const grid = host.querySelector(".crm-client-report-grid");
+    if (!grid) return [];
+    const tiles = mountTileChildren(grid, object, {
+      elementOptions:(report) => ({
+        tagName:"article",
+        className:"crm-client-report-card",
+        preview:false,
+        view:"report-result",
+        ariaLabel:report.tile.label,
+      }),
+      update:(element, report) => {
+        if (!element.querySelector(":scope > header")) {
+          element.innerHTML = '<header><span></span><strong></strong></header><small></small><div class="crm-client-report-list"></div><footer></footer>';
+        }
+        element.dataset.reportKey = report.data.reportKey || "";
+        element.querySelector("header span").textContent = report.tile.label;
+        element.querySelector("header strong").textContent = String(report.data.value ?? "—");
+        element.querySelector(":scope > small").textContent = report.data.note || (report.data.loadState === "loading" ? "Evaluating…" : "No data");
+        const list = element.querySelector(".crm-client-report-list");
+        mountTileChildren(list, report, {
+          selectChildren:(children) => children.slice(0, 40),
+          elementOptions:(item) => ({
+            tagName:"div",
+            className:"crm-client-report-item",
+            canonicalClass:false,
+            preview:false,
+            view:"report-item",
+            ariaLabel:item.tile.label,
+          }),
+          update:(row, item) => {
+            if (row.dataset.reportItemRevision === String(item.revision)) return;
+            row.dataset.reportItemRevision = String(item.revision);
+            row.innerHTML = `<b>${esc(item.data.label)}</b><span>${esc(item.data.detail)}</span>`;
+          },
+        });
+        if (!report.children.length) {
+          const empty = document.createElement("div");
+          empty.className = "crm-client-empty";
+          empty.textContent = report.data.error || (report.data.loadState === "loading" ? "Evaluating…" : "No data");
+          list.appendChild(empty);
+        }
+        const footer = element.querySelector(":scope > footer");
+        footer.hidden = report.children.length <= 40;
+        footer.textContent = report.children.length > 40 ? `${report.children.length - 40} more results` : "";
+      },
+    });
+    syncMaterial(grid);
+    return tiles;
+  };
   const loadReports = async (host, object, { force = false } = {}) => {
     const code = object.data?.clientCode;
-    host.innerHTML = `<header class="crm-client-room-head"><div><span class="crm-clients-kicker">${esc(code)}</span><h1>Reports</h1></div><button type="button" class="crm-menu-action" data-client-refresh-room>Refresh</button></header><section class="crm-client-report-grid"><div class="crm-client-empty">Evaluating reports…</div></section>`;
+    if (!host.querySelector(":scope > .crm-client-report-grid")) {
+      host.innerHTML = `<header class="crm-client-room-head"><div><span class="crm-clients-kicker">${esc(code)}</span><h1>Reports</h1></div><button type="button" class="crm-menu-action" data-client-refresh-room>Refresh</button></header><section class="crm-client-report-grid"></section>`;
+    }
+    object.children.forEach((report) => { report.data.loadState = "loading"; report.data.error = ""; });
+    mountReportObjects(host, object);
     const definitions = REPORT_DATASETS.map(datasetByKey);
     const settled = await Promise.allSettled(definitions.map((definition) => loadDataset(definition, code, { force })));
     const rows = Object.fromEntries(definitions.map((definition, index) => [
@@ -533,35 +889,37 @@ import {
     const titleItem = (definition, row, detail) => ({
       label:recordTitle(definition, row),
       detail,
+      definition,
+      record:row,
     });
-    const reportData = new Map([
-      ["inactive", {
+    const computedReports = {
+      inactive:{
         value:inactive.length,
         note:inactive.length ? "Inactive records returned by the API" : "The source API normally filters archived rows",
         items:inactive.map(({ definition, row, reason }) => titleItem(definition, row, `${definition.label} · ${reason}`)),
-      }],
-      ["missing", {
+      },
+      missing:{
         value:missing.length,
         note:"Core IP/password · VM IP · service password",
         items:missing.map(({ definition, row, reason }) => titleItem(definition, row, `${definition.label} · ${reason}`)),
-      }],
-      ["mfa", {
+      },
+      mfa:{
         value:`${mfa.length}/${activeEmails.length}`,
         note:activeEmails.length ? `${Math.round(mfa.length / activeEmails.length * 100)}% enabled or excepted` : "No active email accounts",
         items:[
           ...mfa.map((row) => titleItem(datasetByKey("emails"), row, "Enabled or excepted")),
           ...mfaDisabled.map((row) => titleItem(datasetByKey("emails"), row, "Not enabled / not excepted")),
         ],
-      }],
-      ["firmware", {
+      },
+      firmware:{
         value:`${firmwarePresent.length}/${rows.externalInfo.length}`,
         note:`${firmwareMissing.length} missing a current version`,
         items:[
           ...firmwareMissing.map((row) => titleItem(datasetByKey("externalInfo"), row, "Current Version missing")),
           ...firmwarePresent.map((row) => titleItem(datasetByKey("externalInfo"), row, `Version ${text(row["Current Version"])}`)),
         ],
-      }],
-      ["resources", {
+      },
+      resources:{
         value:allocations.size,
         note:"Active VM allocation compared with matching Core capacity",
         items:[...allocations.entries()].map(([hostName, allocation]) => {
@@ -574,15 +932,15 @@ import {
             detail:`${allocation.cores}/${cores || "?"} cores · ${allocation.ram}/${ram || "?"} GB`,
           };
         }),
-      }],
-      ["password-age", {
+      },
+      "password-age":{
         value:passwordAge.filter((item) => item.group === "Over 90 days").length,
         note:`${passwordAge.filter((item) => item.group === "60–90 days").length} at 60–90 days · ${passwordAge.filter((item) => item.group === "Unknown").length} unknown`,
         items:passwordAge
           .sort((left, right) => (right.days ?? -1) - (left.days ?? -1))
           .map(({ row, days, group }) => titleItem(datasetByKey("services"), row, days == null ? group : `${group} · ${days} days`)),
-      }],
-      ["windows-11", {
+      },
+      "windows-11":{
         value:`${w11Ready.length}/${rows.workstations.length}`,
         note:`${w11NotReady.length} not capable · ${vmIssues.length} VM issues`,
         items:[
@@ -590,38 +948,23 @@ import {
           ...vmIssues.map((row) => titleItem(datasetByKey("vms"), row, `VM issue · ${text(row["Windows 11 Issue?"])}`)),
           ...w11Ready.map((row) => titleItem(datasetByKey("workstations"), row, "Windows 11 capable")),
         ],
-      }],
-      ["source-health", {
+      },
+      "source-health":{
         value:health?.summary || (health?.ok ? "Live" : "Unavailable"),
         note:health?.error || `Evaluated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}`,
         items:(Array.isArray(health?.sources) ? health.sources : []).map((source) => ({
           label:text(source.key) || "Source",
           detail:`${source.ok ? "OK" : "Unavailable"} · ${Number(source.rows) || 0} rows`,
         })),
-      }],
-    ]);
-    const grid = host.querySelector(".crm-client-report-grid");
-    const tiles = mountTileChildren(grid, object, {
-      elementOptions:(report) => ({
-        tagName:"article",
-        className:"crm-client-report-card",
-        preview:false,
-        view:"report-result",
-        ariaLabel:report.tile.label,
-      }),
-      update:(element, report) => {
-        const result = reportData.get(report.data?.reportKey) || { value:"—", note:"No data", items:[] };
-        const visible = result.items.slice(0, 40);
-        element.dataset.reportKey = report.data?.reportKey || "";
-        element.innerHTML = `<header><span>${esc(report.tile.label)}</span><strong>${esc(result.value)}</strong></header>
-          <small>${esc(result.note)}</small>
-          <div class="crm-client-report-list">${visible.length ? visible.map((item) => `<div><b>${esc(item.label)}</b><span>${esc(item.detail)}</span></div>`).join("")
-            : '<div class="crm-client-empty">No data</div>'}</div>
-          ${result.items.length > visible.length ? `<footer>${result.items.length - visible.length} more results</footer>` : ""}`;
       },
-    });
-    syncMaterial(grid);
-    return tiles;
+    };
+    object.children.forEach((report) => reconcileReportResult(
+      report,
+      computedReports[report.data.reportKey] || { value:"—", note:"No data", items:[] },
+    ));
+    object.revision += 1;
+    notifyTreeChanged("report-results-reconciled");
+    return mountReportObjects(host, object);
   };
 
   const renderWork = (host, object) => {
@@ -762,16 +1105,18 @@ import {
 
   const openRecordDetail = (definition, record, state, options = {}) => {
     detailState = { definition, record, roomState:state, code:state.code, adding:!!options.adding };
+    const datasetObject = state.object.children.find((child) => child.data.definition?.key === definition.key);
+    const datasetRows = (datasetObject?.children || []).map((object) => object.data.record);
     const keys = options.adding
       ? [...new Set([
         definition.clientField,
         ...definition.titleFields,
         ...definition.subtitleFields,
-        ...state.datasets.get(definition.key)?.rows.flatMap(businessKeys) || [],
+        ...datasetRows.flatMap(businessKeys),
       ])].filter(Boolean)
       : businessKeys(record);
     const secrets = options.adding
-      ? [...new Set(state.datasets.get(definition.key)?.rows.flatMap(secretFields) || [])]
+      ? [...new Set(datasetRows.flatMap(secretFields))]
       : secretFields(record);
     const editable = definition.editable !== false;
     detailShell.hidden = false;
@@ -1024,7 +1369,7 @@ import {
         selectedObject = objectForElement(target);
         const clientObject = clientObjectFor(selectedObject);
         if (clientObject) {
-          const client = clientObject.data.client;
+          const client = clientObject.data.record;
           window.crmClientContext?.select?.({
             id:`cdms-company-${stableHash(clientObject.data.clientCode.toLowerCase())}`,
             code:clientObject.data.clientCode,
@@ -1122,7 +1467,7 @@ import {
     }
     const editClient = target.closest?.("[data-client-edit]");
     if (editClient) {
-      const client = clients.find((record) => clientCode(record) === editClient.dataset.clientEdit);
+      const client = clientRecords().find((record) => clientCode(record) === editClient.dataset.clientEdit);
       return openClientEditor(client);
     }
     const refreshRoom = target.closest?.("[data-client-refresh-room]");
@@ -1165,7 +1510,11 @@ import {
     const exportButton = target.closest?.("[data-dataset-export]");
     if (exportButton) {
       const definition = datasetByKey(exportButton.dataset.datasetExport);
-      return exportCsv(definition, filteredRows(definition, state.datasets.get(definition.key)?.rows || [], state), state.code);
+      const datasetObject = state.object.children.find((child) => child.data.definition?.key === definition.key);
+      const rows = datasetObject
+        ? filteredRecordObjects(definition, datasetObject, state).map((object) => object.data.record)
+        : [];
+      return exportCsv(definition, rows, state.code);
     }
     const add = target.closest?.("[data-dataset-add]");
     if (add) {
@@ -1178,11 +1527,12 @@ import {
       state.pages.set(key, Math.max(0, (state.pages.get(key) || 0) + Number(page.dataset.pageStep || 0)));
       renderAllBuckets(state); return;
     }
-    const card = target.closest?.("[data-cdms-record]");
+    const card = target.closest?.(".crm-client-record-card[data-tile-object-id]");
     if (card) {
-      const definition = datasetByKey(card.dataset.cdmsDataset);
-      const record = state.visibleRows.get(definition.key)?.[Number(card.dataset.cdmsRecord)];
-      if (record) openRecordDetail(definition, record, state);
+      const recordObject = objectForElement(card);
+      if (recordObject?.data?.record && recordObject.data.definition) {
+        openRecordDetail(recordObject.data.definition, recordObject.data.record, state);
+      }
     }
   }, true);
   document.addEventListener("submit", async (event) => {
@@ -1206,7 +1556,7 @@ import {
     clientMenu.innerHTML = '<button type="button" class="crm-menu-action" data-context-client-edit>Edit client</button>';
     Object.assign(clientMenu.style, { left:`${event.clientX}px`, top:`${event.clientY}px` });
     clientMenu.querySelector("button").addEventListener("click", () => {
-      clientMenu.remove(); clientMenu = null; openClientEditor(object?.data?.client);
+      clientMenu.remove(); clientMenu = null; openClientEditor(object?.data?.record);
     });
     document.body.appendChild(clientMenu);
   });
@@ -1235,7 +1585,30 @@ import {
     }
     return { stable:false, signature:previous };
   };
-  const homePreviewState = () => ({ revision:rootObject.revision, clients:clients.length });
+  const homePreviewState = () => ({ revision:rootObject.revision, clients:clientObjects().length });
+  const identityState = () => {
+    const objects = [...objectIndex.objectsById.values()];
+    const homeRoot = window.crmHome?._objectGraph?.();
+    const mounted = [...document.querySelectorAll('.crm-clients-surface [data-tile-object-id]')];
+    const exactMounted = mounted.filter((element) => {
+      const object = tileObjectForElement(element);
+      return object && objectIndex.objectForId(element.dataset.tileObjectId) === object;
+    });
+    const counts = objects.reduce((result, object) => {
+      const unit = object.data.unit || "unknown";
+      result[unit] = (result[unit] || 0) + 1;
+      return result;
+    }, {});
+    return {
+      rootId:rootObject.tile.id,
+      homeSharesRoot:!!homeRoot?.children?.includes(rootObject),
+      objects:objects.length,
+      counts,
+      mounted:mounted.length,
+      exactMounted:exactMounted.length,
+      syntheticMounted:mounted.length - exactMounted.length,
+    };
+  };
   const applyHomePreviewState = async () => {
     await loadClients().catch(() => {});
     mount();
@@ -1262,15 +1635,16 @@ import {
     refresh:async () => {
       dataCache.clear(); loadedAt = 0;
       await loadClients({ force:true });
-      return clients.length;
+      return clientObjects().length;
     },
-    clients:() => clone(clients),
+    clients:() => clone(clientRecords()),
     selectedClient,
     level:() => camera?.level?.() || 0,
     surface:() => camera?.surface?.() || null,
     _objectGraph:() => rootObject,
     _objectIndex:() => objectIndex,
     _objectForElement:objectForElement,
+    _identityState:identityState,
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once:true });

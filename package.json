@@ -31,6 +31,7 @@
     "test:cdms:electron": "npm run build:electron-runtime && node tools/visual/cdms-electron-smoke.cjs",
     "test:cdms:auth": "npm run build:electron-runtime && node tools/visual/cdms-auth-electron-smoke.cjs",
     "test:monitor": "node tools/visual/monitor-integration-smoke.cjs",
+    "test:canonical-objects": "node tools/visual/canonical-object-identity-smoke.cjs",
     "test:tray": "npm run build:electron-runtime && node tools/visual/tray-lifecycle-smoke.cjs",
     "test:web": "node tools/web-smoke-test.cjs",
     "test:ws": "node tools/visual/ws-parity-test.js",

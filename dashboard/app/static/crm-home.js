@@ -3,6 +3,7 @@ import {
   bindTileObject,
   createTileObject,
   indexTileTree,
+  isTileObject,
   mountTileChildren,
   normalizeTileRecord,
   tileDataOf,
@@ -27,7 +28,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   ];
   const CANONICAL_HOME_TILE_IDS = new Set(MODULES.map(({ key }) => key));
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v50";
+  const HOME_PREVIEW_VERSION = "filtered-home-v51";
   const HOME_RETURN_INGRESS_MS = 110;
   const HOME_ACRYLIC_RELEASE_MS = 110;
   const HOME_RETURN_HANDOFF_EASE = "cubic-bezier(.4, 0, .2, 1)";
@@ -101,6 +102,27 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const homeTileData = (tile) => tileDataOf(tile) || {};
   const homeTileModuleKey = (tile) => String(homeTileData(tile).moduleKey || "");
   const homeTileLabel = (tile) => String(homeTileData(tile).label || tile?.tile?.label || "");
+  const canonicalModuleObjectFor = (moduleKey) => {
+    const apiName = { clients:"crmClients", monitoring:"crmMonitoring" }[String(moduleKey || "")];
+    if (!apiName) return null;
+    const object = window[apiName]?._objectGraph?.();
+    return isTileObject(object) && object.tile.id === moduleKey ? object : null;
+  };
+  const homeTileSnapshot = (tile, rank = tile?.tile?.rank || 0) => {
+    const id = String(tile?.tile?.id || "");
+    const moduleKey = homeTileModuleKey(tile);
+    const label = homeTileLabel(tile);
+    const tileRecord = tile?.tile || {};
+    return {
+      id,
+      moduleKey,
+      label,
+      rank:Number(rank) || 0,
+      tile:{ ...tileRecord, target:{ ...(tileRecord.target || {}) } },
+      data:{ domain:"home", unit:"workspace", moduleKey, key:moduleKey, label },
+    };
+  };
+  const homeTileSnapshots = (records = []) => records.map(homeTileSnapshot);
   const normalizeHomeTile = (source = {}, rank = 0) => {
     const sourceData = source.data && typeof source.data === "object" ? source.data : {};
     const moduleKey = String(
@@ -112,6 +134,24 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const label = [sourceData.label, source.label, source.tile?.title, module.label]
       .map((value) => String(value ?? "").trim())
       .find(Boolean) || module.label;
+    const canonicalObject = tileId === module.key ? canonicalModuleObjectFor(module.key) : null;
+    if (canonicalObject) {
+      canonicalObject.tile = normalizeTileRecord({
+        ...canonicalObject.tile,
+        id:tileId,
+        key:tileId,
+        title:label,
+        label,
+        rank,
+        target:{ type:"workspace", id:module.key },
+      }, canonicalObject.tile);
+      Object.assign(canonicalObject.data, {
+        moduleKey:module.key,
+        key:module.key,
+        label,
+      });
+      return canonicalObject;
+    }
     return createTileObject({
       data:{
         domain:"home",
@@ -170,7 +210,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       ));
     });
     if (migrated && !window.crmHomePreviews?.isCaptureWorker) {
-      try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(records)); } catch {}
+      try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(homeTileSnapshots(records))); } catch {}
     }
     return records;
   };
@@ -189,6 +229,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   });
   let homeTreeIndex = indexTileTree(homeRootObject);
   let homeTileRecords = homeRootObject.children;
+  document.addEventListener("crm:canonical-tree-changed", (event) => {
+    const changedRoot = event.detail?.root;
+    if (!changedRoot || !homeTileRecords.includes(changedRoot)) return;
+    homeRootObject.revision += 1;
+    homeTreeIndex = indexTileTree(homeRootObject);
+  });
   const isCanonicalHomeTile = (tile) => !!tile
     && CANONICAL_HOME_TILE_IDS.has(String(tile.tile?.id || ""))
     && homeTileModuleKey(tile) === String(tile.tile?.id || "");
@@ -214,8 +260,8 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       return true;
     });
     if (!stored.length) return false;
-    const currentSignature = JSON.stringify(homeTileRecords);
-    const storedSignature = JSON.stringify(stored);
+    const currentSignature = JSON.stringify(homeTileSnapshots(homeTileRecords));
+    const storedSignature = JSON.stringify(homeTileSnapshots(stored));
     if (storedSignature === currentSignature) return false;
     replaceHomeTileRecords(stored);
     camera?.rebuildRoot?.();
@@ -281,7 +327,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   };
   const writeHomeTiles = () => {
     if (window.crmHomePreviews?.isCaptureWorker) return;
-    try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(homeTileRecords)); } catch {}
+    try { localStorage.setItem(HOME_TILE_STORE_KEY, JSON.stringify(homeTileSnapshots(homeTileRecords))); } catch {}
   };
   const rebuildHomeTiles = (refreshKey = MODULES[0]?.key || "people") => {
     closeHomeTileMenu();
@@ -313,7 +359,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!tile) return null;
     replaceHomeTileRecords([...homeTileRecords, tile]);
     writeHomeTiles(); rebuildHomeTiles(module.key);
-    return clone(tile);
+    return clone(homeTileSnapshot(tile));
   };
   const removeHomeTile = (tileId) => {
     const removedId = String(tileId || "");
@@ -3260,7 +3306,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       return true;
     },
     peripheralAcrylicState:()=>homePeripheralAcrylic.status(),
-    tiles:()=>clone(homeTileRecords),_objectGraph:()=>homeRootObject,_objectIndex:()=>homeTreeIndex,
+    tiles:()=>clone(homeTileSnapshots(homeTileRecords)),_objectGraph:()=>homeRootObject,_objectIndex:()=>homeTreeIndex,
     createTile:createHomeTile,removeTile:removeHomeTile,canRemoveTile:canRemoveHomeTile,resetTiles:resetHomeTiles,
     releasePrecomposedModule,
     retainMotionSurface:()=>setInactiveMotionRetention(true),

@@ -124,6 +124,62 @@ export function createTileTree(source = {}, options = {}) {
   return object;
 }
 
+// Reconcile a changing domain collection into the existing canonical child
+// array. The tree owns identity: matching children are updated in place, new
+// children are created once, and removed children simply leave the array.
+// Callers may project/filter the resulting children in the DOM, but must not
+// manufacture a second collection of look-alike viewport objects.
+export function reconcileTileChildren(parent, sources = [], options = {}) {
+  if (!isTileObject(parent)) {
+    throw new TypeError("Tile children can be reconciled only on a canonical tile object.");
+  }
+  const records = Array.isArray(sources) ? sources : [];
+  const previous = parent.children.slice();
+  const existing = new Map(previous.map((object) => [object.tile.id, object]));
+  const ids = new Set();
+  const created = [];
+  const createdSet = new Set();
+  const next = records.map((source, index) => {
+    const requestedId = text(
+      typeof options.keyOf === "function" ? options.keyOf(source, index) : "",
+      tileRecordOf(source)?.id,
+      tileRecordOf(source)?.key,
+    );
+    let object = requestedId ? existing.get(requestedId) || null : null;
+    if (!object && isTileObject(source)) object = source;
+    if (!object) {
+      object = typeof options.create === "function"
+        ? options.create(source, index)
+        : createTileObject(source, options);
+      created.push(object);
+      createdSet.add(object);
+    }
+    if (!isTileObject(object)) {
+      throw new TypeError("A reconciled tile collection may contain only canonical tile objects.");
+    }
+    const id = object.tile.id;
+    if (requestedId && id !== requestedId) {
+      throw new TypeError(`Reconciled tile id ${id} does not match requested id ${requestedId}.`);
+    }
+    if (ids.has(id)) throw new TypeError(`Duplicate tile id in reconciled children: ${id}`);
+    ids.add(id);
+    options.update?.(object, source, index, { created:createdSet.has(object), parent });
+    return object;
+  });
+  const structuralChange = previous.length !== next.length
+    || next.some((object, index) => previous[index] !== object);
+  if (structuralChange) {
+    parent.children.splice(0, parent.children.length, ...next);
+    parent.revision += 1;
+  }
+  return {
+    children:parent.children,
+    created,
+    removed:previous.filter((object) => !ids.has(object.tile.id)),
+    structuralChange,
+  };
+}
+
 export function indexTileTree(root) {
   if (!isTileObject(root)) return null;
   const objectsById = new Map();
@@ -245,11 +301,30 @@ export function tileObjectForElement(element) {
   return element ? tileObjectByElement.get(element) || null : null;
 }
 
-// A collection is always the `children` array of a canonical tile object.
-// Home tiles, year/month tiles, and month/day tiles all enter the DOM through
-// this function; there is no module-owned parallel collection representation.
+// A collection is always owned by the `children` array of a canonical tile
+// object. A paged or filtered view may select a subset, but every selected
+// entry must be the exact child object owned by that parent. Home tiles,
+// year/month tiles, and month/day tiles all enter the DOM through this
+// function; there is no module-owned parallel collection representation.
 export function mountTileChildren(host, parent, options = {}) {
   if (!host || !isTileObject(parent)) return [];
+  const selected = typeof options.selectChildren === "function"
+    ? options.selectChildren(parent.children.slice(), parent)
+    : parent.children;
+  if (!Array.isArray(selected)) {
+    throw new TypeError("A tile child view must select an array of canonical child objects.");
+  }
+  const owned = new Set(parent.children);
+  const selectedIds = new Set();
+  selected.forEach((object) => {
+    if (!owned.has(object)) {
+      throw new TypeError("A tile child view may select only exact objects owned by its parent.");
+    }
+    if (selectedIds.has(object.tile.id)) {
+      throw new TypeError(`Duplicate tile id in selected child view: ${object.tile.id}`);
+    }
+    selectedIds.add(object.tile.id);
+  });
   const selector = options.selector || ':scope > [data-crm-tile-instance="viewport"]';
   const existing = new Map(
     [...host.querySelectorAll(selector)].map((element) => [
@@ -257,7 +332,7 @@ export function mountTileChildren(host, parent, options = {}) {
       element,
     ]),
   );
-  const elements = parent.children.map((object, index) => {
+  const elements = selected.map((object, index) => {
     let element = existing.get(object.tile.id) || null;
     const created = !element || tileObjectForElement(element) !== object;
     if (created) {
@@ -281,6 +356,7 @@ export function mountTileChildren(host, parent, options = {}) {
   }
   host.dataset.crmTileCollection = parent.tile.id;
   host.dataset.crmTileChildCount = String(parent.children.length);
+  host.dataset.crmTileVisibleChildCount = String(selected.length);
   return elements;
 }
 
@@ -562,6 +638,7 @@ export const crmTileSystem = {
   normalizeAll:normalizeTileCollection,
   createObjectRecord:createTileObject,
   createTree:createTileTree,
+  reconcileChildren:reconcileTileChildren,
   indexTree:indexTileTree,
   isObject:isTileObject,
   dataOf:tileDataOf,

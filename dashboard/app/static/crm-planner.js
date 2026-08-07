@@ -238,7 +238,26 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
       window.crmDomain.list("workflow-entries", { includeDeleted:false, limit:1000 }), window.crmDomain.list("commitments", { includeDeleted:false, limit:1000 }),
       window.crmStore.list("contacts", { includeDeleted:false }), window.crmStore.list("tasks", { includeDeleted:false }), window.crmStore.list("tickets", { includeDeleted:false }),
     ]);
-    const projectRecords = rows(projects).filter((record) => !record.deletedAt);
+    const allProjectRecords = rows(projects).filter((record) => !record.deletedAt);
+    const projectRecords = window.crmClientContext?.filter?.(allProjectRecords) || allProjectRecords;
+    const projectIds = new Set(projectRecords.map((record) => String(record.id)));
+    const allItems = rows(items).filter((record) => !record.deletedAt);
+    const itemRecords = window.crmClientContext?.isScoped?.()
+      ? allItems.filter((record) => (
+        window.crmClientContext.matches(record) || projectIds.has(String(record.projectId || ""))
+      ))
+      : allItems;
+    const itemIds = new Set(itemRecords.map((record) => String(record.id)));
+    const scopedRelated = (records) => {
+      const live = rows(records).filter((record) => !record.deletedAt);
+      if (!window.crmClientContext?.isScoped?.()) return live;
+      return live.filter((record) => (
+        window.crmClientContext.matches(record)
+        || projectIds.has(String(record.projectId || ""))
+        || itemIds.has(String(record.recordId || record.workItemId || ""))
+        || (Array.isArray(record.links) && record.links.some((link) => itemIds.has(String(link.recordId || ""))))
+      ));
+    };
     pendingProjectTileMigrations = projectRecords.filter((record) => {
       const tile = record?.tile;
       return !tile || Number(tile.schemaVersion) !== 1 || String(tile.id || "") !== String(record.id || "")
@@ -246,16 +265,28 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     });
     return {
       projects:projectRecords.map(normalizeProject),
-      items:rows(items).filter((record) => !record.deletedAt).map(normalizeItem), flows:rows(flows).filter((record) => !record.deletedAt),
-      commitments:rows(commitments).filter((record) => !record.deletedAt), contacts:rows(contacts).filter((record) => !record.deletedAt),
-      tasks:rows(tasks).filter((record) => !record.deletedAt), tickets:rows(tickets).filter((record) => !record.deletedAt),
+      items:itemRecords.map(normalizeItem),
+      flows:scopedRelated(flows),
+      commitments:scopedRelated(commitments),
+      contacts:window.crmClientContext?.filter?.(rows(contacts).filter((record) => !record.deletedAt))
+        || rows(contacts).filter((record) => !record.deletedAt),
+      tasks:window.crmClientContext?.filter?.(rows(tasks).filter((record) => !record.deletedAt))
+        || rows(tasks).filter((record) => !record.deletedAt),
+      tickets:window.crmClientContext?.filter?.(rows(tickets).filter((record) => !record.deletedAt))
+        || rows(tickets).filter((record) => !record.deletedAt),
     };
   }
 
   async function createLinkedItem(project, stage, title, note = "", options = {}) {
     const rank = model.items.filter((item) => item.projectId === project.id && item.stageId === stage.id).length;
     const cardKind = CARD_KINDS.some((kind) => kind.id === String(options.cardKind || "")) ? String(options.cardKind) : "generic";
-    const itemResult = await window.crmStore.create("workItems", {
+    const itemResult = await window.crmStore.create("workItems", window.crmClientContext?.decorate?.({
+      projectId:project.id, projectTitle:project.title, stageId:stage.id, stageLabel:stage.title, title, note,
+      cardKind,
+      dueAt:options.dueAt || null, priority:options.priority || "normal", assignee:options.assignee || null,
+      assignedContactId:options.assignedContactId || null, linkedEntityType:options.linkedEntityType || null,
+      linkedRecordId:options.linkedRecordId || null, status:stage.kind === "done" ? "completed" : "open", rank,
+    }) || {
       projectId:project.id, projectTitle:project.title, stageId:stage.id, stageLabel:stage.title, title, note,
       cardKind,
       dueAt:options.dueAt || null, priority:options.priority || "normal", assignee:options.assignee || null,
@@ -265,7 +296,12 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     const item = itemResult?.record; if (!item) return null;
     const links = [{ entityType:"workItems", recordId:item.id, relation:"regarding" }];
     if (options.linkedEntityType && options.linkedRecordId) links.push({ entityType:options.linkedEntityType, recordId:options.linkedRecordId, relation:"supports" });
-    const commitmentResult = await window.crmDomain.create("commitments", {
+    const commitmentResult = await window.crmDomain.create("commitments", window.crmClientContext?.decorate?.({
+      title, kind:"pipeline-work", status:stage.kind === "done" ? "completed" : "open", dueAt:options.dueAt || null,
+      cardKind,
+      priority:options.priority || "normal", assignee:options.assignee || null, projectId:project.id, projectTitle:project.title,
+      stageId:stage.id, stageLabel:stage.title, links,
+    }) || {
       title, kind:"pipeline-work", status:stage.kind === "done" ? "completed" : "open", dueAt:options.dueAt || null,
       cardKind,
       priority:options.priority || "normal", assignee:options.assignee || null, projectId:project.id, projectTitle:project.title,
@@ -273,7 +309,9 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     });
     const commitment = commitmentResult?.record;
     if (!commitment) { await window.crmStore.remove("workItems", item.id); return null; }
-    const flowResult = await window.crmDomain.create("workflow-entries", {
+    const flowResult = await window.crmDomain.create("workflow-entries", window.crmClientContext?.decorate?.({
+      workflowKey:`project:${project.id}`, entityType:"workItems", recordId:item.id, stage:stage.id, rank, owner:options.assignee || null,
+    }) || {
       workflowKey:`project:${project.id}`, entityType:"workItems", recordId:item.id, stage:stage.id, rank, owner:options.assignee || null,
     });
     const flow = flowResult?.record;
@@ -295,7 +333,15 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (!legacy.length) { localStorage.setItem(MIGRATED_KEY, "true"); return false; }
     for (const source of legacy) {
       const stages = (source.buckets || []).map((bucket, index) => normalizeStage({ id:uid("stage"), title:bucket.title, kind:index === source.buckets.length - 1 ? "done" : index ? "active" : "queue", rank:index }, index));
-      const projectResult = await window.crmStore.create("projects", { title:first(source.title, "Imported project"), note:String(source.note || ""), stages:stages.length ? stages : clone(DEFAULT_STAGES) });
+      const importedProject = {
+        title:first(source.title, "Imported project"),
+        note:String(source.note || ""),
+        stages:stages.length ? stages : clone(DEFAULT_STAGES),
+      };
+      const projectResult = await window.crmStore.create(
+        "projects",
+        window.crmClientContext?.decorate?.(importedProject) || importedProject,
+      );
       const project = projectResult?.record; if (!project) continue;
       for (let index = 0; index < stages.length; index += 1) {
         const sourceBucket = source.buckets[index];
@@ -1097,7 +1143,18 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     if (Array.isArray(stageTitles)) stageTitles.forEach((value) => { const name = String(value || "").trim(); const key = name.toLocaleLowerCase(); if (name && !seen.has(key)) { seen.add(key); names.push(name); } });
     const stages = names.length ? names.map((name, index) => normalizeStage({ id:uid("stage"), title:name, kind:index === 0 ? "queue" : index === names.length - 1 ? "done" : "active", rank:index }, index)) : clone(DEFAULT_STAGES);
     const projectTitle = String(title || "").trim();
-    const result = await window.crmStore.create("projects", { title:projectTitle, note:String(note || "").trim(), stages, ownerContactId:options.ownerContactId || null, owner:options.owner || null, dueAt:options.dueAt || null });
+    const projectFields = {
+      title:projectTitle,
+      note:String(note || "").trim(),
+      stages,
+      ownerContactId:options.ownerContactId || null,
+      owner:options.owner || null,
+      dueAt:options.dueAt || null,
+    };
+    const result = await window.crmStore.create(
+      "projects",
+      window.crmClientContext?.decorate?.(projectFields) || projectFields,
+    );
     if (!result?.record) return null;
     const normalized = normalizeProject(result.record);
     await window.crmStore.update("projects", normalized.id, { tile:normalized.tile });

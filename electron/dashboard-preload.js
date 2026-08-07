@@ -125,6 +125,18 @@ contextBridge.exposeInMainWorld('crmCdms', {
   }),
   onChanged: (cb) => ipcRenderer.on('auth:changed', (_event, session) => cb(session)),
 });
+contextBridge.exposeInMainWorld('crmMonitoringData', {
+  status: () => ipcRenderer.invoke('monitor:status'),
+  snapshot: (options = {}) => ipcRenderer.invoke('monitor:snapshot', options),
+  history: (options = {}) => ipcRenderer.invoke('monitor:history', options),
+  refresh: () => ipcRenderer.invoke('monitor:refresh'),
+  onChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('monitor:changed', listener);
+    return () => ipcRenderer.removeListener('monitor:changed', listener);
+  },
+});
 contextBridge.exposeInMainWorld('deals', entityBridge('deals'));
 contextBridge.exposeInMainWorld('contacts', entityBridge('contacts'));
 contextBridge.exposeInMainWorld('companies', entityBridge('companies'));

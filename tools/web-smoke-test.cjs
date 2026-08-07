@@ -128,8 +128,14 @@ async function main() {
   assert.equal(users.response.status, 200);
   assert.equal(users.payload.users[0].username, 'smoke-admin');
 
+  const monitor = await json(`${base}/web/monitor/status`, { headers: { cookie } });
+  assert.equal(monitor.response.status, 200);
+  assert.equal(monitor.payload.provider, 'original-mqtt');
+  assert.ok(Array.isArray(monitor.payload.topics));
+  assert.ok(monitor.payload.topics.includes('+/+/checks/+'));
+
   if (childErrors) throw new Error(childErrors);
-  console.log('Web smoke: health, static assets, auth, protected HTTP proxy, users, and WebSocket proxy passed.');
+  console.log('Web smoke: health, auth, protected proxies, original MQTT status, users, and WebSocket proxy passed.');
 }
 
 main().finally(async () => {
@@ -140,4 +146,3 @@ main().finally(async () => {
   console.error(error);
   process.exitCode = 1;
 });
-

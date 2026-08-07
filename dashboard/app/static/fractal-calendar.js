@@ -2774,11 +2774,26 @@ import {
         window.crmStore?.list?.("projects", { includeDeleted:false }),
         window.crmStore?.list?.("workItems", { includeDeleted:false }),
       ]);
-      projects = recordsFrom(projectResult).filter((record) => !record.deletedAt);
-      workItems = recordsFrom(workItemResult).filter((record) => !record.deletedAt);
+      const allProjects = recordsFrom(projectResult).filter((record) => !record.deletedAt);
+      projects = window.crmClientContext?.filter?.(allProjects) || allProjects;
+      const projectIds = new Set(projects.map((record) => String(record.id)));
+      const allWorkItems = recordsFrom(workItemResult).filter((record) => !record.deletedAt);
+      workItems = window.crmClientContext?.isScoped?.()
+        ? allWorkItems.filter((record) => (
+          window.crmClientContext.matches(record)
+          || projectIds.has(String(record.projectId || ""))
+        ))
+        : allWorkItems;
+      const workItemIds = new Set(workItems.map((record) => String(record.id)));
       recordsFrom(commitmentResult)
         .filter((record) => !["completed", "cancelled", "canceled"].includes(
           String(record.status).toLowerCase(),
+        ))
+        .filter((record) => (
+          !window.crmClientContext?.isScoped?.()
+          || window.crmClientContext.matches(record)
+          || projectIds.has(String(record.projectId || ""))
+          || (Array.isArray(record.links) && record.links.some((link) => workItemIds.has(String(link.recordId))))
         ))
         .forEach((record) => add("commitment", record.kind || "Commitment", record));
     } catch {}

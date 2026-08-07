@@ -37,6 +37,10 @@
   `;document.head.appendChild(s)}
   function syncNavigationControls(){if(!root)return;const state=window.crmDeskTransit?.historyState?.()||{canBack:false,canForward:false,busy:false};const back=root.querySelector("[data-crm-history-back]");const forward=root.querySelector("[data-crm-history-forward]");const home=root.querySelector(".crm-home-control");back.disabled=!state.canBack;forward.disabled=!state.canForward;home.disabled=active==="home"||state.busy;home.setAttribute("aria-current",active==="home"?"page":"false");root.dataset.canBack=String(!!state.canBack);root.dataset.canForward=String(!!state.canForward);root.hidden=active==="home"}
   function beginRoute(next) {
+    const previous = active;
+    if (next === "home" || (previous === "home" && next !== "clients")) {
+      window.crmClientContext?.deactivate?.({ reason:`workspace:${previous}->${next}` });
+    }
     if (next !== active) window.crmDeskTransit?.noteViewportDeparture?.();
     active = next;
     if (!window.crmHomePreviews?.isCaptureWorker) localStorage.setItem(STORE_KEY, active);

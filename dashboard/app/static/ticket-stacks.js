@@ -2788,13 +2788,25 @@
   // work screen, where its identity and workflow can be edited without a separate creation form.
   const openCreate = async () => {
     let tk = null;
-    try { const res = await window.tickets?.create?.({ companyLabel: "Untitled", host: "", severity: "medium" }); tk = res && res.ticket; } catch {}
+    try {
+      const draft = window.crmClientContext?.decorate?.({
+        companyLabel:window.crmClientContext?.scope?.()?.label || "Untitled",
+        host:"",
+        severity:"medium",
+      }) || { companyLabel:"Untitled", host:"", severity:"medium" };
+      const res = await window.tickets?.create?.(draft);
+      tk = res && res.ticket;
+    } catch {}
     if (tk && tk.id) { pendingOpenId = tk.id; deckToTop("left", tk.id); }
     load();
   };
 
   const load = async (options = {}) => {
-    try { const r = await window.tickets?.list?.(); tickets = (r && r.tickets) || []; }
+    try {
+      const result = await window.tickets?.list?.();
+      const scoped = window.crmClientContext?.filterResult?.(result) || result;
+      tickets = (scoped && scoped.tickets) || [];
+    }
     catch { tickets = []; }
     hydrateInitialStages(tickets);
     if (typeof options.canRender !== "function" || options.canRender()) render();
@@ -2803,7 +2815,8 @@
       // While the config is open, the card the detail panel is animating from must NOT be rebuilt
       // (that detaches it → a copy snaps back to the stack). Defer the render until the panel closes.
       window.tickets?.onChanged?.((payload) => {
-        tickets = (payload && payload.tickets) || [];
+        const scoped = window.crmClientContext?.filterResult?.(payload) || payload;
+        tickets = (scoped && scoped.tickets) || [];
         hydrateInitialStages(tickets);
         if (window.ticketDetail?.isOpen?.()) { pendingRender = true; return; }
         render();
@@ -2818,7 +2831,8 @@
     if (found) return found;
     try {
       const result = await window.tickets?.list?.({ includeDeleted: true });
-      const fresh = (result && result.tickets) || [];
+      const scoped = window.crmClientContext?.filterResult?.(result) || result;
+      const fresh = (scoped && scoped.tickets) || [];
       found = fresh.find((item) => String(item?.id || "") === id) || null;
       if (found && !tickets.some((item) => String(item?.id || "") === id)) tickets.push(found);
     } catch {}

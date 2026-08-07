@@ -31,9 +31,15 @@
   const isClosedContact = (contact) => ["archived", "deleted"].includes(String(valueOf(contact, "state") || valueOf(contact, "status") || "open").toLowerCase());
 
   const contactSource = {
-    list: () => window.contacts?.list?.({ includeDeleted: true }),
-    onChanged: (cb) => window.contacts?.onChanged?.((payload) => cb(payload)),
-    create: (fields) => window.contacts?.create?.(fields),
+    list: async () => window.crmClientContext?.filterResult?.(
+      await window.contacts?.list?.({ includeDeleted: true }),
+    ) || { records:[] },
+    onChanged: (cb) => window.contacts?.onChanged?.((payload) => (
+      cb(window.crmClientContext?.filterResult?.(payload) || payload)
+    )),
+    create: (fields) => window.contacts?.create?.(
+      window.crmClientContext?.decorate?.(fields) || fields,
+    ),
     update: (id, fields) => window.contacts?.update?.(id, fields),
     remove: (id) => window.contacts?.remove?.(id, { hard: true }),
     resolve: (id) => window.contacts?.update?.(id, { state: "archived", archivedAt: new Date().toISOString() }),
@@ -96,7 +102,8 @@
   };
 
   const refreshCompanies = async (payload) => {
-    const nextCompanies = listRecords(payload).filter((company) => company && !company.deletedAt);
+    const scopedPayload = window.crmClientContext?.filterResult?.(payload) || payload;
+    const nextCompanies = listRecords(scopedPayload).filter((company) => company && !company.deletedAt);
     // Empty payloads are normal while the API is reconnecting. Never replace
     // real company furniture with a transient Unassigned-only layout.
     if (!nextCompanies.length) return;
@@ -130,7 +137,9 @@
     // furniture. Contacts may still carry kind/stage as data, but it never
     // determines which bucket exists or where a person is seated.
     const [companyResult, contactResult] = await Promise.all([
-      readyCompanies || window.companies?.list?.({ includeDeleted: false }).catch?.(() => []),
+      readyCompanies || window.companies?.list?.({ includeDeleted: false })
+        .then?.((result) => window.crmClientContext?.filterResult?.(result) || result)
+        .catch?.(() => []),
       contactSource.list().catch?.(() => []),
     ]);
     const companyRows = listRecords(companyResult).filter((company) => company && !company.deletedAt);

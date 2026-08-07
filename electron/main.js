@@ -11,6 +11,7 @@ import pngjs from 'pngjs';
 import { icons } from './icons';
 import auth from './auth.js';
 import cdmsModule from './cdms-client.cjs';
+import monitorModule from './monitor-client.cjs';
 import {
   initTickets, connectTickets, endTickets,
   ticketList, ticketConnectionState,
@@ -29,6 +30,12 @@ const {
   DEFAULT_CDMS_URL,
   normalizeCdmsUrl,
 } = cdmsModule;
+const {
+  createMonitorClient,
+  DEFAULT_MONITOR_API_URL,
+  DEFAULT_MONITOR_MQTT_HOST,
+  DEFAULT_MONITOR_MQTT_PORT,
+} = monitorModule;
 
 // Handle Squirrel.Windows install/update/uninstall events — must quit immediately.
 if (squirrelStartup) app.quit();
@@ -45,6 +52,9 @@ const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
 const DEFAULT_SETTINGS = {
   apiUrl: process.env.CRM_API_URL || 'http://127.0.0.1:3899',
   cdmsUrl: process.env.CRM_CDMS_URL || process.env.CDMS_API_URL || DEFAULT_CDMS_URL,
+  monitorApiUrl: process.env.CRM_MONITOR_API_URL || DEFAULT_MONITOR_API_URL,
+  monitorMqttHost: process.env.CRM_MONITOR_MQTT_HOST || DEFAULT_MONITOR_MQTT_HOST,
+  monitorMqttPort: Number(process.env.CRM_MONITOR_MQTT_PORT) || DEFAULT_MONITOR_MQTT_PORT,
 };
 
 function loadSettings() {
@@ -57,8 +67,18 @@ function loadSettings() {
     if (process.env.CRM_CDMS_URL || process.env.CDMS_API_URL) {
       merged.cdmsUrl = process.env.CRM_CDMS_URL || process.env.CDMS_API_URL;
     }
+    if (process.env.CRM_MONITOR_API_URL) merged.monitorApiUrl = process.env.CRM_MONITOR_API_URL;
+    if (process.env.CRM_MONITOR_MQTT_HOST) merged.monitorMqttHost = process.env.CRM_MONITOR_MQTT_HOST;
+    if (process.env.CRM_MONITOR_MQTT_PORT) merged.monitorMqttPort = Number(process.env.CRM_MONITOR_MQTT_PORT);
     merged.apiUrl = normalizeApiUrl(merged.apiUrl) || DEFAULT_SETTINGS.apiUrl;
     merged.cdmsUrl = normalizeCdmsUrl(merged.cdmsUrl) || DEFAULT_SETTINGS.cdmsUrl;
+    merged.monitorApiUrl = normalizeApiUrl(merged.monitorApiUrl || DEFAULT_SETTINGS.monitorApiUrl)
+      || DEFAULT_SETTINGS.monitorApiUrl;
+    merged.monitorMqttHost = String(merged.monitorMqttHost || DEFAULT_SETTINGS.monitorMqttHost).trim();
+    merged.monitorMqttPort = Math.max(
+      1,
+      Math.min(65535, Number(merged.monitorMqttPort) || DEFAULT_SETTINGS.monitorMqttPort),
+    );
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -97,7 +117,17 @@ const cdms = createCdmsClient({
   disabled: process.env.CRM_CDMS_DISABLED === '1',
   onChange: ({ reason }) => handleCdmsChanged(reason),
 });
+const monitor = createMonitorClient({
+  apiUrl:settings.monitorApiUrl,
+  mqttHost:settings.monitorMqttHost,
+  mqttPort:settings.monitorMqttPort,
+  mqttUsername:process.env.CRM_MONITOR_MQTT_USERNAME || '',
+  mqttPassword:process.env.CRM_MONITOR_MQTT_PASSWORD || '',
+  historyFile:path.join(app.getPath('userData'), 'monitor-history-v1.json'),
+  onChange:({ reason }) => broadcastMonitoring(reason),
+});
 const HOME_PREVIEW_KEYS = [
+  'clients',
   'people',
   'cases',
   'planner',
@@ -108,7 +138,7 @@ const HOME_PREVIEW_KEYS = [
 // Bump whenever room chrome changes in a way that makes an old raster false.
 // The renderer refuses a different generation instead of briefly presenting
 // stale arrows, controls, or styling while replacement captures are prepared.
-const HOME_PREVIEW_VERSION = 'filtered-home-v49';
+const HOME_PREVIEW_VERSION = 'filtered-home-v50';
 const HOME_PREVIEW_DISK_CACHE_FILE = path.join(
   app.getPath('userData'),
   'home-preview-cache-v1.json',
@@ -1804,6 +1834,13 @@ function broadcastStore(entity = null) {
   });
 }
 
+function broadcastMonitoring(reason = 'monitoring') {
+  const payload = { reason, status:monitor.status() };
+  openWindows().forEach((window) => {
+    window.webContents.send('monitor:changed', payload);
+  });
+}
+
 function handleCdmsChanged(reason = 'cdms') {
   broadcastAuth();
   broadcastTickets();
@@ -1841,6 +1878,7 @@ function endTicketsOnce() {
 function requestAppExit() {
   if (exitRequested) return;
   exitRequested = true;
+  monitor.stop();
   endTicketsOnce();
   app.quit();
 }
@@ -1956,10 +1994,37 @@ ipcMain.handle('settings:save', async (_e, next = {}) => {
   if (!apiUrl) return { ok: false, error: 'API URL must be an http(s) URL' };
   const cdmsUrl = normalizeCdmsUrl(next.cdmsUrl ?? settings.cdmsUrl);
   if (!cdmsUrl) return { ok: false, error: 'CDMS URL must be an http(s) URL' };
+  const monitorApiUrl = normalizeApiUrl(next.monitorApiUrl ?? settings.monitorApiUrl);
+  if (!monitorApiUrl) return { ok: false, error: 'Monitoring API URL must be an http(s) URL' };
+  const monitorMqttHost = String((next.monitorMqttHost ?? settings.monitorMqttHost) || '').trim();
+  if (!monitorMqttHost) return { ok: false, error: 'Monitoring MQTT host is required' };
+  const monitorMqttPort = Number(next.monitorMqttPort ?? settings.monitorMqttPort);
+  if (!Number.isInteger(monitorMqttPort) || monitorMqttPort < 1 || monitorMqttPort > 65535) {
+    return { ok: false, error: 'Monitoring MQTT port must be between 1 and 65535' };
+  }
   const cdmsChanged = cdmsUrl !== settings.cdmsUrl;
-  settings = { ...settings, ...next, apiUrl, cdmsUrl };
+  const monitorChanged = monitorApiUrl !== settings.monitorApiUrl
+    || monitorMqttHost !== settings.monitorMqttHost
+    || monitorMqttPort !== settings.monitorMqttPort;
+  settings = {
+    ...settings,
+    ...next,
+    apiUrl,
+    cdmsUrl,
+    monitorApiUrl,
+    monitorMqttHost,
+    monitorMqttPort,
+  };
   saveSettings(settings);
   connectTickets({ url: settings.apiUrl });
+  if (monitorChanged) {
+    monitor.configure({
+      apiUrl:settings.monitorApiUrl,
+      mqttHost:settings.monitorMqttHost,
+      mqttPort:settings.monitorMqttPort,
+    });
+    void monitor.refresh();
+  }
   if (cdmsChanged) {
     await cdms.initialize({
       baseUrl: settings.cdmsUrl,
@@ -1968,7 +2033,13 @@ ipcMain.handle('settings:save', async (_e, next = {}) => {
     });
   }
   broadcastStore();
-  return { ok: true, settings, connection: storeConnectionInfo(), cdms: cdms.status() };
+  return {
+    ok:true,
+    settings,
+    connection:storeConnectionInfo(),
+    cdms:cdms.status(),
+    monitoring:monitor.status(),
+  };
 });
 ipcMain.handle('backend:connection', () => ({ ok: true, settings, connection: storeConnectionInfo(), cdms: cdms.status() }));
 ipcMain.handle('backend:status', async () => {
@@ -1999,6 +2070,16 @@ ipcMain.handle('cdms:reveal-secret', (_event, options = {}) => cdms.revealSecret
 ipcMain.handle('cdms:preferences', (_event, options = {}) => cdms.preferences(options));
 ipcMain.handle('cdms:whois', (_event, options = {}) => cdms.whois(options));
 ipcMain.handle('cdms:health', () => cdms.health());
+
+// ─── Original MQTT monitoring source ────────────────────────────────────────────
+
+ipcMain.handle('monitor:status', () => monitor.status());
+ipcMain.handle('monitor:snapshot', (_event, options = {}) => monitor.snapshot(options));
+ipcMain.handle('monitor:history', (_event, options = {}) => monitor.history(options));
+ipcMain.handle('monitor:refresh', async () => {
+  const result = await monitor.refresh();
+  return { ...result, snapshot:monitor.snapshot() };
+});
 
 // ─── IPC: window controls ────────────────────────────────────────────────────────
 
@@ -2810,6 +2891,14 @@ app.whenReady().then(async () => {
     fetcher: electronSession.defaultSession.fetch.bind(electronSession.defaultSession),
     disabled: process.env.CRM_CDMS_DISABLED === '1',
   });
+  await monitor.start({
+    apiUrl:settings.monitorApiUrl,
+    mqttHost:settings.monitorMqttHost,
+    mqttPort:settings.monitorMqttPort,
+    mqttUsername:process.env.CRM_MONITOR_MQTT_USERNAME || '',
+    mqttPassword:process.env.CRM_MONITOR_MQTT_PASSWORD || '',
+    fetcher:electronSession.defaultSession.fetch.bind(electronSession.defaultSession),
+  });
 
   // Tickets are an API-backed compatibility adapter; generic CRM entities share
   // the same Postgres/API store seam.
@@ -2846,4 +2935,7 @@ app.on('before-quit', (event) => {
   }
   endTicketsOnce();
 });
-app.on('will-quit', () => endTicketsOnce());
+app.on('will-quit', () => {
+  monitor.stop();
+  endTicketsOnce();
+});

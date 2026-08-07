@@ -7,7 +7,7 @@ const { start } = require('./harness.js');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const MOTION_TARGET = { nativeHz: 100, maxFrameMs: 15, maxOver15Ms: 0, maxLongTasks: 0 };
-const HOME_PREVIEW_VERSION = 'filtered-home-v49';
+const HOME_PREVIEW_VERSION = 'filtered-home-v50';
 const HOME_PREVIEW_REST_FILTER = 'blur(0.65px)';
 let nativeRefreshCalibration = null;
 const readyHome = () => {

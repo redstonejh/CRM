@@ -91,13 +91,31 @@
       window.auth?.session?.().catch?.(() => ({ user:null })) || Promise.resolve({ user:null }),
     ]);
     currentUser = first(session?.user?.username, currentUser, "rosa");
+    const liveRows = (result) => rows(result).filter((item) => !item.deletedAt);
+    const scopedRows = (result) => {
+      const records = liveRows(result);
+      return window.crmClientContext?.filter?.(records) || records;
+    };
+    const contactRows = scopedRows(contacts);
+    const companyRows = scopedRows(companies);
+    const taskRows = scopedRows(tasks);
+    const ticketRows = scopedRows(tickets);
+    const workItemRows = scopedRows(workItems);
+    const relatedIds = new Set([
+      ...contactRows, ...companyRows, ...taskRows, ...ticketRows, ...workItemRows,
+    ].map((record) => String(record.id)));
+    const commitmentRows = liveRows(commitments).filter((item) => (
+      !window.crmClientContext?.isScoped?.()
+      || window.crmClientContext.matches(item)
+      || (Array.isArray(item.links) && item.links.some((link) => relatedIds.has(String(link.recordId))))
+    ));
     model = {
-      commitments:rows(commitments).filter((item) => !item.deletedAt),
-      contacts:rows(contacts).filter((item) => !item.deletedAt),
-      companies:rows(companies).filter((item) => !item.deletedAt),
-      tasks:rows(tasks).filter((item) => !item.deletedAt),
-      tickets:rows(tickets).filter((item) => !item.deletedAt),
-      workItems:rows(workItems).filter((item) => !item.deletedAt),
+      commitments:commitmentRows,
+      contacts:contactRows,
+      companies:companyRows,
+      tasks:taskRows,
+      tickets:ticketRows,
+      workItems:workItemRows,
     };
     return model;
   }
@@ -277,7 +295,10 @@
             ? Math.max(highest, Number(item.assignmentRank) || 0)
             : highest, -1) + 1,
       });
-      const result = await window.crmDomain.create("commitments", payload);
+      const result = await window.crmDomain.create(
+        "commitments",
+        window.crmClientContext?.decorate?.(payload) || payload,
+      );
       if (result?.record) model.commitments.push(result.record);
       return result;
     },

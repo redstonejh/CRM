@@ -12,13 +12,22 @@
     review: [{ key: "acceptance", label: "Acceptance", q: "What must be true to call this complete?", area: true }, { key: "outcome", label: "Outcome", q: "What was delivered?", area: true, req: false }],
   };
   const source = {
-    list: () => window.crmStore.list("jobs", { includeDeleted: true }),
+    list: async () => window.crmClientContext?.filterResult?.(
+      await window.crmStore.list("jobs", { includeDeleted: true }),
+    ) || { records:[] },
     get: (id) => window.crmStore.get("jobs", id),
-    create: (fields) => window.crmStore.create("jobs", fields),
+    create: (fields) => window.crmStore.create(
+      "jobs",
+      window.crmClientContext?.decorate?.(fields) || fields,
+    ),
     update: (id, fields) => window.crmStore.update("jobs", id, fields),
     remove: (id) => window.crmStore.remove("jobs", id, { hard: true }),
     resolve: (id) => window.crmStore.update("jobs", id, { state: "complete", stage: "complete", completedAt: new Date().toISOString() }),
-    onChanged: (cb) => window.crmStore.onChanged(async () => cb(await window.crmStore.list("jobs", { includeDeleted: true }))),
+    onChanged: (cb) => window.crmStore.onChanged(async () => cb(
+      window.crmClientContext?.filterResult?.(
+        await window.crmStore.list("jobs", { includeDeleted: true }),
+      ) || { records:[] },
+    )),
   };
   const detail = {
     open: (record) => window.crmRecordWorld?.open?.("jobs", record.id),

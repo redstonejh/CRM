@@ -59,9 +59,15 @@
   };
 
   const dealSource = {
-    list: () => window.deals?.list?.({ includeDeleted: true }),
-    onChanged: (cb) => window.deals?.onChanged?.((payload) => cb(payload)),
-    create: (fields) => window.deals?.create?.(fields),
+    list: async () => window.crmClientContext?.filterResult?.(
+      await window.deals?.list?.({ includeDeleted: true }),
+    ) || { records:[] },
+    onChanged: (cb) => window.deals?.onChanged?.((payload) => (
+      cb(window.crmClientContext?.filterResult?.(payload) || payload)
+    )),
+    create: (fields) => window.deals?.create?.(
+      window.crmClientContext?.decorate?.(fields) || fields,
+    ),
     update: (id, fields) => window.deals?.update?.(id, fields),
     remove: (id) => window.deals?.remove?.(id, { hard: true }),
     resolve: (id) => window.deals?.update?.(id, { state: "won", wonAt: new Date().toISOString() }),

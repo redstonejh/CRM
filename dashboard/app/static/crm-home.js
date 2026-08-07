@@ -27,7 +27,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   ];
   const CANONICAL_HOME_TILE_IDS = new Set(MODULES.map(({ key }) => key));
   const RETRY_MS = [0, 120, 320, 700, 1400, 2800, 5000];
-  const HOME_PREVIEW_VERSION = "filtered-home-v49";
+  const HOME_PREVIEW_VERSION = "filtered-home-v50";
   const HOME_RETURN_INGRESS_MS = 110;
   const HOME_ACRYLIC_RELEASE_MS = 110;
   const HOME_RETURN_HANDOFF_EASE = "cubic-bezier(.4, 0, .2, 1)";

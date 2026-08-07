@@ -309,7 +309,10 @@ import {
     const grid = host.querySelector(".crm-client-room-grid");
     mountObjectGrid(grid, object, { className:"crm-client-room-tile", view:"client-room" });
     window.crmClientContext?.select?.({
-      id:object.tile.id, code, label:clientLabel(client), group:text(client.group),
+      id:`cdms-company-${stableHash(code.toLowerCase())}`,
+      code,
+      label:clientLabel(client),
+      group:text(client.group),
     }, { reason:"client-world" });
   };
 
@@ -359,7 +362,8 @@ import {
     const filtered = !query ? rows : rows.filter((record) => (
       businessKeys(record).some((field) => valueText(record[field]).toLowerCase().includes(query))
     ));
-    const direction = state.sorts.get(definition.key) || "asc";
+    const direction = state.sorts.get(definition.key) || "none";
+    if (direction === "none") return filtered.slice();
     return filtered.slice().sort((a, b) => {
       const left = recordTitle(definition, a);
       const right = recordTitle(definition, b);
@@ -370,16 +374,18 @@ import {
   const renderDatasetBucket = (bucket, definition, state) => {
     const entry = state.datasets.get(definition.key) || { rows:[], error:null };
     const rows = filteredRows(definition, entry.rows, state);
-    const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    const pageSize = state.pageSizes.get(definition.key) || PAGE_SIZE;
+    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
     const page = Math.max(0, Math.min(pageCount - 1, state.pages.get(definition.key) || 0));
     state.pages.set(definition.key, page);
-    const visible = rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+    const visible = rows.slice(page * pageSize, page * pageSize + pageSize);
     state.visibleRows.set(definition.key, visible);
-    const sort = state.sorts.get(definition.key) || "asc";
+    const sort = state.sorts.get(definition.key) || "none";
     bucket.innerHTML = `<header class="crm-client-bucket-head">
       <div><span class="crm-client-bucket-title">${esc(definition.label)}</span><span class="crm-client-bucket-count">${rows.length.toLocaleString()}</span></div>
       <div class="crm-client-bucket-actions">
-        <button type="button" class="crm-menu-action" data-dataset-sort="${esc(definition.key)}" aria-label="Sort ${esc(definition.label)}">${sort === "desc" ? "Z–A" : "A–Z"}</button>
+        <button type="button" class="crm-menu-action" data-dataset-sort="${esc(definition.key)}" aria-label="Sort ${esc(definition.label)}">${sort === "desc" ? "Z–A" : sort === "asc" ? "A–Z" : "Source"}</button>
+        <select class="crm-menu-input crm-client-page-size" data-page-size="${esc(definition.key)}" aria-label="Rows per page">${[25, 50, 100, 200].map((size) => `<option value="${size}" ${size === pageSize ? "selected" : ""}>${size}</option>`).join("")}</select>
         ${definition.exportable ? `<button type="button" class="crm-menu-action" data-dataset-export="${esc(definition.key)}">CSV</button>` : ""}
         ${definition.addable ? `<button type="button" class="crm-menu-action" data-dataset-add="${esc(definition.key)}">Add</button>` : ""}
       </div>
@@ -408,7 +414,7 @@ import {
     const definitions = datasetsForRoom(room);
     const state = roomStateByHost.get(host) || {
       host, object, room, code, query:"", sorts:new Map(), pages:new Map(),
-      datasets:new Map(), visibleRows:new Map(),
+      pageSizes:new Map(), datasets:new Map(), visibleRows:new Map(),
     };
     state.object = object; state.room = room; state.code = code;
     roomStateByHost.set(host, state);
@@ -487,18 +493,21 @@ import {
       settled[index].status === "fulfilled" ? payloadRows(settled[index].value, definition) : [],
     ]));
     const inactive = [
-      ...rows.users.filter((row) => String(row.Active) === "0"),
-      ...rows.emails.filter((row) => String(row.Active) === "0"),
-      ...rows.vms.filter((row) => String(row.Active) === "0"),
-      ...rows.daemons.filter((row) => String(row.Inactive) === "1"),
+      ...rows.users.filter((row) => String(row.Active) === "0").map((row) => ({ definition:datasetByKey("users"), row, reason:"Active = 0" })),
+      ...rows.emails.filter((row) => String(row.Active) === "0").map((row) => ({ definition:datasetByKey("emails"), row, reason:"Active = 0" })),
+      ...rows.vms.filter((row) => String(row.Active) === "0").map((row) => ({ definition:datasetByKey("vms"), row, reason:"Active = 0" })),
+      ...rows.daemons.filter((row) => String(row.Inactive) === "1").map((row) => ({ definition:datasetByKey("daemons"), row, reason:"Inactive = 1" })),
     ];
     const missing = [
-      ...rows.core.filter((row) => !text(row["IP address"]) || !secretFields(row).some((field) => /password/i.test(field))),
-      ...rows.vms.filter((row) => String(row.Active ?? "1") !== "0" && !text(row.IP)),
-      ...rows.services.filter((row) => !secretFields(row).some((field) => /password|pass|pw/i.test(field))),
+      ...rows.core.filter((row) => !text(row["IP address"])).map((row) => ({ definition:datasetByKey("core"), row, reason:"Missing IP address" })),
+      ...rows.core.filter((row) => !secretFields(row).some((field) => /password/i.test(field))).map((row) => ({ definition:datasetByKey("core"), row, reason:"Missing password" })),
+      ...rows.vms.filter((row) => String(row.Active ?? "1") !== "0" && !text(row.IP)).map((row) => ({ definition:datasetByKey("vms"), row, reason:"Missing IP" })),
+      ...rows.services.filter((row) => !secretFields(row).some((field) => /password|pass|pw/i.test(field))).map((row) => ({ definition:datasetByKey("services"), row, reason:"Missing password" })),
     ];
     const activeEmails = rows.emails.filter((row) => String(row.Active ?? "1") !== "0");
     const mfa = activeEmails.filter((row) => String(row["MFA or Ignore"] ?? "").toLowerCase() === "1" || row["MFA or Ignore"] === true);
+    const mfaDisabled = activeEmails.filter((row) => !mfa.includes(row));
+    const firmwarePresent = rows.externalInfo.filter((row) => text(row["Current Version"]));
     const firmwareMissing = rows.externalInfo.filter((row) => !text(row["Current Version"]));
     const allocations = new Map();
     rows.vms.filter((row) => String(row.Active ?? "1") !== "0").forEach((row) => {
@@ -509,9 +518,10 @@ import {
       allocations.set(hostName, current);
     });
     const now = Date.now();
-    const passwordOld = rows.services.filter((row) => {
+    const passwordAge = rows.services.map((row) => {
       const date = dateFromExcel(row["Date of last known change"]);
-      return date && now - date.getTime() > 90 * 86400000;
+      const days = date ? Math.max(0, Math.floor((now - date.getTime()) / 86400000)) : null;
+      return { row, days, group:days == null ? "Unknown" : days > 90 ? "Over 90 days" : days >= 60 ? "60–90 days" : "Under 60 days" };
     });
     const w11Ready = rows.workstations.filter((row) => String(row["Win11 Capable"]) === "1");
     const w11NotReady = rows.workstations.filter((row) => String(row["Win11 Capable"]) !== "1");
@@ -520,18 +530,98 @@ import {
       return value && !["0", "no"].includes(value.toLowerCase());
     });
     const health = await window.crmCdms.health?.();
-    const reports = [
-      ["Inactive Assets", inactive.length, inactive.length ? "Returned inactive records" : "The backend may filter archived rows"],
-      ["Missing Data", missing.length, "Core IP/password, VM IP, service password"],
-      ["MFA Status", `${mfa.length}/${activeEmails.length}`, activeEmails.length ? `${Math.round(mfa.length / activeEmails.length * 100)}% enabled or excepted` : "No active email accounts"],
-      ["Firmware Versions", firmwareMissing.length, `${rows.externalInfo.length - firmwareMissing.length} populated`],
-      ["Host Resources", allocations.size, "hosts with VM allocation"],
-      ["Password Age", passwordOld.length, "older than 90 days"],
-      ["Windows 11 Ready", `${w11Ready.length}/${rows.workstations.length}`, `${w11NotReady.length} not ready · ${vmIssues.length} VM issues`],
-      ["Source Health", health?.summary || (health?.ok ? "Live" : "Unavailable"), health?.error || ""],
-    ];
+    const titleItem = (definition, row, detail) => ({
+      label:recordTitle(definition, row),
+      detail,
+    });
+    const reportData = new Map([
+      ["inactive", {
+        value:inactive.length,
+        note:inactive.length ? "Inactive records returned by the API" : "The source API normally filters archived rows",
+        items:inactive.map(({ definition, row, reason }) => titleItem(definition, row, `${definition.label} · ${reason}`)),
+      }],
+      ["missing", {
+        value:missing.length,
+        note:"Core IP/password · VM IP · service password",
+        items:missing.map(({ definition, row, reason }) => titleItem(definition, row, `${definition.label} · ${reason}`)),
+      }],
+      ["mfa", {
+        value:`${mfa.length}/${activeEmails.length}`,
+        note:activeEmails.length ? `${Math.round(mfa.length / activeEmails.length * 100)}% enabled or excepted` : "No active email accounts",
+        items:[
+          ...mfa.map((row) => titleItem(datasetByKey("emails"), row, "Enabled or excepted")),
+          ...mfaDisabled.map((row) => titleItem(datasetByKey("emails"), row, "Not enabled / not excepted")),
+        ],
+      }],
+      ["firmware", {
+        value:`${firmwarePresent.length}/${rows.externalInfo.length}`,
+        note:`${firmwareMissing.length} missing a current version`,
+        items:[
+          ...firmwareMissing.map((row) => titleItem(datasetByKey("externalInfo"), row, "Current Version missing")),
+          ...firmwarePresent.map((row) => titleItem(datasetByKey("externalInfo"), row, `Version ${text(row["Current Version"])}`)),
+        ],
+      }],
+      ["resources", {
+        value:allocations.size,
+        note:"Active VM allocation compared with matching Core capacity",
+        items:[...allocations.entries()].map(([hostName, allocation]) => {
+          const core = rows.core.find((row) => [row.Name, row.Host, row["IP address"]]
+            .some((value) => text(value).toLowerCase() === hostName.toLowerCase()));
+          const cores = Number(core?.Cores) || 0;
+          const ram = Number(core?.RAM) || 0;
+          return {
+            label:hostName,
+            detail:`${allocation.cores}/${cores || "?"} cores · ${allocation.ram}/${ram || "?"} GB`,
+          };
+        }),
+      }],
+      ["password-age", {
+        value:passwordAge.filter((item) => item.group === "Over 90 days").length,
+        note:`${passwordAge.filter((item) => item.group === "60–90 days").length} at 60–90 days · ${passwordAge.filter((item) => item.group === "Unknown").length} unknown`,
+        items:passwordAge
+          .sort((left, right) => (right.days ?? -1) - (left.days ?? -1))
+          .map(({ row, days, group }) => titleItem(datasetByKey("services"), row, days == null ? group : `${group} · ${days} days`)),
+      }],
+      ["windows-11", {
+        value:`${w11Ready.length}/${rows.workstations.length}`,
+        note:`${w11NotReady.length} not capable · ${vmIssues.length} VM issues`,
+        items:[
+          ...w11NotReady.map((row) => titleItem(datasetByKey("workstations"), row, "Not Windows 11 capable")),
+          ...vmIssues.map((row) => titleItem(datasetByKey("vms"), row, `VM issue · ${text(row["Windows 11 Issue?"])}`)),
+          ...w11Ready.map((row) => titleItem(datasetByKey("workstations"), row, "Windows 11 capable")),
+        ],
+      }],
+      ["source-health", {
+        value:health?.summary || (health?.ok ? "Live" : "Unavailable"),
+        note:health?.error || `Evaluated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}`,
+        items:(Array.isArray(health?.sources) ? health.sources : []).map((source) => ({
+          label:text(source.key) || "Source",
+          detail:`${source.ok ? "OK" : "Unavailable"} · ${Number(source.rows) || 0} rows`,
+        })),
+      }],
+    ]);
     const grid = host.querySelector(".crm-client-report-grid");
-    grid.innerHTML = reports.map(([label, value, note]) => overviewStat(label, value, note)).join("");
+    const tiles = mountTileChildren(grid, object, {
+      elementOptions:(report) => ({
+        tagName:"article",
+        className:"crm-client-report-card",
+        preview:false,
+        view:"report-result",
+        ariaLabel:report.tile.label,
+      }),
+      update:(element, report) => {
+        const result = reportData.get(report.data?.reportKey) || { value:"—", note:"No data", items:[] };
+        const visible = result.items.slice(0, 40);
+        element.dataset.reportKey = report.data?.reportKey || "";
+        element.innerHTML = `<header><span>${esc(report.tile.label)}</span><strong>${esc(result.value)}</strong></header>
+          <small>${esc(result.note)}</small>
+          <div class="crm-client-report-list">${visible.length ? visible.map((item) => `<div><b>${esc(item.label)}</b><span>${esc(item.detail)}</span></div>`).join("")
+            : '<div class="crm-client-empty">No data</div>'}</div>
+          ${result.items.length > visible.length ? `<footer>${result.items.length - visible.length} more results</footer>` : ""}`;
+      },
+    });
+    syncMaterial(grid);
+    return tiles;
   };
 
   const renderWork = (host, object) => {
@@ -856,6 +946,7 @@ import {
       .crm-client-bucket-head{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 3px 8px}.crm-client-bucket-head>div:first-child{min-width:0;margin-right:auto}
       .crm-client-bucket-title{font-size:var(--crm-type-object,14px);font-weight:760}.crm-client-bucket-count{margin-left:6px;color:rgba(226,234,246,.42);font-size:var(--crm-type-meta,10px)}
       .crm-client-bucket-actions{display:flex;gap:1px}.crm-client-bucket-actions .crm-menu-action{min-height:28px!important;padding:0 6px!important;font-size:var(--crm-type-meta,10px)!important}
+      .crm-client-page-size{width:46px!important;min-width:46px!important;height:28px!important;min-height:28px!important;padding:0 4px!important;font-size:var(--crm-type-meta,10px)!important}
       .crm-client-card-list{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;gap:8px;overflow-y:auto;padding:1px 2px 8px;scrollbar-width:thin}
       .crm-client-record-card{position:relative;display:flex;flex:0 0 auto;min-height:118px;flex-direction:column;gap:5px;padding:13px 14px;text-align:left;color:#fff;border:1px solid rgba(255,255,255,.13);border-radius:15px;background:linear-gradient(155deg,rgba(67,78,98,.66),rgba(30,38,52,.58));box-shadow:inset 0 1px rgba(255,255,255,.16),0 12px 20px -16px rgba(0,0,0,.9);cursor:pointer}
       .crm-client-record-card:hover{border-color:rgba(255,255,255,.27)}.crm-client-record-title{font-size:var(--crm-type-object,14px);font-weight:760;line-height:1.25}.crm-client-record-subtitle{color:rgba(230,237,247,.54);font-size:var(--crm-type-caption,11px);line-height:1.3}
@@ -865,6 +956,9 @@ import {
       .crm-client-page{display:flex;align-items:center;justify-content:center;gap:5px;padding-top:5px;color:rgba(230,237,247,.46);font-size:var(--crm-type-meta,10px)}.crm-client-page .crm-menu-action{min-height:27px!important;padding:0 7px!important}
       .crm-client-overview-grid,.crm-client-report-grid{position:absolute;inset:150px 52px 82px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(118px,1fr);gap:18px;overflow-y:auto}
       .crm-client-overview-card{display:flex;min-width:0;flex-direction:column;padding:16px}.crm-client-overview-card>span{color:rgba(228,236,248,.48);font-size:var(--crm-type-caption,11px)}.crm-client-overview-card strong{margin-top:auto;font-size:clamp(20px,3vw,36px);font-weight:760}.crm-client-overview-card small{margin-top:5px;color:rgba(228,236,248,.42);font-size:var(--crm-type-meta,10px)}
+      .crm-client-report-card{position:relative;z-index:1;display:flex;min-width:0;min-height:190px;box-sizing:border-box;flex-direction:column;padding:13px;border:1px solid var(--bucket-acrylic-border);border-radius:18px;background:linear-gradient(180deg,rgba(22,27,38,.27),rgba(10,14,22,.21));box-shadow:var(--bucket-acrylic-shadow);overflow:hidden}
+      .crm-client-report-card>header{display:flex;align-items:flex-start;gap:8px}.crm-client-report-card>header>span{min-width:0;margin-right:auto;color:rgba(232,239,249,.58);font-size:var(--crm-type-caption,11px);font-weight:700}.crm-client-report-card>header>strong{font-size:var(--crm-type-object,14px);font-weight:780;text-align:right}.crm-client-report-card>small{display:block;margin-top:4px;color:rgba(230,237,248,.38);font-size:var(--crm-type-micro,9px);line-height:1.3}
+      .crm-client-report-list{display:flex;min-height:0;flex:1 1 auto;flex-direction:column;gap:4px;margin-top:9px;overflow-y:auto;scrollbar-width:thin}.crm-client-report-list>div:not(.crm-client-empty){display:grid;gap:2px;padding:6px 7px;border-radius:9px;background:rgba(12,17,25,.28)}.crm-client-report-list b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(240,244,251,.72);font-size:var(--crm-type-meta,10px)}.crm-client-report-list span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(228,235,246,.4);font-size:var(--crm-type-micro,9px)}.crm-client-report-card>footer{padding-top:5px;color:rgba(228,235,246,.34);font-size:var(--crm-type-micro,9px);text-align:right}
       .crm-client-overview-links{display:flex;flex-direction:column;justify-content:center;padding:10px}.crm-client-overview-links .crm-menu-action{text-align:left!important}
       .crm-client-room-error{position:absolute;left:50%;top:50%;display:grid;gap:10px;width:min(360px,calc(100vw - 48px));padding:18px;transform:translate(-50%,-50%)}
       .crm-client-detail-shell{position:fixed;inset:0;z-index:9800;display:grid;place-items:center;background:rgba(4,7,12,.28);-webkit-app-region:no-drag}.crm-client-detail-shell[hidden]{display:none}
@@ -932,7 +1026,7 @@ import {
         if (clientObject) {
           const client = clientObject.data.client;
           window.crmClientContext?.select?.({
-            id:clientObject.tile.id,
+            id:`cdms-company-${stableHash(clientObject.data.clientCode.toLowerCase())}`,
             code:clientObject.data.clientCode,
             label:clientLabel(client),
             group:text(client?.group),
@@ -1001,6 +1095,16 @@ import {
       renderAllBuckets(state);
     }
   });
+  document.addEventListener("change", (event) => {
+    if (!active || !event.target.matches("[data-page-size]")) return;
+    const state = rootEventState(event.target);
+    const key = event.target.dataset.pageSize;
+    const pageSize = Number(event.target.value);
+    if (!state || !key || ![25, 50, 100, 200].includes(pageSize)) return;
+    state.pageSizes.set(key, pageSize);
+    state.pages.set(key, 0);
+    renderAllBuckets(state);
+  });
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (target.closest?.("[data-detail-close]")) return closeDetail();
@@ -1054,7 +1158,8 @@ import {
     const sort = target.closest?.("[data-dataset-sort]");
     if (sort) {
       const key = sort.dataset.datasetSort;
-      state.sorts.set(key, state.sorts.get(key) === "desc" ? "asc" : "desc");
+      const current = state.sorts.get(key) || "none";
+      state.sorts.set(key, current === "none" ? "asc" : current === "asc" ? "desc" : "none");
       state.pages.set(key, 0); renderAllBuckets(state); return;
     }
     const exportButton = target.closest?.("[data-dataset-export]");

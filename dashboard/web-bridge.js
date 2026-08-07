@@ -247,6 +247,48 @@
     },
     onChanged: () => () => {},
   };
+  const monitorQuery = (options = {}) => {
+    const client = options.client && typeof options.client === 'object'
+      ? options.client
+      : {};
+    return query({
+      code:client.code || client.value || client.companyCode || client.cdmsClient,
+      label:client.label || client.name || client.title || client.company,
+      limit:options.limit,
+    });
+  };
+  window.crmMonitoringData = {
+    status: () => request('/web/monitor/status'),
+    snapshot: (options = {}) => request(`/web/monitor/snapshot${monitorQuery(options)}`),
+    history: (options = {}) => request(`/web/monitor/history${monitorQuery(options)}`),
+    refresh: (options = {}) => request(`/web/monitor/refresh${monitorQuery(options)}`, {
+      method:'POST',
+      body:{},
+    }),
+    onChanged: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      let stopped = false;
+      let signature = '';
+      const poll = async () => {
+        if (stopped) return;
+        const status = await request('/web/monitor/status');
+        const next = JSON.stringify([
+          status.connection,
+          status.updatedAt,
+          status.error,
+          status.restCheckedAt,
+        ]);
+        if (signature && next !== signature) callback({ reason:'poll', status });
+        signature = next;
+      };
+      const timer = setInterval(poll, 5000);
+      void poll();
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+      };
+    },
+  };
   window.dashboard = {
     getStatus: () => Promise.resolve({ status: null, connectionState }),
     onStatus: () => () => {},

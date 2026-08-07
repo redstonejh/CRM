@@ -7,12 +7,26 @@ const path = require('node:path');
 const { URL } = require('node:url');
 const { WebSocket, WebSocketServer } = require('ws');
 const { redactDatasetPayload, valueAtPath } = require('../electron/cdms-client.cjs');
+const {
+  createMonitorClient,
+  DEFAULT_MONITOR_API_URL,
+  DEFAULT_MONITOR_MQTT_HOST,
+  DEFAULT_MONITOR_MQTT_PORT,
+} = require('../electron/monitor-client.cjs');
 
 const PORT = Number(process.env.CRM_WEB_PORT || 8080);
 const API_URL = String(process.env.CRM_API_URL || 'http://crm-api:3899').replace(/\/+$/, '');
 const CDMS_URL = String(process.env.CRM_CDMS_URL || process.env.CDMS_API_URL || 'http://192.168.203.238:6030').replace(/\/+$/, '');
 const DASHBOARD_DIR = path.resolve(__dirname, '..', 'dashboard');
 const DATA_DIR = path.resolve(process.env.CRM_WEB_DATA_DIR || '/data');
+const monitor = createMonitorClient({
+  apiUrl:process.env.CRM_MONITOR_API_URL || DEFAULT_MONITOR_API_URL,
+  mqttHost:process.env.CRM_MONITOR_MQTT_HOST || DEFAULT_MONITOR_MQTT_HOST,
+  mqttPort:Number(process.env.CRM_MONITOR_MQTT_PORT) || DEFAULT_MONITOR_MQTT_PORT,
+  mqttUsername:process.env.CRM_MONITOR_MQTT_USERNAME || '',
+  mqttPassword:process.env.CRM_MONITOR_MQTT_PASSWORD || '',
+  historyFile:path.join(DATA_DIR, 'monitor-history-v1.json'),
+});
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SESSION_TTL_MS = Math.max(300000, Number(process.env.CRM_SESSION_TTL_MS) || 12 * 60 * 60 * 1000);
 const COOKIE_SECURE = process.env.CRM_COOKIE_SECURE === '1';
@@ -347,6 +361,33 @@ async function cdmsRoute(req, res, url) {
   }
 }
 
+async function monitorRoute(req, res, url) {
+  const session = requireSession(req, res);
+  if (!session) return;
+  const action = url.pathname.slice('/web/monitor/'.length);
+  const client = {
+    code:String(url.searchParams.get('code') || ''),
+    label:String(url.searchParams.get('label') || ''),
+  };
+  if (action === 'status' && req.method === 'GET') {
+    return sendJson(res, 200, monitor.status());
+  }
+  if (action === 'snapshot' && req.method === 'GET') {
+    return sendJson(res, 200, monitor.snapshot({ client }));
+  }
+  if (action === 'history' && req.method === 'GET') {
+    return sendJson(res, 200, monitor.history({
+      client,
+      limit:Number(url.searchParams.get('limit')) || 100,
+    }));
+  }
+  if (action === 'refresh' && req.method === 'POST') {
+    const result = await monitor.refresh();
+    return sendJson(res, 200, { ...result, snapshot:monitor.snapshot({ client }) });
+  }
+  return sendJson(res, 404, { ok:false, error:'Not found' });
+}
+
 function authSession(req, res) {
   const session = sessionFor(req);
   sendJson(res, 200, {
@@ -525,6 +566,7 @@ const server = http.createServer((req, res) => {
     if (url.pathname === '/healthz') return health(req, res);
     if (url.pathname.startsWith('/web/auth/')) return authRoute(req, res, url);
     if (url.pathname.startsWith('/web/cdms/')) return cdmsRoute(req, res, url);
+    if (url.pathname.startsWith('/web/monitor/')) return monitorRoute(req, res, url);
     if (url.pathname.startsWith('/api/')) return proxyHttp(req, res, url);
     if (!['GET', 'HEAD'].includes(req.method)) return sendJson(res, 405, { ok: false, error: 'Method not allowed' });
     return serveStatic(req, res, url);
@@ -556,7 +598,16 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 seedUsers();
+void monitor.start();
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`CRM web dashboard listening on http://0.0.0.0:${PORT}`);
   console.log(`CRM API upstream: ${API_URL}`);
 });
+
+const shutdown = () => {
+  monitor.stop();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 2000).unref();
+};
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

@@ -25,7 +25,7 @@
   let queued = null;
   const performanceTimings = [];
   const HISTORY_LIMIT = 48;
-  const HISTORY_CAMERAS = new Set(["crmProjectsCamera", "fractalCalendarCamera"]);
+  const HISTORY_CAMERAS = new Set(["crmClientsCamera", "crmProjectsCamera", "fractalCalendarCamera"]);
   let navigationEntries = [];
   let navigationIndex = -1;
   let navigationSeeded = false;
@@ -175,6 +175,7 @@
     return layer?.querySelector?.(`.crm-home-bucket[data-module="${key}"]`) || null;
   };
   const destinationFor = (key) => ({
+    clients: window.crmClients,
     people: window.peopleCards,
     cases: window.ticketStacks,
     planner: window.crmPlanner,
@@ -273,6 +274,7 @@
     return destinationLayers;
   };
   const viewportApiFor = (key) => ({
+    clients:window.crmClients,
     people:window.peopleCards,
     pipeline:window.dealPipeline,
     jobs:window.jobPipeline,
@@ -282,6 +284,7 @@
     cases:window.ticketStacks,
   })[key] || null;
   const viewportCameraFor = (key) => ({
+    clients:window.crmClientsCamera,
     planner:window.crmProjectsCamera,
     calendar:window.fractalCalendarCamera,
   })[key] || null;

@@ -311,7 +311,7 @@ function createCdmsClient(options = {}) {
 
   function dataPath(endpoint, client = '', query = {}) {
     const key = text(endpoint);
-    if (key.startsWith('misc/')) {
+    if (key === 'misc' || key.startsWith('misc/')) {
       const requestedClient = text(client || key.slice(5));
       if (!requestedClient) throw new Error('A client is required for Misc data');
       return `/api/data/misc/${encodeURIComponent(requestedClient)}`;

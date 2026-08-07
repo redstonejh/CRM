@@ -13,12 +13,14 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
 (() => {
   if (typeof window.createFractalCamera !== "function") return;
 
-  const HOME_TILE_STORE_KEY = "crm-home-tiles-v3";
+  const HOME_TILE_STORE_KEY = "crm-home-tiles-v4";
   const LEGACY_HOME_TILE_STORES = [
-    { key:"crm-home-tiles-v2", additions:["monitoring"] },
-    { key:"crm-home-tiles-v1", additions:["calendar", "monitoring"] },
+    { key:"crm-home-tiles-v3", additions:["clients"] },
+    { key:"crm-home-tiles-v2", additions:["monitoring", "clients"] },
+    { key:"crm-home-tiles-v1", additions:["calendar", "monitoring", "clients"] },
   ];
   const MODULES = [
+    { key: "clients", label: "Clients" },
     { key: "people", label: "People" }, { key: "cases", label: "Tickets" },
     { key: "planner", label: "Projects" }, { key: "assignments", label: "Assignments" },
     { key: "calendar", label: "Calendar" }, { key: "monitoring", label: "Monitoring" },
@@ -78,6 +80,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
   const prebuiltExpanders = new Map();
   let prebuiltExpanderFrame = 0;
   const FACTORY_PREWARM_APIS = [
+    "crmClients",
     "peopleCards",
     "ticketStacks",
     "crmPlanner",
@@ -86,6 +89,7 @@ import { changed as contextAddChanged, register as registerContextAddProvider } 
     "crmMonitoring",
   ];
   const FACTORY_API_BY_MODULE = {
+    clients:"crmClients",
     people:"peopleCards",
     cases:"ticketStacks",
     planner:"crmPlanner",
